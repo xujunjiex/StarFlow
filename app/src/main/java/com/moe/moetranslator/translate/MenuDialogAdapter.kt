@@ -57,4 +57,11 @@ class MenuDialogAdapter(ctx: Context, private var str: Array<String>, private va
             notifyDataSetChanged()
         }
     }
+
+    fun updateIcon(position: Int, newIcon: Int) {
+        if (position in img.indices) {
+            img[position] = newIcon
+            notifyDataSetChanged()
+        }
+    }
 }

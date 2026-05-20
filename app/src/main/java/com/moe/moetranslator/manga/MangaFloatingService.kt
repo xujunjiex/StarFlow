@@ -462,8 +462,10 @@ class MangaFloatingService : LifecycleService() {
                     val adapter = listView.adapter as com.moe.moetranslator.translate.MenuDialogAdapter
                     if (isAutoTranslating) {
                         adapter.updateLabel(3, getString(R.string.manga_menu_stop_auto))
+                        adapter.updateIcon(3, R.drawable.stop_auto)
                     } else {
                         adapter.updateLabel(3, getString(R.string.manga_menu_auto_translate))
+                        adapter.updateIcon(3, R.drawable.start_auto)
                     }
                 }
                 4 -> {
