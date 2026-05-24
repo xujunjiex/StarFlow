@@ -1,0 +1,8 @@
+**/*.onnx.filterball merge=ours
+**/*.onnx.data filter=ball
+**/*.ckpt filter=ball
+**/*.pt.onnx filter=ball
+app/src/main/assets/**/*.onnx filter=ball
+app/src/main/assets/**/*.ckpt filter=ball
+.reference/**/*.onnx filter=ball
+.reference/**/*.ckpt filter=ball

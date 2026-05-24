@@ -749,7 +749,44 @@ class MangaFloatingService : LifecycleService() {
             val textBlocks = withContext(Dispatchers.IO) {
                 OCRBridge.recognizeWithLocation(config.sourceLang, bitmap)
             }
+<<<<<<< HEAD
             Log.d(TAG, "processMangaScreenshot: Step 1 - OCR done, found ${textBlocks.size} text blocks")
+=======
+            if (config.useMangaOcr) initMangaOcrIfNeeded()
+
+            // Step 1: 文字检测 + 识别
+            LogCollector.d(TAG, "processMangaScreenshot: Step 1 - OCR starting, sourceLang=${config.sourceLang}, useMangaOcr=${config.useMangaOcr}, detEngine=${config.detEngine}")
+            val textBlocks: List<TextBlockInfo> = withContext(Dispatchers.IO) {
+                when (config.detEngine) {
+                    DetEngine.CTD -> {
+                        if (config.useMangaOcr) {
+                            // CTD + manga-ocr 独立流程
+                            LogCollector.d(TAG, "使用 CTD(简化) + manga-ocr 识别")
+                            DetectionBridge.detectWithCTDManga(bitmap, config.sourceLang)
+                        } else {
+                            // CTD + ML Kit，仍用原有流程
+                            LogCollector.d(TAG, "使用 CTD 检测 + ML Kit 识别")
+                            DetectionBridge.detectWithCTD(bitmap, config.sourceLang, OcrEngine.MLKIT)
+                        }
+                    }
+                    DetEngine.DBNET -> {
+                        val ocrEngine = if (config.useMangaOcr) OcrEngine.MANGA_OCR else OcrEngine.MLKIT
+                        LogCollector.d(TAG, "使用 DBNet 检测 + ${if (config.useMangaOcr) "manga-ocr" else "ML Kit"} 识别")
+                        DetectionBridge.detectWithDBNet(bitmap, config.sourceLang, ocrEngine)
+                    }
+                    DetEngine.MLKIT -> {
+                        if (config.useMangaOcr) {
+                            LogCollector.d(TAG, "使用 ML Kit 检测 + manga-ocr 识别")
+                            MangaOcrBridge.recognizeWithLocation(bitmap)
+                        } else {
+                            LogCollector.d(TAG, "使用 ML Kit 检测 + 识别")
+                            OCRBridge.recognizeWithLocation(config.sourceLang, bitmap)
+                        }
+                    }
+                }
+            }
+            LogCollector.d(TAG, "processMangaScreenshot: Step 1 - OCR done, found ${textBlocks.size} text blocks")
+>>>>>>> 6bd5fb9 (feat(ctd): CTD + manga-ocr 独立流程，按 Y 分组合并框再识别)
 
             if (textBlocks.isEmpty()) {
                 Log.d(TAG, "processMangaScreenshot: No text found, returning early")
