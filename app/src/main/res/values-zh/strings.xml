@@ -7,6 +7,7 @@
     <string name="translate_page">翻译</string>
     <string name="history_page">历史</string>
     <string name="me_page">设置</string>
+    <string name="import_manga_page">导入</string>
     <string name="api_name">API：%s</string>
     <string name="tencent_cloud">腾讯云</string>
     <string name="baidu_translate">百度翻译</string>

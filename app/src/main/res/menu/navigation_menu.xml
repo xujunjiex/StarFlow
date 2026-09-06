@@ -20,27 +20,33 @@
 <menu xmlns:android="http://schemas.android.com/apk/res/android">
 
     <item
+        android:id="@+id/text_translate_fragment"
+        android:title="@string/text_translate_tab"
+        android:icon="@drawable/text_translate_icon"
+        android:orderInCategory="1"/>
+
+    <item
+        android:id="@+id/import_manga_fragment"
+        android:title="@string/import_manga_page"
+        android:icon="@drawable/import_manga_icon"
+        android:orderInCategory="2"/>
+
+    <item
         android:id="@+id/translate_fragment"
         android:title="@string/translate_page"
         android:icon="@drawable/translate_icon"
-        android:orderInCategory="1"/>
+        android:orderInCategory="3"/>
 
     <item
         android:id="@+id/history_fragment"
         android:title="@string/history_page"
         android:icon="@drawable/history_icon"
-        android:orderInCategory="3"/>
+        android:orderInCategory="4"/>
 
     <item
         android:id="@+id/me_fragment"
         android:title="@string/me_page"
         android:icon="@drawable/setting_icon"
-        android:orderInCategory="4"/>
-
-    <item
-        android:id="@+id/text_translate_fragment"
-        android:title="@string/text_translate_tab"
-        android:icon="@drawable/text_translate_icon"
-        android:orderInCategory="2"/>
+        android:orderInCategory="5"/>
 
 </menu>

@@ -6,6 +6,7 @@
     <string name="accessibility_service_description">[Function Description] \nEnable accessibility permissions to take screenshots for translation.\nWhen granting permissions, a warning will pop up. Please rest assured that StarFlow will not collect any of your information.</string>
     <string name="translate_page">Translate</string>
     <string name="me_page">Settings</string>
+    <string name="import_manga_page">Import</string>
     <string name="api_name">API：%s</string>
     <string name="tencent_cloud">Tencent Cloud</string>
     <string name="baidu_translate">Baidu Translate</string>

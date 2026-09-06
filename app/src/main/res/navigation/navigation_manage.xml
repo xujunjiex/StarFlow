@@ -48,4 +48,10 @@
         android:label="fragment_text_translate"
         tools:layout="@layout/fragment_text_translate" />
 
+    <fragment
+        android:id="@+id/import_manga_fragment"
+        android:name="com.moe.starflow.mangaimport.ImportMangaFragment"
+        android:label="fragment_import_manga"
+        tools:layout="@layout/fragment_import_manga" />
+
 </navigation>

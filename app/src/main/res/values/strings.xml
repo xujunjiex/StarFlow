@@ -7,6 +7,7 @@
     <string name="translate_page">Translate</string>
     <string name="history_page">History</string>
     <string name="me_page">Settings</string>
+    <string name="import_manga_page">Import</string>
     <string name="api_name">API：%s</string>
     <string name="tencent_cloud">Tencent Cloud</string>
     <string name="baidu_translate">Baidu Translate</string>
