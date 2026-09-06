@@ -8,6 +8,11 @@
     <string name="history_page">History</string>
     <string name="me_page">Settings</string>
     <string name="import_manga_page">Import</string>
+    <string name="storage_directory">Storage</string>
+    <string name="display_options">Display</string>
+    <string name="import_manga_empty_hint">Tap + to import manga</string>
+    <string name="import_manga_delete_confirm">Delete this manga? App-local copy will also be removed.</string>
+    <string name="confirm_delete">Delete</string>
     <string name="api_name">API：%s</string>
     <string name="tencent_cloud">Tencent Cloud</string>
     <string name="baidu_translate">Baidu Translate</string>

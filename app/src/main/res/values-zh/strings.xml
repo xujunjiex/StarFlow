@@ -8,6 +8,11 @@
     <string name="history_page">历史</string>
     <string name="me_page">设置</string>
     <string name="import_manga_page">导入</string>
+    <string name="storage_directory">存储目录</string>
+    <string name="display_options">显示选项</string>
+    <string name="import_manga_empty_hint">点击右下角 + 导入漫画</string>
+    <string name="import_manga_delete_confirm">删除这部漫画？应用内副本也会一并删除。</string>
+    <string name="confirm_delete">删除</string>
     <string name="api_name">API：%s</string>
     <string name="tencent_cloud">腾讯云</string>
     <string name="baidu_translate">百度翻译</string>
