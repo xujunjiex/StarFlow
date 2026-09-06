@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="20dp">
+
+    <TextView
+        android:id="@+id/btn_import_file"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="12dp"
+        android:textSize="15sp"
+        android:text="@string/import_manga_option_files"/>
+
+    <TextView
+        android:id="@+id/btn_import_single_dir"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="12dp"
+        android:textSize="15sp"
+        android:text="@string/import_manga_option_single_dir"/>
+
+    <TextView
+        android:id="@+id/btn_import_multi_dir"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:padding="12dp"
+        android:textSize="15sp"
+        android:text="@string/import_manga_option_multi_dir"/>
+
+</LinearLayout>

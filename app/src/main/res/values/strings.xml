@@ -13,6 +13,10 @@
     <string name="import_manga_empty_hint">Tap + to import manga</string>
     <string name="import_manga_delete_confirm">Delete this manga? App-local copy will also be removed.</string>
     <string name="confirm_delete">Delete</string>
+    <string name="import_manga_deleted">Deleted</string>
+    <string name="import_manga_option_files">Import files (zip/cbz)</string>
+    <string name="import_manga_option_single_dir">Import single manga folder</string>
+    <string name="import_manga_option_multi_dir">Import multiple manga folders</string>
     <string name="api_name">API：%s</string>
     <string name="tencent_cloud">Tencent Cloud</string>
     <string name="baidu_translate">Baidu Translate</string>
