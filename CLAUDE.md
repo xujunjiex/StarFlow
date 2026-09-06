@@ -12,6 +12,7 @@
 - **`tools/`** — 测试模型和脚本，已 gitignore。用于本地测试转换后的模型。
 - **`models/`** — 模型源文件集中目录，已 gitignore（体积大不适合提交）。存放从各服务器下载的真实模型文件（manga-ocr / PP-OCRv5 / PP-OCRv6 medium / RT-DETR），用于计算 MD5 和核对大小。参见 memory `[[model-download-md5-not-size]]`。
 - **`docs/docs/`** — 文档内容（提交到 GitHub），`docs/` 其余文件已 gitignore。
+- **`docs/superpowers/`** — superpowers 技能的 spec/plan 草稿，本地保留、**不入库不提交 git**（已 gitignore）。设计规格存 `docs/superpowers/specs/`，实现计划存 `docs/superpowers/plans/`。⚠️ 不要用 superpowers skill 默认的「save to docs/superpowers/specs/ and commit」——本项目 spec/plan 一律不 commit。
 - 禁止在项目根目录散落模型文件；模型源文件统一放 `models/`。
 
 ## 环境搭建
@@ -284,6 +285,13 @@ suspend fun renderOverlay(
 
 **AI 上下文（漫画模式）：** 正常漫画翻译不使用上下文。仅增量渲染的两批之间使用上下文（`forceContext=true`），翻译完后回滚，不污染后续页面的上下文历史。
 
+**OpenAI 兼容 API 思考模式（thinkingMode 三态）：**
+- `OpenAIProviderConfig.thinkingMode`（Int: 0=跟随模型默认不发参数 / 1=强制关闭 / 2=强制开启）；内置 `BuiltInProviderMod.thinkingMode` 存 diff（null=回退内置默认，`applyMod` 处理）
+- **默认不发 thinking 参数**：硅基流动等不支持思考参数的模型会报 `enable_thinking` 400（`thinking:{type:disabled}` 被网关归一化成 enable_thinking）
+- 内置 DeepSeek 默认 = 强制关闭（保持翻译速度）；火山/智谱/千问/自定义默认 = 跟随模型默认
+- `OpenAITranslation.buildRequestBody` 按三态发 `thinking:{type:enabled/disabled}` 或完全省略；测试连接同样按当前选择
+- ⚠️ 不要改回「总是发 thinking:disabled」——那会重新破坏硅基流动等严格校验参数的模型
+
 **配置存储：** `CustomPreference` 单例封装 `SharedPreferences`。API 密钥通过 `KeystoreManager` 加密存储。
 
 **UI：** 传统 Android Views + ViewBinding（非 Jetpack Compose）。导航使用 Navigation Component。
@@ -523,6 +531,12 @@ PP-OCRv5 检测框可能倾斜（QuadBox 4 顶点非正交），全链路处理�
 - 框选触点响应区域：50px 半径（`POINT_RADIUS = 2500`）
 
 ## 自动翻译
+
+**翻译中单击悬浮球（终止/确认语义，游戏/漫画通用）：**
+- 手动翻译中单击：**无部分结果上屏 → 直接终止 + 提示「已停止翻译」**（不弹确认）；**已有部分结果**（分批渲染首批 / Hy-MT2 流式已出字）→ **弹「停止/继续」确认框**避免误丢
+- 自动翻译开启 + 正在翻译：单击**只提示**「翻译中...终止翻译请关闭自动翻译」（终止=双击悬浮球关自动翻译）；自动开启 + 空闲时单击=强制翻译当前页
+- 强制关闭自动翻译时翻译在途 → 同样丢弃部分结果不保存
+- 标志：漫画 `partialRenderShown` / 游戏 `partialResultShown`（渲染上屏才置位）；`translationCancelled` 贯穿保存路径，取消后不写库
 
 ### 游戏翻译（像素驱动）
 
@@ -791,6 +805,13 @@ MediaProjectionIntentHolder — 存储授权 Intent。
 - 许可证：LGPL（原项目）
 
 ## 高频踩坑（gotchas）
+
+- **取消翻译管线（改动 `translateBubblesBatch` / 取消路径前必读）：**
+  - `waitForResult` 用 suspendCancellableCoroutine 等翻译回调；**网络 API 取消后回调永不触发**（`OpenAITranslation.cancelTranslation` 直接 cancel 内部 job）→ 必须有 `isCancelled` 轮询看门狗主动 resume，否则 isProcessing 卡死（曾卡 API_TIMEOUT_MS=35s）
+  - **专用异常 `TranslationCancelledException`** 识别用户取消：增量渲染（incrementalPPOcrV5/V6/RTDetr）catch 遇它必须**重抛**，不能当成分批失败返回 false —— 否则回退重跑 OCR（「文字识别中」残留）+ recycled source 二次错误
+  - **`contRef.getAndSet(null)` 原子单次 resume**：看门狗 + 回调竞争同一 continuation，双 resume 抛 `Already resumed`；用 `getAndSet` 保证只有一个线程取到 continuation
+  - `recognizeBatch` 的 catch 遇 `kotlinx.coroutines.CancellationException` 静默重抛，不当「识别模型异常」显示（取消时第二批 OCR 协程被 cancel 会走到这里）
+  - `translationCancelled` 贯穿 `finalizeIncremental` / `renderAndShowMergedOverlay` / 游戏 translateByText/Pic 回调，取消后不写库
 
 - **`Bitmap.createBitmap(src, x, y, w, h)` 是子 bitmap**，共享原图底层数据。原图 `recycle()` 后子 bitmap 失效，再调用 `.copy()` 抛 `Can't copy a recycled bitmap`。**正确顺序：先渲染（产生独立副本），再 try/finally 中 recycle 源 bitmap。**（cache 实时渲染 + 下载修复踩过）
 
