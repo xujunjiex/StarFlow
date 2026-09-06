@@ -17,6 +17,16 @@
     <string name="import_manga_option_files">导入文件（zip/cbz）</string>
     <string name="import_manga_option_single_dir">导入单个漫画文件夹</string>
     <string name="import_manga_option_multi_dir">导入多个漫画文件夹</string>
+    <string name="list_mode">列表模式</string>
+    <string name="mode_list">列表</string>
+    <string name="mode_detailed">详细信息</string>
+    <string name="mode_grid">网格</string>
+    <string name="mode_compact">紧凑网格</string>
+    <string name="grid_size">网格尺寸</string>
+    <string name="sort_order">排序</string>
+    <string name="sort_title">标题</string>
+    <string name="sort_added">添加时间</string>
+    <string name="apply">应用</string>
     <string name="api_name">API：%s</string>
     <string name="tencent_cloud">腾讯云</string>
     <string name="baidu_translate">百度翻译</string>
