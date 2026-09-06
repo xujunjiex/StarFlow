@@ -77,7 +77,11 @@ class ImportMangaFragment : Fragment() {
         loadDisplayPrefs()
 
         adapter = MangaGridAdapter(
-            onItemClick = { /* 后续 Task 接阅读器跳转 */ },
+            onItemClick = { manga ->
+                val intent = android.content.Intent(requireContext(), com.moe.starflow.mangaimport.reader.MangaReaderActivity::class.java)
+                intent.putExtra(com.moe.starflow.mangaimport.reader.MangaReaderActivity.EXTRA_MANGA_ID, manga.id)
+                startActivity(intent)
+            },
             onItemLongClick = { showDeleteDialog(it) }
         )
         binding.recyclerView.adapter = adapter

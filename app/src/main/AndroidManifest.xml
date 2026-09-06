@@ -46,6 +46,11 @@
             android:exported="false"
             android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar" />
         <activity
+            android:name=".mangaimport.reader.MangaReaderActivity"
+            android:exported="false"
+            android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar"
+            android:screenOrientation="portrait" />
+        <activity
             android:name=".launch.FirstLaunchPage"
             android:exported="false"
             android:theme="@style/Base.Theme.MT" />

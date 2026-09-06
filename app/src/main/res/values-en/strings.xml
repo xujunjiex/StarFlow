@@ -656,5 +656,10 @@ Threshold for the large box filter. Detection boxes whose width, height, or area
     <string name="model_name_too_long">Model name is too long (max 100 chars)</string>
     <string name="model_count_limit">At most %d custom models per provider</string>
     <string name="add">Add</string>
+    <string name="reader_detail_placeholder">Translation details (coming soon)</string>
+    <string name="reader_toggle_mode">Original</string>
+    <string name="reader_translate">Translate</string>
+    <string name="reader_toggle_placeholder">Mode switch available after translation</string>
+    <string name="reader_translate_placeholder">Translation coming soon</string>
 
 </resources>

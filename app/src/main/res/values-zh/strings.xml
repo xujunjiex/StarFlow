@@ -800,5 +800,10 @@
     <string name="model_name_too_long">模型名称过长（最多 100 字符）</string>
     <string name="model_count_limit">每个 provider 最多添加 %d 个自定义模型</string>
     <string name="add">添加</string>
+    <string name="reader_detail_placeholder">译文详情（即将上线）</string>
+    <string name="reader_toggle_mode">原文</string>
+    <string name="reader_translate">翻译</string>
+    <string name="reader_toggle_placeholder">翻译后才能切换译文</string>
+    <string name="reader_translate_placeholder">翻译功能即将上线</string>
 
 </resources>
