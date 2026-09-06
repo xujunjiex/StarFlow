@@ -7,6 +7,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.documentfile.provider.DocumentFile
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
@@ -15,6 +16,7 @@ import com.moe.starflow.databinding.FragmentImportMangaBinding
 import com.moe.starflow.mangaimport.data.ImportedManga
 import com.moe.starflow.mangaimport.data.ImportedMangaStore
 import com.moe.starflow.mangaimport.data.MangaImporter
+import com.moe.starflow.mangaimport.data.StorageDirStore
 import com.moe.starflow.mangaimport.ui.DisplayMode
 import com.moe.starflow.mangaimport.ui.DisplayOptionsSheet
 import com.moe.starflow.mangaimport.ui.ImportDialog
@@ -48,6 +50,22 @@ class ImportMangaFragment : Fragment() {
             if (uri != null) importDirectory(uri)
         }
 
+    private val pickStorageDirLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            if (uri != null) {
+                // 持久化授权（作为扫描源，后续后端需要读它）
+                requireContext().contentResolver.takePersistableUriPermission(
+                    uri,
+                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+                val name = DocumentFile.fromTreeUri(requireContext(), uri)?.name
+                    ?: uri.lastPathSegment
+                    ?: getString(R.string.storage_directory)
+                StorageDirStore.save(requireContext(), uri.toString(), name)
+                updateStorageDirLabel(name)
+            }
+        }
+
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         _binding = FragmentImportMangaBinding.inflate(inflater, container, false)
         return binding.root
@@ -79,6 +97,10 @@ class ImportMangaFragment : Fragment() {
             }.show(parentFragmentManager, DisplayOptionsSheet.TAG)
         }
 
+        binding.tvStorageDir.setOnClickListener { pickStorageDirLauncher.launch(null) }
+        val (_, savedName) = StorageDirStore.load(requireContext())
+        updateStorageDirLabel(savedName)
+
         refresh()
     }
 
@@ -93,6 +115,10 @@ class ImportMangaFragment : Fragment() {
             .getOrDefault(DisplayMode.GRID)
         gridSize = p.getInt("grid_size", 3)
         sortByAdded = p.getBoolean("sort_by_added", false)
+    }
+
+    private fun updateStorageDirLabel(name: String?) {
+        binding.tvStorageDir.text = name ?: getString(R.string.storage_directory)
     }
 
     private fun applyDisplay(mode: DisplayMode, size: Int, sortAdded: Boolean) {
