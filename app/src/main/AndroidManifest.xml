@@ -52,7 +52,7 @@
             android:name=".mangaimport.reader.MangaReaderActivity"
             android:exported="false"
             android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar"
-            android:screenOrientation="portrait" />
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode|keyboardHidden" />
         <activity
             android:name=".launch.FirstLaunchPage"
             android:exported="false"

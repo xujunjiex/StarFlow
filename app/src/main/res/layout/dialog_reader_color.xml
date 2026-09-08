@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/reader_color_title"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:textColor="#333333"/>
+
+    <RadioGroup
+        android:id="@+id/rg_preset"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingTop="12dp">
+
+        <RadioButton android:id="@+id/rb_color_none" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/reader_color_none"/>
+        <RadioButton android:id="@+id/rb_color_inverted" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/reader_color_inverted"/>
+        <RadioButton android:id="@+id/rb_color_grayscale" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/reader_color_grayscale"/>
+    </RadioGroup>
+
+    <RadioGroup
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+
+        <RadioButton android:id="@+id/rb_color_book" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/reader_color_book"/>
+        <RadioButton android:id="@+id/rb_color_custom" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/reader_color_custom"/>
+        <RadioButton android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"/>
+    </RadioGroup>
+
+    <TextView
+        android:id="@+id/tv_brightness_value"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingTop="10dp"
+        android:textSize="13sp"
+        android:textColor="#888888"/>
+
+    <SeekBar
+        android:id="@+id/sb_brightness"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:min="-100"
+        android:max="200"/>
+
+    <TextView
+        android:id="@+id/tv_contrast_value"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textSize="13sp"
+        android:textColor="#888888"/>
+
+    <SeekBar
+        android:id="@+id/sb_contrast"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:min="-100"
+        android:max="200"/>
+
+</LinearLayout>

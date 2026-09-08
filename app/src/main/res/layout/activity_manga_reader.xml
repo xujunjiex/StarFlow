@@ -1,66 +1,154 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout
+<FrameLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="#000000">
 
+    <!-- 翻页区（分页模式） -->
     <androidx.viewpager2.widget.ViewPager2
         android:id="@+id/viewPager"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintBottom_toTopOf="@id/bottomBar"/>
+        android:layout_height="match_parent"/>
 
-    <LinearLayout
-        android:id="@+id/bottomBar"
+    <!-- Webtoon 连续滚动模式（竖列表，懒加载） -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/webtoonList"
         android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone"/>
+
+    <!-- 顶部左侧返回按钮 -->
+    <FrameLayout
+        android:id="@+id/btn_back"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        app:layout_constraintBottom_toBottomOf="parent">
+        android:layout_gravity="top|start"
+        android:layout_marginStart="10dp"
+        android:layout_marginTop="34dp"
+        android:background="@drawable/bg_floating_btn_view"
+        android:padding="10dp"
+        android:clickable="true"
+        android:contentDescription="@string/reader_back">
 
-        <LinearLayout
-            android:id="@+id/detailPanel"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:padding="12dp"
-            android:background="#F5F5F5">
+        <ImageView
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:src="@drawable/ic_reader_back"
+            android:contentDescription="@string/reader_back"/>
+    </FrameLayout>
 
-            <TextView
-                android:id="@+id/tv_detail_source"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:textSize="13sp"
-                android:text="@string/reader_detail_placeholder"/>
+    <!-- 顶部右侧菜单按钮 -->
+    <FrameLayout
+        android:id="@+id/btn_menu"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_marginEnd="10dp"
+        android:layout_marginTop="34dp"
+        android:background="@drawable/bg_floating_btn_view"
+        android:padding="10dp"
+        android:clickable="true"
+        android:contentDescription="@string/reader_tab_more">
 
-        </LinearLayout>
+        <ImageView
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:src="@drawable/ic_reader_more"
+            android:tint="#FFFFFF"
+            android:contentDescription="@string/reader_tab_more"/>
+    </FrameLayout>
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:padding="8dp"
-            android:background="#FFFFFF"
-            android:gravity="center">
+    <!-- 顶部中间页面指示 -->
+    <TextView
+        android:id="@+id/tv_page_indicator"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|center_horizontal"
+        android:layout_marginTop="38dp"
+        android:background="@drawable/bg_pill_dark"
+        android:paddingStart="12dp"
+        android:paddingTop="5dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="5dp"
+        android:textColor="#FFFFFF"
+        android:textSize="13sp"/>
 
-            <Button
-                android:id="@+id/btn_toggle_mode"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/reader_toggle_mode"/>
+    <!-- 底部透明胶囊进度条（左翻页 / 中间进度条 / 右翻页） -->
+    <LinearLayout
+        android:id="@+id/bottom_progress"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:layout_gravity="bottom"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/bg_progress_pill"
+        android:layout_marginStart="24dp"
+        android:layout_marginEnd="24dp"
+        android:layout_marginBottom="10dp"
+        android:paddingStart="6dp"
+        android:paddingEnd="6dp">
 
-            <Button
-                android:id="@+id/btn_translate"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="@string/reader_translate"/>
+        <FrameLayout
+            android:id="@+id/btn_prev"
+            android:layout_width="44dp"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:clickable="true"
+            android:contentDescription="@string/reader_prev">
 
-        </LinearLayout>
+            <ImageView
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_reader_prev"
+                android:contentDescription="@string/reader_prev"/>
+        </FrameLayout>
 
+        <com.moe.starflow.mangaimport.reader.ReaderProgressBar
+            android:id="@+id/reader_progress"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:layout_gravity="center_vertical"
+            android:layout_marginHorizontal="4dp"/>
+
+        <FrameLayout
+            android:id="@+id/btn_next"
+            android:layout_width="44dp"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:clickable="true"
+            android:contentDescription="@string/reader_next">
+
+            <ImageView
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_reader_next"
+                android:contentDescription="@string/reader_next"/>
+        </FrameLayout>
     </LinearLayout>
 
-</androidx.constraintlayout.widget.ConstraintLayout>
+    <!-- 右下角翻译按钮（放大 + 白色图标 + 配色调） -->
+    <FrameLayout
+        android:id="@+id/btn_translate"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="20dp"
+        android:layout_marginBottom="62dp"
+        android:background="@drawable/bg_floating_btn_view"
+        android:padding="12dp"
+        android:clickable="true"
+        android:contentDescription="@string/reader_tab_translate">
+
+        <ImageView
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:src="@drawable/ic_reader_translate"
+            android:tint="#FFFFFF"
+            android:contentDescription="@string/reader_tab_translate"/>
+    </FrameLayout>
+
+</FrameLayout>

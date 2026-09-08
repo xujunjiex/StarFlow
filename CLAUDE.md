@@ -98,6 +98,7 @@ adb devices
 - `utils/` — 工具类：`Constants`（枚举定义）、`CustomPreference`（配置封装）、`LogCollector`（日志收集）、`PixelCompare`（像素比较）、`UiUtils`（Toast 统一）、`ServiceUtils`（服务状态检测）、`UpdateChecker`（检查更新）
 - `data/` — Room 数据库、`TranslationCacheManager`、`TranslationCacheUtils`（缓存工具：256-bit hash 守卫 + 气泡 JSON 解析）、`HistoryEntity`/`PageCacheEntity`
 - `download/` — 模型下载流水线：`ModelDownloadManager`/`ModelDownloadRepository`/`ModelDownloadService`/`DownloadState`/`ModelInfo`/`ModelKey`/`ChecksumHelper`
+- `mangaimport/` — 漫画导入书架 & 阅读器（feature/manga-import）：`ImportMangaFragment`（书架+多选管理+下拉刷新）、`data/`（`ImportedManga`/`ImportedMangaStore`/`MangaImporter`/`StorageDirStore`）、`reader/`（`MangaReaderActivity` Koto 式阅读器：4 阅读模式/翻页动画/背景/颜色矫正对比预览/进度胶囊/原文下载）。详见「漫画导入书架 + 阅读器」。
 
 **翻译 API 实现** (`app/src/main/java/translationapi/`):
 每个子目录实现 `TranslationTextAPI` 接口：`openaitranslation/`、`bingtranslation/`、`nllbtranslation/`、`niutrans/`、`volctranslation/`、`deepltranslation/`、`baidutranslation/`、`tencentcloud/`、`azuretranslation/`、`customtranslation/`、`doubaotranslation/`、`hymt2translation/`
@@ -530,6 +531,26 @@ PP-OCRv5 检测框可能倾斜（QuadBox 4 顶点非正交），全链路处理�
 - 框选初始位置：`CropView.setRectCentered()` 延迟到布局完成后用 view 自身尺寸计算居中（游戏 90%×35%，漫画 80%×60%）
 - 框选触点响应区域：50px 半径（`POINT_RADIUS = 2500`）
 
+## 漫画导入书架 + 阅读器（`mangaimport/`）
+
+**书架（`ImportMangaFragment`）**：
+- 存储固定 `filesDir/manga_import/<id>/`（zip 放原文件 / 目录放散图），**无自定义目录可切**；根目录由 `StorageDirStore.root()` 提供
+- 导入即复制（SAF 源 → 复制进 app 内部存储）；封面**唯一命名** `covers/<id>_<ts>.jpg`（每次导入/换封面都新路径，防 Glide 按路径缓存导致删除重导后显示旧图）；重导前清理该 id 旧封面
+- `ImportedManga` 字段：id/title/localRoot/isArchive/coverPath/pageCount/addedAt/sizeBytes/description(简介)/lastReadPage；JSON 存 SP `manga_import`
+- 长按**多选管理**：已读/未读（改 `lastReadPage`）/删除（连同 `filesDir` 副本+封面）/重命名/换封面（photo picker 复制进 covers）/编辑简介；顶部「全选」图标按钮 + 返回键退出多选
+- 下拉刷新 `SwipeRefreshLayout`；显示选项**即时生效**（详细信息列表 = 默认 / 网格，列数 = 网格尺寸；紧凑网格与纯列表已删除）
+- ⚠️ 简介/重命名确认后再 `refresh()`（曾在弹窗打开时就 refresh 导致改了不显示）
+
+**阅读器（`MangaReaderActivity`）**：
+- 存储统一走 `ReaderPageSource`（zip=`ZipFile`/目录=文件枚举；解析页 + 全图 + 缩略图 `LruCache`），`ReaderAdapters` 三种渲染：单页 `ViewPager2`(横/竖)、横屏**双页**（每 item 两页）、**Webtoon 连续滚动**（竖 `RecyclerView`）
+- **阅读模式**（prefs `manga_reader` 的 `reader_mode`）：0=LTR 1=RTL（页码不变，页面/滑动手势/点击分区反转）2=竖排 3=Webtoon
+- **翻页动画**（`reader_animation`）：0无(直接跳) 1默认(滑动) 2高级(景深 `DepthTransformer`) 3仿真(翻页透视 `PageTurnTransformer`)；`configChanges` 声明旋转不重建
+- **背景**（`reader_background`）：0默认(跟随系统) 1浅 2深 3白 4黑；切背景时**面板/进度条/页面指示文字即时深浅联动**（无独立「自动」项，默认即跟随系统）
+- **颜色矫正**（`ReaderColorFilter` ColorMatrix）：反色/灰度/书本开关 + 亮度/对比度滑块，调色面板顶部「**原图 vs 处理后**」对比预览实时刷新；持久化两滑块+三开关（`reader_color_*`）
+- 底部**透明胶囊进度条**（`ReaderProgressBar`）：左◀右▶ + 中间细线（**拖拽寻页 / 长按 → 3 列缩略图预览网格跳页**）
+- 底部工具栏四图标 Tab：**翻页 / 翻译(占位) / 调色 / 更多**；更多=旋转(竖/横/自动)+自动翻页(触摸、失焦自动暂停)+原文下载(zip→`MediaStore.Downloads`)+设置(跳 `SettingPageActivity` 个性化)；右下角翻译占位按钮；右上角 ⋮ 菜单键（白图标）
+- Manifest 已 `supportsRtl="true"`
+
 ## 自动翻译
 
 **翻译中单击悬浮球（终止/确认语义，游戏/漫画通用）：**
@@ -860,6 +881,8 @@ MediaProjectionIntentHolder — 存储授权 Intent。
 - **`AlertDialog.setMessage()` 公告内容必须 `Html.fromHtml()` 渲染**：`TranslateFragment.showNotificationDialog` 接收 Gist content 用 `android.text.Html.fromHtml(content, FROM_HTML_MODE_LEGACY)` 渲染。**直接 `setMessage` 纯文本会显示字面 `<br>` 标签**（v0.9.2 早期版本踩坑）。Gist content 已约定用 HTML 标记（见「Gist 公告格式」），不要换成纯文本。
 
 - **`OpenAIText.testConnection` 在 `isNew=true` 时 `providerIndex` 越界**：`ManageActivity` 启动「新增自定义 API」fragment 时传 `custom_code = allProviders.size`（越界值，APIConfig.kt:674）。OpenAIText 接收后 `providerIndex = allProviders.size` 指向数组末尾的下一个位置。`testConnection` line 746 无条件访问 `allProviders[providerIndex]` → `ArrayIndexOutOfBoundsException` → HTTP 请求根本没发出，弹"测试失败：Index N out of bounds for length N"（N 为当前 provider 数）。修复：line 746 用 `if (providerIndex in allProviders.indices)` 安全访问，越界时显示 `"custom[new]"`；`setupUserMode()` 在 `isNew=true` 时显式 `switchAutoAppendPath.isChecked = true`。
+
+- **FrameLayout 的 `android:gravity` 不影响子 View 定位**——子 View 不设 `android:layout_gravity="center"` 就默认放左上角。曾导致阅读器「所有选中圆出现在图标右下角」（图标没设、选中圆设了 layout_gravity）。凡 FrameLayout 容器内要居中的子层，一律显式 `layout_gravity="center"`（分段选项、Tab、浮层图标都是）。
 
 ## UI 规范
 

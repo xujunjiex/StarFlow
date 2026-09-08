@@ -30,6 +30,12 @@ class ZoomableImageView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : AppCompatImageView(context, attrs, defStyleAttr) {
 
+    /** 任意手势起点回调（ACTION_DOWN），供自动翻页做「触摸自动暂停」。可选，默认 null。 */
+    var onInteraction: (() -> Unit)? = null
+
+    /** 单击确认回调（x, y，view 坐标），供阅读器做点击分区翻页/唤出菜单。可选，默认 null。 */
+    var onSingleTapConfirmed: ((Float, Float) -> Unit)? = null
+
     private val matrix = Matrix()
     private val savedMatrix = Matrix()
     private val matrixValues = FloatArray(9)
@@ -68,6 +74,11 @@ class ZoomableImageView @JvmOverloads constructor(
                 // 放大到 2.5x
                 animateScale(currentScale, 2.5f, e.x, e.y)
             }
+            return true
+        }
+
+        override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+            onSingleTapConfirmed?.invoke(e.x, e.y)
             return true
         }
     })
@@ -221,6 +232,7 @@ class ZoomableImageView @JvmOverloads constructor(
 
         when (event.action and MotionEvent.ACTION_MASK) {
             MotionEvent.ACTION_DOWN -> {
+                onInteraction?.invoke()
                 savedMatrix.set(matrix)
                 startPoint.set(event.x, event.y)
                 mode = DRAG
