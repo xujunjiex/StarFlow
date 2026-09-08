@@ -19,6 +19,11 @@
     <string name="import_manga_option_single_dir">Import single manga folder</string>
     <string name="import_manga_option_multi_dir">Import multiple manga folders</string>
     <string name="import_folder_hint">Tip: some devices only allow choosing a newly-created folder. If blocked, create a folder in the picker first.</string>
+    <string name="all_files_access_title">All files access required</string>
+    <string name="all_files_access_msg">To pick any folder for storage or import, grant "All files access" in system settings first.</string>
+    <string name="all_files_access_go">Grant</string>
+    <string name="all_files_access_fail">Cannot open permission page</string>
+    <string name="storage_dir_set">Storage directory changed</string>
     <string name="list_mode">List mode</string>
     <string name="mode_list">List</string>
     <string name="mode_detailed">Details</string>

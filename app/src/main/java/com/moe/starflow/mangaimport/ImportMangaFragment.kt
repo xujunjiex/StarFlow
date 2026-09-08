@@ -1,12 +1,14 @@
 package com.moe.starflow.mangaimport
 
 import android.app.AlertDialog
+import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.documentfile.provider.DocumentFile
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
@@ -20,6 +22,7 @@ import com.moe.starflow.mangaimport.ui.DisplayMode
 import com.moe.starflow.mangaimport.ui.DisplayOptionsSheet
 import com.moe.starflow.mangaimport.ui.ImportDialog
 import com.moe.starflow.mangaimport.ui.MangaGridAdapter
+import com.moe.starflow.utils.LogCollector
 import com.moe.starflow.utils.UiUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -27,7 +30,11 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
- * 导入翻译 tab：书架页。展示导入漫画清单网格，支持导入（三选一）、显示选项、长按删除。
+ * 导入翻译 tab：书架页。
+ * 展示导入漫画清单网格，支持导入（文件/文件夹）、存储目录切换、显示选项、长按删除。
+ *
+ * 存储目录与目录导入需要「所有文件访问」权限（MANAGE_EXTERNAL_STORAGE），
+ * 授权后 SAF 选择器可选任意已有目录（Kototoro 同款做法）；未授权时引导去系统设置页授权。
  */
 class ImportMangaFragment : Fragment() {
 
@@ -39,14 +46,33 @@ class ImportMangaFragment : Fragment() {
     private var gridSize = 3
     private var sortByAdded = false
 
+    // 文件导入（不需所有文件权限，单文件多选可用）
     private val pickFilesLauncher =
         registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
             if (uris.isNotEmpty()) importArchives(uris)
         }
 
+    // 导入文件夹（需要所有文件权限）
     private val pickDirLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-            if (uri != null) importDirectory(uri)
+            if (uri != null) {
+                persistReadable(uri)
+                importDirectory(uri)
+            }
+        }
+
+    // 存储目录（需要所有文件权限，可选任意已有目录）
+    private val pickStorageLauncher =
+        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+            if (uri != null) {
+                persistReadable(uri)
+                val name = DocumentFile.fromTreeUri(requireContext(), uri)?.name
+                    ?: uri.lastPathSegment
+                    ?: getString(R.string.storage_directory)
+                StorageDirStore.setCustom(requireContext(), uri.toString(), name)
+                updateStorageDirLabel()
+                UiUtils.showToast(requireContext(), getString(R.string.storage_dir_set))
+            }
         }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
@@ -61,7 +87,7 @@ class ImportMangaFragment : Fragment() {
 
         adapter = MangaGridAdapter(
             onItemClick = { manga ->
-                val intent = android.content.Intent(requireContext(), com.moe.starflow.mangaimport.reader.MangaReaderActivity::class.java)
+                val intent = Intent(requireContext(), com.moe.starflow.mangaimport.reader.MangaReaderActivity::class.java)
                 intent.putExtra(com.moe.starflow.mangaimport.reader.MangaReaderActivity.EXTRA_MANGA_ID, manga.id)
                 startActivity(intent)
             },
@@ -73,8 +99,8 @@ class ImportMangaFragment : Fragment() {
             ImportDialog.show(
                 requireContext(),
                 onPickFiles = { pickFilesLauncher.launch(arrayOf("application/zip", "application/octet-stream")) },
-                onPickSingleDir = { pickDirLauncher.launch(null) },
-                onPickMultiDir = { pickDirLauncher.launch(null) }
+                onPickSingleDir = { ensureAllFilesAccessThen { pickDirLauncher.launch(null) } },
+                onPickMultiDir = { ensureAllFilesAccessThen { pickDirLauncher.launch(null) } }
             )
         }
 
@@ -84,7 +110,9 @@ class ImportMangaFragment : Fragment() {
             }.show(parentFragmentManager, DisplayOptionsSheet.TAG)
         }
 
-        binding.tvStorageDir.setOnClickListener { showStorageDirDialog() }
+        binding.tvStorageDir.setOnClickListener {
+            ensureAllFilesAccessThen { pickStorageLauncher.launch(null) }
+        }
         updateStorageDirLabel()
 
         refresh()
@@ -92,7 +120,47 @@ class ImportMangaFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
+        // 从系统设置页授权返回后刷新
         refresh()
+        updateStorageDirLabel()
+    }
+
+    /** 请求持久读权限，保证所选目录在重启后仍可访问。 */
+    private fun persistReadable(uri: Uri) {
+        try {
+            requireContext().contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+        } catch (e: Exception) {
+            // 某些场景（write 权限未授予）只取 read
+            try {
+                requireContext().contentResolver.takePersistableUriPermission(
+                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (ignored: Exception) {
+            }
+        }
+    }
+
+    /** 检查「所有文件访问」权限，未授权则弹引导去系统设置页；已授权执行 onGranted。 */
+    private fun ensureAllFilesAccessThen(onGranted: () -> Unit) {
+        if (StorageDirStore.hasAllFilesAccess(requireContext())) {
+            onGranted()
+            return
+        }
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.all_files_access_title)
+            .setMessage(R.string.all_files_access_msg)
+            .setPositiveButton(R.string.all_files_access_go) { _, _ ->
+                try {
+                    startActivity(StorageDirStore.allFilesAccessIntent(requireContext()))
+                } catch (e: Exception) {
+                    UiUtils.showToast(requireContext(), getString(R.string.all_files_access_fail))
+                }
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
     }
 
     private fun loadDisplayPrefs() {
@@ -103,44 +171,9 @@ class ImportMangaFragment : Fragment() {
         sortByAdded = p.getBoolean("sort_by_added", false)
     }
 
+    /** 存储目录入口显示：默认 → app 目录路径；自定义 → 文件夹名。 */
     private fun updateStorageDirLabel() {
-        val current = StorageDirStore.current(requireContext())
-        binding.tvStorageDir.text = when (current) {
-            StorageDirStore.Location.APP_EXTERNAL -> getString(R.string.storage_dir_external)
-            StorageDirStore.Location.APP_INTERNAL -> getString(R.string.storage_dir_internal)
-        }
-    }
-
-    /** 存储目录：应用内选择（不走系统 SAF 选择器，规避 MIUI 只能选新建目录的限制）。 */
-    private fun showStorageDirDialog() {
-        val options = listOf(
-            StorageDirStore.Location.APP_EXTERNAL,
-            StorageDirStore.Location.APP_INTERNAL
-        )
-        val current = StorageDirStore.current(requireContext())
-        val checked = options.indexOf(current).coerceAtLeast(0)
-
-        val labels = options.map { loc ->
-            getString(
-                when (loc) {
-                    StorageDirStore.Location.APP_EXTERNAL -> R.string.storage_dir_external
-                    StorageDirStore.Location.APP_INTERNAL -> R.string.storage_dir_internal
-                }
-            ) + "\n" + StorageDirStore.rootDir(requireContext(), loc).absolutePath
-        }
-
-        AlertDialog.Builder(requireContext())
-            .setTitle(R.string.storage_directory)
-            .setSingleChoiceItems(labels.toTypedArray(), checked) { _, which ->
-                val chosen = options[which]
-                if (chosen != StorageDirStore.current(requireContext())) {
-                    StorageDirStore.set(requireContext(), chosen)
-                    updateStorageDirLabel()
-                }
-            }
-            .setPositiveButton(R.string.confirm) { d, _ -> d.dismiss() }
-            .setNegativeButton(R.string.cancel, null)
-            .show()
+        binding.tvStorageDir.text = StorageDirStore.describe(requireContext())
     }
 
     private fun applyDisplay(mode: DisplayMode, size: Int, sortAdded: Boolean) {
@@ -196,14 +229,32 @@ class ImportMangaFragment : Fragment() {
             .setMessage(getString(R.string.import_manga_delete_confirm))
             .setPositiveButton(getString(R.string.confirm_delete)) { _, _ ->
                 ImportedMangaStore.remove(requireContext(), manga.id)
-                val local = File(manga.localRoot)
-                if (local.isDirectory) local.deleteRecursively() else local.delete()
-                manga.coverPath?.let { File(it).delete() }
+                deleteImportedFiles(manga)
                 refresh()
                 UiUtils.showToast(requireContext(), getString(R.string.import_manga_deleted))
             }
             .setNegativeButton(getString(R.string.cancel), null)
             .show()
+    }
+
+    /** 删除导入的本地内容：File 路径或 content uri 两种都兼容。 */
+    private fun deleteImportedFiles(manga: ImportedManga) {
+        try {
+            if (manga.localRoot.startsWith("content://")) {
+                val doc = if (manga.isArchive) {
+                    DocumentFile.fromSingleUri(requireContext(), Uri.parse(manga.localRoot))
+                } else {
+                    DocumentFile.fromTreeUri(requireContext(), Uri.parse(manga.localRoot))
+                }
+                doc?.delete()
+            } else {
+                val local = File(manga.localRoot)
+                if (local.isDirectory) local.deleteRecursively() else local.delete()
+            }
+            manga.coverPath?.let { File(it).delete() }
+        } catch (e: Exception) {
+            LogCollector.w("ImportMangaFragment", "删除导入文件失败: ${manga.id}", e)
+        }
     }
 
     override fun onDestroyView() {
