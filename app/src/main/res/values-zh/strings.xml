@@ -9,6 +9,8 @@
     <string name="me_page">设置</string>
     <string name="import_manga_page">导入</string>
     <string name="storage_directory">存储目录</string>
+    <string name="storage_dir_external">应用外部存储</string>
+    <string name="storage_dir_internal">应用内部存储</string>
     <string name="display_options">显示选项</string>
     <string name="import_manga_empty_hint">点击右下角 + 导入漫画</string>
     <string name="import_manga_delete_confirm">删除这部漫画？应用内副本也会一并删除。</string>
@@ -17,6 +19,7 @@
     <string name="import_manga_option_files">导入文件（zip/cbz）</string>
     <string name="import_manga_option_single_dir">导入单个漫画文件夹</string>
     <string name="import_manga_option_multi_dir">导入多个漫画文件夹</string>
+    <string name="import_folder_hint">提示：部分机型系统文件选择器只允许选择「新建的文件夹」，若无法选择请先在系统选择器里新建一个文件夹</string>
     <string name="list_mode">列表模式</string>
     <string name="mode_list">列表</string>
     <string name="mode_detailed">详细信息</string>

@@ -9,6 +9,8 @@
     <string name="me_page">Settings</string>
     <string name="import_manga_page">Import</string>
     <string name="storage_directory">Storage</string>
+    <string name="storage_dir_external">App external storage</string>
+    <string name="storage_dir_internal">App internal storage</string>
     <string name="display_options">Display</string>
     <string name="import_manga_empty_hint">Tap + to import manga</string>
     <string name="import_manga_delete_confirm">Delete this manga? App-local copy will also be removed.</string>
@@ -17,6 +19,7 @@
     <string name="import_manga_option_files">Import files (zip/cbz)</string>
     <string name="import_manga_option_single_dir">Import single manga folder</string>
     <string name="import_manga_option_multi_dir">Import multiple manga folders</string>
+    <string name="import_folder_hint">Tip: some devices only allow choosing a newly-created folder. If blocked, create a folder in the picker first.</string>
     <string name="list_mode">List mode</string>
     <string name="mode_list">List</string>
     <string name="mode_detailed">Details</string>

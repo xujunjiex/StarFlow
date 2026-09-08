@@ -7,7 +7,6 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.documentfile.provider.DocumentFile
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
@@ -50,22 +49,6 @@ class ImportMangaFragment : Fragment() {
             if (uri != null) importDirectory(uri)
         }
 
-    private val pickStorageDirLauncher =
-        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-            if (uri != null) {
-                // 持久化授权（作为扫描源，后续后端需要读它）
-                requireContext().contentResolver.takePersistableUriPermission(
-                    uri,
-                    android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-                val name = DocumentFile.fromTreeUri(requireContext(), uri)?.name
-                    ?: uri.lastPathSegment
-                    ?: getString(R.string.storage_directory)
-                StorageDirStore.save(requireContext(), uri.toString(), name)
-                updateStorageDirLabel(name)
-            }
-        }
-
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         _binding = FragmentImportMangaBinding.inflate(inflater, container, false)
         return binding.root
@@ -101,9 +84,8 @@ class ImportMangaFragment : Fragment() {
             }.show(parentFragmentManager, DisplayOptionsSheet.TAG)
         }
 
-        binding.tvStorageDir.setOnClickListener { pickStorageDirLauncher.launch(null) }
-        val (_, savedName) = StorageDirStore.load(requireContext())
-        updateStorageDirLabel(savedName)
+        binding.tvStorageDir.setOnClickListener { showStorageDirDialog() }
+        updateStorageDirLabel()
 
         refresh()
     }
@@ -121,8 +103,44 @@ class ImportMangaFragment : Fragment() {
         sortByAdded = p.getBoolean("sort_by_added", false)
     }
 
-    private fun updateStorageDirLabel(name: String?) {
-        binding.tvStorageDir.text = name ?: getString(R.string.storage_directory)
+    private fun updateStorageDirLabel() {
+        val current = StorageDirStore.current(requireContext())
+        binding.tvStorageDir.text = when (current) {
+            StorageDirStore.Location.APP_EXTERNAL -> getString(R.string.storage_dir_external)
+            StorageDirStore.Location.APP_INTERNAL -> getString(R.string.storage_dir_internal)
+        }
+    }
+
+    /** 存储目录：应用内选择（不走系统 SAF 选择器，规避 MIUI 只能选新建目录的限制）。 */
+    private fun showStorageDirDialog() {
+        val options = listOf(
+            StorageDirStore.Location.APP_EXTERNAL,
+            StorageDirStore.Location.APP_INTERNAL
+        )
+        val current = StorageDirStore.current(requireContext())
+        val checked = options.indexOf(current).coerceAtLeast(0)
+
+        val labels = options.map { loc ->
+            getString(
+                when (loc) {
+                    StorageDirStore.Location.APP_EXTERNAL -> R.string.storage_dir_external
+                    StorageDirStore.Location.APP_INTERNAL -> R.string.storage_dir_internal
+                }
+            ) + "\n" + StorageDirStore.rootDir(requireContext(), loc).absolutePath
+        }
+
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.storage_directory)
+            .setSingleChoiceItems(labels.toTypedArray(), checked) { _, which ->
+                val chosen = options[which]
+                if (chosen != StorageDirStore.current(requireContext())) {
+                    StorageDirStore.set(requireContext(), chosen)
+                    updateStorageDirLabel()
+                }
+            }
+            .setPositiveButton(R.string.confirm) { d, _ -> d.dismiss() }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
     }
 
     private fun applyDisplay(mode: DisplayMode, size: Int, sortAdded: Boolean) {

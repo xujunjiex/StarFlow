@@ -66,6 +66,13 @@ class MainActivity : BaseActivity() {
             true
         }
 
+        // 同步初始选中项：BottomNavigationView 默认勾选第 0 项（orderInCategory 最小），
+        // 而 startDestination 是 translate_fragment（翻译页）——不加这句会导致启动时
+        // 菜单高亮与当前页面不一致（显示翻译页但高亮文本翻译）。
+        navController.currentDestination?.id?.let { destId ->
+            bottomNavigation.menu.findItem(destId)?.isChecked = true
+        }
+
         // Android 13+ 请求通知权限
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)

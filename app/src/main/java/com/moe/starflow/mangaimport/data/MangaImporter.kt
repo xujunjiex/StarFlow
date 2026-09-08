@@ -26,7 +26,7 @@ object MangaImporter {
         (ImportedMangaStore.load(context).maxOfOrNull { it.id } ?: 0L) + 1L
 
     private fun importRootDir(context: Context): File =
-        File(context.getExternalFilesDir(null) ?: context.filesDir, "manga_import")
+        StorageDirStore.rootDir(context)
 
     private fun coverDir(context: Context): File =
         File(context.filesDir, "covers")
