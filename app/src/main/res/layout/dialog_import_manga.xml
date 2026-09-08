@@ -31,12 +31,22 @@
         android:text="@string/import_manga_option_multi_dir"/>
 
     <TextView
+        android:id="@+id/tv_storage_hint"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:paddingStart="12dp"
         android:paddingTop="8dp"
         android:paddingEnd="12dp"
-        android:textSize="12sp"
+        android:textSize="11sp"
+        android:textColor="#888888"/>
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="12dp"
+        android:paddingTop="6dp"
+        android:paddingEnd="12dp"
+        android:textSize="11sp"
         android:textColor="#888888"
         android:text="@string/import_folder_hint"/>
 

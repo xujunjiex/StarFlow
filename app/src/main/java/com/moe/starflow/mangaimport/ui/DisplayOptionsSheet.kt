@@ -4,15 +4,15 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
 import android.widget.RadioGroup
 import android.widget.SeekBar
+import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.moe.starflow.R
 
 /**
  * 显示选项底部弹窗：4 种列表模式 + 网格尺寸 + 排序。
- * 选择结果通过回调返回，由 Fragment 持久化到 SharedPreferences。
+ * 各选项切换即生效（无需点「应用」），通过回调实时持久化并刷新书架。
  */
 class DisplayOptionsSheet(
     private val currentMode: DisplayMode,
@@ -21,52 +21,62 @@ class DisplayOptionsSheet(
     private val onApply: (DisplayMode, Int, Boolean) -> Unit
 ) : BottomSheetDialogFragment() {
 
+    override fun onStart() {
+        super.onStart()
+        // 圆角对齐 app 弹窗主题（dialog_background 样式）
+        (dialog as? BottomSheetDialog)
+            ?.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
+            ?.setBackgroundResource(R.drawable.bg_bottom_sheet)
+    }
+
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         val view = inflater.inflate(R.layout.sheet_display_options, container, false)
 
+        val modeView = view.findViewById<RadioGroup>(R.id.rg_mode)
+        val sizeView = view.findViewById<SeekBar>(R.id.seek_grid_size)
+        val sortView = view.findViewById<RadioGroup>(R.id.rg_sort)
+
         fun modeToId(mode: DisplayMode): Int = when (mode) {
-            DisplayMode.LIST -> R.id.rb_list
             DisplayMode.DETAILED_LIST -> R.id.rb_detailed
             DisplayMode.GRID -> R.id.rb_grid
-            DisplayMode.COMPACT_GRID -> R.id.rb_compact
         }
 
-        view.findViewById<RadioGroup>(R.id.rg_mode).check(modeToId(currentMode))
-        view.findViewById<SeekBar>(R.id.seek_grid_size).progress = currentGridSize
-        view.findViewById<RadioGroup>(R.id.rg_sort).check(
+        modeView.check(modeToId(currentMode))
+        sizeView.progress = currentGridSize
+        sortView.check(
             if (sortByAdded) R.id.rb_sort_added else R.id.rb_sort_title
         )
 
+        // 各选项切换即生效
         var selectedMode = currentMode
-        view.findViewById<RadioGroup>(R.id.rg_mode).setOnCheckedChangeListener { _, checkedId ->
+        modeView.setOnCheckedChangeListener { _, checkedId ->
             selectedMode = when (checkedId) {
-                R.id.rb_list -> DisplayMode.LIST
                 R.id.rb_detailed -> DisplayMode.DETAILED_LIST
-                R.id.rb_grid -> DisplayMode.GRID
-                else -> DisplayMode.COMPACT_GRID
+                else -> DisplayMode.GRID
             }
+            onApply(selectedMode, sizeView.progress, sortView.checkedRadioButtonId == R.id.rb_sort_added)
         }
 
         var gridSize = currentGridSize
-        view.findViewById<SeekBar>(R.id.seek_grid_size).setOnSeekBarChangeListener(
+        sizeView.setOnSeekBarChangeListener(
             object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                     gridSize = progress
                 }
 
                 override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-                override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+
+                // 拖动结束时自动应用（避免拖动中反复刷新）
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                    onApply(selectedMode, gridSize, sortView.checkedRadioButtonId == R.id.rb_sort_added)
+                }
             }
         )
 
         var sortAdded = sortByAdded
-        view.findViewById<RadioGroup>(R.id.rg_sort).setOnCheckedChangeListener { _, checkedId ->
+        sortView.setOnCheckedChangeListener { _, checkedId ->
             sortAdded = checkedId == R.id.rb_sort_added
-        }
-
-        view.findViewById<Button>(R.id.sheet_apply).setOnClickListener {
-            onApply(selectedMode, gridSize, sortAdded)
-            dismiss()
+            onApply(selectedMode, sizeView.progress, sortAdded)
         }
 
         return view

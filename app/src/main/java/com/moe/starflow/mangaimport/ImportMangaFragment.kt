@@ -7,8 +7,11 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.EditText
+import android.widget.FrameLayout
+import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.documentfile.provider.DocumentFile
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
@@ -17,7 +20,7 @@ import com.moe.starflow.databinding.FragmentImportMangaBinding
 import com.moe.starflow.mangaimport.data.ImportedManga
 import com.moe.starflow.mangaimport.data.ImportedMangaStore
 import com.moe.starflow.mangaimport.data.MangaImporter
-import com.moe.starflow.mangaimport.data.StorageDirStore
+import com.moe.starflow.mangaimport.reader.MangaReaderActivity
 import com.moe.starflow.mangaimport.ui.DisplayMode
 import com.moe.starflow.mangaimport.ui.DisplayOptionsSheet
 import com.moe.starflow.mangaimport.ui.ImportDialog
@@ -31,10 +34,11 @@ import java.io.File
 
 /**
  * 导入翻译 tab：书架页。
- * 展示导入漫画清单网格，支持导入（文件/文件夹）、存储目录切换、显示选项、长按删除。
+ * 展示导入漫画清单网格，支持导入（文件/文件夹）、显示选项、长按多选管理（Koto 式：
+ * 重命名/标为已读/标为未读/删除，删除会一并删掉 app 内部存储的本地副本）。
  *
- * 存储目录与目录导入需要「所有文件访问」权限（MANAGE_EXTERNAL_STORAGE），
- * 授权后 SAF 选择器可选任意已有目录（Kototoro 同款做法）；未授权时引导去系统设置页授权。
+ * 导入的漫画固定复制进 app 内部存储（filesDir/manga_import），无需任何存储权限；
+ * 源文件通过 SAF 选择器选取，导入即复制、用完即弃。
  */
 class ImportMangaFragment : Fragment() {
 
@@ -46,32 +50,27 @@ class ImportMangaFragment : Fragment() {
     private var gridSize = 3
     private var sortByAdded = false
 
-    // 文件导入（不需所有文件权限，单文件多选可用）
+    // 返回键：多选模式下退出多选
+    private lateinit var backCallback: OnBackPressedCallback
+
+    // 文件导入（SAF 多选 zip/cbz）
     private val pickFilesLauncher =
         registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
             if (uris.isNotEmpty()) importArchives(uris)
         }
 
-    // 导入文件夹（需要所有文件权限）
+    // 换封面（单选时）：photo picker 选图 → 复制进 covers/ 并替换 coverPath
+    private val pickCoverLauncher =
+        registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+            if (uri != null) changeCover(uri)
+        }
+
+    // 导入文件夹（SAF 选目录，不需要「所有文件访问」权限）
     private val pickDirLauncher =
         registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
             if (uri != null) {
                 persistReadable(uri)
                 importDirectory(uri)
-            }
-        }
-
-    // 存储目录（需要所有文件权限，可选任意已有目录）
-    private val pickStorageLauncher =
-        registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-            if (uri != null) {
-                persistReadable(uri)
-                val name = DocumentFile.fromTreeUri(requireContext(), uri)?.name
-                    ?: uri.lastPathSegment
-                    ?: getString(R.string.storage_directory)
-                StorageDirStore.setCustom(requireContext(), uri.toString(), name)
-                updateStorageDirLabel()
-                UiUtils.showToast(requireContext(), getString(R.string.storage_dir_set))
             }
         }
 
@@ -86,12 +85,9 @@ class ImportMangaFragment : Fragment() {
         loadDisplayPrefs()
 
         adapter = MangaGridAdapter(
-            onItemClick = { manga ->
-                val intent = Intent(requireContext(), com.moe.starflow.mangaimport.reader.MangaReaderActivity::class.java)
-                intent.putExtra(com.moe.starflow.mangaimport.reader.MangaReaderActivity.EXTRA_MANGA_ID, manga.id)
-                startActivity(intent)
-            },
-            onItemLongClick = { showDeleteDialog(it) }
+            displayMode,
+            onItemClick = { manga -> openReader(manga) },
+            onSelectionChanged = { mode, count -> showSelectionUi(mode, count) }
         )
         binding.recyclerView.adapter = adapter
 
@@ -99,30 +95,47 @@ class ImportMangaFragment : Fragment() {
             ImportDialog.show(
                 requireContext(),
                 onPickFiles = { pickFilesLauncher.launch(arrayOf("application/zip", "application/octet-stream")) },
-                onPickSingleDir = { ensureAllFilesAccessThen { pickDirLauncher.launch(null) } },
-                onPickMultiDir = { ensureAllFilesAccessThen { pickDirLauncher.launch(null) } }
+                onPickSingleDir = { pickDirLauncher.launch(null) },
+                onPickMultiDir = { pickDirLauncher.launch(null) }
             )
         }
 
-        binding.tvDisplayOptions.setOnClickListener {
+        binding.tvSettings.setOnClickListener {
             DisplayOptionsSheet(displayMode, gridSize, sortByAdded) { m, s, sa ->
                 applyDisplay(m, s, sa)
             }.show(parentFragmentManager, DisplayOptionsSheet.TAG)
         }
 
-        binding.tvStorageDir.setOnClickListener {
-            ensureAllFilesAccessThen { pickStorageLauncher.launch(null) }
+        binding.tvCloseSelection.setOnClickListener { adapter.exitSelection() }
+        binding.ivSelectAll.setOnClickListener { adapter.toggleSelectAll() }
+        binding.actionDelete.setOnClickListener { deleteSelected() }
+        binding.actionRead.setOnClickListener { markSelected(read = true) }
+        binding.actionUnread.setOnClickListener { markSelected(read = false) }
+        binding.actionRename.setOnClickListener { renameSelected() }
+        binding.actionCover.setOnClickListener {
+            pickCoverLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
         }
-        updateStorageDirLabel()
+        binding.actionDesc.setOnClickListener { editDesc() }
+
+        backCallback = object : OnBackPressedCallback(false) {
+            override fun handleOnBackPressed() {
+                adapter.exitSelection()
+            }
+        }
+        requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, backCallback)
+
+        // 下拉刷新：重新加载清单，立即反映编辑/阅读进度等状态
+        binding.swipeRefresh.setOnRefreshListener {
+            refresh()
+            binding.swipeRefresh.isRefreshing = false
+        }
 
         refresh()
     }
 
     override fun onResume() {
         super.onResume()
-        // 从系统设置页授权返回后刷新
         refresh()
-        updateStorageDirLabel()
     }
 
     /** 请求持久读权限，保证所选目录在重启后仍可访问。 */
@@ -143,37 +156,190 @@ class ImportMangaFragment : Fragment() {
         }
     }
 
-    /** 检查「所有文件访问」权限，未授权则弹引导去系统设置页；已授权执行 onGranted。 */
-    private fun ensureAllFilesAccessThen(onGranted: () -> Unit) {
-        if (StorageDirStore.hasAllFilesAccess(requireContext())) {
-            onGranted()
-            return
+    // ===== 多选管理（Koto 式）=====
+
+    /** 多选态 UI 切换：顶部栏两态 + 操作栏 + 返回键开关。 */
+    private fun showSelectionUi(mode: Boolean, count: Int) {
+        binding.tvTitle.visibility = if (mode) View.GONE else View.VISIBLE
+        binding.tvSelectionCount.visibility = if (mode) View.VISIBLE else View.GONE
+        binding.tvSettings.visibility = if (mode) View.GONE else View.VISIBLE
+        binding.tvCloseSelection.visibility = if (mode) View.VISIBLE else View.GONE
+        binding.ivSelectAll.visibility = if (mode) View.VISIBLE else View.GONE
+        binding.selectionActions.visibility = if (mode) View.VISIBLE else View.GONE
+        val single = mode && count == 1
+        binding.selectionActionsSingle.visibility = if (single) View.VISIBLE else View.GONE
+        binding.actionDivider.visibility = if (single) View.VISIBLE else View.GONE
+        binding.actionRename.visibility = if (single) View.VISIBLE else View.GONE
+        binding.actionCover.visibility = if (single) View.VISIBLE else View.GONE
+        binding.actionDesc.visibility = if (single) View.VISIBLE else View.GONE
+        if (mode) {
+            binding.tvSelectionCount.text = getString(R.string.import_selected_count, count)
         }
-        AlertDialog.Builder(requireContext())
-            .setTitle(R.string.all_files_access_title)
-            .setMessage(R.string.all_files_access_msg)
-            .setPositiveButton(R.string.all_files_access_go) { _, _ ->
-                try {
-                    startActivity(StorageDirStore.allFilesAccessIntent(requireContext()))
-                } catch (e: Exception) {
-                    UiUtils.showToast(requireContext(), getString(R.string.all_files_access_fail))
+        backCallback.isEnabled = mode
+    }
+
+    private fun openReader(manga: ImportedManga) {
+        val intent = Intent(requireContext(), MangaReaderActivity::class.java)
+        intent.putExtra(MangaReaderActivity.EXTRA_MANGA_ID, manga.id)
+        startActivity(intent)
+    }
+
+    /** 重命名单选中的那部漫画（仅 N==1 可用）。 */
+    private fun renameSelected() {
+        val ids = adapter.selectedIds()
+        if (ids.size != 1) return
+        val manga = ImportedMangaStore.load(requireContext()).firstOrNull { it.id == ids.first() }
+            ?: return
+
+        val editText = EditText(requireContext()).apply {
+            hint = getString(R.string.import_rename_hint)
+            setText(manga.title)
+            setSelection(manga.title.length)
+            setSingleLine(true)
+        }
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        val container = FrameLayout(requireContext()).apply {
+            setPadding(pad, pad / 2, pad, 0)
+            addView(editText)
+        }
+        val dialog = AlertDialog.Builder(requireContext())
+            .setTitle(R.string.import_rename_title)
+            .setView(container)
+            .setPositiveButton(R.string.confirm, null) // 在 show 后再绑定，避免自动关闭
+            .setNegativeButton(R.string.cancel, null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val name = editText.text.toString().trim()
+                if (name.isEmpty()) {
+                    UiUtils.showToast(requireContext(), getString(R.string.import_rename_empty))
+                    return@setOnClickListener
                 }
+                ImportedMangaStore.update(requireContext(), manga.copy(title = name))
+                dialog.dismiss()
+                // 确认后再刷新，立即显示新标题
+                refresh()
+            }
+        }
+        dialog.show()
+        dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
+
+        adapter.exitSelection()
+    }
+
+    /** 更换封面（单选）：photo picker 选图 → 复制进 covers/ 替换 coverPath。 */
+    private fun changeCover(uri: Uri) {
+        val id = adapter.selectedIds().firstOrNull() ?: return
+        val manga = ImportedMangaStore.load(requireContext()).firstOrNull { it.id == id } ?: return
+        adapter.exitSelection()
+        viewLifecycleOwner.lifecycleScope.launch {
+            val newCover = withContext(Dispatchers.IO) {
+                MangaImporter.replaceCover(requireContext(), id, uri)
+            }
+            if (newCover != null) {
+                ImportedMangaStore.update(requireContext(), manga.copy(coverPath = newCover))
+            }
+            refresh()
+        }
+    }
+
+    /** 编辑简介（单选）：弹多行输入框设置 description。 */
+    private fun editDesc() {
+        val id = adapter.selectedIds().firstOrNull() ?: return
+        val manga = ImportedMangaStore.load(requireContext()).firstOrNull { it.id == id } ?: return
+
+        val editText = EditText(requireContext()).apply {
+            hint = getString(R.string.import_desc_hint)
+            setText(manga.description)
+            setSelection(manga.description.length)
+            gravity = android.view.Gravity.TOP or android.view.Gravity.START
+            minLines = 3
+        }
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        val container = FrameLayout(requireContext()).apply {
+            setPadding(pad, pad / 2, pad, 0)
+            addView(editText)
+        }
+        val dialog = AlertDialog.Builder(requireContext())
+            .setTitle(R.string.import_desc_title)
+            .setView(container)
+            .setPositiveButton(R.string.confirm, null) // 在 show 后再绑定，避免自动关闭
+            .setNegativeButton(R.string.cancel, null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                ImportedMangaStore.update(
+                    requireContext(),
+                    manga.copy(description = editText.text.toString().trim())
+                )
+                dialog.dismiss()
+                // 确认后再刷新，简介立即更新到详情列表
+                refresh()
+            }
+        }
+        dialog.show()
+        dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
+
+        adapter.exitSelection()
+    }
+
+    /** 批量标为已读/未读：已读=跳到最后一页，未读=清零阅读进度。 */
+    private fun markSelected(read: Boolean) {
+        val ids = adapter.selectedIds()
+        if (ids.isEmpty()) return
+        val list = ImportedMangaStore.load(requireContext())
+        ids.forEach { id ->
+            val m = list.firstOrNull { it.id == id } ?: return@forEach
+            val target = if (read) (m.pageCount - 1).coerceAtLeast(0) else 0
+            if (target != m.lastReadPage) {
+                ImportedMangaStore.update(requireContext(), m.copy(lastReadPage = target))
+            }
+        }
+        adapter.exitSelection()
+        refresh()
+    }
+
+    /** 删除选中的漫画（含 app 内部存储的本地副本）。 */
+    private fun deleteSelected() {
+        val ids = adapter.selectedIds()
+        if (ids.isEmpty()) return
+        val toDelete = ImportedMangaStore.load(requireContext()).filter { it.id in ids }
+
+        AlertDialog.Builder(requireContext())
+            .setTitle(R.string.import_delete)
+            .setMessage(getString(R.string.import_delete_selected_confirm, ids.size))
+            .setPositiveButton(R.string.import_delete) { _, _ ->
+                toDelete.forEach { manga ->
+                    ImportedMangaStore.remove(requireContext(), manga.id)
+                    deleteImportedFiles(manga)
+                }
+                adapter.exitSelection()
+                refresh()
+                UiUtils.showToast(requireContext(), getString(R.string.import_manga_deleted))
             }
             .setNegativeButton(R.string.cancel, null)
-            .show()
+            .create().also { it.show(); it.window?.setBackgroundDrawableResource(R.drawable.dialog_background) }
     }
+
+    /** 删除导入的本地内容（app 内部存储 filesDir/manga_import/<id>/ 复制件 + 封面）。 */
+    private fun deleteImportedFiles(manga: ImportedManga) {
+        try {
+            val local = File(manga.localRoot)
+            if (local.isDirectory) local.deleteRecursively() else local.delete()
+            manga.coverPath?.let { File(it).delete() }
+        } catch (e: Exception) {
+            LogCollector.w("ImportMangaFragment", "删除导入文件失败: ${manga.id}", e)
+        }
+    }
+
+    // ===== 显示选项 =====
 
     private fun loadDisplayPrefs() {
         val p = requireContext().getSharedPreferences("manga_import", android.content.Context.MODE_PRIVATE)
-        displayMode = runCatching { DisplayMode.valueOf(p.getString("display_mode", DisplayMode.GRID.name)!!) }
-            .getOrDefault(DisplayMode.GRID)
+        displayMode = runCatching { DisplayMode.valueOf(p.getString("display_mode", DisplayMode.DETAILED_LIST.name)!!) }
+            .getOrDefault(DisplayMode.DETAILED_LIST)
         gridSize = p.getInt("grid_size", 3)
         sortByAdded = p.getBoolean("sort_by_added", false)
-    }
-
-    /** 存储目录入口显示：默认 → app 目录路径；自定义 → 文件夹名。 */
-    private fun updateStorageDirLabel() {
-        binding.tvStorageDir.text = StorageDirStore.describe(requireContext())
     }
 
     private fun applyDisplay(mode: DisplayMode, size: Int, sortAdded: Boolean) {
@@ -188,6 +354,8 @@ class ImportMangaFragment : Fragment() {
             .apply()
         refresh()
     }
+
+    // ===== 导入 =====
 
     private fun importArchives(uris: List<Uri>) {
         viewLifecycleOwner.lifecycleScope.launch {
@@ -215,46 +383,12 @@ class ImportMangaFragment : Fragment() {
         val list = if (sortByAdded) list0.sortedByDescending { it.addedAt } else list0.sortedBy { it.title }
         val cols = when (displayMode) {
             DisplayMode.GRID -> gridSize
-            DisplayMode.COMPACT_GRID -> gridSize + 1
             else -> 1
         }
         binding.recyclerView.layoutManager = GridLayoutManager(requireContext(), cols)
+        adapter.setDisplayMode(displayMode)
         adapter.submitList(list)
         binding.tvEmpty.visibility = if (list.isEmpty()) View.VISIBLE else View.GONE
-    }
-
-    private fun showDeleteDialog(manga: ImportedManga) {
-        AlertDialog.Builder(requireContext())
-            .setTitle(manga.title)
-            .setMessage(getString(R.string.import_manga_delete_confirm))
-            .setPositiveButton(getString(R.string.confirm_delete)) { _, _ ->
-                ImportedMangaStore.remove(requireContext(), manga.id)
-                deleteImportedFiles(manga)
-                refresh()
-                UiUtils.showToast(requireContext(), getString(R.string.import_manga_deleted))
-            }
-            .setNegativeButton(getString(R.string.cancel), null)
-            .show()
-    }
-
-    /** 删除导入的本地内容：File 路径或 content uri 两种都兼容。 */
-    private fun deleteImportedFiles(manga: ImportedManga) {
-        try {
-            if (manga.localRoot.startsWith("content://")) {
-                val doc = if (manga.isArchive) {
-                    DocumentFile.fromSingleUri(requireContext(), Uri.parse(manga.localRoot))
-                } else {
-                    DocumentFile.fromTreeUri(requireContext(), Uri.parse(manga.localRoot))
-                }
-                doc?.delete()
-            } else {
-                val local = File(manga.localRoot)
-                if (local.isDirectory) local.deleteRecursively() else local.delete()
-            }
-            manga.coverPath?.let { File(it).delete() }
-        } catch (e: Exception) {
-            LogCollector.w("ImportMangaFragment", "删除导入文件失败: ${manga.id}", e)
-        }
     }
 
     override fun onDestroyView() {

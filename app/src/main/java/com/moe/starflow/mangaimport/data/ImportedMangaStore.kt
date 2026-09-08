@@ -21,6 +21,8 @@ object ImportedMangaStore {
         return try {
             val arr = JSONArray(raw)
             (0 until arr.length()).map { i -> arr.getJSONObject(i).toManga() }
+                // 迁移：旧版自定义 SAF 存储目录的条目（content:// localRoot）已不可读，丢弃
+                .filterNot { it.localRoot.startsWith("content://") }
         } catch (e: Exception) {
             emptyList()
         }
@@ -59,6 +61,8 @@ object ImportedMangaStore {
         put("coverPath", coverPath ?: JSONObject.NULL)
         put("pageCount", pageCount)
         put("addedAt", addedAt)
+        put("sizeBytes", sizeBytes)
+        put("description", description)
         put("translatedPath", translatedPath ?: JSONObject.NULL)
         put("lastReadPage", lastReadPage)
     }
@@ -71,6 +75,8 @@ object ImportedMangaStore {
         coverPath = if (isNull("coverPath")) null else getString("coverPath"),
         pageCount = getInt("pageCount"),
         addedAt = getLong("addedAt"),
+        sizeBytes = optLong("sizeBytes", 0),
+        description = optString("description", ""),
         translatedPath = if (isNull("translatedPath")) null else getString("translatedPath"),
         lastReadPage = optInt("lastReadPage", 0)
     )

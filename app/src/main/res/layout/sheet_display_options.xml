@@ -26,10 +26,8 @@
         android:layout_height="wrap_content"
         android:orientation="vertical">
 
-        <RadioButton android:id="@+id/rb_list" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/mode_list"/>
         <RadioButton android:id="@+id/rb_detailed" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/mode_detailed"/>
         <RadioButton android:id="@+id/rb_grid" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/mode_grid"/>
-        <RadioButton android:id="@+id/rb_compact" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/mode_compact"/>
 
     </RadioGroup>
 
@@ -64,12 +62,5 @@
         <RadioButton android:id="@+id/rb_sort_added" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/sort_added"/>
 
     </RadioGroup>
-
-    <Button
-        android:id="@+id/sheet_apply"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:text="@string/apply"/>
 
 </LinearLayout>
