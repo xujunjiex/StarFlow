@@ -738,7 +738,7 @@ object DetectionBridge {
     ): List<BubbleRegion> {
         return ocrResults.filter { it.boundingBox != null }.map { block ->
             val rect = block.boundingBox!!
-            val isVertical = block.isVertical ?: (rect.height() > rect.width())
+            val isVertical = block.inferredVertical()  // 真实边长推断（抗旋转），缺失才 AABB
             BubbleRegion(
                 rect = rect,
                 texts = listOf(block.text),

@@ -114,7 +114,7 @@ object MangaSpatialGrouping {
             true
         }.map { block ->
             val rect = block.boundingBox!!
-            val isVertical = block.isVertical ?: (rect.height() > rect.width())
+            val isVertical = block.inferredVertical()  // 真实边长推断（抗旋转），缺失才 AABB；ML Kit 路径的竖排误判源头
             BubbleRegion(
                 rect = rect,
                 texts = listOf(block.text),

@@ -470,6 +470,7 @@ v6 medium 用 RadioButton 切档（det+rec 全部下载后才显示 medium Radio
 
 **竖排渲染布局（`OverlayRenderer` + `VerticalTextRenderer`）：**
 - **列距填满**：列数是整数离散的（3 字要么 1 列要么 2 列），fit 字号无法精确填满气泡宽 → 竖排列距 `clamp(气泡宽/列数, 1.0fs, 1.8fs)` 拉伸填满（`verticalLayout()`），消除左侧空白列；`calculateCompactRect` 与绘制同步用拉伸列距
+- **横排自动填充（`Manga_Auto_Font_Size` 开启时，仅 HORIZONTAL）**：`OverlayRenderer` 在 fit 字号后调 `VerticalTextRenderer.computeHorizontalFillLayout`（纯函数，产物 `HorizontalFillLayout`：行/行宽/基线/字距），三段填充让译文尽量填满选区且绝不越界——①行距拉伸填高（多行，剩余高度均分行间，间隙夹 [0.05,1.5]×font 且收束可用值防溢出）；②字距拉伸填宽（单行横向富余时 `letterSpacing` 铺满宽，上限 1×font）；③仍有余量垂直居中兜底（单行/间隙夹上限）。`drawHorizontalText` 收到 layout 时按预计算基线/字距绘制、行水平居中。字号高度预算用 `HORIZONTAL_FIT_RATIO = 1.05`（比非填充 1.2 更接近大字撑满），合并组文字偏大时布局内按比例缩字号自愈，**绝不越界是硬约束**。⚠️ 关闭自动字号 → 走原固定行距 1.2 + `calculateCompactRect` 路径，不受影响。Robolectric 的 Paint.breakText 不按宽度换行，单测构造多行须用 `\n`。
 - **绘制函数参数**：`VerticalTextRenderer.drawVerticalTextRL/LR` 支持 `centered`（列组水平居中 + 单列短文字垂直居中）和 `columnSpacingOverride`（填满列距）
 - **重叠合并**：非自动大字号扩展后 `neededRect` 重叠的相邻气泡合并成一个白块（union-find），组间用记号分隔（竖排 `◇` / 横排 `──`），顺序按阅读流（RL 右列先、LR 左列先）；异方向/倾斜/字号不一致 fallback 独立绘制
 
@@ -565,8 +566,10 @@ PP-OCRv5 检测框可能倾斜（QuadBox 4 顶点非正交），全链路处理�
 
 **悬浮窗语言切换：**
 游戏和漫画模式的悬浮菜单都支持运行时切换源语言。
-- 循环切换：ja → en → zh → ko → ru → ja
-- 跳过未下载的 OCR 模型（PP-OCRv5 的 KO/RU 需检查是否已下载）
+- **循环仅在常用的 4 个源语言间转：中(繁)zh-TW → ja → en → ko**（`OcrEngineGroup.FLOATING_COMMON_LANGS`）；完整源语言目录只在主页可选
+- **逻辑统一收敛到 `OcrEngineManager.cycleFloatingSourceLang`**，游戏/漫画共用一份实现（原两个 `cycleSourceLang` 已删）
+- 只循环「常用 ∩ 当前 OCR 组支持」的语言，跳过不支持的（V6 不支持 ko 则循环不含 ko；RT_MANGA 仅 ja → 无可切换返回 null 提示「无可用的 OCR 模型」）
+- 悬浮窗与主页**读写同一个 `Source_Language` pref**，一一对应；悬浮窗切换后主页选中同步更新
 - 自动翻译时禁用切换，显示提示
 - 切换后不关闭菜单，显示新的语言名称
 - 实时生效：切换后下次翻译使用新语言

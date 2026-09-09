@@ -221,6 +221,12 @@ object OverlayRenderer {
             } else {
                 null
             }
+            // 横排自动模式：填充排版（行距填高/字距填宽/垂直居中），译文尽量填满选区且不越界
+            val horizontalLayout = if (autoFit && item.direction == TextDirection.HORIZONTAL && text.isNotEmpty()) {
+                VerticalTextRenderer.computeHorizontalFillLayout(text, item.drawRect, item.fitFontSize)
+            } else {
+                null
+            }
             VerticalTextRenderer.drawText(
                 canvas = canvas,
                 text = text,
@@ -232,7 +238,8 @@ object OverlayRenderer {
                 // 竖排列组水平居中：避免文字从右缘开始导致左侧整片空白
                 centered = true,
                 columnSpacingOverride = columnSpacing,
-                fontTypeface = fontTypeface
+                fontTypeface = fontTypeface,
+                horizontalLayout = horizontalLayout
             )
             canvas.restore()
             canvas.restore()

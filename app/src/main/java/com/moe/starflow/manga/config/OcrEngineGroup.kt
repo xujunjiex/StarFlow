@@ -35,6 +35,9 @@ enum class OcrEngineGroup(
         needsDownload = true, requiredModelsRes = R.string.ocr_group_manga_required);
 
     companion object {
+        /** 悬浮窗快捷切换的常用源语言（仅中文繁体/日/英/韩），顺序即悬浮窗循环顺序。主页完整 30 语言池不受影响。 */
+        val FLOATING_COMMON_LANGS = listOf("zh-TW", "ja", "en", "ko")
+
         /** 30 种语言池（全组并集），顺序即首页源语言列表顺序 */
         val ALL_LANGS = listOf(
             "zh","zh-TW","en","ja","ko","ru","fr","de","es","pt","it","nl","pl",

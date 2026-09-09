@@ -917,24 +917,15 @@ class FloatingBallService : LifecycleService() {
     }
 
     /**
-     * 循环切换源语言：ja → en → zh → zh-TW → ko → ru → ja
-     * 跳过 OCR 模型不可用的语言（PP-OCRv5 的 KO/RU 需要检查是否已下载）
+     * 循环切换源语言：仅中(繁)/日/英/韩等常用语言（与主页共用 Source_Language pref）。
+     * 只循环当前 OCR 组支持的语言，跳过不支持的。逻辑统一收敛到 OcrEngineManager.cycleFloatingSourceLang。
      */
     private fun cycleSourceLang() {
-        // 只循环当前 OCR 组适配的语言（不适配的不在切换范围）
-        val cycle = com.moe.starflow.utils.OcrEngineManager.getOcrEngineGroup(prefs.getSharedPreferences()).sourceLangs.toList()
-        val current = prefs.getString("Source_Language", "ja")
-        val currentIdx = cycle.indexOf(current).coerceAtLeast(0)
-
-        for (i in 1..cycle.size) {
-            val next = cycle[(currentIdx + i) % cycle.size]
-            prefs.setString("Source_Language", next)
-            val langName = com.moe.starflow.translate.CustomLocale.getInstance(next).getDisplayName()
-            showToast(getString(R.string.language_switched_to, langName), true)
-            checkLanguageHints()
-            return
-        }
-        showToast(getString(R.string.no_available_ocr_model), true)
+        val next = com.moe.starflow.utils.OcrEngineManager.cycleFloatingSourceLang(prefs.getSharedPreferences())
+            ?: run { showToast(getString(R.string.no_available_ocr_model), true); return }
+        val langName = com.moe.starflow.translate.CustomLocale.getInstance(next).getDisplayName()
+        showToast(getString(R.string.language_switched_to, langName), true)
+        checkLanguageHints()
     }
 
     /**

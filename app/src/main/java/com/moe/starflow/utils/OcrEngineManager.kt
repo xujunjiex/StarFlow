@@ -38,6 +38,27 @@ object OcrEngineManager {
         prefs.edit().putString(PREF_KEY, group.key).apply()
     }
 
+    /**
+     * 悬浮窗循环切换源语言（游戏/漫画共用唯一实现，不再各自写一份）。
+     * 只在「常用语言 ∩ 当前 OCR 组支持语言」内循环，跳过不支持的；
+     * 写回共享 pref `Source_Language`（与主页选中一一对应）。
+     * @return 切换后的语言代码；无可切换（如 manga-ocr 仅支持 ja）返回 null
+     */
+    fun cycleFloatingSourceLang(prefs: SharedPreferences): String? {
+        val group = getOcrEngineGroup(prefs)
+        val cycle = OcrEngineGroup.FLOATING_COMMON_LANGS.filter { it in group.sourceLangs }
+        if (cycle.isEmpty()) return null
+        val current = prefs.getString("Source_Language", "ja")
+        val idx = cycle.indexOf(current).coerceAtLeast(0)
+        for (i in 1..cycle.size) {
+            val next = cycle[(idx + i) % cycle.size]
+            if (next == current) return null          // 单语言组（manga-ocr）→ 无可切换
+            prefs.edit().putString("Source_Language", next).apply()
+            return next
+        }
+        return null
+    }
+
     /** 游戏 OCR 引擎值 → 组。MLKIT=0/V5=1/MANGA=2/V6=3。 */
     private fun fromGameEngine(value: Int): OcrEngineGroup = when (value) {
         0 -> OcrEngineGroup.MLKIT

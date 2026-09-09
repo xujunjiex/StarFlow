@@ -358,8 +358,11 @@ object BubbleDetector {
             } else {
                 RectF(0f, 0f, 0f, 0f)
             }
-            val isVertical = block.isVertical
-                ?: (config.textDirection == TextDirection.VERTICAL_RL || config.textDirection == TextDirection.VERTICAL_LR)
+            // ML Kit 的 block.isVertical 通常是 null（OCRBridge 不设置）。
+            // 方向推断统一走 block.inferredVertical()：cornerPoints 真实边长（抗旋转，对齐 PP-OCR），
+            // 缺失才用 AABB 宽高比。⚠️ 不能用 config.textDirection——它恒为 RL/LR，会把横排块全部误判成竖排。
+            val isVertical = block.inferredVertical()
+            LogCollector.d(TAG, "detectBubbles: block='${block.text.take(15)}' bbox=${rect} h${rect.height()} w${rect.width()} → vertical=$isVertical")
             val fontSize = min(rect.width(), rect.height()).toFloat()
             TextLine(rect = rect, fontSize = fontSize, isVertical = isVertical, text = block.text)
         }
@@ -384,7 +387,7 @@ object BubbleDetector {
             } else {
                 RectF(0f, 0f, 0f, 0f)
             }
-            val isVertical = block.isVertical ?: (rect.height() > rect.width())
+            val isVertical = block.inferredVertical()
             val fontSize = min(rect.width(), rect.height()).toFloat()
             TextLine(rect = rect, fontSize = fontSize, isVertical = isVertical, text = block.text)
         }

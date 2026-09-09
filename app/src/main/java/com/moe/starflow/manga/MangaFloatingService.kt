@@ -969,25 +969,16 @@ class MangaFloatingService : LifecycleService() {
     }
 
     /**
-     * 循环切换源语言：ja → en → zh → zh-TW → ko → ru → ja
-     * 跳过 OCR 模型不可用的语言（PP-OCRv5 的 KO/RU 需要检查是否已下载）
+     * 循环切换源语言：仅中(繁)/日/英/韩等常用语言（与主页共用 Source_Language pref）。
+     * 只循环当前 OCR 组支持的语言，跳过不支持的。逻辑统一收敛到 OcrEngineManager.cycleFloatingSourceLang。
      */
     private fun cycleSourceLang() {
-        // 只循环当前 OCR 组适配的语言（不适配的不在切换范围）
-        val cycle = com.moe.starflow.utils.OcrEngineManager.getOcrEngineGroup(prefs.getSharedPreferences()).sourceLangs.toList()
-        val current = prefs.getString("Source_Language", "ja")
-        val currentIdx = cycle.indexOf(current).coerceAtLeast(0)
-
-        for (i in 1..cycle.size) {
-            val next = cycle[(currentIdx + i) % cycle.size]
-            prefs.setString("Source_Language", next)
-            config = loadConfig()  // 重新加载配置
-            val langName = com.moe.starflow.translate.CustomLocale.getInstance(next).getDisplayName()
-            showToast(getString(R.string.language_switched_to, langName), true)
-            checkLanguageHints()
-            return
-        }
-        showToast(getString(R.string.no_available_ocr_model), true)
+        val next = com.moe.starflow.utils.OcrEngineManager.cycleFloatingSourceLang(prefs.getSharedPreferences())
+            ?: run { showToast(getString(R.string.no_available_ocr_model), true); return }
+        config = loadConfig()  // 写 pref 之后再读，刷新内存 config.sourceLang
+        val langName = com.moe.starflow.translate.CustomLocale.getInstance(next).getDisplayName()
+        showToast(getString(R.string.language_switched_to, langName), true)
+        checkLanguageHints()
     }
 
     /**
@@ -2239,7 +2230,7 @@ class MangaFloatingService : LifecycleService() {
                             pageCache = cached.pageCache,
                             mode = TranslationCacheManager.OverlayMode.TRANSLATED,
                             forFullImage = false,
-                            config = TranslationCacheManager.OverlayConfig(config.fontSize, config.autoFontSize, config.textColor, config.bgColor)
+                            config = TranslationCacheManager.OverlayConfig(config.fontSize, config.autoFontSize, config.textColor, config.bgColor, config.textDirection)
                         )
                     } else null
                     statusOverlay.showImmediate("缓存命中")
@@ -2296,7 +2287,10 @@ class MangaFloatingService : LifecycleService() {
                 val (ppRecLang, ppHint) = if (config.ocrEngine == OcrEngine.PPOcrV5 || config.detEngine == DetEngine.PP_OCR_V5) {
                     PPOcrV5Engine.resolveRecLang(this@MangaFloatingService, config.sourceLang)
                 } else {
-                    Pair(PPOcrV5Engine.getRecLang(config.sourceLang), null)
+                    // 非 PP-OCRv5 引擎：没有「专用 rec 模型」，不计算也不提示。
+                    // ⚠️ 之前用 Pair(getRecLang(sourceLang), null) 导致 ML Kit/V6 也在源语言为 en/ko/ru 时
+                    // 误弹出「使用专用识别模型: rec_en」（该提示仅 PP-OCRv5 特有）。
+                    Pair(null, null)
                 }
                 if (ppHint != null) {
                     showToast(ppHint, true)
@@ -2364,7 +2358,7 @@ class MangaFloatingService : LifecycleService() {
                 LogCollector.d(TAG, "processMangaScreenshot: Step 2 - 已前合并，跳过后合并")
                 ocrTextBlocks.filter { it.boundingBox != null }.map { block ->
                     val rect = block.boundingBox!!
-                    val isVertical = block.isVertical ?: (rect.height() > rect.width())
+                    val isVertical = block.inferredVertical()  // 真实边长推断（抗旋转），缺失才 AABB
                     if (kotlin.math.abs(block.angle) > 0.5f) {
                         LogCollector.d(TAG, "BubbleRegion: angle=${block.angle}, cx=${block.centerX}, cy=${block.centerY}, text='${block.text.take(15)}'")
                     }
