@@ -882,6 +882,11 @@
     <string name="reader_translate_state_failed">失败</string>
     <string name="reader_translate_row_detail">详情</string>
     <string name="reader_translate_no_failed">没有失败页</string>
+    <string name="reader_translate_detail_title">P%1$d · 翻译详情</string>
+    <string name="reader_translate_copy_all">复制全部译文</string>
+    <string name="reader_translate_retry_this_page">重试本页</string>
+    <string name="reader_translate_close">关闭</string>
+    <string name="reader_translate_detail_empty">暂无译文内容</string>
     <string name="reader_debug_placeholder">调试选项（不含 AI 超分）</string>
     <string name="reader_rotate">旋转屏幕</string>
     <string name="reader_rotate_portrait">竖屏</string>

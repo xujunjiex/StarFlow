@@ -477,6 +477,10 @@ class MangaReaderActivity : AppCompatActivity() {
         binding.btnToggleTranslate.setOnClickListener {
             controller.cycleVisual(currentPage) { applyPageVisual(currentPage) }
         }
+        binding.btnToggleTranslate.setOnLongClickListener {
+            showTranslateDetail(currentPage)
+            true
+        }
     }
 
     /** 翻译/重翻当前页。 */
@@ -512,6 +516,15 @@ class MangaReaderActivity : AppCompatActivity() {
                     onVisual = { runOnUiThread { applyPageVisual(row.pageIndex) } },
                 )
             }
+        }
+    }
+
+    /** 打开每页翻译详情弹窗（原文/译文列表，可复制/重翻）。 */
+    private fun showTranslateDetail(pageIndex: Int) {
+        val controller = translationController ?: return
+        val row = controller.recordOf(pageIndex) ?: return
+        ReaderPageTranslateDetailDialog.show(this, pageIndex, row.sourceText, row.translatedText) {
+            translateNow(pageIndex)
         }
     }
 
@@ -618,7 +631,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 onTranslatePageJump = { page -> goToPage(page) },
                 onRetryFailedPages = { retryFailedPages() },
                 onRetranslateCurrent = { translateNow() },
-                onTranslatePageDetail = { _ -> }   // T7: 打开每页详情弹窗
+                onTranslatePageDetail = { page -> showTranslateDetail(page) }
             )
         )
         sheet.show(supportFragmentManager, ReaderMenuSheet.TAG)
