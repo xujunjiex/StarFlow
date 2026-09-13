@@ -48,8 +48,6 @@ class ReaderMenuCallbacks(
     val onTranslateMode: (Int) -> Unit = {},
     val onTranslatePageJump: (Int) -> Unit = {},
     val onTranslatePageDetail: (Int) -> Unit = {},
-    val onRetryFailedPages: () -> Unit = {},
-    val onRetranslateCurrent: () -> Unit = {},
 )
 
 /**
@@ -194,8 +192,6 @@ class ReaderMenuSheet(
         rbManual.setOnCheckedChangeListener { _, checked -> if (checked) cb.onTranslateMode(0) }
         setupTranslateFilter(view)
         updateSummary(currentRecords)
-        view.findViewById<View>(R.id.btn_retry_failed).setOnClickListener { cb.onRetryFailedPages() }
-        view.findViewById<View>(R.id.btn_retranslate_current).setOnClickListener { cb.onRetranslateCurrent() }
 
         // Webtoon 滚动模式下翻页动画/自动翻页不生效：禁用并置灰（切回分页模式自动恢复）
         if (state.mode == 3) {

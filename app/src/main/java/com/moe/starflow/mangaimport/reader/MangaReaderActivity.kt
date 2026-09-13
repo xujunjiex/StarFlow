@@ -535,27 +535,6 @@ class MangaReaderActivity : AppCompatActivity() {
         }
     }
 
-    /** 重试全部失败页（顺序逐页翻；0 个失败时提示）。 */
-    private fun retryFailedPages() {
-        val controller = translationController ?: return
-        val failed = controller.records().filter { it.state == ImportedPageTranslation.STATE_FAILED }
-        if (failed.isEmpty()) {
-            UiUtils.showToast(this, getString(R.string.reader_translate_no_failed))
-            return
-        }
-        lifecycleScope.launch(Dispatchers.IO) {
-            for (row in failed) {
-                controller.translatePage(
-                    row.pageIndex,
-                    loadFull = { source.loadFull(it) },
-                    onToast = { msg -> runOnUiThread { UiUtils.showToast(this@MangaReaderActivity, msg) } },
-                    onVisual = { runOnUiThread { applyPageVisual(row.pageIndex) } },
-                    onPhase = ::onTranslatePhase,
-                )
-            }
-        }
-    }
-
     /** 打开每页翻译详情弹窗（原文/译文列表，可复制/重翻）。 */
     private fun showTranslateDetail(pageIndex: Int) {
         val controller = translationController ?: return
@@ -565,11 +544,15 @@ class MangaReaderActivity : AppCompatActivity() {
         }
     }
 
-    /** 同步三态按钮可见性 + 图标（照搬截屏翻译三态图标：译文/原文/纯原图）。 */
+    /** 同步三态按钮可见性 + 翻译/重翻图标 + 三态图标（照搬截屏翻译：译文/原文/纯原图）。 */
     private fun refreshTranslationChrome() {
         val controller = translationController ?: return
         val translated = controller.stateOf(currentPage) == ImportedPageTranslation.STATE_SUCCESS
         binding.btnToggleTranslate.visibility = if (translated) View.VISIBLE else View.GONE
+        // 翻译按钮图标：成功 → 重翻图标；未译/失败 → 翻译图标
+        binding.ivTranslate.setImageResource(
+            if (translated) R.drawable.ic_refresh else R.drawable.ic_reader_translate
+        )
         if (translated) {
             binding.ivToggleTranslate.setImageResource(
                 when (controller.currentVisual(currentPage)) {
@@ -662,8 +645,6 @@ class MangaReaderActivity : AppCompatActivity() {
                 },
                 onTranslateMode = { _ -> },   // 阶段一手动模式固定，无需动作
                 onTranslatePageJump = { page -> goToPage(page) },
-                onRetryFailedPages = { retryFailedPages() },
-                onRetranslateCurrent = { translateNow() },
                 onTranslatePageDetail = { page -> showTranslateDetail(page) }
             )
         )

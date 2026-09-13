@@ -49,6 +49,9 @@ class ReaderTranslationController(
     private val appPrefs get() = PreferenceManager.getDefaultSharedPreferences(context)
     private val customPrefs get() = CustomPreference.getInstance(context)
 
+    /** 漫画身份指纹（title|addedAt）：重导复用 id 时旧记录指纹不匹配 → 忽略，杜绝串数据。 */
+    private val mangaKey: String = "${manga.title}|${manga.addedAt}"
+
     private val renderLru = object : LruCache<String, Bitmap>(RENDER_CACHE_KB) {
         override fun sizeOf(key: String, value: Bitmap) =
             value.allocationByteCount.coerceAtLeast(value.rowBytes * value.height) / 1024
@@ -68,7 +71,7 @@ class ReaderTranslationController(
 
     /** 打开阅读器时载入全部记录。 */
     suspend fun load() {
-        rows.value = dao.forManga(manga.id).associateBy { it.pageIndex }
+        rows.value = dao.forManga(manga.id, mangaKey).associateBy { it.pageIndex }
         version.value += 1
     }
 
@@ -172,6 +175,7 @@ class ReaderTranslationController(
                 bubbleRects = PageTranslationCodec.bubbleRects(translated),
                 failCode = null, failMessage = null,
                 updatedAtMs = System.currentTimeMillis(),
+                mangaKey = mangaKey,
             )
             rows.value = rows.value + (pageIndex to row)
             dao.upsert(row)
@@ -282,6 +286,7 @@ class ReaderTranslationController(
             sourceText = old?.sourceText, translatedText = old?.translatedText,
             bubbleRects = old?.bubbleRects, failCode = old?.failCode,
             failMessage = old?.failMessage, updatedAtMs = System.currentTimeMillis(),
+            mangaKey = mangaKey,
         )
         rows.value = rows.value + (pageIndex to row)
         dao.upsert(row)
@@ -292,6 +297,7 @@ class ReaderTranslationController(
         rows.value = rows.value + (pageIndex to ImportedPageTranslation(
             mangaId = manga.id, pageIndex = pageIndex, state = ImportedPageTranslation.STATE_FAILED,
             failCode = code, failMessage = message, updatedAtMs = System.currentTimeMillis(),
+            mangaKey = mangaKey,
         ))
         dao.upsert(rows.value.getValue(pageIndex))
         version.value += 1

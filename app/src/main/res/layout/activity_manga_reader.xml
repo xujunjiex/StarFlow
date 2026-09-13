@@ -130,48 +130,54 @@
         </FrameLayout>
     </LinearLayout>
 
-    <!-- 右下角翻译按钮（放大 + 白色图标 + 配色调） -->
-    <FrameLayout
-        android:id="@+id/btn_translate"
+    <!-- 右下角翻译浮层组：翻译按钮 +（有翻译结果时出现）三态切换按钮，同一背景组件。
+         翻译按钮成功态图标变「重翻」（ic_refresh），点击即重新翻译；三态按钮点按循环 译文/原文/原图，长按开详情。 -->
+    <LinearLayout
+        android:id="@+id/translate_group"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|end"
         android:layout_marginEnd="20dp"
         android:layout_marginBottom="62dp"
-        android:background="@drawable/bg_floating_btn_view"
-        android:padding="12dp"
-        android:clickable="true"
-        android:contentDescription="@string/reader_tab_translate">
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:padding="6dp"
+        android:background="@drawable/bg_floating_btn_view">
 
-        <ImageView
-            android:layout_width="24dp"
-            android:layout_height="24dp"
-            android:src="@drawable/ic_reader_translate"
-            android:tint="#FFFFFF"
-            android:contentDescription="@string/reader_tab_translate"/>
-    </FrameLayout>
+        <FrameLayout
+            android:id="@+id/btn_toggle_translate"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:gravity="center"
+            android:clickable="true"
+            android:visibility="gone"
+            android:contentDescription="@string/reader_toggle_desc">
+            <ImageView
+                android:id="@+id/iv_toggle_translate"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_reader_translate"
+                android:tint="#FFFFFF"
+                android:contentDescription="@string/reader_toggle_desc"/>
+        </FrameLayout>
 
-    <!-- 左下角三态切换按钮（方形圆角，仅当前页已翻译可见；点按循环 译文/原文/原图，长按开详情） -->
-    <FrameLayout
-        android:id="@+id/btn_toggle_translate"
-        android:layout_width="44dp"
-        android:layout_height="44dp"
-        android:layout_gravity="bottom|start"
-        android:layout_marginStart="20dp"
-        android:layout_marginBottom="62dp"
-        android:background="@drawable/bg_reader_toggle"
-        android:clickable="true"
-        android:visibility="gone"
-        android:contentDescription="@string/reader_toggle_desc">
-
-        <ImageView
-            android:id="@+id/iv_toggle_translate"
-            android:layout_width="22dp"
-            android:layout_height="22dp"
-            android:layout_gravity="center"
-            android:src="@drawable/ic_reader_translate"
-            android:tint="#FFFFFF"
-            android:contentDescription="@string/reader_toggle_desc"/>
-    </FrameLayout>
+        <FrameLayout
+            android:id="@+id/btn_translate"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:gravity="center"
+            android:clickable="true"
+            android:contentDescription="@string/reader_tab_translate">
+            <ImageView
+                android:id="@+id/iv_translate"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_reader_translate"
+                android:tint="#FFFFFF"
+                android:contentDescription="@string/reader_tab_translate"/>
+        </FrameLayout>
+    </LinearLayout>
 
 </FrameLayout>

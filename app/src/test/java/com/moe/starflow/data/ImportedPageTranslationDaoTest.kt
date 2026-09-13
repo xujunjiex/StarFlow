@@ -27,6 +27,7 @@ class ImportedPageTranslationDaoTest {
         state = state,
         sourceText = "[1] src-$page", translatedText = "[1] t-$page",
         bubbleRects = null, failCode = null, failMessage = null, updatedAtMs = page.toLong(),
+        mangaKey = "manga|1",
     )
 
     @Test
@@ -55,10 +56,23 @@ class ImportedPageTranslationDaoTest {
         assertEquals(ImportedPageTranslation.STATE_FAILED, updated?.state)
         assertEquals("OCR_EMPTY", updated?.failCode)
 
-        val all = dao().forManga(7L)
+        val all = dao().forManga(7L, "manga|1")
         assertEquals(listOf(1, 3, 5), all.map { it.pageIndex })
         assertEquals(listOf(ImportedPageTranslation.STATE_SUCCESS, ImportedPageTranslation.STATE_TRANSLATING, ImportedPageTranslation.STATE_FAILED), all.map { it.state })
         assertNull(dao().get(7L, 4))
+    }
+
+    @Test
+    fun rowsWithDifferentMangaKeyAreIgnored() = runBlocking {
+        // 根因用例：删除漫画后重导复用同一 mangaId，但身份指纹（title|addedAt）不同，
+        // 旧孤儿记录绝不串到新漫画。
+        db = Room.inMemoryDatabaseBuilder(
+            RuntimeEnvironment.getApplication(), TranslationHistoryDatabase::class.java
+        ).build()
+        dao().upsert(row(1, ImportedPageTranslation.STATE_SUCCESS).copy(mangaKey = "old-title|100"))
+        dao().upsert(row(2, ImportedPageTranslation.STATE_SUCCESS).copy(mangaKey = "manga|1"))
+        assertEquals(listOf(2), dao().forManga(7L, "manga|1").map { it.pageIndex })
+        assertEquals(1, dao().forManga(7L, "old-title|100").size)
     }
 
     @Test
@@ -69,7 +83,7 @@ class ImportedPageTranslationDaoTest {
         dao().upsert(row(1, ImportedPageTranslation.STATE_SUCCESS))
         dao().upsert(row(1, ImportedPageTranslation.STATE_SUCCESS).copy(mangaId = 99L))
         dao().deleteManga(7L)
-        assertEquals(0, dao().forManga(7L).size)
-        assertEquals(1, dao().forManga(99L).size)
+        assertEquals(0, dao().forManga(7L, "manga|1").size)
+        assertEquals(1, dao().forManga(99L, "manga|1").size)
     }
 }

@@ -17,6 +17,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import com.moe.starflow.R
 import com.moe.starflow.databinding.FragmentImportMangaBinding
+import com.moe.starflow.data.TranslationHistoryDatabase
 import com.moe.starflow.mangaimport.data.ImportedManga
 import com.moe.starflow.mangaimport.data.ImportedMangaStore
 import com.moe.starflow.mangaimport.data.MangaImporter
@@ -133,11 +134,14 @@ class ImportMangaFragment : Fragment() {
 
         refresh()
 
-        // 一次性迁移：旧版存放在 filesDir（用户不可访问）的导入漫画搬到外部专属目录
-        // （Android/data/<pkg>/files），完成后刷新清单让新路径生效
+        // 一次性迁移 + 清理孤儿翻译记录：
+        //  - 旧版 filesDir 目录搬到外部专属目录（Android/data/<pkg>/files）；
+        //  - 已删除漫画的 imported_page_translation 旧行（书架删了但 DB 没清 → id 复用会把旧译图
+        //    错误映射到新导入的漫画）按「当前书架不存在的 mangaId」批量清掉（根因修复，删除时也会即时清）。
         viewLifecycleOwner.lifecycleScope.launch {
             withContext(Dispatchers.IO) {
                 StorageDirStore.migrate(requireContext())
+                purgeOrphanTranslations(requireContext())
             }
             refresh()
         }
@@ -327,6 +331,13 @@ class ImportMangaFragment : Fragment() {
                 toDelete.forEach { manga ->
                     ImportedMangaStore.remove(requireContext(), manga.id)
                     deleteImportedFiles(manga)
+                    // 删除时同步清掉该漫画的每页翻译记录，避免孤儿行在 id 复用时泄漏进新漫画
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        runCatching {
+                            TranslationHistoryDatabase.getInstance(requireContext())
+                                .importedPageTranslationDao().deleteManga(manga.id)
+                        }
+                    }
                 }
                 adapter.exitSelection()
                 refresh()
@@ -344,6 +355,24 @@ class ImportMangaFragment : Fragment() {
             manga.coverPath?.let { File(it).delete() }
         } catch (e: Exception) {
             LogCollector.w("ImportMangaFragment", "删除导入文件失败: ${manga.id}", e)
+        }
+    }
+
+    /** 删除书架里已不存在的漫画的孤儿翻译记录（防止旧译图因 id 复用串到新漫画）。 */
+    private suspend fun purgeOrphanTranslations(context: android.content.Context) {
+        try {
+            val dao = TranslationHistoryDatabase.getInstance(context).importedPageTranslationDao()
+            val validIds = ImportedMangaStore.load(context).map { it.id }.toSet()
+            val orphanIds = dao.allMangaIds().filter { it !in validIds }
+            orphanIds.forEach { id ->
+                try {
+                    dao.deleteManga(id)
+                } catch (e: Exception) {
+                    LogCollector.w("ImportMangaFragment", "清理孤儿翻译记录失败 id=$id", e)
+                }
+            }
+        } catch (e: Exception) {
+            LogCollector.w("ImportMangaFragment", "孤儿翻译记录清理失败", e)
         }
     }
 
