@@ -176,6 +176,9 @@ class ReaderTranslationController(
                 failCode = null, failMessage = null,
                 updatedAtMs = System.currentTimeMillis(),
                 mangaKey = mangaKey,
+                translatorName = TranslateUtils.buildTranslatorDisplayName(translator, det, ocr, appPrefs),
+                sourceLang = srcLang,
+                targetLang = tgtLang,
             )
             rows.value = rows.value + (pageIndex to row)
             dao.upsert(row)

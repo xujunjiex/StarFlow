@@ -4,7 +4,8 @@
     android:layout_height="wrap_content"
     android:orientation="vertical"
     android:paddingTop="6dp"
-    android:paddingBottom="6dp">
+    android:paddingBottom="6dp"
+    android:layout_marginEnd="4dp">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -54,4 +55,40 @@
         android:textSize="11sp"
         android:textColor="#CC5555"
         android:visibility="gone"/>
+
+    <!-- 内联展开详情（点「详情/收起」切换；元数据 + 逐条原文/译文 + 复制全部），配色随面板主题 -->
+    <LinearLayout
+        android:id="@+id/detail_panel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_marginTop="6dp"
+        android:background="#0F000000"
+        android:padding="8dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/tv_detail_meta"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="11sp"/>
+
+        <TextView
+            android:id="@+id/tv_detail_list"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textIsSelectable="true"
+            android:textSize="13sp"
+            android:lineSpacingExtra="2dp"/>
+
+        <TextView
+            android:id="@+id/btn_copy_all"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:padding="2dp"
+            android:textSize="12sp"
+            android:textColor="#55AEEA"/>
+    </LinearLayout>
 </LinearLayout>

@@ -142,7 +142,7 @@
         android:orientation="horizontal"
         android:gravity="center"
         android:padding="6dp"
-        android:background="@drawable/bg_floating_btn_view">
+        android:background="@drawable/bg_reader_translate_group">
 
         <FrameLayout
             android:id="@+id/btn_toggle_translate"

@@ -28,6 +28,12 @@ data class ImportedPageTranslation(
      * 指纹随每次导入唯一（addedAt），不匹配的记录一律不采用 → 从根上杜绝 id 复用串数据。
      */
     val mangaKey: String? = null,
+    /** 翻译器显示名（如 OpenAITranslation(gpt-4o) | PP-OCRv5+PPOcrV5）。详情面板展示用。 */
+    val translatorName: String? = null,
+    /** 源语言（如 ja）。 */
+    val sourceLang: String? = null,
+    /** 目标语言（如 zh）。 */
+    val targetLang: String? = null,
 ) {
     companion object {
         const val STATE_IDLE = 0          // 未翻译

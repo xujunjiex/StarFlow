@@ -47,7 +47,6 @@ class ReaderMenuCallbacks(
     val onSettings: () -> Unit,
     val onTranslateMode: (Int) -> Unit = {},
     val onTranslatePageJump: (Int) -> Unit = {},
-    val onTranslatePageDetail: (Int) -> Unit = {},
 )
 
 /**
@@ -63,7 +62,7 @@ class ReaderMenuSheet(
     private var darkPanel = state.isDarkPanel
 
     private val pageAdapter by lazy {
-        ReaderPageStateAdapter(onJump = { cb.onTranslatePageJump(it) }, onDetail = { cb.onTranslatePageDetail(it) })
+        ReaderPageStateAdapter(onJump = { cb.onTranslatePageJump(it) })
     }
     private var currentRecords: List<ImportedPageTranslation> = emptyList()
     private var currentFilterKey = 0
@@ -270,6 +269,8 @@ class ReaderMenuSheet(
         }
         // 分段未选中文字 + 复合图标颜色（随深浅）
         reapplySegments(view)
+        // 每页状态列表行内配色（元数据/原文译文/复制）随面板深浅
+        pageAdapter.dark = darkPanel
         // 调色/更多面板 Switch 配色（避免与面板背景重叠/看不清）
         val swTrack = if (dark) 0xFF3A4046.toInt() else 0xFFCFD8DC.toInt()
         listOf(R.id.sw_invert, R.id.sw_grayscale, R.id.sw_book, R.id.sw_auto_turn).forEach { id ->
