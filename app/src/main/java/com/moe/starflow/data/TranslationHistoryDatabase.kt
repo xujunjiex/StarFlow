@@ -9,8 +9,8 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [HistoryEntity::class, PageCacheEntity::class, TextTranslateRecord::class, ChatMessageEntity::class],
-    version = 14,
+    entities = [HistoryEntity::class, PageCacheEntity::class, TextTranslateRecord::class, ChatMessageEntity::class, ImportedPageTranslation::class],
+    version = 15,
     exportSchema = false
 )
 abstract class TranslationHistoryDatabase : RoomDatabase() {
@@ -20,6 +20,8 @@ abstract class TranslationHistoryDatabase : RoomDatabase() {
     abstract fun textTranslateRecordDao(): TextTranslateRecordDao
 
     abstract fun chatMessageDao(): ChatMessageDao
+
+    abstract fun importedPageTranslationDao(): ImportedPageTranslationDao
 
     companion object {
         @Volatile
@@ -185,13 +187,33 @@ abstract class TranslationHistoryDatabase : RoomDatabase() {
             }
         }
 
+        // 版本 14 → 15：新增 imported_page_translation（阅读器每页翻译记录）。
+        // ⚠️ 纯新增、幂等，绝不 ALTER 现有表。
+        val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS imported_page_translation (" +
+                    "mangaId INTEGER NOT NULL, " +
+                    "pageIndex INTEGER NOT NULL, " +
+                    "state INTEGER NOT NULL, " +
+                    "sourceText TEXT, " +
+                    "translatedText TEXT, " +
+                    "bubbleRects TEXT, " +
+                    "failCode TEXT, " +
+                    "failMessage TEXT, " +
+                    "updatedAtMs INTEGER NOT NULL, " +
+                    "PRIMARY KEY(mangaId, pageIndex))"
+                )
+            }
+        }
+
         fun getInstance(context: Context): TranslationHistoryDatabase {
             return instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext,
                     TranslationHistoryDatabase::class.java,
                     "translation_history.db"
-                ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
+                ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
                 .fallbackToDestructiveMigration()
                 .build().also { instance = it }
             }
