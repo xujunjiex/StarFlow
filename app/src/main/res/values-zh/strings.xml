@@ -856,6 +856,12 @@
     <string name="reader_auto_turn_hint">自动翻页（触摸自动暂停）</string>
     <string name="reader_interval">翻页间隔</string>
     <string name="reader_translate_pending">翻译功能开发中…</string>
+    <string name="reader_translate_busy">另一页正在翻译</string>
+    <string name="reader_translate_model_missing">识别模型未就绪：%1$s</string>
+    <string name="reader_translate_api_not_configured">请先在设置中配置翻译 API</string>
+    <string name="reader_translate_load_failed">页面读取失败</string>
+    <string name="reader_translate_ocr_empty">本页未识别到文字</string>
+    <string name="reader_translate_empty">未生成译文</string>
     <string name="reader_debug_placeholder">调试选项（不含 AI 超分）</string>
     <string name="reader_rotate">旋转屏幕</string>
     <string name="reader_rotate_portrait">竖屏</string>

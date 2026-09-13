@@ -1,0 +1,277 @@
+package com.moe.starflow.mangaimport.translate
+
+import android.content.Context
+import android.graphics.Bitmap
+import android.util.LruCache
+import androidx.preference.PreferenceManager
+import com.moe.starflow.R
+import com.moe.starflow.data.ImportedPageTranslation
+import com.moe.starflow.data.TranslationCacheManager
+import com.moe.starflow.data.TranslationHistoryDatabase
+import com.moe.starflow.manga.OcrLock
+import com.moe.starflow.manga.TranslationCancelledException
+import com.moe.starflow.manga.TranslateUtils
+import com.moe.starflow.manga.engine.DetectionBridge
+import com.moe.starflow.manga.render.OverlayRenderer
+import com.moe.starflow.manga.types.BubbleRegion
+import com.moe.starflow.manga.types.TextBlockInfo
+import com.moe.starflow.manga.types.TranslatedBubble
+import com.moe.starflow.mangaimport.data.ImportedManga
+import com.moe.starflow.translate.TranslationTextAPI
+import com.moe.starflow.utils.CustomPreference
+import com.moe.starflow.utils.LogCollector
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.MutableStateFlow
+import translationapi.TranslatorFactory
+
+/**
+ * 阅读器翻译编排器：每页记录（Room）+ 渲染缓存（LRU）+ 三态（译文/原文/原图）。
+ * 阶段一只实现手动翻译；translateMode 固定 0（自动/增量置灰，后续阶段接入）。
+ */
+class ReaderTranslationController(
+    private val context: Context,
+    private val manga: ImportedManga,
+    private val scope: CoroutineScope,
+) {
+
+    val version = MutableStateFlow(0L)
+    val translateMode = MutableStateFlow(0) // 0 手动 / 1 自动 / 2 增量（阶段一恒为 0）
+
+    private val db = TranslationHistoryDatabase.getInstance(context)
+    private val dao = db.importedPageTranslationDao()
+    private val cacheManager = TranslationCacheManager(context)
+    private val rows = MutableStateFlow<Map<Int, ImportedPageTranslation>>(emptyMap())
+
+    private val appPrefs get() = PreferenceManager.getDefaultSharedPreferences(context)
+    private val customPrefs get() = CustomPreference.getInstance(context)
+
+    private val renderLru = object : LruCache<String, Bitmap>(RENDER_CACHE_KB) {
+        override fun sizeOf(key: String, value: Bitmap) =
+            value.allocationByteCount.coerceAtLeast(value.rowBytes * value.height) / 1024
+    }
+
+    /** 各页当前三态（内存态；翻页默认：成功页=译文，其余=原图）。 */
+    private val currentVisualByPage = mutableMapOf<Int, TranslationCacheManager.OverlayMode>()
+
+    companion object {
+        private const val TAG = "ReaderTranslate"
+        private const val RENDER_CACHE_KB = 100 * 1024 // 100MB 预算（原图同量级，够 3 态来回切）
+        private fun renderKey(pageIndex: Int, mode: TranslationCacheManager.OverlayMode) =
+            "page:$pageIndex:${mode.name}"
+    }
+
+    // ========== 记录读取 ==========
+
+    /** 打开阅读器时载入全部记录。 */
+    suspend fun load() {
+        rows.value = dao.forManga(manga.id).associateBy { it.pageIndex }
+        version.value += 1
+    }
+
+    fun stateOf(pageIndex: Int): Int =
+        rows.value[pageIndex]?.state ?: ImportedPageTranslation.STATE_IDLE
+
+    fun failMessageOf(pageIndex: Int): String? = rows.value[pageIndex]?.failMessage
+
+    fun recordOf(pageIndex: Int): ImportedPageTranslation? = rows.value[pageIndex]
+
+    /** 全部记录（pageIndex 升序），供面板。 */
+    fun records(): List<ImportedPageTranslation> = rows.value.values.sortedBy { it.pageIndex }
+
+    // ========== 手动翻译 ==========
+
+    /**
+     * 翻译/重翻某一页。全程在 [OcrLock] 互斥下（与截屏翻译、历史重翻共用同一把锁）。
+     * 成功：写 SUCCESS 记录 + 预热译文图缓存；失败：写 FAILED + failCode/failMessage。
+     */
+    suspend fun translatePage(
+        pageIndex: Int,
+        loadFull: suspend (Int) -> Bitmap?,
+        onToast: (String) -> Unit,
+        onVisual: () -> Unit,
+    ) {
+        if (!OcrLock.tryAcquire()) {
+            onToast(context.getString(R.string.reader_translate_busy))
+            return
+        }
+        try {
+            upsert(pageIndex, ImportedPageTranslation.STATE_TRANSLATING)
+
+            val (det, ocr) = try {
+                TranslationEngineInit.ensureReady(context)
+            } catch (e: Exception) {
+                LogCollector.e(TAG, "engine init failed page=$pageIndex", e)
+                fail(pageIndex, "OCR_MODEL_MISSING",
+                    context.getString(R.string.reader_translate_model_missing, e.message.orEmpty()))
+                onToast(context.getString(R.string.reader_translate_model_missing, ""))
+                return
+            }
+
+            val translator: TranslationTextAPI? =
+                TranslatorFactory.create(context, customPrefs, TranslatorFactory.Mode.MANGA)
+            if (translator == null) {
+                fail(pageIndex, "TRANSLATION_API_NOT_CONFIGURED",
+                    context.getString(R.string.reader_translate_api_not_configured))
+                onToast(context.getString(R.string.reader_translate_api_not_configured))
+                return
+            }
+
+            val bitmap = loadFull(pageIndex)
+            if (bitmap == null) {
+                fail(pageIndex, "PROCESS_EXCEPTION", context.getString(R.string.reader_translate_load_failed))
+                onToast(context.getString(R.string.reader_translate_load_failed))
+                return
+            }
+
+            val srcLang = customPrefs.getString("Source_Language", "ja")
+            val tgtLang = customPrefs.getString("Target_Language", "zh")
+            val overlayConfig = cacheManager.getOverlayConfig(appPrefs)
+
+            // 检测 + OCR + 气泡合并
+            val blocks: List<TextBlockInfo> =
+                DetectionBridge.runOCR(bitmap, srcLang, det.value, ocr.value, context)
+            val bubbleRegions: List<BubbleRegion> =
+                DetectionBridge.ocrToBubbleRegions(blocks, overlayConfig.textDirection)
+            if (bubbleRegions.isEmpty()) {
+                fail(pageIndex, "OCR_EMPTY", context.getString(R.string.reader_translate_ocr_empty))
+                onToast(context.getString(R.string.reader_translate_ocr_empty))
+                return
+            }
+
+            // 翻译
+            val translated: List<TranslatedBubble> = TranslateUtils.translateBubbles(
+                translator, bubbleRegions, srcLang, tgtLang, customPrefs,
+                isCancelled = { false },
+            )
+            if (translated.isEmpty()) {
+                fail(pageIndex, "TRANSLATE_EMPTY", context.getString(R.string.reader_translate_empty))
+                onToast(context.getString(R.string.reader_translate_empty))
+                return
+            }
+
+            // 预热译文图缓存 + 默认切到译文态
+            renderInto(pageIndex, translated, TranslationCacheManager.OverlayMode.TRANSLATED, bitmap, overlayConfig)
+
+            // 写库 SUCCESS
+            val row = ImportedPageTranslation(
+                mangaId = manga.id, pageIndex = pageIndex,
+                state = ImportedPageTranslation.STATE_SUCCESS,
+                sourceText = PageTranslationCodec.sourceText(translated),
+                translatedText = PageTranslationCodec.translatedText(translated),
+                bubbleRects = PageTranslationCodec.bubbleRects(translated),
+                failCode = null, failMessage = null,
+                updatedAtMs = System.currentTimeMillis(),
+            )
+            rows.value = rows.value + (pageIndex to row)
+            dao.upsert(row)
+            version.value += 1
+            onVisual()
+            LogCollector.d(TAG, "translated page=$pageIndex bubbles=${translated.size}")
+        } catch (e: TranslationCancelledException) {
+            // 用户主动停止：保持 TRANSLATING，不判失败
+            LogCollector.d(TAG, "translate cancelled page=$pageIndex")
+        } catch (e: Exception) {
+            LogCollector.e(TAG, "translate page=$pageIndex failed", e)
+            fail(pageIndex, "PROCESS_EXCEPTION", e.message ?: "Unknown error")
+        } finally {
+            OcrLock.release()
+        }
+    }
+
+    // ========== 三态切换 / 渲染 ==========
+
+    /** 循环切换：PLAIN → ORIGINAL → TRANSLATED → PLAIN。无成功记录页忽略。 */
+    fun cycleVisual(pageIndex: Int, onVisual: () -> Unit) {
+        if (stateOf(pageIndex) != ImportedPageTranslation.STATE_SUCCESS) return
+        val order = listOf(
+            TranslationCacheManager.OverlayMode.PLAIN,
+            TranslationCacheManager.OverlayMode.ORIGINAL,
+            TranslationCacheManager.OverlayMode.TRANSLATED,
+        )
+        val cur = order.indexOf(currentVisual(pageIndex)).let { if (it < 0) 0 else it }
+        val next = order[(cur + 1) % order.size]
+        currentVisualByPage[pageIndex] = next
+        version.value += 1
+        onVisual()
+    }
+
+    /** 当前页显示态（成功页默认译文，其余默认原图）。 */
+    fun currentVisual(pageIndex: Int): TranslationCacheManager.OverlayMode =
+        currentVisualByPage[pageIndex]
+            ?: (if (stateOf(pageIndex) == ImportedPageTranslation.STATE_SUCCESS)
+                TranslationCacheManager.OverlayMode.TRANSLATED
+            else TranslationCacheManager.OverlayMode.PLAIN)
+
+    /** 取某页某态的图。PLAIN=原图（loadFull）；译文/原文=缓存命中或实时渲染。 */
+    suspend fun visualBitmap(
+        pageIndex: Int,
+        mode: TranslationCacheManager.OverlayMode,
+        loadFull: suspend (Int) -> Bitmap?,
+    ): Bitmap? = when (mode) {
+        TranslationCacheManager.OverlayMode.PLAIN -> loadFull(pageIndex)
+        else -> {
+            val key = renderKey(pageIndex, mode)
+            renderLru.get(key) ?: run {
+                val row = rows.value[pageIndex] ?: return null
+                val config = cacheManager.getOverlayConfig(appPrefs)
+                val bubbles = PageTranslationCodec.fromRow(row, config.fontSize, config.bgColor) ?: return null
+                val orig = loadFull(pageIndex) ?: return null
+                val out = renderBubbles(orig, bubbles, mode, config)
+                renderLru.put(key, out)
+                out
+            }
+        }
+    }
+
+    private fun renderBubbles(
+        original: Bitmap,
+        bubbles: List<TranslatedBubble>,
+        mode: TranslationCacheManager.OverlayMode,
+        cfg: TranslationCacheManager.OverlayConfig,
+    ): Bitmap = OverlayRenderer.renderOverlay(
+        original = original,
+        regions = bubbles,
+        fontSize = cfg.fontSize,
+        autoFit = cfg.autoFit,
+        textColor = cfg.textColor,
+        bgColor = cfg.bgColor,
+        useOriginalText = mode == TranslationCacheManager.OverlayMode.ORIGINAL,
+        verticalDirection = cfg.textDirection,
+    )
+
+    /** 翻译成功后预热译文图缓存并切到译文态。 */
+    private fun renderInto(
+        pageIndex: Int,
+        bubbles: List<TranslatedBubble>,
+        mode: TranslationCacheManager.OverlayMode,
+        original: Bitmap,
+        cfg: TranslationCacheManager.OverlayConfig,
+    ) {
+        renderLru.put(renderKey(pageIndex, mode), renderBubbles(original, bubbles, mode, cfg))
+        currentVisualByPage[pageIndex] = mode
+    }
+
+    // ========== 私有：写记录 ==========
+
+    private suspend fun upsert(pageIndex: Int, state: Int) {
+        val old = rows.value[pageIndex]
+        val row = ImportedPageTranslation(
+            mangaId = manga.id, pageIndex = pageIndex, state = state,
+            sourceText = old?.sourceText, translatedText = old?.translatedText,
+            bubbleRects = old?.bubbleRects, failCode = old?.failCode,
+            failMessage = old?.failMessage, updatedAtMs = System.currentTimeMillis(),
+        )
+        rows.value = rows.value + (pageIndex to row)
+        dao.upsert(row)
+        version.value += 1
+    }
+
+    private suspend fun fail(pageIndex: Int, code: String, message: String) {
+        rows.value = rows.value + (pageIndex to ImportedPageTranslation(
+            mangaId = manga.id, pageIndex = pageIndex, state = ImportedPageTranslation.STATE_FAILED,
+            failCode = code, failMessage = message, updatedAtMs = System.currentTimeMillis(),
+        ))
+        dao.upsert(rows.value.getValue(pageIndex))
+        version.value += 1
+    }
+}
