@@ -887,6 +887,10 @@
     <string name="reader_translate_retry_this_page">重试本页</string>
     <string name="reader_translate_close">关闭</string>
     <string name="reader_translate_detail_empty">暂无译文内容</string>
+    <string name="reader_translate_detecting">检测中…</string>
+    <string name="reader_translate_in_progress">翻译中…</string>
+    <string name="reader_translate_done">翻译完成</string>
+    <string name="reader_translate_failed">翻译失败</string>
     <string name="reader_debug_placeholder">调试选项（不含 AI 超分）</string>
     <string name="reader_rotate">旋转屏幕</string>
     <string name="reader_rotate_portrait">竖屏</string>

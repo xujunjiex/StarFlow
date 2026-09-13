@@ -1,5 +1,6 @@
 package com.moe.starflow.mangaimport.reader
 
+import android.graphics.Bitmap
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -23,6 +24,10 @@ private class Shared(val source: ReaderPageSource) {
     var onTap: (Float, Float) -> Unit = { _, _ -> }
     @Volatile
     var visibleImage: com.moe.starflow.ui.viewer.ZoomableImageView? = null
+    /** 页图提供者：返回该页「应显示」的图（译文/原文渲染图）或 null（显示原图）。由阅读器注入。
+     *  ⚠️ 必须在 IO 线程安全、可同步返回（内部是 LruCache.get）。重绑/复用页时优先用它，防止把译图覆盖回原图。 */
+    @Volatile
+    var pageImage: ((Int) -> Bitmap?)? = null
 }
 
 private fun bindImageCommon(img: ZoomableImageView, shared: Shared, page: Int, isCurrent: () -> Boolean) {
@@ -63,7 +68,9 @@ private fun loadTo(
     shared.visibleImage = img
     val slot = page
     shared.scope.launch {
-        val bmp = withContext(Dispatchers.IO) { shared.source.loadFull(slot) }
+        val bmp = withContext(Dispatchers.IO) {
+            shared.pageImage?.invoke(slot) ?: shared.source.loadFull(slot)
+        }
         if (bmp != null && isCurrent()) img.setImageBitmap(bmp)
     }
 }
@@ -84,6 +91,11 @@ class ReaderPageAdapter(
 
     val visibleImage: ZoomableImageView?
         get() = shared.visibleImage
+
+    /** 注入页图提供者（译文/原文渲染图，null=原图）。 */
+    fun setPageImageProvider(provider: (Int) -> Bitmap?) {
+        shared.pageImage = provider
+    }
 
     /** 实时预览：直接给当前可见页上滤镜。 */
     fun applyLiveColor(f: ReaderColorFilter?) {
@@ -136,6 +148,11 @@ class DoublePageAdapter(
     /** 最近绑定的页面图片（供阅读器内嵌翻译直接 setImageBitmap）。双页时近似取最近一张。 */
     val visibleImage: ZoomableImageView?
         get() = shared.visibleImage
+
+    /** 注入页图提供者（译文/原文渲染图，null=原图）。 */
+    fun setPageImageProvider(provider: (Int) -> Bitmap?) {
+        shared.pageImage = provider
+    }
 
     class VH(val binding: ItemReaderDoublePageBinding) : RecyclerView.ViewHolder(binding.root)
 

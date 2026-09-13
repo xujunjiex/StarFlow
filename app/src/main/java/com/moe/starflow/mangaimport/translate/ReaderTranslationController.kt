@@ -23,6 +23,10 @@ import com.moe.starflow.utils.LogCollector
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import translationapi.TranslatorFactory
+import java.util.concurrent.ConcurrentHashMap
+
+/** 翻译阶段（供状态浮层显示进度：检测/翻译/成功/失败）。 */
+enum class ReaderTranslatePhase { DETECTING, TRANSLATING, SUCCESS, FAILED }
 
 /**
  * 阅读器翻译编排器：每页记录（Room）+ 渲染缓存（LRU）+ 三态（译文/原文/原图）。
@@ -50,8 +54,8 @@ class ReaderTranslationController(
             value.allocationByteCount.coerceAtLeast(value.rowBytes * value.height) / 1024
     }
 
-    /** 各页当前三态（内存态；翻页默认：成功页=译文，其余=原图）。 */
-    private val currentVisualByPage = mutableMapOf<Int, TranslationCacheManager.OverlayMode>()
+    /** 各页当前三态（内存态；翻页默认：成功页=译文，其余=原图）。并发安全（IO 页图提供者 + 主线程切换都会读写）。 */
+    private val currentVisualByPage = ConcurrentHashMap<Int, TranslationCacheManager.OverlayMode>()
 
     companion object {
         private const val TAG = "ReaderTranslate"
@@ -83,12 +87,14 @@ class ReaderTranslationController(
     /**
      * 翻译/重翻某一页。全程在 [OcrLock] 互斥下（与截屏翻译、历史重翻共用同一把锁）。
      * 成功：写 SUCCESS 记录 + 预热译文图缓存；失败：写 FAILED + failCode/failMessage。
+     * [onPhase] 上报阶段（检测/翻译/成功/失败）供状态浮层显示，与截屏翻译路线的状态提示一致。
      */
     suspend fun translatePage(
         pageIndex: Int,
         loadFull: suspend (Int) -> Bitmap?,
-        onToast: (String) -> Unit,
-        onVisual: () -> Unit,
+        onToast: (String) -> Unit = {},
+        onVisual: () -> Unit = {},
+        onPhase: (ReaderTranslatePhase, String?) -> Unit = { _, _ -> },
     ) {
         if (!OcrLock.tryAcquire()) {
             onToast(context.getString(R.string.reader_translate_busy))
@@ -96,30 +102,32 @@ class ReaderTranslationController(
         }
         try {
             upsert(pageIndex, ImportedPageTranslation.STATE_TRANSLATING)
+            onPhase(ReaderTranslatePhase.DETECTING, null)
 
             val (det, ocr) = try {
                 TranslationEngineInit.ensureReady(context)
             } catch (e: Exception) {
                 LogCollector.e(TAG, "engine init failed page=$pageIndex", e)
-                fail(pageIndex, "OCR_MODEL_MISSING",
-                    context.getString(R.string.reader_translate_model_missing, e.message.orEmpty()))
-                onToast(context.getString(R.string.reader_translate_model_missing, ""))
+                val msg = context.getString(R.string.reader_translate_model_missing, e.message.orEmpty())
+                fail(pageIndex, "OCR_MODEL_MISSING", msg)
+                onPhase(ReaderTranslatePhase.FAILED, msg)
                 return
             }
 
             val translator: TranslationTextAPI? =
                 TranslatorFactory.create(context, customPrefs, TranslatorFactory.Mode.MANGA)
             if (translator == null) {
-                fail(pageIndex, "TRANSLATION_API_NOT_CONFIGURED",
-                    context.getString(R.string.reader_translate_api_not_configured))
-                onToast(context.getString(R.string.reader_translate_api_not_configured))
+                val msg = context.getString(R.string.reader_translate_api_not_configured)
+                fail(pageIndex, "TRANSLATION_API_NOT_CONFIGURED", msg)
+                onPhase(ReaderTranslatePhase.FAILED, msg)
                 return
             }
 
             val bitmap = loadFull(pageIndex)
             if (bitmap == null) {
-                fail(pageIndex, "PROCESS_EXCEPTION", context.getString(R.string.reader_translate_load_failed))
-                onToast(context.getString(R.string.reader_translate_load_failed))
+                val msg = context.getString(R.string.reader_translate_load_failed)
+                fail(pageIndex, "PROCESS_EXCEPTION", msg)
+                onPhase(ReaderTranslatePhase.FAILED, msg)
                 return
             }
 
@@ -133,19 +141,22 @@ class ReaderTranslationController(
             val bubbleRegions: List<BubbleRegion> =
                 DetectionBridge.ocrToBubbleRegions(blocks, overlayConfig.textDirection)
             if (bubbleRegions.isEmpty()) {
-                fail(pageIndex, "OCR_EMPTY", context.getString(R.string.reader_translate_ocr_empty))
-                onToast(context.getString(R.string.reader_translate_ocr_empty))
+                val msg = context.getString(R.string.reader_translate_ocr_empty)
+                fail(pageIndex, "OCR_EMPTY", msg)
+                onPhase(ReaderTranslatePhase.FAILED, msg)
                 return
             }
 
             // 翻译
+            onPhase(ReaderTranslatePhase.TRANSLATING, null)
             val translated: List<TranslatedBubble> = TranslateUtils.translateBubbles(
                 translator, bubbleRegions, srcLang, tgtLang, customPrefs,
                 isCancelled = { false },
             )
             if (translated.isEmpty()) {
-                fail(pageIndex, "TRANSLATE_EMPTY", context.getString(R.string.reader_translate_empty))
-                onToast(context.getString(R.string.reader_translate_empty))
+                val msg = context.getString(R.string.reader_translate_empty)
+                fail(pageIndex, "TRANSLATE_EMPTY", msg)
+                onPhase(ReaderTranslatePhase.FAILED, msg)
                 return
             }
 
@@ -166,16 +177,27 @@ class ReaderTranslationController(
             dao.upsert(row)
             version.value += 1
             onVisual()
+            onPhase(ReaderTranslatePhase.SUCCESS, null)
             LogCollector.d(TAG, "translated page=$pageIndex bubbles=${translated.size}")
         } catch (e: TranslationCancelledException) {
             // 用户主动停止：保持 TRANSLATING，不判失败
             LogCollector.d(TAG, "translate cancelled page=$pageIndex")
         } catch (e: Exception) {
             LogCollector.e(TAG, "translate page=$pageIndex failed", e)
-            fail(pageIndex, "PROCESS_EXCEPTION", e.message ?: "Unknown error")
+            val msg = e.message ?: "Unknown error"
+            fail(pageIndex, "PROCESS_EXCEPTION", msg)
+            onPhase(ReaderTranslatePhase.FAILED, msg)
         } finally {
             OcrLock.release()
         }
+    }
+
+    /** 供适配器同步取图（IO 线程安全）：该页当前三态对应的渲染图缓存，无则 null（显示原图）。 */
+    fun cachedDisplayBitmap(pageIndex: Int): Bitmap? {
+        if (stateOf(pageIndex) != ImportedPageTranslation.STATE_SUCCESS) return null
+        val mode = currentVisual(pageIndex)
+        if (mode == TranslationCacheManager.OverlayMode.PLAIN) return null
+        return renderLru.get(renderKey(pageIndex, mode))
     }
 
     // ========== 三态切换 / 渲染 ==========

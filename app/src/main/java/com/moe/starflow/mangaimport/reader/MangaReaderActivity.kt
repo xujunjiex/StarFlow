@@ -30,8 +30,10 @@ import com.moe.starflow.data.ImportedPageTranslation
 import com.moe.starflow.data.TranslationCacheManager
 import com.moe.starflow.mangaimport.data.ImportedManga
 import com.moe.starflow.mangaimport.data.ImportedMangaStore
+import com.moe.starflow.mangaimport.translate.ReaderTranslatePhase
 import com.moe.starflow.mangaimport.translate.ReaderTranslationController
 import com.moe.starflow.me.settings.SettingPageActivity
+import com.moe.starflow.translate.TranslationStatusOverlay
 import com.moe.starflow.utils.LogCollector
 import com.moe.starflow.utils.UiUtils
 import kotlinx.coroutines.Dispatchers
@@ -196,6 +198,7 @@ class MangaReaderActivity : AppCompatActivity() {
         }
         applyDirection()
         applyAnimation()
+        applyPageImageSource()
     }
 
     /**
@@ -481,6 +484,33 @@ class MangaReaderActivity : AppCompatActivity() {
             showTranslateDetail(currentPage)
             true
         }
+        applyPageImageSource()
+    }
+
+    /** 注入「页图提供者」：适配器绑定页时优先取译文/原文渲染图（无则原图），
+     *  避免 RecyclerView 重绑/复用把已显示的译图覆盖回原图。 */
+    private fun applyPageImageSource() {
+        val controller = translationController ?: return
+        val provider: (Int) -> android.graphics.Bitmap? = { page -> controller.cachedDisplayBitmap(page) }
+        pageAdapter?.setPageImageProvider(provider)
+        doubleAdapter?.setPageImageProvider(provider)
+    }
+
+    /** 状态浮层（与截屏翻译路线一致）：检测中 / 翻译中 / 完成 / 失败。 */
+    private fun onTranslatePhase(phase: ReaderTranslatePhase, message: String?) {
+        runOnUiThread {
+            val overlay = TranslationStatusOverlay.getInstance(this)
+            when (phase) {
+                ReaderTranslatePhase.DETECTING ->
+                    overlay.showImmediate(getString(R.string.reader_translate_detecting), autoDismiss = false)
+                ReaderTranslatePhase.TRANSLATING ->
+                    overlay.showImmediate(getString(R.string.reader_translate_in_progress), autoDismiss = false)
+                ReaderTranslatePhase.SUCCESS ->
+                    overlay.show(getString(R.string.reader_translate_done))
+                ReaderTranslatePhase.FAILED ->
+                    overlay.showError(message ?: getString(R.string.reader_translate_failed))
+            }
+        }
     }
 
     /** 翻译/重翻当前页。 */
@@ -495,6 +525,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 loadFull = { source.loadFull(it) },
                 onToast = { msg -> runOnUiThread { UiUtils.showToast(this@MangaReaderActivity, msg) } },
                 onVisual = { runOnUiThread { applyPageVisual(page) } },
+                onPhase = ::onTranslatePhase,
             )
         }
     }
@@ -514,6 +545,7 @@ class MangaReaderActivity : AppCompatActivity() {
                     loadFull = { source.loadFull(it) },
                     onToast = { msg -> runOnUiThread { UiUtils.showToast(this@MangaReaderActivity, msg) } },
                     onVisual = { runOnUiThread { applyPageVisual(row.pageIndex) } },
+                    onPhase = ::onTranslatePhase,
                 )
             }
         }
@@ -528,16 +560,26 @@ class MangaReaderActivity : AppCompatActivity() {
         }
     }
 
-    /** 同步三态按钮可见性（仅当前页已翻译显示）。 */
+    /** 同步三态按钮可见性 + 图标（照搬截屏翻译三态图标：译文/原文/纯原图）。 */
     private fun refreshTranslationChrome() {
         val controller = translationController ?: return
-        binding.btnToggleTranslate.visibility =
-            if (controller.stateOf(currentPage) == ImportedPageTranslation.STATE_SUCCESS) View.VISIBLE else View.GONE
+        val translated = controller.stateOf(currentPage) == ImportedPageTranslation.STATE_SUCCESS
+        binding.btnToggleTranslate.visibility = if (translated) View.VISIBLE else View.GONE
+        if (translated) {
+            binding.ivToggleTranslate.setImageResource(
+                when (controller.currentVisual(currentPage)) {
+                    TranslationCacheManager.OverlayMode.TRANSLATED -> android.R.drawable.ic_menu_camera
+                    TranslationCacheManager.OverlayMode.ORIGINAL -> android.R.drawable.ic_menu_gallery
+                    else -> android.R.drawable.ic_menu_view
+                }
+            )
+        }
     }
 
     /** 把当前页显示切到 controller 指定态（译文/原文/原图）。 */
     private fun applyPageVisual(pageIndex: Int) {
         val controller = translationController ?: return
+        refreshTranslationChrome()
         if (pageIndex != currentPage) return
         val mode = if (controller.stateOf(pageIndex) == ImportedPageTranslation.STATE_SUCCESS)
             controller.currentVisual(pageIndex) else null
