@@ -496,7 +496,8 @@ class MangaReaderActivity : AppCompatActivity() {
         doubleAdapter?.setPageImageProvider(provider)
     }
 
-    /** 状态浮层（与截屏翻译路线一致）：检测中 / 翻译中 / 完成 / 失败。 */
+    /** 状态浮层（与截屏翻译路线一致）：检测中 / 翻译中 / 完成 / 失败。
+     *  成功/失败必须 dismiss 掉常驻的「翻译中」进度芯片，否则一直挂着（还会跨场景残留）。 */
     private fun onTranslatePhase(phase: ReaderTranslatePhase, message: String?) {
         runOnUiThread {
             val overlay = TranslationStatusOverlay.getInstance(this)
@@ -505,10 +506,14 @@ class MangaReaderActivity : AppCompatActivity() {
                     overlay.showImmediate(getString(R.string.reader_translate_detecting), autoDismiss = false)
                 ReaderTranslatePhase.TRANSLATING ->
                     overlay.showImmediate(getString(R.string.reader_translate_in_progress), autoDismiss = false)
-                ReaderTranslatePhase.SUCCESS ->
+                ReaderTranslatePhase.SUCCESS -> {
+                    overlay.dismiss()
                     overlay.show(getString(R.string.reader_translate_done))
-                ReaderTranslatePhase.FAILED ->
+                }
+                ReaderTranslatePhase.FAILED -> {
+                    overlay.dismiss()
                     overlay.showError(message ?: getString(R.string.reader_translate_failed))
+                }
             }
         }
     }
@@ -576,35 +581,21 @@ class MangaReaderActivity : AppCompatActivity() {
         }
     }
 
-    /** 把当前页显示切到 controller 指定态（译文/原文/原图）。 */
+    /** 把指定页显示切到 controller 的当前态（译文/原文/原图）。
+     *  不直接写 visibleImage（它可能是邻页，写错视图 = 错图）；而是把该页当前态渲染图预热进缓存后
+     *  `notifyItemChanged` 重绑，由适配器经「页图提供者」按【槽位】取回正确的图。 */
     private fun applyPageVisual(pageIndex: Int) {
         val controller = translationController ?: return
         refreshTranslationChrome()
-        if (pageIndex != currentPage) return
         val mode = if (controller.stateOf(pageIndex) == ImportedPageTranslation.STATE_SUCCESS)
             controller.currentVisual(pageIndex) else null
-        if (mode == null || mode == TranslationCacheManager.OverlayMode.PLAIN) {
-            reloadOriginal(pageIndex)
-            return
-        }
         lifecycleScope.launch(Dispatchers.IO) {
-            val bmp = controller.visualBitmap(pageIndex, mode) { source.loadFull(it) }
-            runOnUiThread {
-                if (pageIndex != currentPage) return@runOnUiThread
-                val img = pageAdapter?.visibleImage ?: doubleAdapter?.visibleImage ?: return@runOnUiThread
-                if (bmp != null) img.setImageBitmap(bmp)
+            if (mode != null && mode != TranslationCacheManager.OverlayMode.PLAIN) {
+                controller.visualBitmap(pageIndex, mode) { source.loadFull(it) } // 渲染 + 预热缓存
             }
-        }
-    }
-
-    /** 显示原图（无译文态时回退）。 */
-    private fun reloadOriginal(pageIndex: Int) {
-        lifecycleScope.launch(Dispatchers.IO) {
-            val bmp = source.loadFull(pageIndex)
             runOnUiThread {
-                if (pageIndex != currentPage) return@runOnUiThread
-                val img = pageAdapter?.visibleImage ?: doubleAdapter?.visibleImage ?: return@runOnUiThread
-                if (bmp != null) img.setImageBitmap(bmp)
+                pageAdapter?.notifyItemChanged(pageIndex)
+                doubleAdapter?.notifyItemChanged(pageIndex / 2)
             }
         }
     }
