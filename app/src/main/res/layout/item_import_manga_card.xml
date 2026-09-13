@@ -60,6 +60,23 @@
                 android:textSize="10sp"
                 android:visibility="gone"/>
 
+            <!-- 文件丢失徽章（左上角，与已读互斥） -->
+            <TextView
+                android:id="@+id/tv_lost_badge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="top|start"
+                android:layout_margin="8dp"
+                android:background="@drawable/bg_lost_badge"
+                android:paddingStart="6dp"
+                android:paddingTop="2dp"
+                android:paddingEnd="6dp"
+                android:paddingBottom="2dp"
+                android:text="@string/import_file_lost"
+                android:textColor="#FFFFFF"
+                android:textSize="10sp"
+                android:visibility="gone"/>
+
         </FrameLayout>
 
         <TextView

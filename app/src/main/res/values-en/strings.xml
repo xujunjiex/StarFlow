@@ -14,7 +14,7 @@
     <string name="import_manga_option_single_dir">Import single manga folder</string>
     <string name="import_manga_option_multi_dir">Import multiple manga folders</string>
     <string name="import_folder_hint">Tip: some devices only allow choosing a newly-created folder. If blocked, create a folder in the picker first.</string>
-    <string name="import_storage_hint">Stored to app\'s internal storage:&#10;%1$s</string>
+    <string name="import_storage_hint">Comics are stored in the app folder under Android/data (accessible via file manager / USB):&#10;%1$s</string>
     <string name="browse">Browse</string>
     <string name="import_delete">Delete</string>
     <string name="import_delete_selected_confirm">Delete %1$d selected manga? App-local copies will also be removed.</string>
@@ -30,6 +30,8 @@
     <string name="import_rename_hint">Manga name</string>
     <string name="import_rename_empty">Name cannot be empty</string>
     <string name="import_read_badge">Read</string>
+    <string name="import_file_lost">Files lost</string>
+    <string name="reader_file_lost">Comic files are missing. Please delete this title.</string>
     <string name="import_close_selection">Close selection</string>
     <string name="select_all">Select all</string>
     <string name="import_pages_count">%1$d pages</string>

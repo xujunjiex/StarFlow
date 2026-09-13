@@ -26,6 +26,26 @@ class ReaderPageSource(
         override fun sizeOf(key: Int, value: Bitmap) = 1
     }
 
+    // Webtoon 连续滚动采样图缓存（按像素预算计数，避免滚动反复全图解码）
+    private val webtoonCache = object : LruCache<Int, Bitmap>(WEBTOON_CACHE_PIXEL_BUDGET) {
+        override fun sizeOf(key: Int, value: Bitmap) =
+            value.allocationByteCount.coerceAtLeast(value.rowBytes * value.height)
+    }
+
+    // 复用一个打开的 ZipFile：避免每页都重新读中央目录（400 页漫画的关键开销）
+    @Volatile private var cachedZip: ZipFile? = null
+
+    private fun zip(): ZipFile? {
+        cachedZip?.let { return it }
+        return synchronized(this) {
+            cachedZip ?: try {
+                ZipFile(File(localRoot)).also { cachedZip = it }
+            } catch (e: Exception) {
+                null
+            }
+        }
+    }
+
     val size: Int get() = pageKeys.size
 
     /** 某页对应的存储 key（zip 内 entry 名 / 目录相对路径），供导出等场景。 */
@@ -51,6 +71,70 @@ class ReaderPageSource(
         val bmp = decodeThumb(position) ?: return null
         thumbCache.put(position, bmp)
         return bmp
+    }
+
+    /**
+     * Webtoon 连续滚动用：按目标宽度**采样解码**（不放大、限高），带 LRU 缓存。
+     * 300-400 页大漫画全图解码会内存爆炸/滚动卡死，必须降采样到屏宽再显示。
+     * 应在 IO 线程调用。
+     */
+    /** 翻起区采样目标宽（主线程安全设置；由阅读器打开时设为屏幕宽）。 */
+    @Volatile
+    var webtoonWidth = 0
+
+    fun loadWebtoon(position: Int, targetWidth: Int): Bitmap? {
+        webtoonCache.get(position)?.let { return it }
+        val bmp = decodeWebtoon(position, targetWidth)
+        if (bmp != null) webtoonCache.put(position, bmp)
+        return bmp
+    }
+
+    /**
+     * 主线程安全：取下一页采样图供翻起区绘制。
+     * 缓存未命中时**同步解码兜底**（每页仅一次，随后命中缓存）→ 翻起区一定有下一页，不黑屏。
+     */
+    fun peekWebtoon(position: Int): Bitmap? {
+        webtoonCache.get(position)?.let { return it }
+        if (webtoonWidth <= 0) return null
+        val bmp = decodeWebtoon(position, webtoonWidth)
+        if (bmp != null) webtoonCache.put(position, bmp)
+        return bmp
+    }
+
+    private fun decodeWebtoon(position: Int, targetWidth: Int): Bitmap? {
+        val key = pageKeys.getOrNull(position) ?: return null
+        return try {
+            if (isArchive) {
+                val zip = zip() ?: return null
+                val entry = zip.getEntry(key) ?: return null
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                zip.getInputStream(entry).use { BitmapFactory.decodeStream(it, null, bounds) }
+                decodeZipEntry(zip, key, computeSample(bounds.outWidth, bounds.outHeight, targetWidth))
+            } else {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(File(localRoot, key).absolutePath, bounds)
+                decodeFileScaled(File(localRoot, key), computeSample(bounds.outWidth, bounds.outHeight, targetWidth))
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** 采样率：按目标宽度适配 + 限制超高页 + 限制总像素（防超大页 OOM 卡死）。 */
+    private fun computeSample(boundsW: Int, boundsH: Int, targetWidth: Int): Int {
+        val w = boundsW.coerceAtLeast(1)
+        val h = boundsH.coerceAtLeast(1)
+        val target = targetWidth.coerceAtLeast(1)
+        val maxHeight = target * 12          // 高宽比上限 ~12:1
+        val maxArea = 12_000_000            // 单幅像素上限 ~48MB
+        var sample = 1
+        while (true) {
+            val sw = w / sample
+            val sh = h / sample
+            if (sw <= target && sh <= maxHeight && sw * sh <= maxArea) break
+            sample *= 2
+        }
+        return sample
     }
 
     private fun decodeThumb(position: Int): Bitmap? {
@@ -94,14 +178,19 @@ class ReaderPageSource(
     private fun resolvePages(): List<String> {
         return if (isArchive) {
             val out = mutableListOf<String>()
-            ZipFile(File(localRoot)).use { zip ->
-                val entries = zip.entries()
-                while (entries.hasMoreElements()) {
-                    val e = entries.nextElement()
-                    if (!e.isDirectory && ArchivedMangaReader.isImageFile(e.name)) out.add(e.name)
+            try {
+                ZipFile(File(localRoot)).use { zip ->
+                    val entries = zip.entries()
+                    while (entries.hasMoreElements()) {
+                        val e = entries.nextElement()
+                        if (!e.isDirectory && ArchivedMangaReader.isImageFile(e.name)) out.add(e.name)
+                    }
                 }
+                ArchivedMangaReader.sortNaturally(out)
+            } catch (e: Exception) {
+                // zip 缺失/损坏时返回空，由阅读器侧展示「文件丢失」提示，而不是崩溃
+                emptyList()
             }
-            ArchivedMangaReader.sortNaturally(out)
         } else {
             ArchivedMangaReader.listImageFilesInDir(File(localRoot))
         }
@@ -110,5 +199,7 @@ class ReaderPageSource(
     private companion object {
         const val THUMB_SAMPLE = 4
         const val MAX_THUMBS = 48
+        // Webtoon 采样缓存像素预算（~60MB，约覆盖十几屏）
+        const val WEBTOON_CACHE_PIXEL_BUDGET = 60 * 1024 * 1024
     }
 }

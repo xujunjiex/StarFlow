@@ -78,7 +78,8 @@ class ZoomableImageView @JvmOverloads constructor(
         }
 
         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-            onSingleTapConfirmed?.invoke(e.x, e.y)
+            // 放大状态不翻页：单击只在未缩放时派发（缩回初始后恢复翻页）
+            if (currentScale <= 1.05f) onSingleTapConfirmed?.invoke(e.x, e.y)
             return true
         }
     })
@@ -263,17 +264,14 @@ class ZoomableImageView @JvmOverloads constructor(
 
                     // 决定 ViewPager2 是否接管水平滑动：
                     // - 未缩放（currentScale <= 1.05）：交给 ViewPager2（横滑距离 > 纵滑距离且 > 10px）
-                    // - 已缩放：图片被放大后水平超出 view，需要先平移图片。
-                    //   当图片被拖到**水平边界**（左边缘/右边缘），继续的拖动应让 ViewPager2 接管切页。
+                    // - 已缩放：图片被放大，拖动只平移图片，**绝不翻页**——必须缩回初始才能翻页
                     if (currentScale <= 1.05f) {
                         if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 10f) {
                             parent.requestDisallowInterceptTouchEvent(false)
                         }
                     } else {
-                        if (isAtHorizontalEdge()) {
-                            // 用户拖动后已到水平边界，让 ViewPager2 接管
-                            parent.requestDisallowInterceptTouchEvent(false)
-                        }
+                        // 放大状态始终由图片消费拖动（平移图片），不让 ViewPager2 拦截 → 无法滑动翻页
+                        parent.requestDisallowInterceptTouchEvent(true)
                     }
                 }
             }

@@ -31,6 +31,8 @@
     <string name="import_rename_hint">Manga name</string>
     <string name="import_rename_empty">Name cannot be empty</string>
     <string name="import_read_badge">Read</string>
+    <string name="import_file_lost">Files lost</string>
+    <string name="reader_file_lost">Comic files are missing. Please delete this title.</string>
     <string name="import_close_selection">Close selection</string>
     <string name="select_all">Select all</string>
     <string name="import_pages_count">%1$d pages</string>

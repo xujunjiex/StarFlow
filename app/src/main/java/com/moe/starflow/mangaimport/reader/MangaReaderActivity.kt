@@ -9,7 +9,9 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.SystemClock
 import android.provider.MediaStore
+import android.view.GestureDetector
 import android.view.LayoutInflater
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -20,12 +22,14 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.LinearSmoothScroller
 import androidx.viewpager2.widget.ViewPager2
 import com.moe.starflow.R
 import com.moe.starflow.databinding.ActivityMangaReaderBinding
 import com.moe.starflow.mangaimport.data.ImportedManga
 import com.moe.starflow.mangaimport.data.ImportedMangaStore
 import com.moe.starflow.me.settings.SettingPageActivity
+import com.moe.starflow.utils.LogCollector
 import com.moe.starflow.utils.UiUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -83,6 +87,10 @@ class MangaReaderActivity : AppCompatActivity() {
     private var doubleAdapter: DoublePageAdapter? = null
     private var isDoublePage = false
 
+    /** 仿真/高级动画共享状态（折线触点 + 翻页方向）。 */
+    private val animState = ReaderAnimationState()
+    private var webtoonTapDetector: GestureDetector? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMangaReaderBinding.inflate(layoutInflater)
@@ -102,6 +110,12 @@ class MangaReaderActivity : AppCompatActivity() {
         manga = ImportedMangaStore.load(this).firstOrNull { it.id == id }
             ?: run { finish(); return }
         source = ReaderPageSource(manga.isArchive, manga.localRoot)
+        if (source.size == 0) {
+            // 本地文件已丢失/损坏（可能被手动删除）：不再展示空白阅读器
+            UiUtils.showToast(this, getString(R.string.reader_file_lost))
+            finish()
+            return
+        }
 
         setupOverlays()
         applyBackground()
@@ -143,20 +157,24 @@ class MangaReaderActivity : AppCompatActivity() {
 
     private fun applyPager() {
         if (mode == 3) {
-            // Webtoon：竖列表
-            binding.viewPager.visibility = View.GONE
-            binding.webtoonList.visibility = View.VISIBLE
-            binding.webtoonList.layoutManager = LinearLayoutManager(this)
+            // Webtoon：连续竖滚列表（无翻页动画/自动翻页，滚动即翻页）
             binding.webtoonList.adapter = WebtoonAdapter(source) { colorFilter }
+            binding.webtoonList.layoutManager = LinearLayoutManager(this)
+            binding.webtoonList.visibility = View.VISIBLE
+            binding.viewPager.visibility = View.GONE
             return
         }
         binding.webtoonList.adapter = null
         binding.webtoonList.visibility = View.GONE
         binding.viewPager.visibility = View.VISIBLE
 
+        // 竖排模式（Koto VERTICAL）= 竖向整页 Pager，逐页上/下切换；其余横向
+        binding.viewPager.orientation =
+            if (mode == 2) ViewPager2.ORIENTATION_VERTICAL else ViewPager2.ORIENTATION_HORIZONTAL
+
         val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        // 横屏且非 Webtoon → 双页
-        isDoublePage = landscape
+        // 横屏双页仅对水平模式（LTR/RTL）生效；竖排保持单页竖向，不参与双页
+        isDoublePage = landscape && mode != 2
         if (isDoublePage) {
             doubleAdapter = DoublePageAdapter(source, { colorFilter }, ::onInteraction, ::handleTap)
             binding.viewPager.adapter = doubleAdapter
@@ -164,20 +182,58 @@ class MangaReaderActivity : AppCompatActivity() {
             pageAdapter = ReaderPageAdapter(source, { colorFilter }, ::onInteraction, ::handleTap)
             binding.viewPager.adapter = pageAdapter
         }
-        binding.viewPager.registerOnPageChangeCallback(pageChangeCallback)
         applyDirection()
         applyAnimation()
     }
 
-    /** 翻页动画：0无(直接跳) / 1默认(滑动) / 2高级(景深) / 3仿真(翻页)。 */
+    /**
+     * 翻页动画：0无(直接跳) / 1默认(滑动) / 2高级(封面叠放) / 3仿真(页脚卷曲翻页)。
+     * 高级/仿真按当前横/竖模式 + 正/反向选择 transformer（Koto 语义）。
+     */
     private fun applyAnimation() {
+        if (mode == 3) return // Webtoon 无翻页动画
+        // 关键：先清除所有已附加页上旧 transformer 残留的 alpha/缩放/旋转/折叠，
+        // 否则切动画（尤其切到 0/1 = null transformer）时旧效果粘在页面上 → 堆叠/黑屏
+        resetPageTransforms()
+        // 清空上一动画的共享锚点/导航状态，避免跨动画切换残留（切到无/默认/高级/仿真互相干扰）
+        animState.anchorPage = currentPage
+        animState.navigationProgress = 0f
+        animState.isBackward = false
+        animState.foldStartFraction = 0.85f
+        if (isDoublePage) {
+            // 双页阅读：只用默认滑动（不叠加封面/翻页动画）
+            binding.viewPager.setPageTransformer(null)
+            return
+        }
         binding.viewPager.setPageTransformer(
             when (animationMode) {
-                2 -> DepthTransformer()
-                3 -> PageTurnTransformer()
+                0 -> NoneTransformer(isVertical = mode == 2, animState)   // 无动画：全程静止，落整直接换页
+                1 -> null                                       // 默认滑动
+                2 -> CoverTransformer(isVertical = mode == 2, isReversed = mode == 1, animState)
+                3 -> SimulationTransformer(isVertical = mode == 2, isReversed = mode == 1, animState)
                 else -> null
             }
         )
+    }
+
+    /** 复位 viewPager 内所有页面 View 的 transform + 折叠状态（换 transformer 前调用）。 */
+    private fun resetPageTransforms() {
+        val rv = binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView ?: return
+        for (i in 0 until rv.childCount) {
+            val page = rv.getChildAt(i)
+            page.alpha = 1f
+            page.translationX = 0f
+            page.translationY = 0f
+            page.scaleX = 1f
+            page.scaleY = 1f
+            page.rotationX = 0f
+            page.rotationY = 0f
+            page.rotation = 0f
+            page.pivotX = page.width / 2f
+            page.pivotY = page.height / 2f
+            page.translationZ = 0f
+            (page as? CurlPageView)?.clearFold()
+        }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -198,16 +254,36 @@ class MangaReaderActivity : AppCompatActivity() {
     private var doublePageIndex = 0
 
     private val pageChangeCallback = object : ViewPager2.OnPageChangeCallback() {
+        override fun onPageScrolled(position: Int, positionOffset: Float, positionOffsetPixels: Int) {
+            // 滚动标记（连续）。回翻判定用「标记相对锚点」而非瞬时增量：
+            // 瞬时增量（marker < prev）会在用户中途反向/松手时立刻翻转 isBackward → 折叠镜像瞬间
+            // 跳到另一边。相对锚点判定只在 marker 越过 anchor、那次折叠归零（不可见）时才翻转 → 反向平滑。
+            val marker = position + positionOffset
+            // 锚点：仅在静止（吸附到整数）时更新为当前停留页；转场期间保持不变
+            if (kotlin.math.abs(marker - kotlin.math.round(marker)) < 0.02f) {
+                animState.anchorPage = currentPage
+            }
+            animState.isBackward = marker < animState.anchorPage
+            // 导航进度 = 滚动标记 - 锚点（Kototoro resolveAdvancedNavigationProgress）
+            animState.navigationProgress = (marker - animState.anchorPage).coerceIn(-1f, 1f)
+            if (mode == 1 || animationMode >= 2) {
+                LogCollector.i("ReaderAnim", "scroll p=$position off=$positionOffset marker=$marker nav=${animState.navigationProgress} anchor=${animState.anchorPage} mode=$mode anim=$animationMode bw=${animState.isBackward}")
+            }
+        }
+
         override fun onPageSelected(position: Int) {
             val page = if (isDoublePage) position * 2 else position
             currentPage = page.coerceIn(0, (source.size - 1).coerceAtLeast(0))
+            // 无动画模式：选中后锚点同步到新页，避免下次拖拽时还把上一页钉在中心
+            if (animationMode == 0) animState.anchorPage = currentPage
             ImportedMangaStore.update(applicationContext, manga.copy(lastReadPage = currentPage))
             refreshOverlay()
         }
     }
 
     private fun applyDirection() {
-        if (mode == 3) return
+        // Webtoon / 竖排 无左右方向概念
+        if (mode == 3 || mode == 2) return
         val isRtl = mode == 1
         val dir = if (isRtl) View.LAYOUT_DIRECTION_RTL else View.LAYOUT_DIRECTION_LTR
         binding.viewPager.layoutDirection = dir
@@ -217,8 +293,13 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun handleTap(x: Float, y: Float) {
         val w = binding.viewPager.width.toFloat()
         val h = binding.viewPager.height.toFloat()
-        if (w <= 0f) return
+        if (w <= 0f || h <= 0f) return
         if (y < h * 0.22f && x > w * 0.72f) { showMenu(); return }
+        if (mode == 2) {
+            // 竖排：点击上半=上一页，下半=下一页
+            turnPage(if (y >= h / 2f) 1 else -1)
+            return
+        }
         val isRtl = mode == 1
         val goNext = if (isRtl) x < w / 2f else x >= w / 2f
         turnPage(if (goNext) 1 else -1)
@@ -240,13 +321,14 @@ class MangaReaderActivity : AppCompatActivity() {
         }
     }
 
-    /** 动画 switch：0=无动画直接跳，其余走默认补间。仿真/高级暂未实现真翻页特效，退化为默认。 */
+    /** 动画开关：无动画(0)时点击/自动翻页直接跳（setCurrentItem 无平滑），其余模式走 transformer 补间。 */
     private fun animationSupportsAnim(): Boolean = animationMode != 0
 
     private fun goToPage(page: Int) {
         val p = page.coerceIn(0, (source.size - 1).coerceAtLeast(0))
         if (mode == 3) {
-            binding.webtoonList.scrollToPosition(p)
+            // Webtoon：定位到顶部（scrollToPosition 不保证贴顶）
+            (binding.webtoonList.layoutManager as? LinearLayoutManager)?.scrollToPositionWithOffset(p, 0)
             currentPage = p
             ImportedMangaStore.update(applicationContext, manga.copy(lastReadPage = p))
             refreshOverlay()
@@ -267,11 +349,101 @@ class MangaReaderActivity : AppCompatActivity() {
         }
         binding.btnMenu.setOnClickListener { showMenu() }
 
+        // 分页进度：只注册一次（applyPager 会重建 adapter，但回调挂在 viewPager 上，无需重复注册）
+        binding.viewPager.registerOnPageChangeCallback(pageChangeCallback)
+        // 手势：仿真记录折线触点（返回 false 不打断手势）
+        binding.viewPager.setOnTouchListener { _, e ->
+            if (animationMode == 3 && mode != 3) {
+                val size = if (mode == 2) binding.viewPager.width.toFloat() else binding.viewPager.height.toFloat()
+                if (size > 0f) {
+                    animState.foldStartFraction = ((if (mode == 2) e.x else e.y) / size).coerceIn(0f, 1f)
+                }
+            }
+            false
+        }
+        // 高级动画：保证叠放绘制顺序——按 translationZ 升序画（z 高者后画=在上层）。
+        // ViewPager2 重叠页的 z 排序不可靠，显式设置绘制回调后封面/卷曲的「上/下层」才稳定
+        (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)?.setChildDrawingOrderCallback(
+            object : androidx.recyclerview.widget.RecyclerView.ChildDrawingOrderCallback {
+                override fun onGetChildDrawingOrder(count: Int, i: Int): Int {
+                    if (count <= 1) return i
+                    val rv = binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView ?: return i
+                    return (0 until count).sortedBy { rv.getChildAt(it).translationZ }[i]
+                }
+            }
+        )
+        // Webtoon 滚动进度：滚动时更新当前页/进度条/lastReadPage
+        binding.webtoonList.addOnScrollListener(object : androidx.recyclerview.widget.RecyclerView.OnScrollListener() {
+            override fun onScrolled(rv: androidx.recyclerview.widget.RecyclerView, dx: Int, dy: Int) {
+                updateFromWebtoonScroll()
+            }
+        })
+        // Webtoon 点击 = 平滑定位到每页开始位置；长按 = 预览（与分页模式一致）
+        webtoonTapDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
+            override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+                if (mode != 3) return false
+                webtoonTapToPage(e.y, e.x)
+                return true
+            }
+
+            override fun onLongPress(e: MotionEvent) {
+                if (mode != 3) return
+                lastInteractionMs = SystemClock.elapsedRealtime()
+                openPagePreview()
+            }
+        })
+        binding.webtoonList.setOnTouchListener { _, e ->
+            webtoonTapDetector?.onTouchEvent(e)
+            false // 不消费，交给 RecyclerView 正常滚动
+        }
+
         binding.readerProgress.onSeek = { page -> goToPage(page) }
         binding.readerProgress.onLongPress = {
             lastInteractionMs = SystemClock.elapsedRealtime()
             openPagePreview()
         }
+    }
+
+    /** Webtoon 模式滚动后：把当前可见页同步到 currentPage / 进度条 / 断点续读。 */
+    private fun updateFromWebtoonScroll() {
+        if (mode != 3) return
+        val lm = binding.webtoonList.layoutManager as? androidx.recyclerview.widget.LinearLayoutManager ?: return
+        val first = lm.findFirstVisibleItemPosition()
+        if (first == androidx.recyclerview.widget.RecyclerView.NO_POSITION) return
+        val page = first.coerceIn(0, (source.size - 1).coerceAtLeast(0))
+        if (page == currentPage) return
+        currentPage = page
+        ImportedMangaStore.update(applicationContext, manga.copy(lastReadPage = currentPage))
+        refreshOverlay()
+    }
+
+    /** Webtoon 点击：点下半屏=平滑滚动到下一页顶部，上半屏=上一页顶部；右上角菜单位仍弹菜单。 */
+    private fun webtoonTapToPage(y: Float, x: Float) {
+        val w = binding.webtoonList.width.toFloat()
+        val h = binding.webtoonList.height.toFloat()
+        if (w <= 0f || h <= 0f) return
+        if (y < h * 0.22f && x > w * 0.72f) { showMenu(); return }
+        val lm = binding.webtoonList.layoutManager as? androidx.recyclerview.widget.LinearLayoutManager ?: return
+        val cur = lm.findFirstVisibleItemPosition()
+        if (cur == androidx.recyclerview.widget.RecyclerView.NO_POSITION) return
+        val delta = if (y >= h / 2f) 1 else -1
+        webtoonSmoothScrollToTop((cur + delta).coerceIn(0, (source.size - 1).coerceAtLeast(0)))
+        lastInteractionMs = SystemClock.elapsedRealtime()
+    }
+
+    /** Webtoon 平滑滚动到指定页顶部（Koto 式点击定位每页开始位置）。 */
+    private fun webtoonSmoothScrollToTop(page: Int) {
+        val rv = binding.webtoonList
+        val lm = rv.layoutManager as? androidx.recyclerview.widget.LinearLayoutManager ?: return
+        // 页面一般已预取可见：精确贴顶 = 平滑滚动 targetView.top 像素（其顶部对齐可视区顶）
+        val targetView = lm.findViewByPosition(page)
+        if (targetView != null && targetView.top != 0) {
+            rv.smoothScrollBy(0, targetView.top)
+            return
+        }
+        val scroller = object : LinearSmoothScroller(this) {}
+        scroller.targetPosition = page
+        lm.startSmoothScroll(scroller)
     }
 
     private fun refreshOverlay() {
@@ -281,10 +453,6 @@ class MangaReaderActivity : AppCompatActivity() {
 
     private fun openPagePreview() {
         ReaderPagePreviewDialog(this, source, currentPage) { page ->
-            binding.webtoonList.adapter?.let {
-                // webtoon 直接用 scroll
-                binding.webtoonList.scrollToPosition(page)
-            }
             goToPage(page)
             refreshOverlay()
         }.show()
@@ -317,6 +485,8 @@ class MangaReaderActivity : AppCompatActivity() {
                     mode = m
                     applyPager()
                     goToPage(currentPage)
+                    // Webtoon ↔ 分页切换后重算自动翻页（webtoon 禁用、分页按开关恢复）
+                    updateAutoTurn()
                 },
                 onAnimation = { a -> prefs.edit().putInt(KEY_ANIM, a).apply(); animationMode = a; applyAnimation() },
                 onBackground = { b -> prefs.edit().putInt(KEY_BG, b).apply(); bgMode = b; applyBackground() },

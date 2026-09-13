@@ -60,12 +60,18 @@ class ReaderProgressBar @JvmOverloads constructor(
         }
 
     private var tracking = false
+    private var dragging = false
     private var longPressTriggered = false
     private var downX = 0f
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
 
     private val longPressCallback = Runnable {
         longPressTriggered = true
+        // 长按反馈动画：进度条轻微脉冲（变粗+闪烁后还原）
+        animate().scaleX(1.12f).scaleY(1.5f).alpha(0.7f).setDuration(90L)
+            .withEndAction {
+                animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(90L).start()
+            }.start()
         onLongPress?.invoke()
     }
 
@@ -82,20 +88,22 @@ class ReaderProgressBar @JvmOverloads constructor(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                // 按下不移动滑块：避免长按预览时进度条被误移位
                 tracking = true
+                dragging = false
                 longPressTriggered = false
                 downX = event.x
-                updateFromX(event.x)
                 postDelayed(longPressCallback, 500)
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
-                if (tracking) {
-                    if (abs(event.x - downX) > touchSlop) {
-                        removeCallbacks(longPressCallback)
-                        downX = event.x
-                    }
+                if (tracking && !longPressTriggered && dragging) {
+                    // 拖动：跟随手指实时移动
                     updateFromX(event.x)
+                } else if (tracking && !dragging && abs(event.x - downX) > touchSlop) {
+                    // 越过 slop → 判定为拖动，取消长按
+                    dragging = true
+                    removeCallbacks(longPressCallback)
                 }
                 return true
             }
@@ -103,10 +111,12 @@ class ReaderProgressBar @JvmOverloads constructor(
                 if (tracking) {
                     removeCallbacks(longPressCallback)
                     if (!longPressTriggered) {
+                        // 点击（或拖动结束）→ 按当前位置寻页
                         updateFromX(event.x)
                         onSeek?.invoke(currentPage)
                     }
                     tracking = false
+                    dragging = false
                 }
                 return true
             }

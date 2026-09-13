@@ -13,7 +13,7 @@ import java.io.FileOutputStream
 import java.util.zip.ZipFile
 
 /**
- * 导入逻辑：SAF 源 → 复制进 app 内部存储目录（filesDir/manga_import）→ 解封面 → 产出 ImportedManga。
+ * 导入逻辑：SAF 源 → 复制进应用专属目录（getExternalFilesDir/manga_import，Android/data 下）→ 解封面 → 产出 ImportedManga。
  *
  * 「导入即复制」策略彻底解除对源文件的依赖，源文件（SAF uri）用完即弃。
  */
@@ -27,7 +27,7 @@ object MangaImporter {
         (ImportedMangaStore.load(context).maxOfOrNull { it.id } ?: 0L) + 1L
 
     private fun coverDir(context: Context): File =
-        File(context.filesDir, "covers")
+        StorageDirStore.coversDir(context)
 
     // ===== 导入压缩包 zip/cbz =====
 

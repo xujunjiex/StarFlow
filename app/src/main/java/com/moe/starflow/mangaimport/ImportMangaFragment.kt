@@ -20,6 +20,7 @@ import com.moe.starflow.databinding.FragmentImportMangaBinding
 import com.moe.starflow.mangaimport.data.ImportedManga
 import com.moe.starflow.mangaimport.data.ImportedMangaStore
 import com.moe.starflow.mangaimport.data.MangaImporter
+import com.moe.starflow.mangaimport.data.StorageDirStore
 import com.moe.starflow.mangaimport.reader.MangaReaderActivity
 import com.moe.starflow.mangaimport.ui.DisplayMode
 import com.moe.starflow.mangaimport.ui.DisplayOptionsSheet
@@ -37,7 +38,7 @@ import java.io.File
  * 展示导入漫画清单网格，支持导入（文件/文件夹）、显示选项、长按多选管理（Koto 式：
  * 重命名/标为已读/标为未读/删除，删除会一并删掉 app 内部存储的本地副本）。
  *
- * 导入的漫画固定复制进 app 内部存储（filesDir/manga_import），无需任何存储权限；
+ * 导入的漫画固定复制进应用专属目录（getExternalFilesDir/manga_import，Android/data 下），无需任何存储权限；
  * 源文件通过 SAF 选择器选取，导入即复制、用完即弃。
  */
 class ImportMangaFragment : Fragment() {
@@ -131,6 +132,15 @@ class ImportMangaFragment : Fragment() {
         }
 
         refresh()
+
+        // 一次性迁移：旧版存放在 filesDir（用户不可访问）的导入漫画搬到外部专属目录
+        // （Android/data/<pkg>/files），完成后刷新清单让新路径生效
+        viewLifecycleOwner.lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                StorageDirStore.migrate(requireContext())
+            }
+            refresh()
+        }
     }
 
     override fun onResume() {
@@ -179,6 +189,11 @@ class ImportMangaFragment : Fragment() {
     }
 
     private fun openReader(manga: ImportedManga) {
+        // 本地文件可能已被手动删除：先拦下，避免进阅读器读到「文件丢失」又退回
+        if (!File(manga.localRoot).exists()) {
+            UiUtils.showToast(requireContext(), getString(R.string.reader_file_lost))
+            return
+        }
         val intent = Intent(requireContext(), MangaReaderActivity::class.java)
         intent.putExtra(MangaReaderActivity.EXTRA_MANGA_ID, manga.id)
         startActivity(intent)
@@ -321,7 +336,7 @@ class ImportMangaFragment : Fragment() {
             .create().also { it.show(); it.window?.setBackgroundDrawableResource(R.drawable.dialog_background) }
     }
 
-    /** 删除导入的本地内容（app 内部存储 filesDir/manga_import/<id>/ 复制件 + 封面）。 */
+    /** 删除导入的本地内容（应用专属目录 getExternalFilesDir/manga_import/<id>/ 复制件 + 封面）。 */
     private fun deleteImportedFiles(manga: ImportedManga) {
         try {
             val local = File(manga.localRoot)
@@ -380,7 +395,10 @@ class ImportMangaFragment : Fragment() {
 
     private fun refresh() {
         val list0 = ImportedMangaStore.load(requireContext())
-        val list = if (sortByAdded) list0.sortedByDescending { it.addedAt } else list0.sortedBy { it.title }
+        // 推导「文件丢失」标记（瞬态，不入库）：localRoot 不存在 → lost=true。
+        // 放入 data class 参与 DiffUtil 相等比较，文件被删/恢复后对应格子自动重绘
+        val withLost = list0.map { m -> m.copy(lost = !File(m.localRoot).exists()) }
+        val list = if (sortByAdded) withLost.sortedByDescending { it.addedAt } else withLost.sortedBy { it.title }
         val cols = when (displayMode) {
             DisplayMode.GRID -> gridSize
             else -> 1

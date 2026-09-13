@@ -15,7 +15,7 @@
     <string name="import_manga_option_single_dir">导入单个漫画文件夹</string>
     <string name="import_manga_option_multi_dir">导入多个漫画文件夹</string>
     <string name="import_folder_hint">提示：部分机型系统文件选择器只允许选择「新建的文件夹」，若无法选择请先在系统选择器里新建一个文件夹</string>
-    <string name="import_storage_hint">已导入的漫画保存在应用内部存储：&#10;%1$s</string>
+    <string name="import_storage_hint">已导入的漫画保存在应用专属目录（Android/data 下，可通过文件管理器 / 数据线访问）：&#10;%1$s</string>
     <string name="browse">浏览</string>
     <string name="import_delete">删除</string>
     <string name="import_delete_selected_confirm">删除选中的 %1$d 部漫画？应用内副本将一并删除。</string>
@@ -31,6 +31,8 @@
     <string name="import_rename_hint">漫画名称</string>
     <string name="import_rename_empty">名称不能为空</string>
     <string name="import_read_badge">已读</string>
+    <string name="import_file_lost">文件丢失</string>
+    <string name="reader_file_lost">漫画文件已丢失，请删除该书</string>
     <string name="import_close_selection">关闭多选</string>
     <string name="select_all">全选</string>
     <string name="import_pages_count">%1$d 页</string>

@@ -10,6 +10,8 @@ package com.moe.starflow.mangaimport.data
  * @param description 用户添加的简介/备注，可为空
  * @param translatedPath 译文缓存路径（三态切换「译文」态用），阶段一恒为 null
  * @param lastReadPage 断点续读的阅读进度，阶段一仅保存/恢复页号
+ * @param lost 该条目本地文件是否已丢失（被手动删除等）。**瞬态标记，不入库**——由书架刷新时
+ *             按 `localRoot` 是否存在实时推导；`toJson` 不持久化，加载回的条目恒为 false。
  */
 data class ImportedManga(
     val id: Long,
@@ -22,5 +24,6 @@ data class ImportedManga(
     val sizeBytes: Long = 0,
     val description: String = "",
     val translatedPath: String? = null,
-    val lastReadPage: Int = 0
+    val lastReadPage: Int = 0,
+    val lost: Boolean = false
 )

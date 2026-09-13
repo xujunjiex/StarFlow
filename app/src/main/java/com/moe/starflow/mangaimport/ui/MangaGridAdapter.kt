@@ -149,6 +149,7 @@ class MangaGridAdapter(
         bindCover(
             coverView = h.binding.ivCover,
             readBadge = h.binding.tvReadBadge,
+            lostBadge = h.binding.tvLostBadge,
             dim = h.binding.viewSelectionDim,
             check = h.binding.ivSelectionCheck,
             root = h.binding.root,
@@ -187,6 +188,7 @@ class MangaGridAdapter(
         bindCover(
             coverView = h.binding.ivCover,
             readBadge = h.binding.tvReadBadge,
+            lostBadge = h.binding.tvLostBadge,
             dim = h.binding.viewSelectionDim,
             check = h.binding.ivSelectionCheck,
             root = h.binding.root,
@@ -194,17 +196,22 @@ class MangaGridAdapter(
         )
     }
 
-    /** 封面加载 + 已读徽章 + 多选勾选态 + 点击/长按（卡片与行共用）。 */
+    /** 封面加载 + 已读/文件丢失徽章 + 多选勾选态 + 点击/长按（卡片与行共用）。 */
     private fun bindCover(
         coverView: android.widget.ImageView,
         readBadge: View,
+        lostBadge: View,
         dim: View,
         check: View,
         root: View,
         item: ImportedManga
     ) {
-        val isRead = item.pageCount > 0 && item.lastReadPage >= item.pageCount - 1
+        val lost = item.lost
+        val isRead = !lost && item.pageCount > 0 && item.lastReadPage >= item.pageCount - 1
         readBadge.visibility = if (isRead) View.VISIBLE else View.GONE
+        lostBadge.visibility = if (lost) View.VISIBLE else View.GONE
+        // 文件丢失时封面压暗，提示为失效条目
+        coverView.alpha = if (lost) 0.35f else 1f
 
         val cover = item.coverPath?.let { File(it) }
         Glide.with(root)

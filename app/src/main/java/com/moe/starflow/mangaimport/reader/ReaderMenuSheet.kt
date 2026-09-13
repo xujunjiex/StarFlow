@@ -164,6 +164,15 @@ class ReaderMenuSheet(
         view.findViewById<TextView>(R.id.tv_rotate_value).text = state.rotateLabel
         view.findViewById<TextView>(R.id.tv_download_value).text = state.downloadLabel
 
+        // Webtoon 滚动模式下翻页动画/自动翻页不生效：禁用并置灰（切回分页模式自动恢复）
+        if (state.mode == 3) {
+            setSegEnabled(view.findViewById<ViewGroup>(R.id.seg_animation), false)
+            swAutoTurn.isEnabled = false
+            swAutoTurn.alpha = 0.4f
+            tvInterval.isEnabled = false
+            tvInterval.alpha = 0.4f
+        }
+
         // 调色
         val swInvert = view.findViewById<Switch>(R.id.sw_invert)
         val swGray = view.findViewById<Switch>(R.id.sw_grayscale)
@@ -238,6 +247,15 @@ class ReaderMenuSheet(
                 it.thumbTintList = ColorStateList.valueOf(0xFF55AEEA.toInt())
                 it.trackTintList = ColorStateList.valueOf(swTrack)
             }
+        }
+    }
+
+    /** 启用/禁用某分段容器内的所有子单元格（置灰用）。 */
+    private fun setSegEnabled(container: ViewGroup, enabled: Boolean) {
+        for (i in 0 until container.childCount) {
+            val cell = container.getChildAt(i)
+            cell.isEnabled = enabled
+            cell.alpha = if (enabled) 1f else 0.45f
         }
     }
 
