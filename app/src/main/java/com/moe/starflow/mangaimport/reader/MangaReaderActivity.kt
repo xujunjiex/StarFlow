@@ -479,10 +479,12 @@ class MangaReaderActivity : AppCompatActivity() {
         }
     }
 
-    /** 翻译/重翻当前页（在 IO 线程跑管线）。 */
-    private fun translateNow() {
+    /** 翻译/重翻当前页。 */
+    private fun translateNow() = translateNow(currentPage)
+
+    /** 翻译/重翻指定页（IO 线程跑管线）。 */
+    private fun translateNow(page: Int) {
         val controller = translationController ?: return
-        val page = currentPage
         lifecycleScope.launch(Dispatchers.IO) {
             controller.translatePage(
                 page,
@@ -490,6 +492,26 @@ class MangaReaderActivity : AppCompatActivity() {
                 onToast = { msg -> runOnUiThread { UiUtils.showToast(this@MangaReaderActivity, msg) } },
                 onVisual = { runOnUiThread { applyPageVisual(page) } },
             )
+        }
+    }
+
+    /** 重试全部失败页（顺序逐页翻；0 个失败时提示）。 */
+    private fun retryFailedPages() {
+        val controller = translationController ?: return
+        val failed = controller.records().filter { it.state == ImportedPageTranslation.STATE_FAILED }
+        if (failed.isEmpty()) {
+            UiUtils.showToast(this, getString(R.string.reader_translate_no_failed))
+            return
+        }
+        lifecycleScope.launch(Dispatchers.IO) {
+            for (row in failed) {
+                controller.translatePage(
+                    row.pageIndex,
+                    loadFull = { source.loadFull(it) },
+                    onToast = { msg -> runOnUiThread { UiUtils.showToast(this@MangaReaderActivity, msg) } },
+                    onVisual = { runOnUiThread { applyPageVisual(row.pageIndex) } },
+                )
+            }
         }
     }
 
@@ -558,7 +580,9 @@ class MangaReaderActivity : AppCompatActivity() {
                     rotateLabel = rotateLabel(),
                     downloadLabel = getString(R.string.reader_download_original),
                     isDarkPanel = dark,
-                    previewBitmap = previewBmp
+                    previewBitmap = previewBmp,
+                    translateMode = translationController?.translateMode?.value ?: 0,
+                    pageTranslations = translationController?.records() ?: emptyList()
                 ),
             ReaderMenuCallbacks(
                 onMode = { m ->
@@ -589,7 +613,12 @@ class MangaReaderActivity : AppCompatActivity() {
                 onSettings = {
                     startActivity(Intent(this@MangaReaderActivity, SettingPageActivity::class.java)
                         .putExtra(SettingPageActivity.EXTRA_FRAGMENT_TYPE, SettingPageActivity.TYPE_FRAGMENT_PERSONALIZATION))
-                }
+                },
+                onTranslateMode = { _ -> },   // 阶段一手动模式固定，无需动作
+                onTranslatePageJump = { page -> goToPage(page) },
+                onRetryFailedPages = { retryFailedPages() },
+                onRetranslateCurrent = { translateNow() },
+                onTranslatePageDetail = { _ -> }   // T7: 打开每页详情弹窗
             )
         )
         sheet.show(supportFragmentManager, ReaderMenuSheet.TAG)

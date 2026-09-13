@@ -2,17 +2,21 @@ package com.moe.starflow.mangaimport.reader
 
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageView
+import android.widget.RadioButton
 import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
+import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.moe.starflow.R
+import com.moe.starflow.data.ImportedPageTranslation
 
 /** 阅读器底部工具栏初始状态。mode:0=LTR 1=RTL 2=竖排 3=Webtoon；animation:0无 1默认 2高级 3仿真；bg:0默认 1浅 2深 3白 4黑 5自动。 */
 class ReaderMenuState(
@@ -25,7 +29,9 @@ class ReaderMenuState(
     val rotateLabel: String = "",
     val downloadLabel: String = "",
     val isDarkPanel: Boolean = false,
-    val previewBitmap: Bitmap? = null
+    val previewBitmap: Bitmap? = null,
+    val translateMode: Int = 0,                 // 0 手动 1 自动 2 增量（阶段一恒 0）
+    val pageTranslations: List<ImportedPageTranslation> = emptyList()  // 每页翻译记录快照
 )
 
 /** 阅读器底部工具栏回调。 */
@@ -38,7 +44,12 @@ class ReaderMenuCallbacks(
     val onResetColor: () -> Unit,
     val onRotate: () -> Unit,
     val onDownload: () -> Unit,
-    val onSettings: () -> Unit
+    val onSettings: () -> Unit,
+    val onTranslateMode: (Int) -> Unit = {},
+    val onTranslatePageJump: (Int) -> Unit = {},
+    val onTranslatePageDetail: (Int) -> Unit = {},
+    val onRetryFailedPages: () -> Unit = {},
+    val onRetranslateCurrent: () -> Unit = {},
 )
 
 /**
@@ -52,6 +63,12 @@ class ReaderMenuSheet(
 
     /** 面板深浅（随阅读背景切换即时更新）。 */
     private var darkPanel = state.isDarkPanel
+
+    private val pageAdapter by lazy {
+        ReaderPageStateAdapter(onJump = { cb.onTranslatePageJump(it) }, onDetail = { cb.onTranslatePageDetail(it) })
+    }
+    private var currentRecords: List<ImportedPageTranslation> = emptyList()
+    private var currentFilterKey = 0
 
     private fun systemDark(): Boolean =
         (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
@@ -164,6 +181,22 @@ class ReaderMenuSheet(
         view.findViewById<TextView>(R.id.tv_rotate_value).text = state.rotateLabel
         view.findViewById<TextView>(R.id.tv_download_value).text = state.downloadLabel
 
+        // 翻译面板：模式骨架（手动可用，自动/增量置灰）+ 汇总 + 过滤 + 每页列表 + 重试
+        currentRecords = state.pageTranslations
+        val rvPages = view.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rv_translate_pages)
+        rvPages.layoutManager = LinearLayoutManager(requireContext())
+        rvPages.adapter = pageAdapter
+        pageAdapter.rows = filteredRows()
+        val rbManual = view.findViewById<RadioButton>(R.id.translate_mode_manual)
+        rbManual.isChecked = state.translateMode == 0
+        view.findViewById<RadioButton>(R.id.translate_mode_auto).isEnabled = false
+        view.findViewById<RadioButton>(R.id.translate_mode_incremental).isEnabled = false
+        rbManual.setOnCheckedChangeListener { _, checked -> if (checked) cb.onTranslateMode(0) }
+        setupTranslateFilter(view)
+        updateSummary(currentRecords)
+        view.findViewById<View>(R.id.btn_retry_failed).setOnClickListener { cb.onRetryFailedPages() }
+        view.findViewById<View>(R.id.btn_retranslate_current).setOnClickListener { cb.onRetranslateCurrent() }
+
         // Webtoon 滚动模式下翻页动画/自动翻页不生效：禁用并置灰（切回分页模式自动恢复）
         if (state.mode == 3) {
             setSegEnabled(view.findViewById<ViewGroup>(R.id.seg_animation), false)
@@ -226,6 +259,7 @@ class ReaderMenuSheet(
         val subColor = if (dark) 0xFF9A9A9F.toInt() else 0xFF888888.toInt()
         listOf(
             R.id.tv_mode_label, R.id.tv_animation_label, R.id.tv_background_label,
+            R.id.tv_translate_mode_label, R.id.tv_translate_summary,
             R.id.tv_color_title, R.id.tv_color_inverted, R.id.tv_color_grayscale, R.id.tv_color_book,
             R.id.tv_brightness_label, R.id.tv_contrast_label,
             R.id.tv_rotate_label, R.id.tv_auto_turn_label, R.id.tv_download_label, R.id.tv_settings_label
@@ -233,7 +267,7 @@ class ReaderMenuSheet(
             view.findViewById<TextView>(id).setTextColor(labelColor)
         }
         listOf(
-            R.id.tv_translate_pending, R.id.tv_brightness_value, R.id.tv_contrast_value, R.id.tv_color_hint,
+            R.id.tv_brightness_value, R.id.tv_contrast_value, R.id.tv_color_hint,
             R.id.tv_rotate_value, R.id.tv_interval_value, R.id.tv_download_value
         ).forEach { id ->
             view.findViewById<TextView>(id).setTextColor(subColor)
@@ -339,6 +373,90 @@ class ReaderMenuSheet(
         override fun onStartTrackingTouch(seekBar: SeekBar?) {}
         override fun onStopTrackingTouch(seekBar: SeekBar?) {}
     }
+
+    // ===== 翻译面板：汇总 / 过滤 / 外部刷新 =====
+
+    private fun updateSummary(records: List<ImportedPageTranslation>) {
+        val s = records.count { it.state == ImportedPageTranslation.STATE_SUCCESS }
+        val t = records.count { it.state == ImportedPageTranslation.STATE_TRANSLATING }
+        val f = records.count { it.state == ImportedPageTranslation.STATE_FAILED }
+        view?.findViewById<TextView>(R.id.tv_translate_summary)?.text =
+            getString(R.string.reader_translate_summary, records.size, s, t, f)
+    }
+
+    /** 外部刷新入口（翻译任务开始/完成/失败后调用）。 */
+    fun notifyTranslateChanged(records: List<ImportedPageTranslation>) {
+        currentRecords = records
+        view?.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rv_translate_pages)?.adapter = pageAdapter
+        pageAdapter.rows = filteredRows()
+        updateSummary(currentRecords)
+    }
+
+    private fun filteredRows(): List<ImportedPageTranslation> = when (currentFilterKey) {
+        1 -> currentRecords.filter { it.state == ImportedPageTranslation.STATE_FAILED }
+        2 -> currentRecords.filter { it.state == ImportedPageTranslation.STATE_FAILED && it.failCode == "OCR_EMPTY" }
+        3 -> currentRecords.filter { it.state == ImportedPageTranslation.STATE_FAILED && it.failCode == "TRANSLATE_EMPTY" }
+        4 -> currentRecords.filter { it.state == ImportedPageTranslation.STATE_FAILED && it.failCode != "OCR_EMPTY" && it.failCode != "TRANSLATE_EMPTY" }
+        else -> currentRecords
+    }
+
+    private fun setupTranslateFilter(view: View) {
+        val row = view.findViewById<ViewGroup>(R.id.translate_filter_row)
+        row.removeAllViews()
+        val options = listOf(
+            0 to R.string.reader_translate_filter_all,
+            1 to R.string.reader_translate_filter_failed,
+            2 to R.string.reader_translate_filter_ocr,
+            3 to R.string.reader_translate_filter_translate,
+            4 to R.string.reader_translate_filter_exception,
+        )
+        for ((key, label) in options) {
+            val chip = TextView(requireContext()).apply {
+                text = getString(label)
+                textSize = 12f
+                setPadding(dp8 * 2, dp8, dp8 * 2, dp8)
+                tag = key
+                setOnClickListener {
+                    currentFilterKey = key
+                    refreshFilterChipStyle(row)
+                    pageAdapter.rows = filteredRows()
+                }
+            }
+            setChipStyle(chip, key == currentFilterKey)
+            row.addView(chip)
+        }
+    }
+
+    private fun refreshFilterChipStyle(row: ViewGroup) {
+        for (i in 0 until row.childCount) {
+            val tv = row.getChildAt(i) as? TextView ?: continue
+            setChipStyle(tv, (tv.tag as? Int) == currentFilterKey)
+        }
+    }
+
+    private fun setChipStyle(tv: TextView, selected: Boolean) {
+        val radius = 10f * resources.displayMetrics.density
+        val bg = GradientDrawable().apply {
+            cornerRadius = radius
+            setColor(
+                when {
+                    !selected -> 0
+                    darkPanel -> 0xFF2E3A45.toInt()
+                    else -> 0xFFE4E4E6.toInt()
+                }
+            )
+        }
+        tv.background = bg
+        tv.setTextColor(
+            when {
+                !selected -> if (darkPanel) 0xFF9A9A9F.toInt() else 0xFF888888.toInt()
+                darkPanel -> 0xFFB8D9FF.toInt()
+                else -> 0xFF1D6FB8.toInt()
+            }
+        )
+    }
+
+    private val dp8: Int get() = (8 * resources.displayMetrics.density).toInt().coerceAtLeast(1)
 
     companion object {
         const val TAG = "ReaderMenuSheet"
