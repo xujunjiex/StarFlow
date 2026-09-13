@@ -862,6 +862,8 @@
     <string name="reader_translate_load_failed">页面读取失败</string>
     <string name="reader_translate_ocr_empty">本页未识别到文字</string>
     <string name="reader_translate_empty">未生成译文</string>
+    <string name="reader_toggle_desc">切换 译文/原文/原图</string>
+    <string name="reader_translate_translating">翻译中…</string>
     <string name="reader_debug_placeholder">调试选项（不含 AI 超分）</string>
     <string name="reader_rotate">旋转屏幕</string>
     <string name="reader_rotate_portrait">竖屏</string>

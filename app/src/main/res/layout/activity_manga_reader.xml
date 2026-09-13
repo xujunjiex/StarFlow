@@ -151,4 +151,27 @@
             android:contentDescription="@string/reader_tab_translate"/>
     </FrameLayout>
 
+    <!-- 左下角三态切换按钮（方形圆角，仅当前页已翻译可见；点按循环 译文/原文/原图，长按开详情） -->
+    <FrameLayout
+        android:id="@+id/btn_toggle_translate"
+        android:layout_width="44dp"
+        android:layout_height="44dp"
+        android:layout_gravity="bottom|start"
+        android:layout_marginStart="20dp"
+        android:layout_marginBottom="62dp"
+        android:background="@drawable/bg_reader_toggle"
+        android:clickable="true"
+        android:visibility="gone"
+        android:contentDescription="@string/reader_toggle_desc">
+
+        <ImageView
+            android:id="@+id/iv_toggle_translate"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:layout_gravity="center"
+            android:src="@drawable/ic_reader_translate"
+            android:tint="#FFFFFF"
+            android:contentDescription="@string/reader_toggle_desc"/>
+    </FrameLayout>
+
 </FrameLayout>

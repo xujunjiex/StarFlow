@@ -718,6 +718,8 @@ Threshold for the large box filter. Detection boxes whose width, height, or area
     <string name="reader_translate_load_failed">Failed to read page</string>
     <string name="reader_translate_ocr_empty">No text detected on this page</string>
     <string name="reader_translate_empty">No translation produced</string>
+    <string name="reader_toggle_desc">Toggle translated/original/plain</string>
+    <string name="reader_translate_translating">Translating…</string>
     <string name="reader_debug_placeholder">Debug options (no AI super-resolution)</string>
     <string name="reader_rotate">Rotate screen</string>
     <string name="reader_rotate_portrait">Portrait</string>

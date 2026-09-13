@@ -133,6 +133,10 @@ class DoublePageAdapter(
         shared.visibleImage?.colorFilter = f?.toColorFilter()
     }
 
+    /** 最近绑定的页面图片（供阅读器内嵌翻译直接 setImageBitmap）。双页时近似取最近一张。 */
+    val visibleImage: ZoomableImageView?
+        get() = shared.visibleImage
+
     class VH(val binding: ItemReaderDoublePageBinding) : RecyclerView.ViewHolder(binding.root)
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH =

@@ -26,8 +26,11 @@ import androidx.recyclerview.widget.LinearSmoothScroller
 import androidx.viewpager2.widget.ViewPager2
 import com.moe.starflow.R
 import com.moe.starflow.databinding.ActivityMangaReaderBinding
+import com.moe.starflow.data.ImportedPageTranslation
+import com.moe.starflow.data.TranslationCacheManager
 import com.moe.starflow.mangaimport.data.ImportedManga
 import com.moe.starflow.mangaimport.data.ImportedMangaStore
+import com.moe.starflow.mangaimport.translate.ReaderTranslationController
 import com.moe.starflow.me.settings.SettingPageActivity
 import com.moe.starflow.utils.LogCollector
 import com.moe.starflow.utils.UiUtils
@@ -90,6 +93,7 @@ class MangaReaderActivity : AppCompatActivity() {
     /** 仿真/高级动画共享状态（折线触点 + 翻页方向）。 */
     private val animState = ReaderAnimationState()
     private var webtoonTapDetector: GestureDetector? = null
+    private var translationController: ReaderTranslationController? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -123,6 +127,14 @@ class MangaReaderActivity : AppCompatActivity() {
         applyPager()
 
         goToPage(manga.lastReadPage.coerceIn(0, (source.size - 1).coerceAtLeast(0)))
+
+        // 阅读器内嵌翻译：载入每页记录（含失败/成功态），接左下角三态按钮与右下角翻译按钮
+        translationController = ReaderTranslationController(this, manga, lifecycleScope)
+        lifecycleScope.launch {
+            translationController?.load()
+            refreshTranslationChrome()
+        }
+        setupTranslationUi()
     }
 
     override fun onStart() {
@@ -278,6 +290,8 @@ class MangaReaderActivity : AppCompatActivity() {
             if (animationMode == 0) animState.anchorPage = currentPage
             ImportedMangaStore.update(applicationContext, manga.copy(lastReadPage = currentPage))
             refreshOverlay()
+            refreshTranslationChrome()
+            applyPageVisual(currentPage)
         }
     }
 
@@ -344,9 +358,6 @@ class MangaReaderActivity : AppCompatActivity() {
         binding.btnBack.setOnClickListener { finish() }
         binding.btnPrev.setOnClickListener { turnPage(-1) }
         binding.btnNext.setOnClickListener { turnPage(1) }
-        binding.btnTranslate.setOnClickListener {
-            UiUtils.showToast(this, getString(R.string.reader_translate_pending))
-        }
         binding.btnMenu.setOnClickListener { showMenu() }
 
         // 分页进度：只注册一次（applyPager 会重建 adapter，但回调挂在 viewPager 上，无需重复注册）
@@ -449,6 +460,76 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun refreshOverlay() {
         binding.tvPageIndicator.text = getString(R.string.reader_page_indicator, currentPage + 1, source.size)
         binding.readerProgress.setPage(currentPage, source.size)
+    }
+
+    // ===== 阅读器内嵌翻译 =====
+
+    /** 右下角翻译按钮 + 左下角三态按钮接线（逻辑走 ReaderTranslationController）。 */
+    private fun setupTranslationUi() {
+        val controller = translationController ?: return
+        binding.btnTranslate.setOnClickListener {
+            when (controller.stateOf(currentPage)) {
+                ImportedPageTranslation.STATE_TRANSLATING ->
+                    UiUtils.showToast(this, getString(R.string.reader_translate_translating))
+                else -> translateNow()   // 未翻译/失败→翻译；已成功→重翻
+            }
+        }
+        binding.btnToggleTranslate.setOnClickListener {
+            controller.cycleVisual(currentPage) { applyPageVisual(currentPage) }
+        }
+    }
+
+    /** 翻译/重翻当前页（在 IO 线程跑管线）。 */
+    private fun translateNow() {
+        val controller = translationController ?: return
+        val page = currentPage
+        lifecycleScope.launch(Dispatchers.IO) {
+            controller.translatePage(
+                page,
+                loadFull = { source.loadFull(it) },
+                onToast = { msg -> runOnUiThread { UiUtils.showToast(this@MangaReaderActivity, msg) } },
+                onVisual = { runOnUiThread { applyPageVisual(page) } },
+            )
+        }
+    }
+
+    /** 同步三态按钮可见性（仅当前页已翻译显示）。 */
+    private fun refreshTranslationChrome() {
+        val controller = translationController ?: return
+        binding.btnToggleTranslate.visibility =
+            if (controller.stateOf(currentPage) == ImportedPageTranslation.STATE_SUCCESS) View.VISIBLE else View.GONE
+    }
+
+    /** 把当前页显示切到 controller 指定态（译文/原文/原图）。 */
+    private fun applyPageVisual(pageIndex: Int) {
+        val controller = translationController ?: return
+        if (pageIndex != currentPage) return
+        val mode = if (controller.stateOf(pageIndex) == ImportedPageTranslation.STATE_SUCCESS)
+            controller.currentVisual(pageIndex) else null
+        if (mode == null || mode == TranslationCacheManager.OverlayMode.PLAIN) {
+            reloadOriginal(pageIndex)
+            return
+        }
+        lifecycleScope.launch(Dispatchers.IO) {
+            val bmp = controller.visualBitmap(pageIndex, mode) { source.loadFull(it) }
+            runOnUiThread {
+                if (pageIndex != currentPage) return@runOnUiThread
+                val img = pageAdapter?.visibleImage ?: doubleAdapter?.visibleImage ?: return@runOnUiThread
+                if (bmp != null) img.setImageBitmap(bmp)
+            }
+        }
+    }
+
+    /** 显示原图（无译文态时回退）。 */
+    private fun reloadOriginal(pageIndex: Int) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val bmp = source.loadFull(pageIndex)
+            runOnUiThread {
+                if (pageIndex != currentPage) return@runOnUiThread
+                val img = pageAdapter?.visibleImage ?: doubleAdapter?.visibleImage ?: return@runOnUiThread
+                if (bmp != null) img.setImageBitmap(bmp)
+            }
+        }
     }
 
     private fun openPagePreview() {
