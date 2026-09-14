@@ -34,6 +34,6 @@
         android:layout_gravity="center_vertical"
         android:id="@+id/Introduce"
         android:gravity="start|center_vertical"
-        android:textSize="15sp">
+        android:textSize="18sp">
     </TextView>
 </LinearLayout>

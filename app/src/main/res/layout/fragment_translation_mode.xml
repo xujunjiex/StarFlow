@@ -100,6 +100,8 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
+                        android:maxLines="2"
+                        android:ellipsize="end"
                         android:text="@string/ocr_mode_description" />
 
                 </LinearLayout>
@@ -130,6 +132,8 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
+                        android:maxLines="2"
+                        android:ellipsize="end"
                         android:text="@string/pic_mode_description"
                         android:textColorHighlight="@android:color/transparent"/>
 
