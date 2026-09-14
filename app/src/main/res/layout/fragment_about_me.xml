@@ -62,15 +62,15 @@
                     android:layout_centerVertical="true"
                     android:src="@drawable/apiicon" />
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <TextView android:layout_marginEnd="48dp" android:singleLine="true" android:ellipsize="end"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_centerVertical="true"
                     android:layout_marginStart="20dp"
                     android:layout_toEndOf="@id/apiselect"
                     android:text="@string/translation_mode"
                     android:textColor="@color/text_secondary"
-                    android:textSize="20sp" />
+                    android:textSize="13sp" />
 
                 <ImageView
                     android:layout_width="40dp"
@@ -95,15 +95,15 @@
                     android:layout_centerVertical="true"
                     android:src="@drawable/apiset" />
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <TextView android:layout_marginEnd="48dp" android:singleLine="true" android:ellipsize="end"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_centerVertical="true"
                     android:layout_marginStart="20dp"
                     android:layout_toEndOf="@id/apiset"
                     android:text="@string/api_configuration"
                     android:textColor="@color/text_secondary"
-                    android:textSize="20sp" />
+                    android:textSize="13sp" />
 
                 <ImageView
                     android:layout_width="40dp"
@@ -128,15 +128,15 @@
                     android:layout_centerVertical="true"
                     android:src="@drawable/personalization" />
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <TextView android:layout_marginEnd="48dp" android:singleLine="true" android:ellipsize="end"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_centerVertical="true"
                     android:layout_marginStart="20dp"
                     android:layout_toEndOf="@id/themeset"
                     android:text="@string/personalization_setting"
                     android:textColor="@color/text_secondary"
-                    android:textSize="20sp" />
+                    android:textSize="13sp" />
 
                 <ImageView
                     android:layout_width="40dp"
@@ -161,15 +161,15 @@
                     android:layout_centerVertical="true"
                     android:src="@drawable/model_manage"/>
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <TextView android:layout_marginEnd="48dp" android:singleLine="true" android:ellipsize="end"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_centerVertical="true"
                     android:layout_marginStart="20dp"
                     android:layout_toEndOf="@id/modelicon"
                     android:text="@string/model_management"
                     android:textColor="@color/text_secondary"
-                    android:textSize="20sp"/>
+                    android:textSize="13sp"/>
 
                 <ImageView
                     android:layout_width="40dp"
@@ -194,15 +194,15 @@
                     android:layout_centerVertical="true"
                     android:src="@drawable/faq" />
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <TextView android:layout_marginEnd="48dp" android:singleLine="true" android:ellipsize="end"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_centerVertical="true"
                     android:layout_marginStart="20dp"
                     android:layout_toEndOf="@id/faq"
                     android:text="@string/faq_title"
                     android:textColor="@color/text_secondary"
-                    android:textSize="20sp" />
+                    android:textSize="13sp" />
 
                 <ImageView
                     android:layout_width="40dp"
@@ -242,15 +242,15 @@
                     android:layout_centerVertical="true"
                     android:src="@drawable/update"/>
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <TextView android:layout_marginEnd="48dp" android:singleLine="true" android:ellipsize="end"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_centerVertical="true"
                     android:layout_marginStart="20dp"
                     android:layout_toEndOf="@id/update"
                     android:text="@string/check_update"
                     android:textColor="@color/text_secondary"
-                    android:textSize="20sp"/>
+                    android:textSize="13sp"/>
 
                 <ImageView
                     android:layout_width="40dp"
@@ -275,15 +275,15 @@
                     android:layout_centerVertical="true"
                     android:src="@drawable/about_info"/>
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <TextView android:layout_marginEnd="48dp" android:singleLine="true" android:ellipsize="end"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_centerVertical="true"
                     android:layout_marginStart="20dp"
                     android:layout_toEndOf="@id/developer"
                     android:text="@string/about_page"
                     android:textColor="@color/text_secondary"
-                    android:textSize="20sp"/>
+                    android:textSize="13sp"/>
 
                 <ImageView
                     android:layout_width="40dp"
@@ -321,15 +321,15 @@
                     android:layout_centerVertical="true"
                     android:src="@drawable/log_icon"/>
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <TextView android:layout_marginEnd="48dp" android:singleLine="true" android:ellipsize="end"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_centerVertical="true"
                     android:layout_marginStart="20dp"
                     android:layout_toEndOf="@id/logicon"
                     android:text="@string/view_logs"
                     android:textColor="@color/text_secondary"
-                    android:textSize="20sp"/>
+                    android:textSize="13sp"/>
 
                 <ImageView
                     android:layout_width="40dp"

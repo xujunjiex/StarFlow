@@ -47,7 +47,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:text="@string/text_translate_engine_loading"
-                android:textSize="14sp"
+                android:textSize="13sp"
                 android:textStyle="bold" />
 
             <TextView
@@ -145,7 +145,7 @@
             android:lineSpacingExtra="3dp"
             android:minHeight="120dp"
             android:padding="12dp"
-            android:textSize="16sp" />
+            android:textSize="13sp" />
 
         <!-- 最近记录 -->
         <LinearLayout
@@ -160,7 +160,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:text="@string/text_translate_recent"
-                android:textSize="16sp"
+                android:textSize="13sp"
                 android:textStyle="bold" />
 
             <com.google.android.material.button.MaterialButton

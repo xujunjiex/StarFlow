@@ -18,7 +18,7 @@
             android:layout_height="wrap_content"
             android:paddingVertical="8dp"
             android:text="@string/hymt2_section_intro"
-            android:textSize="16sp"
+            android:textSize="13sp"
             android:textStyle="bold" />
 
         <TextView
@@ -37,7 +37,7 @@
             android:layout_height="wrap_content"
             android:paddingVertical="8dp"
             android:text="@string/hymt2_section_download"
-            android:textSize="16sp"
+            android:textSize="13sp"
             android:textStyle="bold" />
 
         <TextView
@@ -118,7 +118,7 @@
             android:layout_height="wrap_content"
             android:paddingVertical="8dp"
             android:text="@string/hymt2_section_params"
-            android:textSize="16sp"
+            android:textSize="13sp"
             android:textStyle="bold" />
 
         <!-- 提示词模板 -->
@@ -207,7 +207,7 @@
             android:layout_height="wrap_content"
             android:paddingVertical="14dp"
             android:text="@string/hymt2_sample_subtitle"
-            android:textSize="15sp"
+            android:textSize="13sp"
             android:textStyle="bold" />
 
         <!-- temperature | top_p（双列） -->

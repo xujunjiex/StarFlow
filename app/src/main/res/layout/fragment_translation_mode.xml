@@ -60,7 +60,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/choose_mode"
-            android:textSize="15sp"
+            android:textSize="13sp"
             app:layout_constraintTop_toBottomOf="@id/api_imageView"
             app:layout_constraintStart_toStartOf="parent" />
 
@@ -96,7 +96,7 @@
 						android:textStyle="bold"
                         android:textColorHighlight="@android:color/transparent"/>
 
-                    <TextView
+                    <TextView android:textSize="13sp" 
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
@@ -128,7 +128,7 @@
                         android:textSize="13sp"
                         android:textStyle="bold" />
 
-                    <TextView
+                    <TextView android:textSize="13sp" 
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
@@ -149,7 +149,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
             android:text="@string/screenshot_section_title"
-            android:textSize="15sp"
+            android:textSize="13sp"
             app:layout_constraintTop_toBottomOf="@id/modeGroup"
             app:layout_constraintStart_toStartOf="parent" />
 
@@ -159,7 +159,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
             android:text="@string/screenshot_section_desc"
-            android:textSize="14sp"
+            android:textSize="13sp"
             android:textColor="?android:textColorSecondary"
             app:layout_constraintTop_toBottomOf="@id/screenshot_title"
             app:layout_constraintStart_toStartOf="parent" />
@@ -199,7 +199,7 @@
 						android:textStyle="bold"
                         android:textColorHighlight="@android:color/transparent"/>
 
-                    <TextView
+                    <TextView android:textSize="13sp" 
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
@@ -227,10 +227,10 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/screenshot_method_accessibility"
-                        android:textSize="14sp"
+                        android:textSize="13sp"
                         android:textStyle="bold" />
 
-                    <TextView
+                    <TextView android:textSize="13sp" 
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"

@@ -63,7 +63,7 @@
                 android:layout_marginBottom="20dp"
                 android:text="@string/app_name"
                 android:textColor="@color/text_secondary"
-                android:textSize="30sp"
+                android:textSize="13sp"
                 app:layout_constraintBottom_toTopOf="@+id/imageView6"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintStart_toStartOf="parent" />
@@ -97,15 +97,15 @@
                         android:layout_centerVertical="true"
                         android:src="@drawable/idea" />
 
-                    <TextView
-                        android:layout_width="wrap_content"
+                    <TextView android:layout_marginEnd="48dp" android:singleLine="true" android:ellipsize="end"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_centerVertical="true"
                         android:layout_marginStart="20dp"
                         android:layout_toEndOf="@id/idea"
                         android:text="@string/feedback"
                         android:textColor="@color/text_secondary"
-                        android:textSize="20sp" />
+                        android:textSize="13sp" />
 
                     <ImageView
                         android:layout_width="40dp"
@@ -130,15 +130,15 @@
                         android:layout_centerVertical="true"
                         android:src="@drawable/github" />
 
-                    <TextView
-                        android:layout_width="wrap_content"
+                    <TextView android:layout_marginEnd="48dp" android:singleLine="true" android:ellipsize="end"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_centerVertical="true"
                         android:layout_marginStart="20dp"
                         android:layout_toEndOf="@id/git"
                         android:text="GitHub"
                         android:textColor="@color/text_secondary"
-                        android:textSize="20sp" />
+                        android:textSize="13sp" />
 
                     <ImageView
                         android:layout_width="40dp"
@@ -163,15 +163,15 @@
                         android:layout_centerVertical="true"
                         android:src="@drawable/opensource" />
 
-                    <TextView
-                        android:layout_width="wrap_content"
+                    <TextView android:layout_marginEnd="48dp" android:singleLine="true" android:ellipsize="end"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_centerVertical="true"
                         android:layout_marginStart="20dp"
                         android:layout_toEndOf="@id/os"
                         android:text="@string/open_source_statement"
                         android:textColor="@color/text_secondary"
-                        android:textSize="20sp" />
+                        android:textSize="13sp" />
 
                     <ImageView
                         android:layout_width="40dp"
@@ -195,15 +195,15 @@
                         android:layout_centerVertical="true"
                         android:src="@drawable/develop" />
 
-                    <TextView
-                        android:layout_width="wrap_content"
+                    <TextView android:layout_marginEnd="48dp" android:singleLine="true" android:ellipsize="end"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_centerVertical="true"
                         android:layout_marginStart="20dp"
                         android:layout_toEndOf="@id/debugModeIcon"
                         android:text="@string/debug_mode"
                         android:textColor="@color/primary"
-                        android:textSize="20sp"
+                        android:textSize="13sp"
                         android:textStyle="bold" />
                 </RelativeLayout>
 
@@ -232,7 +232,7 @@
                         android:layout_centerVertical="true"
                         android:text="@string/dev_debug_rtdetr"
                         android:textColor="@color/text_secondary"
-                        android:textSize="18sp" />
+                        android:textSize="13sp" />
 
                     <com.google.android.material.switchmaterial.SwitchMaterial
                         android:id="@+id/rtdetrDebugSwitch"
@@ -258,7 +258,7 @@
                         android:layout_centerVertical="true"
                         android:text="@string/dev_debug_mlkit"
                         android:textColor="@color/text_secondary"
-                        android:textSize="18sp" />
+                        android:textSize="13sp" />
 
                     <com.google.android.material.switchmaterial.SwitchMaterial
                         android:id="@+id/mlkitDebugSwitch"
@@ -284,7 +284,7 @@
                         android:layout_centerVertical="true"
                         android:text="@string/dev_debug_ppocrv5"
                         android:textColor="@color/text_secondary"
-                        android:textSize="18sp" />
+                        android:textSize="13sp" />
 
                     <com.google.android.material.switchmaterial.SwitchMaterial
                         android:id="@+id/ppocrv5DebugSwitch"
@@ -310,7 +310,7 @@
                         android:layout_centerVertical="true"
                         android:text="@string/dev_debug_ppocrv6"
                         android:textColor="@color/text_secondary"
-                        android:textSize="18sp" />
+                        android:textSize="13sp" />
 
                     <com.google.android.material.switchmaterial.SwitchMaterial
                         android:id="@+id/ppocrv6DebugSwitch"
@@ -336,7 +336,7 @@
                         android:layout_centerVertical="true"
                         android:text="@string/dev_debug_game"
                         android:textColor="@color/text_secondary"
-                        android:textSize="18sp" />
+                        android:textSize="13sp" />
 
                     <com.google.android.material.switchmaterial.SwitchMaterial
                         android:id="@+id/gameTranslateDebugSwitch"
@@ -361,7 +361,7 @@
                         android:layout_centerVertical="true"
                         android:text="@string/cache_marker_title"
                         android:textColor="@color/text_secondary"
-                        android:textSize="18sp" />
+                        android:textSize="13sp" />
 
                     <com.google.android.material.switchmaterial.SwitchMaterial
                         android:id="@+id/cache_marker_switch"
