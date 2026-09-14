@@ -59,6 +59,8 @@ class MenuDialogAdapter(ctx: Context, private var str: Array<String>, private va
         im.setImageResource(img[position])
         // 固定可读字号 17sp（按 menuScale 缩放）；两行值项由布局 wrap 自适应，不压缩不消失
         txt.textSize = 17f * menuScale
+        // UI 同步字体：列表项 getView 惰性 inflate，Factory2 覆盖不到，这里定点应用
+        com.moe.starflow.utils.FontSync.apply(txt)
         if (menuScale < 1f) {
             val iconSizePx = (40 * menuScale * density).toInt()
             im.layoutParams?.let { lp ->

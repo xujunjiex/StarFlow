@@ -266,6 +266,8 @@ class ReaderTranslationController(
         bgColor = cfg.bgColor,
         useOriginalText = mode == TranslationCacheManager.OverlayMode.ORIGINAL,
         verticalDirection = cfg.textDirection,
+        // 阅读器译图渲染也要用自定义结果字体（Custom_Result_Font），否则恒为系统字体
+        fontTypeface = OverlayRenderer.loadResultTypeface(context, customPrefs),
     )
 
     /** 翻译成功后预热译文图缓存并切到译文态。 */

@@ -98,6 +98,8 @@ class MangaReaderActivity : AppCompatActivity() {
     private var translationController: ReaderTranslationController? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // UI 同步字体（开关开启时）：挂 Factory2，inflate 即应用。须在 super.onCreate 前挂。
+        com.moe.starflow.utils.FontSync.install(this)
         super.onCreate(savedInstanceState)
         binding = ActivityMangaReaderBinding.inflate(layoutInflater)
         setContentView(binding.root)

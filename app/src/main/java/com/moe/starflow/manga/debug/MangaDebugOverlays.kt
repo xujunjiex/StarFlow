@@ -544,6 +544,7 @@ object MangaDebugOverlays {
             textSize = if (scrollable) 11f else 13f
             setPadding(24, 16, 24, 16)
             setBackgroundColor(android.graphics.Color.argb(200, 0, 0, 0))
+            com.moe.starflow.utils.FontSync.apply(this)
         }
 
         return if (scrollable) {
@@ -567,6 +568,7 @@ object MangaDebugOverlays {
             textSize = 18f
             gravity = android.view.Gravity.CENTER
             setBackgroundColor(android.graphics.Color.argb(180, 0, 0, 0))
+            com.moe.starflow.utils.FontSync.apply(this)
             setOnClickListener {
                 onToggle()
             }

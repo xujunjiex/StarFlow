@@ -38,38 +38,11 @@ abstract class BaseActivity : AppCompatActivity() {
         // 启用 Edge-to-Edge，一定要在super.onCreate之前调用
         enableEdgeToEdge()
         // 自定义 UI 字体（开关开启时）：LayoutInflater Factory2，inflate 即应用，
-        // 覆盖动态创建/列表项/弹窗等（比遍历 View 树稳定）
-        setupFontInflater()
+        // 覆盖动态创建/列表项/弹窗等（比遍历 View 树稳定）。必须在 super.onCreate 前挂。
+        com.moe.starflow.utils.FontSync.install(this)
         super.onCreate(savedInstanceState)
 
         window.isNavigationBarContrastEnforced = false
-    }
-
-    /**
-     * UI 同步字体开关开启时，给 LayoutInflater 挂 Factory2：
-     * inflate 出的 TextView 自动用自定义字体（Custom_Result_Font）。
-     * 开关默认关闭——字体只用于翻译结果。
-     */
-    private fun setupFontInflater() {
-        val prefs = com.moe.starflow.utils.CustomPreference.getInstance(this)
-        if (!prefs.getBoolean("ui_apply_custom_font", false)) return
-        val typeface = com.moe.starflow.manga.render.OverlayRenderer.loadResultTypeface(this, prefs) ?: return
-        try {
-            androidx.core.view.LayoutInflaterCompat.setFactory2(
-                layoutInflater,
-                object : android.view.LayoutInflater.Factory2 {
-                    override fun onCreateView(parent: View?, name: String, context: Context, attrs: android.util.AttributeSet): View? {
-                        val view = delegate.createView(parent, name, context, attrs)
-                        if (view is android.widget.TextView) view.typeface = typeface
-                        return view
-                    }
-                    override fun onCreateView(name: String, context: Context, attrs: android.util.AttributeSet): View? =
-                        onCreateView(null, name, context, attrs)
-                }
-            )
-        } catch (e: Exception) {
-            // AppCompat 已设 Factory2 时忽略（保持默认字体）
-        }
     }
 
     /**

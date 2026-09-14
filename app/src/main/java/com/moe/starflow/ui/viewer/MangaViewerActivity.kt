@@ -106,10 +106,11 @@ class MangaViewerActivity : AppCompatActivity() {
     private var currentPagePosition = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // UI 同步字体（开关开启时）：挂 Factory2，inflate 即应用。
+        // ⚠️ 必须在 super.onCreate 前挂——AppCompat 在 super.onCreate 里已 setFactory2，
+        // 之后再挂会抛 IllegalStateException 被静默吞掉 → 字体失效（旧实现踩过）。
+        com.moe.starflow.utils.FontSync.install(this)
         super.onCreate(savedInstanceState)
-
-        // UI 同步字体（开关开启时）：在首次 inflate 前挂 Factory2
-        setupFontInflater()
 
         // 全屏沉浸
         @Suppress("DEPRECATION")
@@ -131,32 +132,6 @@ class MangaViewerActivity : AppCompatActivity() {
 
         setupViews()
         loadData(clickedEntryId, entryIds)
-    }
-
-    /**
-     * UI 同步字体开关开启时给 LayoutInflater 挂 Factory2（inflate 即应用自定义字体）。
-     * 本类直接继承 AppCompatActivity（不经 BaseActivity），故单独处理。
-     */
-    private fun setupFontInflater() {
-        val prefs = com.moe.starflow.utils.CustomPreference.getInstance(this)
-        if (!prefs.getBoolean("ui_apply_custom_font", false)) return
-        val typeface = com.moe.starflow.manga.render.OverlayRenderer.loadResultTypeface(this, prefs) ?: return
-        try {
-            androidx.core.view.LayoutInflaterCompat.setFactory2(
-                layoutInflater,
-                object : android.view.LayoutInflater.Factory2 {
-                    override fun onCreateView(parent: android.view.View?, name: String, context: android.content.Context, attrs: android.util.AttributeSet): android.view.View? {
-                        val view = delegate.createView(parent, name, context, attrs)
-                        if (view is android.widget.TextView) view.typeface = typeface
-                        return view
-                    }
-                    override fun onCreateView(name: String, context: android.content.Context, attrs: android.util.AttributeSet): android.view.View? =
-                        onCreateView(null, name, context, attrs)
-                }
-            )
-        } catch (e: Exception) {
-            // AppCompat 已设 Factory2 时忽略
-        }
     }
 
     private fun setupViews() {
@@ -242,17 +217,17 @@ class MangaViewerActivity : AppCompatActivity() {
             val entry = getCurrentVariant()
             val originalPath = entry.originalImagePath
             if (originalPath.isNullOrEmpty() || !java.io.File(originalPath).exists()) {
-                com.moe.starflow.utils.UiUtils.showToast(this, "原图不可用")
+                com.moe.starflow.utils.UiUtils.showToast(this, getString(R.string.toast_original_unavailable))
                 return@setOnClickListener
             }
             val pageCache = pageCacheMap[entry.id]
             if (pageCache == null ||
                 pageCache.cropRight <= pageCache.cropLeft || pageCache.cropBottom <= pageCache.cropTop) {
-                com.moe.starflow.utils.UiUtils.showToast(this, "框选区域不可用")
+                com.moe.starflow.utils.UiUtils.showToast(this, getString(R.string.toast_crop_unavailable))
                 return@setOnClickListener
             }
             if (!com.moe.starflow.manga.OcrLock.tryAcquire()) {
-                com.moe.starflow.utils.UiUtils.showToast(this, "翻译进行中，请稍后")
+                com.moe.starflow.utils.UiUtils.showToast(this, getString(R.string.toast_translating_wait))
                 return@setOnClickListener
             }
             performRetranslate(entry, pageCache, originalPath)
@@ -546,7 +521,11 @@ class MangaViewerActivity : AppCompatActivity() {
         val updatedStr = fullDateFormat.format(Date(entry.updatedAt))
         // 64-bit 跟历史列表一致（pHash 段），高位不被截断
         val phashStr = if (entry.pHash != 0L) "pHash:${String.format("%016X", entry.pHash)}" else ""
-        binding.tvTranslationInfo.text = "$fullInfo\n尺寸: $dimStr  |  ${entry.sourceLang} → ${entry.targetLang}  |  $timeStr\n创建: $createdStr\n修改: $updatedStr\n$phashStr"
+        binding.tvTranslationInfo.text = "$fullInfo\n" +
+            getString(R.string.manga_viewer_size_line, dimStr, entry.sourceLang, entry.targetLang, timeStr) +
+            "\n" + getString(R.string.history_created_format, createdStr) +
+            "\n" + getString(R.string.history_updated_format, updatedStr) +
+            "\n$phashStr"
 
         val detailList = buildDetailList(entry)
         LogCollector.d(TAG, "expandPanel: detailList size=${detailList.size}")
@@ -766,7 +745,7 @@ class MangaViewerActivity : AppCompatActivity() {
         originalPath: String
     ) {
         binding.btnRetranslate.isEnabled = false
-        com.moe.starflow.utils.UiUtils.showToast(this, "正在翻译...")
+        com.moe.starflow.utils.UiUtils.showToast(this, getString(R.string.toast_translating_now))
         lifecycleScope.launch {
             var originalBmp: Bitmap?
             try {
@@ -854,10 +833,10 @@ class MangaViewerActivity : AppCompatActivity() {
                 // 若详情面板展开，实时刷新译文详情
                 if (isPanelExpanded) expandPanel()
 
-                com.moe.starflow.utils.UiUtils.showToast(this@MangaViewerActivity, "重新翻译完成")
+                com.moe.starflow.utils.UiUtils.showToast(this@MangaViewerActivity, getString(R.string.toast_retranslate_done))
             } catch (e: Exception) {
                 LogCollector.e(TAG, "Retranslate failed", e)
-                com.moe.starflow.utils.UiUtils.showToast(this@MangaViewerActivity, e.message ?: "重新翻译失败")
+                com.moe.starflow.utils.UiUtils.showToast(this@MangaViewerActivity, e.message ?: getString(R.string.toast_retranslate_failed))
             } finally {
                 binding.btnRetranslate.isEnabled = true
                 com.moe.starflow.manga.OcrLock.release()

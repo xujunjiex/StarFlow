@@ -6,6 +6,7 @@ import com.moe.starflow.manga.engine.*
 import com.moe.starflow.manga.types.*
 import com.moe.starflow.manga.config.*
 import com.moe.starflow.translate.screenshot.*
+import com.moe.starflow.R
 
 import android.annotation.SuppressLint
 import android.content.Context
@@ -70,6 +71,7 @@ class GameDebugOverlay(private val context: Context) {
             setBackgroundColor(BG_COLOR)
             setPadding(paddingPx, paddingPx, paddingPx, paddingPx)
             text = "【空闲】等待截图..."
+            com.moe.starflow.utils.FontSync.apply(this)
         }
 
         val params = WindowManager.LayoutParams().apply {
@@ -134,6 +136,7 @@ class GameDebugOverlay(private val context: Context) {
             setBackgroundColor(BG_COLOR)
             setPadding(paddingPx, paddingPx, paddingPx, paddingPx)
             text = "暂无日志"
+            com.moe.starflow.utils.FontSync.apply(this)
         }
 
         val params = WindowManager.LayoutParams().apply {
@@ -177,7 +180,7 @@ class GameDebugOverlay(private val context: Context) {
     @SuppressLint("SetTextI18n")
     private fun refreshStatusHint() {
         val view = statusView ?: return
-        val hint = if (logVisible) "[点击折叠日志]" else "[点击展开日志]"
+        val hint = if (logVisible) context.getString(R.string.debug_log_collapse) else context.getString(R.string.debug_log_expand)
         view.text = "$currentStatusText\n$hint"
     }
 
@@ -206,7 +209,7 @@ class GameDebugOverlay(private val context: Context) {
     private fun refreshLogDisplay() {
         val view = logView ?: return
         if (logs.isEmpty()) {
-            view.text = "暂无日志"
+            view.text = context.getString(R.string.debug_no_logs)
             return
         }
         val sb = StringBuilder()

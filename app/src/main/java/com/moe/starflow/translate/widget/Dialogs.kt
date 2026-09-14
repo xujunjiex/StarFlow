@@ -144,18 +144,11 @@ object Dialogs {
 
     /**
      * UI 同步字体开关开启时，对 view 树递归应用自定义字体（Custom_Result_Font）。
-     * Service 悬浮菜单/对话框用（Activity 已由 BaseActivity 的 LayoutInflater Factory2 覆盖）。
-     * 开关关闭或无字体时为空操作。
+     * Service 悬浮菜单/对话框用（Activity 已由 FontSync 的 LayoutInflater Factory2 覆盖）。
+     * 开关关闭或无字体时为空操作。实现收敛到 utils/FontSync。
      */
     fun applyCustomFontToTree(ctx: Context, view: View) {
-        val prefs = com.moe.starflow.utils.CustomPreference.getInstance(ctx)
-        if (!prefs.getBoolean("ui_apply_custom_font", false)) return
-        val typeface = com.moe.starflow.manga.render.OverlayRenderer.loadResultTypeface(ctx, prefs) ?: return
-        fun apply(v: View) {
-            if (v is android.widget.TextView) v.typeface = typeface
-            if (v is ViewGroup) for (i in 0 until v.childCount) apply(v.getChildAt(i))
-        }
-        apply(view)
+        com.moe.starflow.utils.FontSync.applyToTree(view)
     }
 
     fun historyDialog(ctx: Context, items: List<HistoryItem>, onItemClick: (Int) -> Unit, onItemLongClick: ((Int) -> Unit)? = null): AlertDialog {
@@ -197,6 +190,8 @@ object Dialogs {
         @SuppressLint("ViewHolder")
         override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
             val v = inflater.inflate(R.layout.dialog_history_item, parent, false)
+            // UI 同步字体：列表项惰性 inflate，Factory2 覆盖不到，这里定点应用
+            com.moe.starflow.utils.FontSync.applyToTree(v)
             val item = items[position]
             v.findViewById<TextView>(R.id.history_time).text = item.time
             v.findViewById<TextView>(R.id.history_source).text = item.source
