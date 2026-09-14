@@ -34,7 +34,7 @@
             android:layout_height="1dp"
             android:layout_marginStart="12dp"
             android:layout_marginEnd="12dp"
-            android:background="#E8E8E8" />
+            android:background="@color/divider" />
 
         <TextView
             android:id="@+id/btn_add_custom"

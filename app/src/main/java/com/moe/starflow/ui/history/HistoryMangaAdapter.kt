@@ -182,10 +182,13 @@ class HistoryMangaAdapter(
 
             // 分组颜色
             val colorIdx = colorMap[entry.id] ?: 0
-            val bgColor = GROUP_COLORS.getOrElse(colorIdx) { GROUP_COLORS[0] }
             val card = itemView as? MaterialCardView
             if (card != null) {
-                card.setCardBackgroundColor(bgColor)
+                // 默认组（colorIdx==0）用主题表面色（深色模式不泛白），彩色组保留半透明淡彩
+                card.setCardBackgroundColor(
+                    if (colorIdx == 0) androidx.core.content.ContextCompat.getColor(itemView.context, R.color.surface)
+                    else GROUP_COLORS.getOrElse(colorIdx) { GROUP_COLORS[1] }
+                )
                 val strokeWidthPx = (1 * itemView.resources.displayMetrics.density).toInt()
                 card.strokeWidth = strokeWidthPx
                 card.strokeColor = androidx.core.content.ContextCompat.getColor(itemView.context, R.color.divider)

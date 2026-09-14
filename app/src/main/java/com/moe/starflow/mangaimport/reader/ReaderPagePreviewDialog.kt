@@ -38,7 +38,7 @@ class ReaderPagePreviewDialog(
             .create()
         rv.adapter = PreviewAdapter(source, currentPage, onSelect, dialog)
         dialog.show()
-        dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
+        dialog.window?.setBackgroundDrawableResource(R.drawable.bg_dialog_white)
         // 长按进度条打开的预览：内容淡入 + 轻微缩放进入动画
         try {
             view.alpha = 0f

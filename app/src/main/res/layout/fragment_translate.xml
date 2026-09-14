@@ -96,7 +96,7 @@
                     android:textSize="15sp"
                     android:textStyle="bold"
                     app:layout_constraintBottom_toTopOf="@id/engine_subtitle"
-                    app:layout_constraintEnd_toStartOf="@id/theme_btn"
+                    app:layout_constraintEnd_toStartOf="@id/help"
                     app:layout_constraintStart_toEndOf="@id/notice"
                     app:layout_constraintTop_toTopOf="parent"
                     app:layout_constraintVertical_chainStyle="packed"
@@ -116,7 +116,7 @@
                     android:textSize="15sp"
                     android:textStyle="bold"
                     app:layout_constraintBottom_toBottomOf="parent"
-                    app:layout_constraintEnd_toStartOf="@id/theme_btn"
+                    app:layout_constraintEnd_toStartOf="@id/help"
                     app:layout_constraintStart_toEndOf="@id/notice"
                     app:layout_constraintTop_toBottomOf="@id/selected_API"
                     tools:text="翻译模型：NLLB" />
@@ -125,24 +125,11 @@
                     android:id="@+id/help"
                     android:layout_width="48dp"
                     android:layout_height="48dp"
-                    android:layout_marginEnd="12dp"
+                    android:layout_marginEnd="16dp"
                     android:background="?attr/selectableItemBackgroundBorderless"
                     android:clickable="true"
                     android:padding="8dp"
                     android:src="@drawable/help"
-                    app:layout_constraintBottom_toBottomOf="parent"
-                    app:layout_constraintEnd_toStartOf="@id/theme_btn"
-                    app:layout_constraintTop_toTopOf="parent" />
-
-                <ImageView
-                    android:id="@+id/theme_btn"
-                    android:layout_width="48dp"
-                    android:layout_height="48dp"
-                    android:layout_marginEnd="16dp"
-                    android:background="?attr/selectableItemBackgroundBorderless"
-                    android:clickable="true"
-                    android:padding="12dp"
-                    android:src="@drawable/ic_theme_auto"
                     app:layout_constraintBottom_toBottomOf="parent"
                     app:layout_constraintEnd_toEndOf="parent"
                     app:layout_constraintTop_toTopOf="parent" />
@@ -288,6 +275,20 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toBottomOf="@id/language_card"
             app:layout_constraintWidth_percent="0.7" />
+
+        <!-- 主题三态切换（跟随系统/浅/暗）：放在「准备开始翻译」右侧 -->
+        <ImageView
+            android:id="@+id/theme_btn"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_marginEnd="8dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:clickable="true"
+            android:padding="12dp"
+            android:src="@drawable/ic_theme_auto"
+            app:layout_constraintBottom_toBottomOf="@id/start_button"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="@id/start_button" />
 
         <!-- 漫画翻译按钮 -->
         <com.google.android.material.button.MaterialButton

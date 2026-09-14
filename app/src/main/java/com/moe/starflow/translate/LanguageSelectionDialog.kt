@@ -37,6 +37,7 @@ class LanguageSelectionDialog(
     private val enabled: List<Boolean>? = null,
     private val onDisabledClick: ((CustomLocale) -> Unit)? = null,
     private val dark: Boolean = false,
+    private val lightBg: Int = R.drawable.dialog_background,
     private val onLanguageSelected: (CustomLocale) -> Unit)
 {
     fun show() {
@@ -95,6 +96,6 @@ class LanguageSelectionDialog(
         }
 
         dialog.show()
-        dialog.window?.setBackgroundDrawableResource(if (dark) R.drawable.bg_dialog_dark else R.drawable.dialog_background)
+        dialog.window?.setBackgroundDrawableResource(if (dark) R.drawable.bg_dialog_dark else lightBg)
     }
 }

@@ -125,7 +125,7 @@ class ReaderMenuSheet(
     private fun reapplySheetContainerBg() {
         (dialog as? BottomSheetDialog)
             ?.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
-            ?.setBackgroundResource(if (darkPanel) R.drawable.bg_bottom_sheet_dark else R.drawable.bg_bottom_sheet)
+            ?.setBackgroundResource(if (darkPanel) R.drawable.bg_bottom_sheet_dark else R.drawable.bg_bottom_sheet_light)
     }
 
     /** 重新读模型名到两行（onStart / prefs 变化时调用）。 */
@@ -502,6 +502,7 @@ class ReaderMenuSheet(
             ctx, type, locales,
             enabled = enabled,
             dark = darkPanel,
+            lightBg = R.drawable.bg_dialog_white,
             onDisabledClick = when (type) {
                 1 -> { loc ->
                     val supportedNames = OcrEngineGroup.entries
@@ -529,7 +530,7 @@ class ReaderMenuSheet(
             .setPositiveButton(R.string.user_known, null)
             .create()
         dlg.show()
-        dlg.window?.setBackgroundDrawableResource(if (darkPanel) R.drawable.bg_dialog_dark else R.drawable.dialog_background)
+        dlg.window?.setBackgroundDrawableResource(if (darkPanel) R.drawable.bg_dialog_dark else R.drawable.bg_dialog_white)
         if (darkPanel) recolorLang(dlg.window?.decorView)
     }
 

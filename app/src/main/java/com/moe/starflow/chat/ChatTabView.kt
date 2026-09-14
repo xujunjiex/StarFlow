@@ -104,7 +104,9 @@ class ChatTabView @JvmOverloads constructor(
             } else {
                 lp.gravity = Gravity.START
                 holder.bubble.setBackgroundResource(R.drawable.bg_chat_bubble_assistant)
-                holder.bubble.setTextColor(0xFF212121.toInt())
+                holder.bubble.setTextColor(
+                    androidx.core.content.ContextCompat.getColor(holder.bubble.context, R.color.text_primary)
+                )
             }
             holder.bubble.layoutParams = lp
         }

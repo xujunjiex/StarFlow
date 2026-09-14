@@ -763,7 +763,7 @@ class MangaReaderActivity : AppCompatActivity() {
         val view = LayoutInflater.from(this).inflate(R.layout.dialog_reader_download, null, false)
         val dialog = AlertDialog.Builder(this).setView(view).setNegativeButton(R.string.cancel, null).create()
         dialog.show()
-        dialog.window?.setBackgroundDrawableResource(if (dark) R.drawable.bg_dialog_dark else R.drawable.dialog_background)
+        dialog.window?.setBackgroundDrawableResource(if (dark) R.drawable.bg_dialog_dark else R.drawable.bg_dialog_white)
         if (dark) {
             fun recolor(v: View) {
                 if (v is android.widget.TextView) v.setTextColor(0xFFE2E2E4.toInt())

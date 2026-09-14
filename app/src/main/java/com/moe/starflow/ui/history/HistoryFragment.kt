@@ -258,7 +258,7 @@ class HistoryFragment : Fragment() {
             .setNegativeButton(android.R.string.cancel, null)
             .create()
             .apply {
-                window?.setBackgroundDrawableResource(R.drawable.dialog_background_light)
+                window?.setBackgroundDrawableResource(R.drawable.dialog_background)
                 show()
             }
     }
@@ -389,7 +389,7 @@ class HistoryFragment : Fragment() {
         onPositive: () -> Unit = {},
         onNegative: (() -> Unit)? = null
     ) {
-        val view = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_light, null)
+        val view = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_dark, null)
         val tvTitle = view.findViewById<TextView>(R.id.dialogTitle)
         val tvMessage = view.findViewById<TextView>(R.id.dialogMessage)
         val btnPositive = view.findViewById<TextView>(R.id.dialogBtnPositive)

@@ -107,7 +107,7 @@ class APIConfig : PreferenceFragmentCompat() {
                 findPreference<Preference>(key)?.let { pref ->
                     val origTitle = pref.title?.toString() ?: return@let
                     pref.title = android.text.SpannableString(origTitle).apply {
-                        setSpan(android.text.style.ForegroundColorSpan(android.graphics.Color.parseColor("#999999")), 0, origTitle.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        setSpan(android.text.style.ForegroundColorSpan(androidx.core.content.ContextCompat.getColor(requireContext(), R.color.text_tertiary)), 0, origTitle.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                         setSpan(android.text.style.RelativeSizeSpan(0.85f), 0, origTitle.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                     }
                 }
@@ -171,7 +171,7 @@ class APIConfig : PreferenceFragmentCompat() {
                 findPreference<Preference>(key)?.let { pref ->
                     val origTitle = pref.title?.toString() ?: return@let
                     pref.title = android.text.SpannableString(origTitle).apply {
-                        setSpan(android.text.style.ForegroundColorSpan(android.graphics.Color.parseColor("#999999")), 0, origTitle.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        setSpan(android.text.style.ForegroundColorSpan(androidx.core.content.ContextCompat.getColor(requireContext(), R.color.text_tertiary)), 0, origTitle.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                         setSpan(android.text.style.RelativeSizeSpan(0.85f), 0, origTitle.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                     }
                 }
@@ -461,7 +461,7 @@ class APIConfig : PreferenceFragmentCompat() {
                     key = manageKey
                     val manageTitle = getString(R.string.custom_api_manage)
                     title = android.text.SpannableString(manageTitle).apply {
-                        setSpan(android.text.style.ForegroundColorSpan(android.graphics.Color.parseColor("#999999")), 0, manageTitle.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        setSpan(android.text.style.ForegroundColorSpan(androidx.core.content.ContextCompat.getColor(requireContext(), R.color.text_tertiary)), 0, manageTitle.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                         setSpan(android.text.style.RelativeSizeSpan(0.85f), 0, manageTitle.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                     }
                     isIconSpaceReserved = true
@@ -535,7 +535,7 @@ class APIConfig : PreferenceFragmentCompat() {
                     key = manageKey
                     val manageTitle = getString(R.string.custom_api_manage)
                     title = android.text.SpannableString(manageTitle).apply {
-                        setSpan(android.text.style.ForegroundColorSpan(android.graphics.Color.parseColor("#999999")), 0, manageTitle.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                        setSpan(android.text.style.ForegroundColorSpan(androidx.core.content.ContextCompat.getColor(requireContext(), R.color.text_tertiary)), 0, manageTitle.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                         setSpan(android.text.style.RelativeSizeSpan(0.85f), 0, manageTitle.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                     }
                     isIconSpaceReserved = true
@@ -668,7 +668,7 @@ class APIConfig : PreferenceFragmentCompat() {
                 key = "ui_openai_provider_manage_$index"
                 val manageTitle = getString(R.string.manage_openai_provider, provider.name)
                 title = android.text.SpannableString(manageTitle).apply {
-                    setSpan(android.text.style.ForegroundColorSpan(android.graphics.Color.parseColor("#999999")), 0, manageTitle.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    setSpan(android.text.style.ForegroundColorSpan(androidx.core.content.ContextCompat.getColor(requireContext(), R.color.text_tertiary)), 0, manageTitle.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                     setSpan(android.text.style.RelativeSizeSpan(0.85f), 0, manageTitle.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                 }
                 isIconSpaceReserved = true

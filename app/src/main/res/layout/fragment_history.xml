@@ -73,7 +73,7 @@
         android:gravity="center_vertical"
         android:paddingHorizontal="12dp"
         android:paddingVertical="6dp"
-        android:background="#F5F9FC"
+        android:background="@color/surface_secondary"
         android:visibility="gone">
 
         <TextView

@@ -95,7 +95,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="变量说明"
-                        android:textColor="#616161"
+                        android:textColor="@color/text_secondary"
                         android:textStyle="bold" />
 
                     <TextView

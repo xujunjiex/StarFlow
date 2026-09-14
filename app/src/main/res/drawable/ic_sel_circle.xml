@@ -1,3 +1,3 @@
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
-    <solid android:color="#E8EEF5" />
+    <solid android:color="@color/surface_variant" />
 </shape>

@@ -51,7 +51,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:textColor="#AAAAAA"
+                android:textColor="@color/text_hint"
                 android:textSize="11sp"
                 android:maxLines="1" />
 
@@ -59,7 +59,7 @@
                 android:id="@+id/tv_time"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:textColor="#AAAAAA"
+                android:textColor="@color/text_hint"
                 android:textSize="11sp" />
         </LinearLayout>
     </LinearLayout>

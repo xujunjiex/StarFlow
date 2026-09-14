@@ -510,7 +510,7 @@ class OpenAIText :Fragment() {
                             (24 * density).toInt(),
                             (14 * density).toInt()
                         )
-                        setTextColor(if (isSelected) Color.parseColor("#55AEEA") else Color.parseColor("#333333"))
+                        setTextColor(if (isSelected) Color.parseColor("#55AEEA") else androidx.core.content.ContextCompat.getColor(requireContext(), R.color.text_primary))
                         isClickable = true
                         isFocusable = true
                         setBackgroundResource(R.drawable.ripple_item_bg)
@@ -540,7 +540,7 @@ class OpenAIText :Fragment() {
                             (24 * density).toInt(),
                             (14 * density).toInt()
                         )
-                        setTextColor(if (isSelected) Color.parseColor("#55AEEA") else Color.parseColor("#333333"))
+                        setTextColor(if (isSelected) Color.parseColor("#55AEEA") else androidx.core.content.ContextCompat.getColor(requireContext(), R.color.text_primary))
                         isClickable = true
                         isFocusable = true
                         setOnClickListener {
@@ -572,7 +572,7 @@ class OpenAIText :Fragment() {
                         val deleteBtn = TextView(context).apply {
                             text = "×"
                             textSize = 16f
-                            setTextColor(Color.parseColor("#999999"))
+                            setTextColor(androidx.core.content.ContextCompat.getColor(requireContext(), R.color.text_tertiary))
                             gravity = Gravity.CENTER
                             // 小的点击区域，无需背景色
                             setPadding(
@@ -642,7 +642,7 @@ class OpenAIText :Fragment() {
                             marginStart = (16 * density).toInt()
                             marginEnd = (16 * density).toInt()
                         }
-                        setBackgroundColor(Color.parseColor("#E8E8E8"))
+                        setBackgroundColor(androidx.core.content.ContextCompat.getColor(requireContext(), R.color.divider))
                     }
                     container.addView(divider)
                 }
