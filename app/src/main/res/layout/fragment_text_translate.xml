@@ -41,13 +41,13 @@
             android:layout_height="wrap_content"
             android:orientation="horizontal">
 
-            <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="14sp" android:autoSizeStepGranularity="1sp" 
+            <TextView android:ellipsize="end" android:maxLines="1" 
                 android:id="@+id/engineDisplay"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:text="@string/text_translate_engine_loading"
-                android:textSize="13sp"
+                android:textSize="14sp"
                 android:textStyle="bold" />
 
             <TextView
@@ -145,7 +145,7 @@
             android:lineSpacingExtra="3dp"
             android:minHeight="120dp"
             android:padding="12dp"
-            android:textSize="13sp" />
+            android:textSize="14sp" />
 
         <!-- 最近记录 -->
         <LinearLayout
@@ -155,12 +155,12 @@
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
-            <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="16sp" android:autoSizeStepGranularity="1sp" 
+            <TextView android:ellipsize="end" android:maxLines="1" 
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:text="@string/text_translate_recent"
-                android:textSize="13sp"
+                android:textSize="14sp"
                 android:textStyle="bold" />
 
             <com.google.android.material.button.MaterialButton
@@ -170,7 +170,7 @@
                 android:layout_height="wrap_content"
                 android:minHeight="0dp"
                 android:paddingHorizontal="8dp"
-                android:textSize="13sp" />
+                android:textSize="14sp" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/recentClearButton"
@@ -180,7 +180,7 @@
                 android:minHeight="0dp"
                 android:paddingHorizontal="8dp"
                 android:text="@string/text_translate_clear_recent"
-                android:textSize="13sp" />
+                android:textSize="14sp" />
         </LinearLayout>
 
         <LinearLayout
@@ -206,15 +206,15 @@
                 android:layout_height="wrap_content"
                 android:minHeight="0dp"
                 android:text="@string/text_translate_page_prev"
-                android:textSize="13sp" />
+                android:textSize="14sp" />
 
-            <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="13sp" android:autoSizeStepGranularity="1sp" 
+            <TextView android:ellipsize="end" android:maxLines="1" 
                 android:id="@+id/pageIndicator"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:gravity="center"
-                android:textSize="13sp" />
+                android:textSize="14sp" />
 
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/nextPageButton"
@@ -223,7 +223,7 @@
                 android:layout_height="wrap_content"
                 android:minHeight="0dp"
                 android:text="@string/text_translate_page_next"
-                android:textSize="13sp" />
+                android:textSize="14sp" />
         </LinearLayout>
     </LinearLayout>
     </ScrollView>

@@ -36,7 +36,7 @@
             android:focusable="true"
             android:focusableInTouchMode="true"
             android:textAppearance="?android:attr/textAppearanceListItem"
-            android:textSize="13sp" />
+            android:textSize="14sp" />
 
         <TextView
             android:id="@android:id/summary"

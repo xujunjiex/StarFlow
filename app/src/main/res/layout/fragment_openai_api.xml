@@ -49,7 +49,7 @@
                 android:id="@+id/providerNameText"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:textSize="13sp"
+                android:textSize="14sp"
                 android:textColor="@color/text_primary"
                 android:textStyle="bold"
                 android:visibility="gone" />
@@ -155,7 +155,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
                     android:text="@string/auto_append_path_title"
-                    android:textSize="13sp"
+                    android:textSize="14sp"
                     android:checked="true" />
 
             </LinearLayout>
@@ -210,7 +210,7 @@
                         android:layout_marginTop="4dp"
                         android:paddingVertical="12dp"
                         android:paddingHorizontal="4dp"
-                        android:textSize="13sp"
+                        android:textSize="14sp"
                         android:textColor="@color/text_primary"
                         android:background="?attr/selectableItemBackground"
                         android:drawableEnd="@drawable/baseline_expand_more"
@@ -257,7 +257,7 @@
                     android:layout_marginTop="4dp"
                     android:paddingVertical="12dp"
                     android:paddingHorizontal="4dp"
-                    android:textSize="13sp"
+                    android:textSize="14sp"
                     android:textColor="@color/text_primary"
                     android:background="?attr/selectableItemBackground"
                     android:drawableEnd="@drawable/baseline_expand_more"
@@ -321,7 +321,7 @@
                     android:layout_marginTop="4dp"
                     android:text="@string/reset_to_default"
                     android:textColor="@color/primary"
-                    android:textSize="13sp"
+                    android:textSize="14sp"
                     android:visibility="gone"
                     android:background="?attr/selectableItemBackground" />
 
@@ -361,7 +361,7 @@
                     android:layout_marginTop="4dp"
                     android:text="@string/reset_to_default"
                     android:textColor="@color/primary"
-                    android:textSize="13sp"
+                    android:textSize="14sp"
                     android:visibility="gone"
                     android:background="?attr/selectableItemBackground" />
 

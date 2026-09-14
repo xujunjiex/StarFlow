@@ -17,7 +17,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/model_group_mlkit"
-            android:textSize="13sp"
+            android:textSize="14sp"
             android:textStyle="bold"
             android:padding="4dp"
             android:layout_marginTop="8dp"
@@ -57,7 +57,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/model_built_in_label"
-                    android:textSize="13sp"
+                    android:textSize="14sp"
                     android:textColor="@color/success"/>
             </LinearLayout>
         </LinearLayout>
@@ -70,7 +70,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/model_group_ppocrv6"
-            android:textSize="13sp"
+            android:textSize="14sp"
             android:textStyle="bold"
             android:padding="4dp"
             android:layout_marginTop="16dp"
@@ -119,7 +119,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="small"
-                        android:textSize="13sp"/>
+                        android:textSize="14sp"/>
 
                     <TextView
                         android:layout_width="wrap_content"
@@ -134,7 +134,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/model_built_in_label"
-                    android:textSize="13sp"
+                    android:textSize="14sp"
                     android:textColor="@color/success"
                     android:layout_marginEnd="8dp"/>
 
@@ -173,7 +173,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="medium"
-                        android:textSize="13sp"/>
+                        android:textSize="14sp"/>
 
                     <TextView
                         android:layout_width="wrap_content"
@@ -197,7 +197,7 @@
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
     android:text="@string/model_detector"
-    android:textSize="13sp"
+    android:textSize="14sp"
     android:textStyle="bold"/>
 
             
@@ -209,7 +209,7 @@
                 android:layout_marginTop="6dp"
                 android:gravity="center_vertical">
 
-                <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="12sp" android:autoSizeStepGranularity="1sp"  android:maxLines="1" android:ellipsize="end" 
+                <TextView  android:maxLines="1" android:ellipsize="end" 
                     android:id="@+id/ppocrv6_medium_det_status"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
@@ -262,7 +262,7 @@
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
     android:text="@string/model_recognizer"
-    android:textSize="13sp"
+    android:textSize="14sp"
     android:textStyle="bold"/>
 
             <LinearLayout
@@ -272,7 +272,7 @@
                 android:layout_marginTop="6dp"
                 android:gravity="center_vertical">
 
-                <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="12sp" android:autoSizeStepGranularity="1sp"  android:maxLines="1" android:ellipsize="end" 
+                <TextView  android:maxLines="1" android:ellipsize="end" 
                     android:id="@+id/ppocrv6_medium_rec_status"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
@@ -329,7 +329,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/model_group_ppocrv5"
-            android:textSize="13sp"
+            android:textSize="14sp"
             android:textStyle="bold"
             android:padding="4dp"
             android:layout_marginTop="16dp"
@@ -365,7 +365,7 @@
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
     android:text="@string/model_detector"
-    android:textSize="13sp"
+    android:textSize="14sp"
     android:textStyle="bold"/>
 
             
@@ -377,7 +377,7 @@
                 android:layout_marginTop="6dp"
                 android:gravity="center_vertical">
 
-                <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="12sp" android:autoSizeStepGranularity="1sp"  android:maxLines="1" android:ellipsize="end" 
+                <TextView  android:maxLines="1" android:ellipsize="end" 
                     android:id="@+id/v5_det_status"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
@@ -440,7 +440,7 @@
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
     android:text="@string/model_recognizer_multi"
-    android:textSize="13sp"
+    android:textSize="14sp"
     android:textStyle="bold"/>
 
             <!-- 中日英 rec -->
@@ -448,7 +448,7 @@
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
     android:text="@string/model_lang_zhjaen"
-    android:textSize="13sp"
+    android:textSize="14sp"
     android:textStyle="bold"/>
 
             
@@ -460,7 +460,7 @@
                 android:layout_marginTop="6dp"
                 android:gravity="center_vertical">
 
-                <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="12sp" android:autoSizeStepGranularity="1sp"  android:maxLines="1" android:ellipsize="end" 
+                <TextView  android:maxLines="1" android:ellipsize="end" 
                     android:id="@+id/v5_rec_zh_status"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
@@ -536,7 +536,7 @@
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
     android:text="@string/model_lang_en"
-    android:textSize="13sp"
+    android:textSize="14sp"
     android:textStyle="bold"/>
 
             
@@ -548,7 +548,7 @@
                 android:layout_marginTop="6dp"
                 android:gravity="center_vertical">
 
-                <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="12sp" android:autoSizeStepGranularity="1sp"  android:maxLines="1" android:ellipsize="end" 
+                <TextView  android:maxLines="1" android:ellipsize="end" 
                     android:id="@+id/v5_rec_en_status"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
@@ -624,7 +624,7 @@
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
     android:text="@string/model_lang_ko"
-    android:textSize="13sp"
+    android:textSize="14sp"
     android:textStyle="bold"/>
 
             
@@ -636,7 +636,7 @@
                 android:layout_marginTop="6dp"
                 android:gravity="center_vertical">
 
-                <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="12sp" android:autoSizeStepGranularity="1sp"  android:maxLines="1" android:ellipsize="end" 
+                <TextView  android:maxLines="1" android:ellipsize="end" 
                     android:id="@+id/v5_rec_ko_status"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
@@ -712,7 +712,7 @@
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
     android:text="@string/model_lang_ru"
-    android:textSize="13sp"
+    android:textSize="14sp"
     android:textStyle="bold"/>
 
             
@@ -724,7 +724,7 @@
                 android:layout_marginTop="6dp"
                 android:gravity="center_vertical">
 
-                <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="12sp" android:autoSizeStepGranularity="1sp"  android:maxLines="1" android:ellipsize="end" 
+                <TextView  android:maxLines="1" android:ellipsize="end" 
                     android:id="@+id/v5_rec_ru_status"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
@@ -794,7 +794,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/model_group_rt_manga"
-            android:textSize="13sp"
+            android:textSize="14sp"
             android:textStyle="bold"
             android:padding="4dp"
             android:layout_marginTop="16dp"
@@ -830,7 +830,7 @@
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
     android:text="RT-DETR-V2"
-    android:textSize="13sp"
+    android:textSize="14sp"
     android:textStyle="bold"/>
 
             
@@ -842,7 +842,7 @@
                 android:layout_marginTop="6dp"
                 android:gravity="center_vertical">
 
-                <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="12sp" android:autoSizeStepGranularity="1sp"  android:maxLines="1" android:ellipsize="end" 
+                <TextView  android:maxLines="1" android:ellipsize="end" 
                     android:id="@+id/rtdetr_status"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
@@ -911,10 +911,10 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="manga-ocr"
-                    android:textSize="13sp"
+                    android:textSize="14sp"
                     android:textStyle="bold"/>
 
-                <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="12sp" android:autoSizeStepGranularity="1sp"  android:maxLines="1" android:ellipsize="end" 
+                <TextView  android:maxLines="1" android:ellipsize="end" 
                     android:id="@+id/manga_ocr_status"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"

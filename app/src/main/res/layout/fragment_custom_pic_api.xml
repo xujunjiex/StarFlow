@@ -47,7 +47,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:textSize="13sp"
+                    android:textSize="14sp"
                     android:text="@string/dont_know_custom">
                 </TextView>
 
@@ -96,7 +96,7 @@
                 android:orientation="vertical"
                 android:padding="16dp">
 
-                <TextView android:textSize="13sp" 
+                <TextView android:textSize="14sp" 
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/request_method"
@@ -125,7 +125,7 @@
                 android:orientation="vertical"
                 android:padding="16dp">
 
-                <TextView android:textSize="13sp" 
+                <TextView android:textSize="14sp" 
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Content-Type"
@@ -181,7 +181,7 @@
                 android:orientation="vertical"
                 android:padding="16dp">
 
-                <TextView android:textSize="13sp" 
+                <TextView android:textSize="14sp" 
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/query_parameters"
@@ -193,7 +193,7 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical" />
 
-                <TextView android:textSize="13sp" 
+                <TextView android:textSize="14sp" 
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
@@ -223,7 +223,7 @@
                 android:orientation="vertical"
                 android:padding="16dp">
 
-                <TextView android:textSize="13sp" 
+                <TextView android:textSize="14sp" 
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/headers"
@@ -259,7 +259,7 @@
                 android:orientation="vertical"
                 android:padding="16dp">
 
-                <TextView android:textSize="13sp" 
+                <TextView android:textSize="14sp" 
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/request_body"
@@ -271,7 +271,7 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical" />
 
-                <TextView android:textSize="13sp" 
+                <TextView android:textSize="14sp" 
                     android:id="@+id/txtBodyHint"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"

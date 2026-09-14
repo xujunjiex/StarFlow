@@ -60,7 +60,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/choose_mode"
-            android:textSize="13sp"
+            android:textSize="14sp"
             app:layout_constraintTop_toBottomOf="@id/api_imageView"
             app:layout_constraintStart_toStartOf="parent" />
 
@@ -88,15 +88,15 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical">
 
-                    <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="13sp" android:autoSizeStepGranularity="1sp"  android:ellipsize="end" android:maxLines="1" 
+                    <TextView  android:ellipsize="end" android:maxLines="1" 
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/ocr_mode"
-                        android:textSize="13sp"
+                        android:textSize="14sp"
 						android:textStyle="bold"
                         android:textColorHighlight="@android:color/transparent"/>
 
-                    <TextView android:textSize="13sp" 
+                    <TextView android:textSize="14sp" 
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
@@ -121,14 +121,14 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical">
 
-                    <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="13sp" android:autoSizeStepGranularity="1sp"  android:ellipsize="end" android:maxLines="1" 
+                    <TextView  android:ellipsize="end" android:maxLines="1" 
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/pic_mode"
-                        android:textSize="13sp"
+                        android:textSize="14sp"
                         android:textStyle="bold" />
 
-                    <TextView android:textSize="13sp" 
+                    <TextView android:textSize="14sp" 
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
@@ -149,7 +149,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
             android:text="@string/screenshot_section_title"
-            android:textSize="13sp"
+            android:textSize="14sp"
             app:layout_constraintTop_toBottomOf="@id/modeGroup"
             app:layout_constraintStart_toStartOf="parent" />
 
@@ -159,7 +159,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
             android:text="@string/screenshot_section_desc"
-            android:textSize="13sp"
+            android:textSize="14sp"
             android:textColor="?android:textColorSecondary"
             app:layout_constraintTop_toBottomOf="@id/screenshot_title"
             app:layout_constraintStart_toStartOf="parent" />
@@ -191,15 +191,15 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical">
 
-                    <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="13sp" android:autoSizeStepGranularity="1sp"  android:ellipsize="end" android:maxLines="1" 
+                    <TextView  android:ellipsize="end" android:maxLines="1" 
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/screenshot_method_mediaprojection"
-                        android:textSize="13sp"
+                        android:textSize="14sp"
 						android:textStyle="bold"
                         android:textColorHighlight="@android:color/transparent"/>
 
-                    <TextView android:textSize="13sp" 
+                    <TextView android:textSize="14sp" 
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
@@ -223,14 +223,14 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical">
 
-                    <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="14sp" android:autoSizeStepGranularity="1sp"  android:ellipsize="end" android:maxLines="1" 
+                    <TextView  android:ellipsize="end" android:maxLines="1" 
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/screenshot_method_accessibility"
-                        android:textSize="13sp"
+                        android:textSize="14sp"
                         android:textStyle="bold" />
 
-                    <TextView android:textSize="13sp" 
+                    <TextView android:textSize="14sp" 
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"

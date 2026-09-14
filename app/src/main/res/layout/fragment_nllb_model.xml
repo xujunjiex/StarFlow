@@ -39,7 +39,7 @@
                 android:layout_height="wrap_content"
                 android:text="@string/download_tips"
                 android:layout_marginTop="8dp"
-                android:textSize="13sp" />
+                android:textSize="14sp" />
 
             <TextView
                 android:id="@+id/download_hand_Text"
@@ -48,7 +48,7 @@
                 android:text="@string/download_manually"
                 android:layout_marginTop="8dp"
                 android:layout_marginBottom="15dp"
-                android:textSize="13sp" />
+                android:textSize="14sp" />
 
             <TextView
                 android:id="@+id/statusText"
@@ -56,7 +56,7 @@
                 android:layout_height="wrap_content"
                 android:gravity="center"
                 android:layout_marginBottom="8dp"
-                android:textSize="13sp" />
+                android:textSize="14sp" />
 
             <LinearLayout
                 android:layout_width="match_parent"

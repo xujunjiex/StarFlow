@@ -19,21 +19,21 @@
             android:gravity="center_vertical"
             android:padding="12dp">
 
-            <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="15sp" android:autoSizeMaxTextSize="18sp" android:autoSizeStepGranularity="1sp" 
+            <TextView android:ellipsize="end" android:maxLines="1" 
                 android:id="@+id/tv_title"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:textSize="13sp"
+                android:textSize="14sp"
                 android:textStyle="bold"
                 android:text="@string/import_manga_page"/>
 
-            <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="15sp" android:autoSizeStepGranularity="1sp" 
+            <TextView android:ellipsize="end" android:maxLines="1" 
                 android:id="@+id/tv_selection_count"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:textSize="13sp"
+                android:textSize="14sp"
                 android:textStyle="bold"
                 android:visibility="gone"/>
 
@@ -52,7 +52,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:padding="8dp"
-                android:textSize="13sp"
+                android:textSize="14sp"
                 android:clickable="true"
                 android:text="@string/display_options"/>
 
@@ -64,7 +64,7 @@
                 android:paddingTop="4dp"
                 android:paddingEnd="8dp"
                 android:paddingBottom="4dp"
-                android:textSize="13sp"
+                android:textSize="14sp"
                 android:textColor="@color/text_secondary"
                 android:clickable="true"
                 android:text="×"
@@ -298,7 +298,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/import_manga_empty_hint"
-                android:textSize="13sp"
+                android:textSize="14sp"
                 android:visibility="gone"
                 android:layout_gravity="center"/>
 
