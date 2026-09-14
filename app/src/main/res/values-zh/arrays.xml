@@ -180,4 +180,73 @@
         <item>0</item>
         <item>1</item>
     </string-array>
+
+    <!-- ===== 此前仅存在于 values/，中文环境回退英文 → 补全 ===== -->
+    <string-array name="context_count_entries">
+        <item>5 轮</item>
+        <item>8 轮</item>
+        <item>10 轮</item>
+        <item>12 轮</item>
+        <item>15 轮</item>
+        <item>20 轮</item>
+    </string-array>
+
+    <string-array name="context_count_values">
+        <item>5</item>
+        <item>8</item>
+        <item>10</item>
+        <item>12</item>
+        <item>15</item>
+        <item>20</item>
+    </string-array>
+
+    <string-array name="cache_count_entries">
+        <item>0（禁用）</item>
+        <item>20</item>
+        <item>50</item>
+        <item>100</item>
+        <item>200</item>
+        <item>500</item>
+    </string-array>
+
+    <string-array name="cache_count_values">
+        <item>0</item>
+        <item>20</item>
+        <item>50</item>
+        <item>100</item>
+        <item>200</item>
+        <item>500</item>
+    </string-array>
+
+    <string-array name="ball_action_entries">
+        <item>@string/ball_action_translate</item>
+        <item>@string/ball_action_menu</item>
+        <item>@string/ball_action_auto_translate</item>
+        <item>@string/ball_action_close</item>
+    </string-array>
+
+    <string-array name="ball_action_values">
+        <item>0</item>
+        <item>1</item>
+        <item>2</item>
+        <item>3</item>
+    </string-array>
+
+    <string-array name="screenshot_method_entries">
+        <item>@string/screenshot_method_mediaprojection</item>
+        <item>@string/screenshot_method_accessibility</item>
+    </string-array>
+
+    <string-array name="screenshot_method_values">
+        <item>0</item>
+        <item>1</item>
+    </string-array>
+
+    <string-array name="manga_ocr_version_entries">
+        <item>完整版 (460MB)</item>
+    </string-array>
+
+    <string-array name="manga_ocr_version_values">
+        <item>FULL</item>
+    </string-array>
 </resources>

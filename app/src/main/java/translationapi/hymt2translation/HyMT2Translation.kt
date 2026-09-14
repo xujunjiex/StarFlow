@@ -87,7 +87,7 @@ class HyMT2Translation(context: Context) : TranslationTextAPI {
                         } else 0L
                     }
                     if (nativeHandle == 0L) {
-                        callback(TranslationResult.Error(Exception("翻译引擎已释放")))
+                        callback(TranslationResult.Error(Exception(ctx.getString(R.string.error_hy_released))))
                         return@Thread
                     }
                     val s = HyMt2Params.read(CustomPreference.getInstance(ctx).getSharedPreferences())
@@ -114,7 +114,7 @@ class HyMT2Translation(context: Context) : TranslationTextAPI {
                     // native 超长 prompt 防御标记（token 超 context 时返回，避免 ggml_abort 闪退）
                     if (result == "__PROMPT_TOO_LONG__") {
                         LogCollector.e(TAG, "Hy-MT2 文本过长超过模型上下文，已拒绝翻译")
-                        callback(TranslationResult.Error(Exception("待翻译文本过长，超过模型上下文限制")))
+                        callback(TranslationResult.Error(Exception(ctx.getString(R.string.error_text_too_long))))
                         return@Thread
                     }
                     LogCollector.d(TAG, "Hy-MT2 native 调用耗时=${System.currentTimeMillis() - tNative0}ms")
@@ -122,7 +122,7 @@ class HyMT2Translation(context: Context) : TranslationTextAPI {
                     if (cancelled || currentEpoch != epoch) {
                         // 本任务已取消/被后续任务取代：丢弃结果
                         LogCollector.d(TAG, "Hy-MT2 翻译已取消，丢弃结果")
-                        callback(TranslationResult.Error(Exception("翻译已取消")))
+                        callback(TranslationResult.Error(Exception(ctx.getString(R.string.error_translation_cancelled))))
                     } else {
                         callback(TranslationResult.Success(result))
                     }
@@ -163,7 +163,7 @@ class HyMT2Translation(context: Context) : TranslationTextAPI {
             try {
                 val h = ensureLoaded()
                 if (h == 0L) {
-                    callback(TranslationResult.Error(Exception("模型未就绪")))
+                    callback(TranslationResult.Error(Exception(ctx.getString(R.string.error_model_not_ready))))
                     return@Thread
                 }
                 var registered = false
@@ -172,7 +172,7 @@ class HyMT2Translation(context: Context) : TranslationTextAPI {
                         if (handle != 0L && currentEpoch == epoch) { inFlight++; registered = true; handle } else 0L
                     }
                     if (nativeHandle == 0L) {
-                        callback(TranslationResult.Error(Exception("翻译引擎已释放")))
+                        callback(TranslationResult.Error(Exception(ctx.getString(R.string.error_hy_released))))
                         return@Thread
                     }
                     val cb = object : HyMt2StreamCallback {
@@ -184,7 +184,7 @@ class HyMT2Translation(context: Context) : TranslationTextAPI {
                         temperature, topP, topK, repetitionPenalty, maxTokens, cb
                     ).trim()
                     if (cancelled || currentEpoch != epoch) {
-                        callback(TranslationResult.Error(Exception("对话已取消")))
+                        callback(TranslationResult.Error(Exception(ctx.getString(R.string.error_chat_cancelled))))
                     } else {
                         callback(TranslationResult.Success(result))
                     }

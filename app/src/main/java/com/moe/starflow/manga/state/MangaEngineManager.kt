@@ -42,14 +42,21 @@ class MangaEngineManager(
         }
     }
 
+    /** OCR 引擎初始化角色标签（det/rec/det+rec）走本地化资源，避免英文模式下显示「检测器/识别器」。 */
+    private fun roleLabel(role: String): String = context.getString(when (role) {
+        "识别器" -> R.string.role_rec
+        "检测器" -> R.string.role_det
+        else -> R.string.role_det_rec
+    })
+
     fun initRTDetrV2() {
         scope.launch {
             try {
                 initRTDetrV2IfNeeded()
-                onShowToast("RT-DETR-V2 检测器初始化成功")
+                onShowToast(context.getString(R.string.engine_init_success, "RT-DETR-V2", context.getString(R.string.role_det)))
             } catch (e: Exception) {
                 LogCollector.e(TAG, "RT-DETR-V2 检测器初始化失败", e)
-                onShowToast("RT-DETR-V2 检测器初始化失败: ${e.message ?: "未知错误"}")
+                onShowToast(context.getString(R.string.engine_init_failed, "RT-DETR-V2", context.getString(R.string.role_det), e.message ?: context.getString(R.string.error_unknown)))
             }
         }
     }
@@ -65,7 +72,7 @@ class MangaEngineManager(
         } catch (e: Exception) {
             LogCollector.e(TAG, "initRTDetrV2IfNeeded: 初始化失败", e)
             withContext(Dispatchers.Main) {
-                onShowToast("RT-DETR-V2 检测器初始化失败: ${e.message}")
+                onShowToast(context.getString(R.string.engine_init_failed, "RT-DETR-V2", context.getString(R.string.role_det), e.message ?: ""))
             }
             throw e
         }
@@ -88,10 +95,10 @@ class MangaEngineManager(
         scope.launch {
             try {
                 initPPOcrV5IfNeeded()
-                onShowToast("PP-OCRv5${role}初始化成功")
+                onShowToast(context.getString(R.string.engine_init_success, "PP-OCRv5", roleLabel(role)))
             } catch (e: Exception) {
                 LogCollector.e(TAG, "PP-OCRv5${role}初始化失败", e)
-                onShowToast("PP-OCRv5${role}初始化失败: ${e.message ?: "未知错误"}")
+                onShowToast(context.getString(R.string.engine_init_failed, "PP-OCRv5", roleLabel(role), e.message ?: context.getString(R.string.error_unknown)))
             }
         }
     }
@@ -127,10 +134,10 @@ class MangaEngineManager(
         scope.launch {
             try {
                 initPPOcrV6IfNeeded()
-                onShowToast("PP-OCRv6${role}初始化成功")
+                onShowToast(context.getString(R.string.engine_init_success, "PP-OCRv6", roleLabel(role)))
             } catch (e: Exception) {
                 LogCollector.e(TAG, "PP-OCRv6${role}初始化失败", e)
-                onShowToast("PP-OCRv6${role}初始化失败: ${e.message ?: "未知错误"}")
+                onShowToast(context.getString(R.string.engine_init_failed, "PP-OCRv6", roleLabel(role), e.message ?: context.getString(R.string.error_unknown)))
             }
         }
     }
@@ -202,7 +209,7 @@ class MangaEngineManager(
         }
         LogCollector.d(TAG, "ensureMangaOcrInitialized: manga-ocr 初始化完成")
         withContext(Dispatchers.Main) {
-            onShowToast("manga-ocr 识别器初始化成功")
+            onShowToast(context.getString(R.string.engine_init_success, "manga-ocr", context.getString(R.string.role_rec)))
         }
     }
 }

@@ -10,6 +10,7 @@ import com.moe.starflow.manga.*
 import com.moe.starflow.manga.types.*
 import com.moe.starflow.manga.config.*
 import android.content.Context
+import com.moe.starflow.R
 import com.moe.starflow.utils.LogCollector
 import java.io.File
 
@@ -123,7 +124,7 @@ object MangaOcrModelFiles {
     fun getModelSizeString(context: Context): String {
         val encoder = getEncoderFile(context)
         val decoder = getDecoderFile(context)
-        if (!encoder.exists() || !decoder.exists()) return "未下载"
+        if (!encoder.exists() || !decoder.exists()) return context.getString(R.string.model_not_downloaded)
 
         val totalSize = encoder.length() + decoder.length()
         return formatSize(totalSize)

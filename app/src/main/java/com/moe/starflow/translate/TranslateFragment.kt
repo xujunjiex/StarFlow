@@ -1025,7 +1025,7 @@ class TranslateFragment : Fragment() {
                     }
                     2 -> { locale ->
                         AlertDialog.Builder(requireContext())
-                            .setMessage("该语言当前翻译模型不支持，请使用 NLLB 或 API 翻译")
+                            .setMessage(getString(R.string.toast_lang_not_supported))
                             .setPositiveButton(R.string.user_known, null)
                             .create().also { it.window?.setBackgroundDrawableResource(R.drawable.dialog_background) }.show()
                     }
@@ -1076,7 +1076,7 @@ class TranslateFragment : Fragment() {
                 setTitleAndButton(true)
             } else {
                 setTitleAndButton(true)
-                UiUtils.showToast(requireContext(), "already running", isShort = false)
+                UiUtils.showToast(requireContext(), getString(R.string.toast_already_running), isShort = false)
             }
         } catch (e: Exception) {
             UiUtils.showToast(requireContext(), getString(R.string.startup_failure, e.toString()), isShort = false)
@@ -1093,7 +1093,7 @@ class TranslateFragment : Fragment() {
                 setTitleAndButton(false)
             } else {
                 setTitleAndButton(false)
-                UiUtils.showToast(requireContext(), "already stopped", isShort = false)
+                UiUtils.showToast(requireContext(), getString(R.string.toast_already_stopped), isShort = false)
             }
         } catch (e: Exception) {
             UiUtils.showToast(requireContext(), getString(R.string.stop_failed, e.toString()), isShort = false)

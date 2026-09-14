@@ -534,7 +534,7 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
             }
         } catch (e: Exception) {
             // 通用错误处理
-            UiUtils.showToast(requireContext(), e.message ?: "unknow error", isShort = false)
+            UiUtils.showToast(requireContext(), e.message ?: getString(R.string.error_unknown), isShort = false)
         }
     }
 

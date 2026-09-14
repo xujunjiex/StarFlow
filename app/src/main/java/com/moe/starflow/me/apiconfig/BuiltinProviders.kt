@@ -3,6 +3,8 @@ import com.moe.starflow.translate.widget.*
 import com.moe.starflow.translate.autotranslate.*
 import com.moe.starflow.translate.screenshot.*
 
+import com.moe.starflow.R
+
 /**
  * 内置 OpenAI 兼容 API 提供商定义
  *
@@ -51,6 +53,7 @@ object BuiltinProviders {
     val providers = listOf(
         OpenAIProviderConfig(
             name = "火山引擎",
+            nameRes = R.string.provider_volc,
             apiKey = "",
             baseUrl = "https://ark.cn-beijing.volces.com/api/v3",
             modelName = "doubao-seed-2-0-pro-260215",
@@ -72,6 +75,7 @@ object BuiltinProviders {
         ),
         OpenAIProviderConfig(
             name = "智谱AI",
+            nameRes = R.string.provider_zhipu,
             apiKey = "",
             baseUrl = "https://open.bigmodel.cn/api/paas/v4",
             modelName = "glm-4-flash-250414",
@@ -94,6 +98,7 @@ object BuiltinProviders {
         ),
         OpenAIProviderConfig(
             name = "DeepSeek",
+            nameRes = R.string.provider_deepseek,
             apiKey = "",
             baseUrl = "https://api.deepseek.com",
             modelName = "deepseek-v4-pro",
@@ -113,6 +118,7 @@ object BuiltinProviders {
         ),
         OpenAIProviderConfig(
             name = "通义千问",
+            nameRes = R.string.provider_qwen,
             apiKey = "",
             baseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1",
             modelName = "qwen3.7-plus",

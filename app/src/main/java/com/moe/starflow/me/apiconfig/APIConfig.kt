@@ -606,7 +606,7 @@ class APIConfig : PreferenceFragmentCompat() {
             val switchKey = "ui_openai_provider_select_$index"
             val switchPref = SwitchPreferenceCompat(requireContext()).apply {
                 key = switchKey
-                title = provider.name
+                title = provider.displayName(requireContext())
                 if (provider.isBuiltin) {
                     icon = androidx.core.content.ContextCompat.getDrawable(
                         requireContext(),
@@ -666,7 +666,7 @@ class APIConfig : PreferenceFragmentCompat() {
             // 管理按钮
             val managePref = Preference(requireContext()).apply {
                 key = "ui_openai_provider_manage_$index"
-                val manageTitle = getString(R.string.manage_openai_provider, provider.name)
+                val manageTitle = getString(R.string.manage_openai_provider, provider.displayName(requireContext()))
                 title = android.text.SpannableString(manageTitle).apply {
                     setSpan(android.text.style.ForegroundColorSpan(androidx.core.content.ContextCompat.getColor(requireContext(), R.color.text_tertiary)), 0, manageTitle.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
                     setSpan(android.text.style.RelativeSizeSpan(0.85f), 0, manageTitle.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -792,7 +792,7 @@ class APIConfig : PreferenceFragmentCompat() {
                     if (cancelled) return@runOnUiThread
                     AlertDialog.Builder(requireContext())
                         .setTitle(R.string.test_failed)
-                        .setMessage(e.message ?: "Unknown error")
+                        .setMessage(e.message ?: getString(R.string.error_unknown))
                         .setPositiveButton(R.string.user_known, null)
                         .show()
                 }

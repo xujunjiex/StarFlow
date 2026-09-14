@@ -552,7 +552,7 @@ class MangaFloatingService : LifecycleService() {
             }
         } catch (e: Exception) {
             LogCollector.e(TAG, "initTranslator: Exception", e)
-            showToast("Initialize Error: ${e.message}")
+            showToast(getString(R.string.toast_init_error_format, e.message ?: ""))
         }
 
         // 显示翻译 API 初始化成功的消息
@@ -604,6 +604,8 @@ class MangaFloatingService : LifecycleService() {
 
         // Create floating ball using original layout (65dp icon)
         floatingBallView = LayoutInflater.from(this).inflate(R.layout.floatball_layout, null)
+        // UI 同步字体（开关开启时）：Service 无 Factory2，树遍历应用
+        com.moe.starflow.utils.FontSync.applyToTree(floatingBallView!!)
 
         floatingBallParams = WindowManager.LayoutParams().apply {
             type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
@@ -1432,10 +1434,10 @@ class MangaFloatingService : LifecycleService() {
                             isProcessing = false
                             stopAutoTranslate()
                             AlertDialog.Builder(this@MangaFloatingService)
-                                .setTitle("自动翻译超时")
-                                .setMessage("页面超过 40 秒未变化，已自动停止翻译服务以节省电量。")
+                                .setTitle(getString(R.string.dlg_manga_auto_timeout_title))
+                                .setMessage(getString(R.string.dlg_manga_auto_timeout_msg))
                                 .setCancelable(false)
-                                .setPositiveButton("确定", null)
+                                .setPositiveButton(getString(R.string.confirm_ok), null)
                                 .create()
                                 .apply {
                                     window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
@@ -1531,7 +1533,7 @@ class MangaFloatingService : LifecycleService() {
                         val extHashes = PerceptualHash.computeExtended(data.fullBitmap, centerCrop = true)
                         // 保存全屏 bitmap 引用用于缓存（不要在翻译前释放）
                         pendingFullBitmap = data.fullBitmap
-                        showProgressOverlay("检测中...")
+                        showProgressOverlay(getString(R.string.detecting))
                         try {
                             processMangaScreenshot(ocrBitmap, cachePHash, extHashes)
                         } finally {
@@ -1549,7 +1551,7 @@ class MangaFloatingService : LifecycleService() {
                     LogCollector.e(TAG, "Screenshot collector: 模型文件缺失", e)
                     isProcessing = false
                     dismissProgressOverlay()
-                    statusOverlay.showError("识别模型文件缺失：${e.message}")
+                    statusOverlay.showError(getString(R.string.error_rec_model_missing, e.message ?: ""))
                     ballStateManager?.setState(BallStateManager.State.Error)
                     if (autoTranslateEngine.isAutoTranslating) {
                         stopAutoTranslate()
@@ -1563,7 +1565,7 @@ class MangaFloatingService : LifecycleService() {
                         LogCollector.d(TAG, "Screenshot collector: 翻译已被用户停止（${e.message}）")
                     } else {
                         LogCollector.e(TAG, "Screenshot collector: CAUGHT EXCEPTION", e)
-                        statusOverlay.showError("翻译失败：${e.message ?: "Unknown error"}")
+                        statusOverlay.showError(getString(R.string.error_translate_failed, e.message ?: getString(R.string.error_unknown)))
                         ballStateManager?.setState(BallStateManager.State.Error)
                         if (autoTranslateEngine.isAutoTranslating) {
                             stopAutoTranslate()
@@ -1686,7 +1688,7 @@ class MangaFloatingService : LifecycleService() {
             emptyList()
         } else {
             withContext(Dispatchers.Main) {
-                showProgressOverlay("翻译进行中，请勿点击屏幕...")
+                showProgressOverlay(getString(R.string.translating_do_not_tap))
                 ballStateManager?.setState(BallStateManager.State.Translating)
             }
 
@@ -1750,7 +1752,7 @@ class MangaFloatingService : LifecycleService() {
         LogCollector.d(TAG, "incrementalRTDetrMangaOcr: 第一批 ${firstBatch.size}，第二批 ${secondBatch.size}")
 
         try {
-            showProgressOverlay("识别中（1/2）...")
+            showProgressOverlay(getString(R.string.recognizing_half))
             val firstTextBlocks = DetectionBridge.recognizeCroppedBubbles(
                 firstBatch, config.sourceLang
             )
@@ -1824,7 +1826,7 @@ class MangaFloatingService : LifecycleService() {
                 }
             } catch (e: java.io.FileNotFoundException) {
                 crops.forEach { it.recycle() }
-                statusOverlay.showError("识别模型加载失败：${e.message}")
+                statusOverlay.showError(getString(R.string.error_rec_model_load_failed, e.message))
                 ballStateManager?.setState(BallStateManager.State.Error)
                 throw e
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -1833,7 +1835,7 @@ class MangaFloatingService : LifecycleService() {
                 throw e
             } catch (e: Exception) {
                 crops.forEach { it.recycle() }
-                statusOverlay.showError("识别模型异常：${e.message}")
+                statusOverlay.showError(getString(R.string.error_rec_model_exception, e.message))
                 ballStateManager?.setState(BallStateManager.State.Error)
                 throw e
             }
@@ -1861,7 +1863,7 @@ class MangaFloatingService : LifecycleService() {
 
         var ocrJob: kotlinx.coroutines.Deferred<List<TextBlockInfo>>? = null
         try {
-            showProgressOverlay("识别中（1/2）...")
+            showProgressOverlay(getString(R.string.recognizing_half))
             val firstTextBlocks = recognizeBatch(firstBatch)
             LogCollector.d(TAG, "incrementalPPOcrV5: 第一批 OCR ${firstTextBlocks.size} 个文字块")
 
@@ -1924,7 +1926,7 @@ class MangaFloatingService : LifecycleService() {
                 }
             } catch (e: java.io.FileNotFoundException) {
                 crops.forEach { it.recycle() }
-                statusOverlay.showError("识别模型加载失败：${e.message}")
+                statusOverlay.showError(getString(R.string.error_rec_model_load_failed, e.message))
                 ballStateManager?.setState(BallStateManager.State.Error)
                 throw e
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -1933,7 +1935,7 @@ class MangaFloatingService : LifecycleService() {
                 throw e
             } catch (e: Exception) {
                 crops.forEach { it.recycle() }
-                statusOverlay.showError("识别模型异常：${e.message}")
+                statusOverlay.showError(getString(R.string.error_rec_model_exception, e.message))
                 ballStateManager?.setState(BallStateManager.State.Error)
                 throw e
             }
@@ -1958,7 +1960,7 @@ class MangaFloatingService : LifecycleService() {
 
         var ocrJob: kotlinx.coroutines.Deferred<List<TextBlockInfo>>? = null
         try {
-            showProgressOverlay("识别中（1/2）...")
+            showProgressOverlay(getString(R.string.recognizing_half))
             val firstTextBlocks = recognizeBatch(firstBatch)
             LogCollector.d(TAG, "incrementalPPOcrV6: 第一批 OCR ${firstTextBlocks.size} 个文字块")
 
@@ -2003,7 +2005,7 @@ class MangaFloatingService : LifecycleService() {
             saveCacheEntry(bitmap, allTranslated)
             ballStateManager?.setState(BallStateManager.State.Completed)
         }
-        statusOverlay.showImmediate("翻译完成")
+        statusOverlay.showImmediate(getString(R.string.translating_done))
         ballStateManager?.setState(BallStateManager.State.Completed)
         autoTranslateEngine.lastTranslatedHash = currentPHash
         autoTranslateEngine.lastTranslatedTime = System.currentTimeMillis()
@@ -2039,7 +2041,7 @@ class MangaFloatingService : LifecycleService() {
             // 检测到无内容 → 跳过缓存+OCR+翻译，回到 IDLE
             if (currentExtHashes != null && currentExtHashes!!.all { it == 0L }) {
                 LogCollector.d(TAG, "processMangaScreenshot: 画面无内容（dHash全零），跳过翻译")
-                statusOverlay.showImmediate("未检测到文字")
+                statusOverlay.showImmediate(getString(R.string.no_text_detected))
                 ballStateManager?.setState(BallStateManager.State.Completed)
                 showToast(getString(R.string.toast_no_text_detected), false)
                 autoTranslateEngine.lastTranslatedHash = currentPHash
@@ -2238,7 +2240,7 @@ class MangaFloatingService : LifecycleService() {
                             config = TranslationCacheManager.OverlayConfig(config.fontSize, config.autoFontSize, config.textColor, config.bgColor, config.textDirection)
                         )
                     } else null
-                    statusOverlay.showImmediate("缓存命中")
+                    statusOverlay.showImmediate(getString(R.string.cache_hit))
                     ballStateManager?.setState(BallStateManager.State.Completed)
                     autoTranslateEngine.lastTranslatedHash = currentPHash
         autoTranslateEngine.lastTranslatedTime = System.currentTimeMillis()
@@ -2288,7 +2290,7 @@ class MangaFloatingService : LifecycleService() {
                 }
 
                 // Step 1: 文字检测 + 识别
-                showProgressOverlay("文字识别中...")
+                showProgressOverlay(getString(R.string.text_recognizing))
                 val (ppRecLang, ppHint) = if (config.ocrEngine == OcrEngine.PPOcrV5 || config.detEngine == DetEngine.PP_OCR_V5) {
                     PPOcrV5Engine.resolveRecLang(this@MangaFloatingService, config.sourceLang)
                 } else {
@@ -2395,7 +2397,7 @@ class MangaFloatingService : LifecycleService() {
             LogCollector.d(TAG, "processMangaScreenshot: Step 4 - Rendering merged overlay")
             renderAndShowMergedOverlay(bitmap, newTranslatedBubbles)
             LogCollector.d(TAG, "processMangaScreenshot: Step 4 - DONE")
-            statusOverlay.showImmediate("翻译完成")
+            statusOverlay.showImmediate(getString(R.string.translating_done))
             ballStateManager?.setState(BallStateManager.State.Completed)
 
             // 更新区域缓存和 pHash
@@ -2705,7 +2707,7 @@ class MangaFloatingService : LifecycleService() {
             translatorText!!, bubbles, config.sourceLang, config.targetLang, prefs, contextHistory, forceContext,
             onPhase = { phase ->
                 when (phase) {
-                    "prefill" -> showProgressOverlay("读取原文中…")
+                    "prefill" -> showProgressOverlay(getString(R.string.manga_reading))
                     "generate" -> showProgressOverlay(getString(R.string.manga_translating))
                 }
             },
@@ -2875,11 +2877,12 @@ class MangaFloatingService : LifecycleService() {
 
         // "⚡ 缓存" 标签（左上角）
         val cacheTag = android.widget.TextView(this).apply {
-            text = "⚡ 缓存"
+            text = getString(R.string.cache_tag)
             setTextColor(Color.WHITE)
             textSize = 14f
             setBackgroundColor(Color.argb(180, 255, 152, 0))
             setPadding(24, 12, 24, 12)
+            com.moe.starflow.utils.FontSync.apply(this)
         }
         container.addView(cacheTag, android.widget.FrameLayout.LayoutParams(
             android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
@@ -3059,6 +3062,7 @@ class MangaFloatingService : LifecycleService() {
             background = bg
             isClickable = true
             isFocusable = true
+            com.moe.starflow.utils.FontSync.apply(this)
             setOnTouchListener { v, event ->
                 when (event.action) {
                     android.view.MotionEvent.ACTION_DOWN -> {
@@ -3098,6 +3102,7 @@ class MangaFloatingService : LifecycleService() {
             textSize = 11f
             setTextColor(if (copyOriginalMode) Color.argb(220, 30, 30, 30) else Color.argb(200, 255, 255, 255))
             gravity = Gravity.CENTER
+            com.moe.starflow.utils.FontSync.apply(this)
             setPadding(padH, padV, padH, padV)
             background = if (copyOriginalMode) activeBgLeft else null
             setOnClickListener {
@@ -3113,6 +3118,7 @@ class MangaFloatingService : LifecycleService() {
             textSize = 11f
             setTextColor(if (!copyOriginalMode) Color.argb(220, 30, 30, 30) else Color.argb(200, 255, 255, 255))
             gravity = Gravity.CENTER
+            com.moe.starflow.utils.FontSync.apply(this)
             setPadding(padH, padV, padH, padV)
             background = if (!copyOriginalMode) activeBgRight else null
             setOnClickListener {
@@ -3491,10 +3497,10 @@ class MangaFloatingService : LifecycleService() {
      */
     private fun showStopTranslationDialog() {
         val dialog = android.app.AlertDialog.Builder(this)
-            .setTitle("翻译未完成")
-            .setMessage("当前翻译尚未完成，是否停止？停止后将不保存本次翻译结果。")
-            .setPositiveButton("停止") { _, _ -> stopTranslationNow() }
-            .setNegativeButton("继续", null)
+            .setTitle(getString(R.string.dlg_translation_unfinished_title))
+            .setMessage(getString(R.string.dlg_translation_unfinished_msg))
+            .setPositiveButton(getString(R.string.stop)) { _, _ -> stopTranslationNow() }
+            .setNegativeButton(getString(R.string.continue_action), null)
             .create()
         // ⚠️ Service 无 Activity token：必须先把对话框窗口类型设为 OVERLAY，否则 show() 抛 BadTokenException
         dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
@@ -3515,7 +3521,7 @@ class MangaFloatingService : LifecycleService() {
         dismissProgressOverlay()
         dismissResultOverlay()
         ballStateManager?.setState(BallStateManager.State.Idle)
-        if (showMessage) statusOverlay.showImmediate("已停止翻译", autoDismiss = true)
+        if (showMessage) statusOverlay.showImmediate(getString(R.string.translation_stopped), autoDismiss = true)
     }
 
     private fun dismissProgressOverlay() {

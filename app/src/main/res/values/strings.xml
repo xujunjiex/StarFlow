@@ -100,7 +100,7 @@
     <string name="hymt2_help_top_k">Top-k: each generation draws only from the top 20 most probable candidates, preventing off-topic or wrong-word translations.</string>
     <string name="hymt2_help_rep_penalty">Repetition penalty. Mildly penalizes already-generated tokens. 1.05 avoids endless repetition without breaking legitimate repeats (layout, punctuation).</string>
     <string name="hymt2_help_max_tokens">Maximum output tokens per single request. Caps the output length of one translation; not the model context (-c).</string>
-    <string name="text_translate_tab">Text Translation</string>
+    <string name="text_translate_tab">Text</string>
     <string name="text_translate_engine_loading">Loading translation engine…</string>
     <string name="text_translate_engine_init_failed">Translation engine init failed. Check the engine settings.</string>
     <string name="text_translate_input_hint">Enter or paste text to translate</string>
@@ -647,6 +647,8 @@
     <string name="model_delete">Delete</string>
     <string name="model_downloaded">Downloaded</string>
     <string name="model_not_downloaded">Not downloaded</string>
+    <string name="error_local_engine_stall">Local translation engine not responding (no output for %1$d s)</string>
+    <string name="default_manga_title">Manga %1$s</string>
     <string name="model_downloading">Downloading…</string>
     <string name="model_status_idle">Not downloaded</string>
     <string name="model_status_paused">Paused %1$s / %2$s</string>
@@ -1056,5 +1058,134 @@
     <string name="manga_button_stop">Stop Manga Translation</string>
     <string name="manga_started">Manga translation started</string>
     <string name="manga_stopped">Manga translation stopped</string>
+
+    <!-- ===== 硬编码 UI 文案外提（消除中英混杂） ===== -->
+    <string name="close">Close</string>
+    <string name="stop">Stop</string>
+    <string name="continue_action">Continue</string>
+    <string name="confirm_ok">OK</string>
+    <string name="toast_no_ocr_engine">No OCR engine available</string>
+    <string name="toast_ppocrv5_init">Initializing PP-OCRv5…</string>
+    <string name="toast_ppocrv5_ready">PP-OCRv5 initialized</string>
+    <string name="toast_mangaocr_init">Initializing manga-ocr…</string>
+    <string name="toast_mangaocr_ready">manga-ocr initialized</string>
+    <string name="toast_mangaocr_not_downloaded">manga-ocr is not downloaded. Download it in Model Management first.</string>
+    <string name="toast_ppocrv6_init">Initializing PP-OCRv6…</string>
+    <string name="toast_ppocrv6_ready">PP-OCRv6 initialized</string>
+    <string name="toast_engine_init_failed_format">Engine init failed: %1$s</string>
+    <string name="toast_no_history">No translation history</string>
+    <string name="toast_copied_translation">Translation copied</string>
+    <string name="toast_show_history_failed">Failed to show history</string>
+    <string name="toast_no_translatable_content">Nothing to translate</string>
+    <string name="toast_lang_not_supported">This language is not supported by the current engine. Use NLLB or an API instead.</string>
+    <string name="toast_copied">Copied</string>
+    <string name="toast_need_capture_permission">Screenshot permission is required to translate</string>
+    <string name="toast_saved_to_download">Saved to Download/%1$s</string>
+    <string name="toast_download_failed">Download failed</string>
+    <string name="toast_download_complete">Download complete</string>
+    <string name="history_created_format">Created %1$s</string>
+    <string name="history_updated_format">Modified %1$s</string>
+    <string name="toast_original_unavailable">Original image unavailable</string>
+    <string name="toast_crop_unavailable">Crop region unavailable</string>
+    <string name="toast_translating_wait">Translation in progress, please wait</string>
+    <string name="toast_translating_now">Translating…</string>
+    <string name="toast_retranslate_done">Re-translation complete</string>
+    <string name="toast_retranslate_failed">Re-translation failed</string>
+    <string name="get_api_key">🔑 Get API Key</string>
+    <string name="dlg_manga_auto_timeout_title">Auto-translate timed out</string>
+    <string name="dlg_manga_auto_timeout_msg">The page has not changed for over 40 seconds. Translation service stopped to save battery.</string>
+    <string name="dlg_translation_unfinished_title">Translation not finished</string>
+    <string name="dlg_translation_unfinished_msg">The current translation is not finished. Stop it? The result will not be saved.</string>
+    <string name="toast_init_error_format">Initialization error: %1$s</string>
+    <string name="toast_no_custom_pic_api">No custom picture translation API configured</string>
+    <string name="toast_unknown_translator">Unknown translation engine</string>
+    <string name="toast_stop_service_failed">Failed to stop service: %1$s</string>
+    <string name="toast_already_running">Service is already running</string>
+    <string name="toast_already_stopped">Service is already stopped</string>
+    <string name="toast_screenshot_failed_format">Failed to take screenshot: %1$s</string>
+    <string name="error_unknown">Unknown error</string>
+    <string name="error_load_config">Error loading configuration: %1$s</string>
+    <string name="developer_contact">QQ: 2057095664\nBilibili: 小灰不怕黑</string>
+    <string name="debug_log_expand">[Tap to expand log]</string>
+    <string name="debug_log_collapse">[Tap to collapse log]</string>
+    <string name="debug_no_logs">No logs yet</string>
+
+    <!-- 对话提示词模板 -->
+    <string name="chat_template_sheet_title">Translation prompt templates (for reference, copyable)</string>
+    <string name="chat_tpl_default">Default translation</string>
+    <string name="chat_tpl_terminology">Terminology</string>
+    <string name="chat_tpl_style">Style</string>
+    <string name="chat_tpl_personalization">Personalization</string>
+    <string name="chat_tpl_delimiters">Delimiters</string>
+    <string name="chat_tpl_structured1">Structured data</string>
+    <string name="chat_tpl_structured2">With background</string>
+    <string name="chat_hint_source_text">Text to translate</string>
+    <string name="chat_hint_target_lang">Target language</string>
+    <string name="chat_hint_glossary">Glossary (one per line: source target; use = for multi-word terms)</string>
+    <string name="chat_hint_target_style">Translation style (classical/modern/colloquial/formal/cute/literary/dialect/anime)</string>
+    <string name="chat_hint_prefs">Translation preferences (one per line, e.g. keep person names as-is)</string>
+    <string name="chat_hint_format_type">Data structure type (JSON/XML/YAML/code/config)</string>
+    <string name="chat_hint_background_text">Background info (e.g. this is a game walkthrough; keep official terms)</string>
+    <string name="manga_viewer_size_line">Size: %1$s  |  %2$s → %3$s  |  %4$s</string>
+    <string name="toast_game_started">Game translation started</string>
+    <string name="download_speed_format">Speed: %1$s</string>
+
+    <!-- 内置 OpenAI 兼容厂商显示名（`name` 字段是持久化身份 key，不可改，显示走这些资源） -->
+    <string name="provider_volc">@string/volcapi_name</string>
+    <string name="provider_zhipu">Zhipu AI</string>
+    <string name="provider_deepseek">DeepSeek</string>
+    <string name="provider_qwen">Qwen</string>
+    <string name="ai_engine_label">AI engine</string>
+    <string name="translation_engine_label">Translation engine</string>
+
+    <!-- 历史记录里的翻译器短名 -->
+    <string name="nt_openai">OpenAI</string>
+    <string name="nt_bing">Bing</string>
+    <string name="nt_nllb">NLLB</string>
+    <string name="nt_deepl">DeepL</string>
+    <string name="nt_azure">Azure</string>
+    <string name="nt_niu">Niu</string>
+    <string name="nt_volc">Volc</string>
+    <string name="nt_baidu">Baidu</string>
+    <string name="nt_tencent">Tencent</string>
+
+    <!-- 引擎初始化 / 状态浮层 -->
+    <string name="role_det_rec">detector + recognizer</string>
+    <string name="role_rec">recognizer</string>
+    <string name="role_det">detector</string>
+    <string name="engine_init_success">%1$s %2$s initialized</string>
+    <string name="engine_init_failed">%1$s %2$s initialization failed: %3$s</string>
+    <string name="detecting">Detecting…</string>
+    <string name="recognizing_half">Recognizing (1/2)…</string>
+    <string name="translating_do_not_tap">Translating, please do not tap the screen…</string>
+    <string name="error_rec_model_missing">Recognition model files missing: %1$s</string>
+    <string name="error_rec_model_load_failed">Recognition model load failed: %1$s</string>
+    <string name="error_rec_model_exception">Recognition model error: %1$s</string>
+    <string name="error_translate_failed">Translation failed: %1$s</string>
+    <string name="error_text_too_long">Input text too long (exceeds model context)</string>
+    <string name="error_translation_cancelled">Translation cancelled</string>
+    <string name="error_model_not_ready">Model not ready</string>
+    <string name="error_chat_cancelled">Chat cancelled</string>
+    <string name="error_no_openai_config">No OpenAI configuration</string>
+    <string name="error_hy_released">Translation engine released</string>
+    <string name="translating_done">Translation complete</string>
+    <string name="no_text_detected">No text detected</string>
+    <string name="cache_hit">Cache hit</string>
+    <string name="text_recognizing">Recognizing text…</string>
+    <string name="translation_stopped">Translation stopped</string>
+    <string name="cache_tag">⚡ Cache</string>
+    <string name="error_det_model_missing">RT-DETR-V2 model not downloaded. Download it in Model Management first.</string>
+
+    <!-- 下载通知 / 异常 -->
+    <string name="dl_notify_title">Model download</string>
+    <string name="dl_notify_preparing">Preparing…</string>
+    <string name="dl_downloading">%1$s downloading — %2$s</string>
+    <string name="dl_paused">%1$s paused</string>
+    <string name="dl_partial">%1$s incomplete</string>
+    <string name="dl_done">%1$s downloaded</string>
+    <string name="dl_multiple">%1$s + %2$d more downloading</string>
+    <string name="error_download_cancelled">Download cancelled</string>
+    <string name="error_download_incomplete">Download incomplete: expected %1$s, got %2$s</string>
+    <string name="error_md5_failed">MD5 verification failed</string>
 
 </resources>

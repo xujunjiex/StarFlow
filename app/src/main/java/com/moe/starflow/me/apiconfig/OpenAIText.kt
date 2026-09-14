@@ -328,7 +328,7 @@ class OpenAIText :Fragment() {
                 setupUserMode()
             }
         } catch (e: Exception) {
-            UiUtils.showToast(requireContext(), "Error loading configuration: ${e.message}")
+            UiUtils.showToast(requireContext(), getString(R.string.error_load_config, e.message ?: ""))
         }
     }
 
@@ -337,7 +337,7 @@ class OpenAIText :Fragment() {
         binding.providerIcon.visibility = View.VISIBLE
         binding.providerIcon.setImageResource(builtinIconRes(provider.name))
         binding.providerNameText.visibility = View.VISIBLE
-        binding.providerNameText.text = provider.name
+        binding.providerNameText.text = provider.displayName(requireContext())
         binding.providerNameInputLayout.visibility = View.GONE
         // 隐藏整个URL卡片
         binding.baseUrlCard.visibility = View.GONE
@@ -345,7 +345,7 @@ class OpenAIText :Fragment() {
         // 显示控制台链接（不显示URL，点击跳转）
         if (provider.consoleUrl.isNotEmpty()) {
             binding.consoleLink.visibility = View.VISIBLE
-            binding.consoleLink.text = "🔑 获取 API Key"
+            binding.consoleLink.text = getString(R.string.get_api_key)
             binding.consoleLink.setOnClickListener {
                 startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(provider.consoleUrl)))
             }
@@ -789,7 +789,7 @@ class OpenAIText :Fragment() {
                 // 日志 tag = "OpenAIText"，便于在设置页日志查看器 / logcat 中过滤
                 // 修复：providerIndex 在 isNew=true 时等于 allProviders.size（越界），要安全访问
                 val providerLabel = if (providerIndex in allProviders.indices) {
-                    allProviders[providerIndex].name
+                    allProviders[providerIndex].displayName(requireContext())
                 } else {
                     "custom[new]"  // 新建自定义 provider
                 }

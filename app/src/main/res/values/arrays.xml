@@ -143,7 +143,7 @@
     </string-array>
 
     <string-array name="manga_ocr_version_entries">
-        <item>完整版 (460MB)</item>
+        <item>Full (460MB)</item>
     </string-array>
 
     <string-array name="manga_ocr_version_values">
@@ -179,12 +179,12 @@
     </string-array>
 
     <string-array name="context_count_entries">
-        <item>5 轮</item>
-        <item>8 轮</item>
-        <item>10 轮</item>
-        <item>12 轮</item>
-        <item>15 轮</item>
-        <item>20 轮</item>
+        <item>5 turns</item>
+        <item>8 turns</item>
+        <item>10 turns</item>
+        <item>12 turns</item>
+        <item>15 turns</item>
+        <item>20 turns</item>
     </string-array>
     <string-array name="context_count_values">
         <item>5</item>

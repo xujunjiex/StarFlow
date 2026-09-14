@@ -6,6 +6,7 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import com.moe.starflow.utils.LogCollector
+import com.moe.starflow.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -37,7 +38,7 @@ object MangaImporter {
             val id = nextId(context)
             val name = DocumentFile.fromSingleUri(context, contentUri)?.name
                 ?: contentUri.lastPathSegment
-                ?: "漫画$id"
+                ?: context.getString(R.string.default_manga_title, id)
             val title = name.substringBeforeLast('.', name)
 
             val manga = importArchiveToFile(context, contentUri, id, name, title)
@@ -107,7 +108,7 @@ object MangaImporter {
 
         return ImportedManga(
             id = id,
-            title = rootDoc.name ?: "漫画$id",
+            title = rootDoc.name ?: context.getString(R.string.default_manga_title, id),
             localRoot = destDir.absolutePath,
             isArchive = false,
             coverPath = coverPath,

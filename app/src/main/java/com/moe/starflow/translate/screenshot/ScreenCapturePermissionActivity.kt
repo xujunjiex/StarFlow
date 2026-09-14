@@ -5,6 +5,7 @@ import com.moe.starflow.manga.*
 import com.moe.starflow.manga.engine.*
 import com.moe.starflow.manga.types.*
 import com.moe.starflow.manga.config.*
+import com.moe.starflow.R
 
 import android.content.Context
 import android.content.Intent
@@ -77,7 +78,7 @@ class ScreenCapturePermissionActivity : Activity() {
                     "game" -> {
                         if (!ServiceUtils.isServiceRunning(this, FloatingBallService::class.java)) {
                             startService(Intent(this, FloatingBallService::class.java))
-                            UiUtils.showToast(this, "游戏翻译已启动", isShort = true)
+                            UiUtils.showToast(this, getString(R.string.toast_game_started), isShort = true)
                             LogCollector.d(TAG, "FloatingBallService started after permission grant")
                         }
                     }
@@ -86,14 +87,14 @@ class ScreenCapturePermissionActivity : Activity() {
                             androidx.core.content.ContextCompat.startForegroundService(
                                 this, Intent(this, MangaFloatingService::class.java)
                             )
-                            UiUtils.showToast(this, "漫画翻译已启动", isShort = true)
+                            UiUtils.showToast(this, getString(R.string.manga_started), isShort = true)
                             LogCollector.d(TAG, "MangaFloatingService started after permission grant")
                         }
                     }
                 }
             } else {
                 LogCollector.w(TAG, "Permission denied for: $serviceType")
-                UiUtils.showToast(this, "需要截图权限才能翻译", isShort = true)
+                UiUtils.showToast(this, getString(R.string.toast_need_capture_permission), isShort = true)
                 // 发送停止广播确保按钮状态正确
                 when (serviceType) {
                     "game" -> {

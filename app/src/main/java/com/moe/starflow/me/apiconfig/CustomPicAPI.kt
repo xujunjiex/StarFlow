@@ -274,7 +274,7 @@ class CustomPicAPI : Fragment() {
                 updateViewVisibility()
 
             } catch (e: Exception) {
-                UiUtils.showToast(requireContext(), "Error loading configuration: ${e.message}")
+                UiUtils.showToast(requireContext(), getString(R.string.error_load_config, e.message ?: ""))
             }
         }
     }

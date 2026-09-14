@@ -64,6 +64,10 @@ data class NamedPicAPIConfig(
 
 // OpenAI兼容API厂商配置
 data class OpenAIProviderConfig(
+    /**
+     * ⚠️ 持久化身份 key：`BuiltInProviderMod.name` 靠它匹配用户已存的修改（CustomStorage.loadAllProviders）。
+     * 内置厂商这里是中文名，**不能改成英文**，否则老用户的 API Key/提示词全部失配。展示一律用 [displayName]。
+     */
     val name: String,
     val apiKey: String,
     val baseUrl: String,
@@ -72,6 +76,8 @@ data class OpenAIProviderConfig(
     val userPrompt: String,
     // 内置API相关字段
     val providerType: String = PROVIDER_TYPE_USER,
+    /** 内置厂商本地化显示名资源；0 = 用户自建（名称是用户输入的，直接显示 name） */
+    @androidx.annotation.StringRes val nameRes: Int = 0,
     val models: List<String> = emptyList(),
     val defaultSystemPrompt: String = "",
     val defaultUserPrompt: String = "",
@@ -104,6 +110,10 @@ data class OpenAIProviderConfig(
 
     val isBuiltin: Boolean get() = providerType == PROVIDER_TYPE_BUILTIN
     val isResponsesFormat: Boolean get() = apiFormat == FORMAT_RESPONSES
+
+    /** 面向用户的厂商名：内置走资源（中英各一份），用户自建直接用其输入的名称。 */
+    fun displayName(context: android.content.Context): String =
+        if (nameRes != 0) context.getString(nameRes) else name
 }
 
 // 内置API用户修改数据模型

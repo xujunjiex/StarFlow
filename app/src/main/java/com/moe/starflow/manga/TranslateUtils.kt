@@ -6,6 +6,8 @@ import com.moe.starflow.manga.state.*
 import com.moe.starflow.manga.render.*
 import com.moe.starflow.manga.merge.*
 
+import android.content.Context
+import com.moe.starflow.R
 import com.moe.starflow.manga.engine.*
 import com.moe.starflow.manga.types.*
 import com.moe.starflow.manga.config.*
@@ -37,6 +39,12 @@ import kotlin.math.abs
 object TranslateUtils {
 
     private const val TAG = "TranslateUtils"
+
+    /** 由 StarFlowApplication.onCreate 注入（对齐 LogCollector.init），用于本地化错误消息。纯 object 无构造 Context。 */
+    private var appContext: Context? = null
+    fun init(context: Context) {
+        appContext = context.applicationContext
+    }
 
     // 带编号翻译结果的行匹配：`[N] 文本`（N 可为任意数字，前缀 [N]、N.、N、 也兼容）。两个解析器共用，避免行为漂移。
     private val NUMBERED_TRANSLATION_REGEX = Regex("""\[(\d+)]\s*([\s\S]*?)(?=\[\d+]|$)""")
@@ -253,7 +261,11 @@ object TranslateUtils {
         }
         if (timedOut.get()) {
             translator.cancelTranslation()
-            throw RuntimeException("本地翻译引擎无响应（${LOCAL_STALL_TIMEOUT_MS / 1000}s 无新输出）")
+            val stallSec = (LOCAL_STALL_TIMEOUT_MS / 1000).toInt()
+            throw RuntimeException(
+                appContext?.getString(R.string.error_local_engine_stall, stallSec)
+                    ?: "Local engine not responding (no output for $stallSec s)"
+            )
         }
         if (completed == null) {
             translator.cancelTranslation()

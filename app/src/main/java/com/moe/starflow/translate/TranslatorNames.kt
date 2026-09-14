@@ -19,7 +19,7 @@ object TranslatorNames {
             Constants.TextApi.OPENAI.id -> {
                 val list = ConfigurationStorage.loadAllProviders(prefs)
                 val i = prefs.getInt("OpenAI_Selected_Provider", 0)
-                if (i < list.size) list[i].name else context.getString(R.string.uniaiapi_name)
+                if (i < list.size) list[i].displayName(context) else context.getString(R.string.uniaiapi_name)
             }
             Constants.TextApi.VOLC.id -> context.getString(R.string.volcapi_name)
             Constants.TextApi.AZURE.id -> context.getString(R.string.azureapi_name)

@@ -23,13 +23,13 @@ class ChatTemplateSheet : BottomSheetDialogFragment() {
             setPadding(48, 32, 48, 48)
         }
         root.addView(TextView(requireContext()).apply {
-            text = "翻译提示词模板（参考，可复制）"
+            text = requireContext().getString(R.string.chat_template_sheet_title)
             textSize = 18f
             setPadding(0, 0, 0, 32)
         })
         ChatTemplates.all.forEach { tpl ->
             root.addView(TextView(requireContext()).apply {
-                text = "📋 ${tpl.label}"
+                text = "📋 " + requireContext().getString(tpl.labelRes)
                 textSize = 16f
                 setPadding(0, 24, 0, 24)
                 setOnClickListener { showDetail(tpl) }
@@ -50,11 +50,11 @@ class ChatTemplateSheet : BottomSheetDialogFragment() {
             setTextIsSelectable(true)
         }
         view.findViewById<TextView>(R.id.templateHints).text =
-            tpl.variableHints.entries.joinToString("\n") { "${it.key} = ${it.value}" }
+            tpl.variableHints.joinToString("\n") { "${it.first} = ${getString(it.second)}" }
         android.app.AlertDialog.Builder(requireContext())
-            .setTitle(tpl.label)
+            .setTitle(getString(tpl.labelRes))
             .setView(view)
-            .setNegativeButton("关闭", null)
+            .setNegativeButton(getString(R.string.close), null)
             .create().also { it.show(); it.window?.setBackgroundDrawableResource(R.drawable.dialog_background) }
     }
 

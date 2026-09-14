@@ -9,6 +9,7 @@ import com.moe.starflow.manga.*
 
 import com.moe.starflow.manga.config.*
 import android.content.Context
+import com.moe.starflow.R
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.graphics.RectF
@@ -62,7 +63,7 @@ object ComicBubbleDetector {
 
         val modelFile = RTDetrModelFiles.getFilesDirModelFile(context)
         if (!modelFile.exists() || modelFile.length() == 0L) {
-            throw IllegalStateException("RT-DETR-V2 模型未下载，请先在模型管理中下载")
+            throw IllegalStateException(context.getString(R.string.error_det_model_missing))
         }
 
         try {

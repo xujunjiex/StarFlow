@@ -1,6 +1,7 @@
 package translationapi
 
 import android.content.Context
+import com.moe.starflow.R
 import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.translate.TranslationTextAPI
 import com.moe.starflow.utils.Constants
@@ -171,21 +172,21 @@ object TranslatorFactory {
         Constants.TextApi.AI.id -> when (prefs.getInt("Text_AI", Constants.TextAI.NLLB.id)) {
             Constants.TextAI.NLLB.id, 1 -> "NLLB"
             Constants.TextAI.HYMT2.id -> "Hy-MT2 1.8B"
-            else -> "AI 引擎"
+            else -> context.getString(R.string.ai_engine_label)
         }
-        Constants.TextApi.BING.id -> "必应翻译"
-        Constants.TextApi.NIUTRANS.id -> "小牛翻译"
+        Constants.TextApi.BING.id -> context.getString(R.string.bingapi_name)
+        Constants.TextApi.NIUTRANS.id -> context.getString(R.string.niuapi_name)
         Constants.TextApi.OPENAI.id -> {
             val providers = ConfigurationStorage.loadAllProviders(prefs)
             val idx = prefs.getInt("OpenAI_Selected_Provider", 0)
             providers.getOrNull(idx)?.modelName ?: "OpenAI"
         }
-        Constants.TextApi.VOLC.id -> "火山翻译"
+        Constants.TextApi.VOLC.id -> context.getString(R.string.volcapi_name)
         Constants.TextApi.AZURE.id -> "Azure"
         Constants.TextApi.DEEPL.id -> "DeepL"
-        Constants.TextApi.BAIDU.id -> "百度翻译"
-        Constants.TextApi.TENCENT.id -> "腾讯翻译"
-        Constants.TextApi.CUSTOM_TEXT.id -> "自定义 API"
-        else -> "翻译引擎"
+        Constants.TextApi.BAIDU.id -> context.getString(R.string.baiduapi_name)
+        Constants.TextApi.TENCENT.id -> context.getString(R.string.tencentapi_name)
+        Constants.TextApi.CUSTOM_TEXT.id -> context.getString(R.string.custom)
+        else -> context.getString(R.string.translation_engine_label)
     }
 }

@@ -92,6 +92,16 @@ android {
             excludes += ['**/libsentencepiece_train.so']
         }
     }
+
+    // 本地化防漂移：缺失翻译在构建期直接失败。
+    // 本项目是「values(英文默认) + values-zh(中文)」双份手工同步，历史上堆积了 82 个 key
+    // 只存在于 values/ → 中文界面回退英文（中英混杂且长期无人发现）。
+    // 用 fatal 而非 error：仓库另有 27 个历史 error 级问题（NewApi/UnusedResources 等）会把
+    // `./gradlew lint` 整体染红、淹没新问题；而 fatal 级会被 lintVitalRelease 单独拦下，
+    // 即「release 构建因缺翻译而失败」——这正是想要的硬门槛（当前 MissingTranslation 命中 0，构建正常）。
+    lint {
+        fatal += ['MissingTranslation']
+    }
 }
 
 dependencies {

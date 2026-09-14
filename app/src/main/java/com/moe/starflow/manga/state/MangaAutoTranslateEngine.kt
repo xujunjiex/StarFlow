@@ -142,7 +142,7 @@ class MangaAutoTranslateEngine(
                     previousScreenshotHash = currentHash
                     motionStartTime = System.currentTimeMillis()
                     LogCollector.d(TAG, "AutoDetect[IDLE→MOTION]: simToTranslated=$simToTranslated, motion detected")
-                    onShowProgress("检测中...")
+                    onShowProgress(context.getString(R.string.detecting))
                     scheduleNextDetection(DETECT_INTERVAL_MS)
                     return false
                 }

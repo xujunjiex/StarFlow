@@ -25,7 +25,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginTop="4dp"
-        android:text="Speed: 0.0 MB/s"
+        android:text="@string/download_speed_format"
         android:textSize="12sp"
         android:textColor="#888"/>
 </LinearLayout>

@@ -99,7 +99,7 @@ class ScreenShotAccessibilityService: AccessibilityService() {
                 }
             )
         } catch (e: Exception) {
-            showToast("Failed to take screenshot：$e")
+            showToast(getString(com.moe.starflow.R.string.toast_screenshot_failed_format, e.toString()))
         }
     }
 

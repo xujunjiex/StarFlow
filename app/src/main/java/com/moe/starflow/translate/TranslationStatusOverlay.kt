@@ -5,6 +5,7 @@ import com.moe.starflow.translate.screenshot.*
 
 import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.LogCollector
+import com.moe.starflow.R
 
 import android.animation.LayoutTransition
 import android.content.ClipData
@@ -120,7 +121,7 @@ class TranslationStatusOverlay private constructor(private val context: Context)
             chip.isClickable = true
             chip.setOnClickListener {
                 copyToClipboard(message)
-                chip.text = "已复制"
+                chip.text = context.getString(R.string.toast_copied)
                 chip.background = createRoundedBackground(Color.argb(150, 0, 120, 0))
                 chip.isClickable = false
                 rescheduleDismiss(chip, true, 1000L)

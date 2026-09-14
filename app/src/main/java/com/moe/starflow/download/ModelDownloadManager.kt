@@ -3,6 +3,7 @@ import com.moe.starflow.translate.widget.*
 
 import android.content.Context
 import com.moe.starflow.utils.LogCollector
+import com.moe.starflow.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
@@ -108,7 +109,7 @@ object ModelDownloadManager {
                             // 让下一次 read() 抛 SocketException 退出循环
                             if (currentCoroutineContext()[kotlinx.coroutines.Job]?.isActive == false) {
                                 conn.disconnect()
-                                throw kotlinx.coroutines.CancellationException("下载被取消")
+                                throw kotlinx.coroutines.CancellationException(context.getString(R.string.error_download_cancelled))
                             }
                             val read = inputStream.read(buffer)
                             if (read == -1) break
@@ -132,7 +133,7 @@ object ModelDownloadManager {
                 // 验证完整性
                 val downloadedBytes = tempFile.length()
                 if (actualTotalBytes > 0 && downloadedBytes != actualTotalBytes) {
-                    throw Exception("下载不完整：期望 $actualTotalBytes，实际 $downloadedBytes")
+                    throw Exception(context.getString(R.string.error_download_incomplete, actualTotalBytes, downloadedBytes))
                 }
 
                 // 移动到目标
@@ -145,7 +146,7 @@ object ModelDownloadManager {
                     val fileHash = calculateMD5(destFile)
                     if (fileHash != checksum.lowercase()) {
                         destFile.delete()
-                        throw Exception("MD5 校验失败")
+                        throw Exception(context.getString(R.string.error_md5_failed))
                     }
                 }
 
@@ -170,7 +171,7 @@ object ModelDownloadManager {
         LogCollector.e(TAG, "下载失败，已重试 $maxRetries 次")
         // 保留 .part 文件，下次可继续断点续传（应用重启、跨页面都能恢复）
         // 只有删除已下载成功的目标文件时才会清理（由调用方 deleteModel() 处理）
-        Result.failure(lastException ?: Exception("下载失败"))
+        Result.failure(lastException ?: Exception(context.getString(R.string.toast_download_failed)))
     }
 
     private fun calculateMD5(file: File): String {

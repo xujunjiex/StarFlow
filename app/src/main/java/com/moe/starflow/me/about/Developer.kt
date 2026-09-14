@@ -92,7 +92,7 @@ class Developer : Fragment() {
         binding.ideas.setOnClickListener {
             AlertDialog.Builder(requireContext())
                 .setTitle(R.string.feedback)
-                .setMessage("QQ：2057095664\nB站：小灰不怕黑")
+                .setMessage(getString(R.string.developer_contact))
                 .setPositiveButton(R.string.user_known, null)
                 .show()
         }

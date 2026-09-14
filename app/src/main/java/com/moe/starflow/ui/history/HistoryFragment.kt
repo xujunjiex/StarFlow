@@ -686,7 +686,7 @@ class HistoryFragment : Fragment() {
                             zipFile.inputStream().use { it.copyTo(out) }
                         }
                         LogCollector.d(TAG, "zip saved to MediaStore uri=$targetUri")
-                        com.moe.starflow.utils.UiUtils.showToast(requireContext(), "已保存到 Download/$fileName")
+                        com.moe.starflow.utils.UiUtils.showToast(requireContext(), getString(R.string.toast_saved_to_download, fileName))
                         zipFile.delete()
                     } catch (e: Exception) {
                         LogCollector.e(TAG, "MediaStore save failed, fallback to SAF", e)
@@ -782,7 +782,7 @@ class HistoryFragment : Fragment() {
                 LogCollector.e(TAG, "Download game session failed", e)
                 withContext(Dispatchers.Main) {
                     progressDialog?.dismiss()
-                    com.moe.starflow.utils.UiUtils.showToast(requireContext(), "下载失败")
+                    com.moe.starflow.utils.UiUtils.showToast(requireContext(), getString(R.string.toast_download_failed))
                 }
             }
         }
@@ -804,10 +804,10 @@ class HistoryFragment : Fragment() {
                                 zip.delete()
                             }
                         }
-                        com.moe.starflow.utils.UiUtils.showToast(requireContext(), "下载完成")
+                        com.moe.starflow.utils.UiUtils.showToast(requireContext(), getString(R.string.toast_download_complete))
                     } catch (e: Exception) {
                         LogCollector.e(TAG, "Download save failed", e)
-                        com.moe.starflow.utils.UiUtils.showToast(requireContext(), "下载失败")
+                        com.moe.starflow.utils.UiUtils.showToast(requireContext(), getString(R.string.toast_download_failed))
                     }
                 }
             }
@@ -825,10 +825,10 @@ class HistoryFragment : Fragment() {
                                     out.write(content.toByteArray(Charsets.UTF_8))
                                 }
                             }
-                            com.moe.starflow.utils.UiUtils.showToast(requireContext(), "下载完成")
+                            com.moe.starflow.utils.UiUtils.showToast(requireContext(), getString(R.string.toast_download_complete))
                         } catch (e: Exception) {
                             LogCollector.e(TAG, "Download txt save failed", e)
-                            com.moe.starflow.utils.UiUtils.showToast(requireContext(), "下载失败")
+                            com.moe.starflow.utils.UiUtils.showToast(requireContext(), getString(R.string.toast_download_failed))
                         }
                     }
                 }

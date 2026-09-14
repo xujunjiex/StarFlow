@@ -584,7 +584,7 @@ class FloatingBallService : LifecycleService() {
                         val selectedIndex = prefs.getInt("Custom_Pic_API", 0)
                         if (apiList.isEmpty() || selectedIndex >= apiList.size) {
                             LogCollector.e(TAG, "No Custom Pic API Config Found")
-                            showToast("No Custom Pic API Config Found.")
+                            showToast(getString(R.string.toast_no_custom_pic_api))
                         } else {
                             translatorPic = CustomTranslationImage(apiList[selectedIndex].config)
                             LogCollector.d(TAG, "翻译 API 初始化: Custom Pic API")
@@ -592,13 +592,13 @@ class FloatingBallService : LifecycleService() {
                     }
                     else -> {
                         LogCollector.e(TAG, "Unknown Pic API: ${prefs.getInt("Pic_API", 0)}")
-                        showToast("Unknown Translator.")
+                        showToast(getString(R.string.toast_unknown_translator))
                     }
                 }
             }
         } catch (e: Exception){
             LogCollector.e(TAG, "翻译 API 初始化失败", e)
-            showToast("Initialize Error: ${e.message}")
+            showToast(getString(R.string.toast_init_error_format, e.message ?: ""))
         }
 
         // 显示翻译 API 初始化成功的消息
@@ -647,6 +647,8 @@ class FloatingBallService : LifecycleService() {
 
         // 创建悬浮球视图
         floatingBallView = LayoutInflater.from(this).inflate(R.layout.floatball_layout, null)
+        // UI 同步字体（开关开启时）：Service 无 Factory2，树遍历应用
+        com.moe.starflow.utils.FontSync.applyToTree(floatingBallView!!)
 
         // 创建翻译结果视图
         resultViewParams = WindowManager.LayoutParams().apply {
@@ -956,7 +958,7 @@ class FloatingBallService : LifecycleService() {
         } while (!isEngineAvailable(next) && nextIdx != currentIdx)
 
         if (!isEngineAvailable(next)) {
-            showToast("无可用的 OCR 引擎", true)
+            showToast(getString(R.string.toast_no_ocr_engine), true)
             return
         }
 
@@ -1009,35 +1011,35 @@ class FloatingBallService : LifecycleService() {
             try {
                 when (engine) {
                     ENGINE_V5 -> {
-                        showToast("PP-OCRv5 初始化中...", true)
+                        showToast(getString(R.string.toast_ppocrv5_init), true)
                         withContext(Dispatchers.IO) {
                             PPOcrV5Engine.initialize(this@FloatingBallService)
                         }
-                        showToast("PP-OCRv5 初始化成功", true)
+                        showToast(getString(R.string.toast_ppocrv5_ready), true)
                     }
                     ENGINE_MANGA -> {
                         if (MangaOcrModelFiles.isModelDownloaded(this@FloatingBallService)) {
-                            showToast("manga-ocr 初始化中...", true)
+                            showToast(getString(R.string.toast_mangaocr_init), true)
                             withContext(Dispatchers.IO) {
                                 MangaOcrBridge.initializeDownloaded(this@FloatingBallService)
                             }
-                            showToast("manga-ocr 初始化成功", true)
+                            showToast(getString(R.string.toast_mangaocr_ready), true)
                         } else {
-                            showToast("manga-ocr 未下载，请先在模型管理中下载", true)
+                            showToast(getString(R.string.toast_mangaocr_not_downloaded), true)
                         }
                     }
                     ENGINE_V6 -> {
-                        showToast("PP-OCRv6 初始化中...", true)
+                        showToast(getString(R.string.toast_ppocrv6_init), true)
                         withContext(Dispatchers.IO) {
                             PPOcrV6Engine.initialize(this@FloatingBallService)
                         }
-                        showToast("PP-OCRv6 初始化成功", true)
+                        showToast(getString(R.string.toast_ppocrv6_ready), true)
                     }
                     else -> { /* MLKit 无需初始化 */ }
                 }
             } catch (e: Exception) {
                 LogCollector.e(TAG, "引擎初始化失败: engine", e)
-                showToast("引擎初始化失败: {e.message}", true)
+                showToast(getString(R.string.toast_engine_init_failed_format, e.message ?: ""), true)
             }
         }
     }
@@ -1084,7 +1086,7 @@ class FloatingBallService : LifecycleService() {
                     limit = 20
                 )
                 if (historyList.isEmpty()) {
-                    showToast("暂无翻译历史", true)
+                    showToast(getString(R.string.toast_no_history), true)
                     return@launch
                 }
                 val dateFormat = java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault())
@@ -1104,7 +1106,7 @@ class FloatingBallService : LifecycleService() {
                             selected.translatedText?.let { text ->
                                 (getSystemService(CLIPBOARD_SERVICE) as? ClipboardManager)
                                     ?.setPrimaryClip(ClipData.newPlainText("translation", text))
-                                UiUtils.showToast(this@FloatingBallService, "已复制译文", isShort = true)
+                                UiUtils.showToast(this@FloatingBallService, getString(R.string.toast_copied_translation), isShort = true)
                             }
                         },
                         onItemLongClick = { position ->
@@ -1131,7 +1133,7 @@ class FloatingBallService : LifecycleService() {
                 }
             } catch (e: Exception) {
                 LogCollector.e("FloatingBallService", "显示翻译历史失败", e)
-                showToast("显示历史失败", true)
+                showToast(getString(R.string.toast_show_history_failed), true)
             }
         }
     }
@@ -1339,10 +1341,10 @@ class FloatingBallService : LifecycleService() {
      */
     private fun showStopTranslationDialog() {
         val dialog = android.app.AlertDialog.Builder(this)
-            .setTitle("翻译未完成")
-            .setMessage("当前翻译尚未完成，是否停止？停止后将不保存本次翻译结果。")
-            .setPositiveButton("停止") { _, _ -> stopTranslationNow() }
-            .setNegativeButton("继续", null)
+            .setTitle(getString(R.string.dlg_translation_unfinished_title))
+            .setMessage(getString(R.string.dlg_translation_unfinished_msg))
+            .setPositiveButton(getString(R.string.stop)) { _, _ -> stopTranslationNow() }
+            .setNegativeButton(getString(R.string.continue_action), null)
             .create()
         // ⚠️ Service 无 Activity token：必须先把对话框窗口类型设为 OVERLAY，否则 show() 抛 BadTokenException
         dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
@@ -1563,7 +1565,7 @@ class FloatingBallService : LifecycleService() {
                                             isTranslating.set(false)
                                         } else {
                                             updateDebugStatus("【翻译中】", diffRatio = pixelDecision.diffRatio)
-                                            statusOverlay.showImmediate("翻译中...")
+                                            statusOverlay.showImmediate(getString(R.string.text_translate_translating))
                                             ballStateManager?.setState(BallStateManager.State.Translating)
                                             translateByText(ocrDecision.ocrText)
                                         }
@@ -1583,7 +1585,7 @@ class FloatingBallService : LifecycleService() {
                     }
                 } else {
                     // 手动翻译模式
-                    statusOverlay.showImmediate("检测中...")
+                    statusOverlay.showImmediate(getString(R.string.detecting))
                     ballStateManager?.setState(BallStateManager.State.Processing)
                     updateDebugStatus("【检测中】手动翻译")
                     translateStartTime = System.currentTimeMillis()
@@ -1614,14 +1616,14 @@ class FloatingBallService : LifecycleService() {
                         isTranslating.set(false)
                     } else {
                         updateDebugStatus("【翻译中】手动")
-                        statusOverlay.show("翻译中...")
+                        statusOverlay.show(getString(R.string.text_translate_translating))
                         ballStateManager?.setState(BallStateManager.State.Translating)
                         translateByText(normalizedTxt)
                     }
                 }
             } else {
                 updateDebugStatus("【翻译中】图片翻译")
-                statusOverlay.show("翻译中...")
+                statusOverlay.show(getString(R.string.text_translate_translating))
                 ballStateManager?.setState(BallStateManager.State.Translating)
                 val bitmapCopy = bitmap.copy(bitmap.config!!, true)
                 translateByPic(bitmapCopy)
@@ -1658,7 +1660,7 @@ class FloatingBallService : LifecycleService() {
                 lifecycleScope.launch(Dispatchers.Main) {
                     when (phase) {
                         "prefill" -> statusOverlay.showImmediate("读取原文中…", autoDismiss = false)
-                        "generate" -> statusOverlay.showImmediate("翻译中…", autoDismiss = false)
+                        "generate" -> statusOverlay.showImmediate(getString(R.string.text_translate_translating), autoDismiss = false)
                     }
                 }
             },
@@ -1818,7 +1820,7 @@ class FloatingBallService : LifecycleService() {
     private fun retranslateCurrentText() {
         val sourceText = lastTranslatedSource
         if (sourceText.isNullOrBlank()) {
-            showToast("无可翻译内容", true)
+            showToast(getString(R.string.toast_no_translatable_content), true)
             return
         }
         if (isTranslating.get()) {
@@ -1897,7 +1899,7 @@ class FloatingBallService : LifecycleService() {
             // 停止服务
             stopSelf()
         } catch (e: Exception) {
-            showToast("Stop service failed: ${e.message}")
+            showToast(getString(R.string.toast_stop_service_failed, e.message ?: ""))
         }
     }
 

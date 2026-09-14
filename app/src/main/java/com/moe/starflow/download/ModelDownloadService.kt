@@ -114,8 +114,8 @@ class ModelDownloadService : LifecycleService() {
         try {
             val placeholder = NotificationCompat.Builder(this, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_download)
-                .setContentTitle("模型下载")
-                .setContentText("准备中...")
+                .setContentTitle(getString(R.string.dl_notify_title))
+                .setContentText(getString(R.string.dl_notify_preparing))
                 .setOngoing(true)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .build()
@@ -129,7 +129,7 @@ class ModelDownloadService : LifecycleService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "模型下载",
+                getString(R.string.dl_notify_title),
                 NotificationManager.IMPORTANCE_LOW
             )
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
@@ -146,10 +146,10 @@ class ModelDownloadService : LifecycleService() {
                 } else {
                     "$pct%"
                 }
-                "${modelKey.displayName()} 下载中 $fileLabel" to
+                getString(R.string.dl_downloading, modelKey.displayName(), fileLabel) to
                     "${formatBytes(state.bytesDownloaded)} / ${formatBytes(state.totalBytes)} · ${formatSpeed(state.speedBytesPerSec)}"
             }
-            is DownloadState.Paused -> "${modelKey.displayName()} 已暂停" to
+            is DownloadState.Paused -> getString(R.string.dl_paused, modelKey.displayName()) to
                 formatPausedOrPartialBody(
                     state.currentFileCount,
                     state.currentFileIndex,
@@ -158,7 +158,7 @@ class ModelDownloadService : LifecycleService() {
                     state.bytesDownloaded,
                     state.totalBytes
                 )
-            is DownloadState.Partial -> "${modelKey.displayName()} 未下载完整" to
+            is DownloadState.Partial -> getString(R.string.dl_partial, modelKey.displayName()) to
                 formatPausedOrPartialBody(
                     state.currentFileCount,
                     state.currentFileIndex,
@@ -167,7 +167,7 @@ class ModelDownloadService : LifecycleService() {
                     state.bytesDownloaded,
                     state.totalBytes
                 )
-            is DownloadState.Done -> "${modelKey.displayName()} 下载完成" to ""
+            is DownloadState.Done -> getString(R.string.dl_done, modelKey.displayName()) to ""
             DownloadState.Idle -> "" to ""
         }
 
@@ -193,13 +193,13 @@ class ModelDownloadService : LifecycleService() {
         val runningCount = activeJobs.size
         val firstRunning = activeJobs.keys.firstOrNull()
         val text = if (firstRunning != null) {
-            "${firstRunning.displayName()} 等 $runningCount 个下载进行中"
+            getString(R.string.dl_multiple, firstRunning.displayName(), runningCount)
         } else {
-            "模型下载"
+            getString(R.string.dl_notify_title)
         }
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_download)
-            .setContentTitle("模型下载")
+            .setContentTitle(getString(R.string.dl_notify_title))
             .setContentText(text)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)

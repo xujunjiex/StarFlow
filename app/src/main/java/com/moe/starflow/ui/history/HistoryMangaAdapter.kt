@@ -4,6 +4,7 @@ import com.moe.starflow.translate.widget.*
 import com.moe.starflow.translate.autotranslate.*
 import com.moe.starflow.translate.screenshot.*
 
+import android.content.Context
 import android.graphics.BitmapFactory
 import android.util.TypedValue
 import android.view.LayoutInflater
@@ -57,25 +58,26 @@ class HistoryMangaAdapter(
         )
 
         private val TRANSLATOR_DISPLAY_NAMES = mapOf(
-            "OpenAITranslation" to "OpenAI",
-            "BingTranslation" to "Bing",
-            "NLLBTranslation" to "NLLB",
-            "NiuTransTranslation" to "小牛",
-            "VolcTranslation" to "火山",
-            "DeepLTranslation" to "DeepL",
-            "BaiduTranslation" to "百度",
-            "TencentCloudTranslation" to "腾讯",
-            "AzureTranslation" to "Azure",
+            "OpenAITranslation" to R.string.nt_openai,
+            "BingTranslation" to R.string.nt_bing,
+            "NLLBTranslation" to R.string.nt_nllb,
+            "NiuTransTranslation" to R.string.nt_niu,
+            "VolcTranslation" to R.string.nt_volc,
+            "DeepLTranslation" to R.string.nt_deepl,
+            "BaiduTranslation" to R.string.nt_baidu,
+            "TencentCloudTranslation" to R.string.nt_tencent,
+            "AzureTranslation" to R.string.nt_azure,
         )
 
-        fun getDisplayName(translatorName: String): String {
+        /** 译名走资源（中英各一份），避免历史页在英文模式下显示「火山/小牛/百度/腾讯」。 */
+        fun getDisplayName(context: Context, translatorName: String): String {
             val apiPart = translatorName.split(" | ").first().trim()
             val match = Regex("^(\\w+?)\\((.+)\\)$").find(apiPart)
             if (match != null) {
                 val model = match.groupValues[2]
                 return model  // 只显示模型名，不要 API 前缀
             }
-            return TRANSLATOR_DISPLAY_NAMES[apiPart] ?: apiPart
+            return TRANSLATOR_DISPLAY_NAMES[apiPart]?.let { context.getString(it) } ?: apiPart
         }
     }
 
@@ -118,7 +120,7 @@ class HistoryMangaAdapter(
             }
 
             // 翻译器名（模型名）
-            tvTranslatorName.text = getDisplayName(entry.translatorName)
+            tvTranslatorName.text = getDisplayName(itemView.context, entry.translatorName)
 
             // pHash
             tvPhash.text = if (entry.pHash != 0L) String.format("%016X", entry.pHash) else ""
@@ -127,8 +129,8 @@ class HistoryMangaAdapter(
                 // === List 模式：完整时间信息 ===
                 val createdStr = fullDateFormat.format(Date(entry.createdAt))
                 val updatedStr = fullDateFormat.format(Date(entry.updatedAt))
-                tvCreateTime?.text = "创建 $createdStr"
-                tvModifyTime?.text = "修改 $updatedStr"
+                tvCreateTime?.text = itemView.context.getString(R.string.history_created_format, createdStr)
+                tvModifyTime?.text = itemView.context.getString(R.string.history_updated_format, updatedStr)
 
                 // 如果创建时间和修改时间相同，隐藏修改时间避免冗余
                 if (entry.createdAt == entry.updatedAt) {

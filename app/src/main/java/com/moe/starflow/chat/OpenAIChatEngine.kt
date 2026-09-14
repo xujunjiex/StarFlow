@@ -3,6 +3,7 @@ import com.moe.starflow.translate.widget.*
 
 import android.content.Context
 import com.moe.starflow.me.apiconfig.ConfigurationStorage
+import com.moe.starflow.R
 import com.moe.starflow.translate.TranslationResult
 import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.LogCollector
@@ -17,7 +18,7 @@ class OpenAIChatEngine(context: Context, prefs: CustomPreference) : ChatEngine {
     private val translator: OpenAITranslation = run {
         val providers = ConfigurationStorage.loadAllProviders(prefs)
         val idx = prefs.getInt("OpenAI_Selected_Provider", 0)
-        val p = providers.getOrNull(idx) ?: throw IllegalStateException("无 OpenAI 配置")
+        val p = providers.getOrNull(idx) ?: throw IllegalStateException(context.getString(R.string.error_no_openai_config))
         OpenAITranslation(
             apiKey = p.apiKey,
             baseUrl = p.baseUrl,

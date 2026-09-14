@@ -20,6 +20,7 @@ class StarFlowApplication : Application() {
 
         // 日志文件落盘（native 崩溃后日志仍保留）——必须最先初始化
         LogCollector.init(this)
+        com.moe.starflow.manga.TranslateUtils.init(this)
 
         // 全局主题（跟随系统/浅色/暗色）：必须在任何 Activity 创建前应用
         ThemeManager.apply(applicationContext)
