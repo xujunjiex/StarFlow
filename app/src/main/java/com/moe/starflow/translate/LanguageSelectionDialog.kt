@@ -36,6 +36,7 @@ class LanguageSelectionDialog(
     private val locales: List<CustomLocale>,
     private val enabled: List<Boolean>? = null,
     private val onDisabledClick: ((CustomLocale) -> Unit)? = null,
+    private val dark: Boolean = false,
     private val onLanguageSelected: (CustomLocale) -> Unit)
 {
     fun show() {
@@ -43,6 +44,7 @@ class LanguageSelectionDialog(
         val inflater = LayoutInflater.from(context)
         val dialogView = inflater.inflate(R.layout.dialog_languages, null)
         val listView = dialogView.findViewById<ListView>(R.id.languages_list)
+        val density = context.resources.displayMetrics.density
 
         val adapter = object : ArrayAdapter<CustomLocale>(context, android.R.layout.simple_list_item_1, locales) {
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
@@ -50,6 +52,7 @@ class LanguageSelectionDialog(
                 val textView = view.findViewById<TextView>(android.R.id.text1)
                 val locale = locales[position]
                 textView.text = locale.getDisplayName()
+                if (dark) textView.setTextColor(0xFFE2E2E4.toInt())
                 // 置灰：当前 OCR/翻译模型不支持的语言（enabled[position]=false）
                 val isEnabled = enabled?.getOrNull(position) ?: true
                 textView.isEnabled = isEnabled
@@ -61,7 +64,21 @@ class LanguageSelectionDialog(
         listView.adapter = adapter
 
         builder.setView(dialogView)
-        builder.setTitle(if (type == 1) R.string.select_source_language else R.string.select_target_language)
+
+        // 深色：自定义浅色标题（避免默认标题文字不可见）
+        if (dark) {
+            builder.setCustomTitle(TextView(context).apply {
+                text = context.getString(
+                    if (type == 1) R.string.select_source_language else R.string.select_target_language
+                )
+                setTextColor(0xFFE2E2E4.toInt())
+                textSize = 18f
+                setPadding((16 * density).toInt(), (16 * density).toInt(), (16 * density).toInt(), (4 * density).toInt())
+                gravity = android.view.Gravity.CENTER_HORIZONTAL
+            })
+        } else {
+            builder.setTitle(if (type == 1) R.string.select_source_language else R.string.select_target_language)
+        }
 
         val dialog = builder.create()
 
@@ -78,6 +95,6 @@ class LanguageSelectionDialog(
         }
 
         dialog.show()
-        dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
+        dialog.window?.setBackgroundDrawableResource(if (dark) R.drawable.bg_dialog_dark else R.drawable.dialog_background)
     }
 }
