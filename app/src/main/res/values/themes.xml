@@ -4,6 +4,7 @@
          ⚠️ 阅读器（MangaReaderActivity）自身背景/面板独立，不受全局主题影响。 -->
     <style name="Base.Theme.MT" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="colorPrimary">@color/primary</item>
+        <item name="preferenceTheme">@style/AppPreferenceTheme</item>
         <item name="android:windowBackground">@color/surface</item>
         <item name="android:navigationBarColor">
             @android:color/transparent
