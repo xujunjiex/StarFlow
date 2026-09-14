@@ -12,11 +12,22 @@ import android.widget.RadioButton
 import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
+import androidx.appcompat.app.AlertDialog
+import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.moe.starflow.R
 import com.moe.starflow.data.ImportedPageTranslation
+import com.moe.starflow.manga.config.OcrEngineGroup
+import com.moe.starflow.mangaimport.translate.ReaderTranslationInfo
+import com.moe.starflow.translate.CustomLocale
+import com.moe.starflow.translate.LanguageSelectionDialog
+import com.moe.starflow.translate.TranslateTools
+import com.moe.starflow.utils.Constants
+import com.moe.starflow.utils.CustomPreference
+import com.moe.starflow.utils.OcrEngineManager
+import translationapi.hymt2translation.HyMt2Languages
 
 /** 阅读器底部工具栏初始状态。mode:0=LTR 1=RTL 2=竖排 3=Webtoon；animation:0无 1默认 2高级 3仿真；bg:0默认 1浅 2深 3白 4黑 5自动。 */
 class ReaderMenuState(
@@ -47,6 +58,8 @@ class ReaderMenuCallbacks(
     val onSettings: () -> Unit,
     val onTranslateMode: (Int) -> Unit = {},
     val onTranslatePageJump: (Int) -> Unit = {},
+    val onOpenModelManagement: () -> Unit = {},
+    val onOpenApiConfig: () -> Unit = {},
 )
 
 /**
@@ -192,6 +205,19 @@ class ReaderMenuSheet(
         setupTranslateFilter(view)
         updateSummary(currentRecords)
 
+        // 模型区：OCR/翻译模型 快速跳转（跳转前先 dismiss 面板）
+        view.findViewById<TextView>(R.id.tv_ocr_model_row).text =
+            getString(R.string.reader_translate_ocr_model, ReaderTranslationInfo.ocrModelLabel(requireContext()))
+        view.findViewById<TextView>(R.id.tv_translator_model_row).text =
+            getString(R.string.reader_translate_translator_model, ReaderTranslationInfo.translatorModelLabel(requireContext()))
+        view.findViewById<View>(R.id.btn_model_ocr).setOnClickListener { dismiss(); cb.onOpenModelManagement() }
+        view.findViewById<View>(R.id.btn_model_translate).setOnClickListener { dismiss(); cb.onOpenApiConfig() }
+
+        // 语言区：源/目标语言选择（下拉弹窗，随面板深浅主题）
+        refreshLangRow(view)
+        view.findViewById<View>(R.id.btn_source_lang).setOnClickListener { showLangDialog(1) }
+        view.findViewById<View>(R.id.btn_target_lang).setOnClickListener { showLangDialog(2) }
+
         // Webtoon 滚动模式下翻页动画/自动翻页不生效：禁用并置灰（切回分页模式自动恢复）
         if (state.mode == 3) {
             setSegEnabled(view.findViewById<ViewGroup>(R.id.seg_animation), false)
@@ -257,7 +283,9 @@ class ReaderMenuSheet(
             R.id.tv_translate_mode_label, R.id.tv_translate_summary,
             R.id.tv_color_title, R.id.tv_color_inverted, R.id.tv_color_grayscale, R.id.tv_color_book,
             R.id.tv_brightness_label, R.id.tv_contrast_label,
-            R.id.tv_rotate_label, R.id.tv_auto_turn_label, R.id.tv_download_label, R.id.tv_settings_label
+            R.id.tv_rotate_label, R.id.tv_auto_turn_label, R.id.tv_download_label, R.id.tv_settings_label,
+            R.id.tv_ocr_model_row, R.id.tv_translator_model_row,
+            R.id.tv_source_lang_value, R.id.tv_target_lang_value
         ).forEach { id ->
             view.findViewById<TextView>(id).setTextColor(labelColor)
         }
@@ -278,6 +306,11 @@ class ReaderMenuSheet(
                 it.thumbTintList = ColorStateList.valueOf(0xFF55AEEA.toInt())
                 it.trackTintList = ColorStateList.valueOf(swTrack)
             }
+        }
+        // 语言行下拉图标随深浅
+        val spinnerColor = if (dark) 0xFFB8BCC2.toInt() else 0xFF777777.toInt()
+        listOf(R.id.iv_source_spinner, R.id.iv_target_spinner).forEach { id ->
+            view.findViewById<ImageView>(id).setColorFilter(spinnerColor)
         }
     }
 
@@ -372,6 +405,76 @@ class ReaderMenuSheet(
     }
 
     // ===== 翻译面板：汇总 / 过滤 / 外部刷新 =====
+
+    // ===== 翻译面板：模型/语言区 =====
+
+    private fun refreshLangRow(view: View) {
+        val prefs = CustomPreference.getInstance(requireContext())
+        view.findViewById<TextView>(R.id.tv_source_lang_value).text = getString(
+            R.string.reader_translate_source_lang,
+            CustomLocale.getInstance(prefs.getString("Source_Language", "ja")).getDisplayName()
+        )
+        view.findViewById<TextView>(R.id.tv_target_lang_value).text = getString(
+            R.string.reader_translate_target_lang,
+            CustomLocale.getInstance(prefs.getString("Target_Language", "zh")).getDisplayName()
+        )
+    }
+
+    /** 语言选择弹窗（复刻主页 showLanguageListDialog，主题随 darkPanel）。 */
+    private fun showLangDialog(type: Int) {
+        val ctx = requireContext()
+        val appPrefs = PreferenceManager.getDefaultSharedPreferences(ctx)
+        val customPrefs = CustomPreference.getInstance(ctx)
+        val ocrGroup = if (type == 1) OcrEngineManager.getOcrEngineGroup(appPrefs) else null
+        val locales = TranslateTools.getLanguagesList(ctx, type, ocrGroup) ?: return
+        val isHyMt2 = appPrefs.getInt("Text_API", Constants.TextApi.BING.id) == Constants.TextApi.AI.id &&
+            appPrefs.getInt("Text_AI", Constants.TextAI.NLLB.id) == Constants.TextAI.HYMT2.id
+        val disabledTargets = if (type == 2) TranslateTools.getDisabledTargetLangs(customPrefs) else emptySet()
+        val enabled = when (type) {
+            1 -> locales.map { ReaderTranslationInfo.isSourceSupported(it.getOriCode(), ocrGroup!!.sourceLangs) }
+            2 -> locales.map { ReaderTranslationInfo.isTargetSupported(it.getOriCode(), isHyMt2, HyMt2Languages.supportedCodes, disabledTargets) }
+            else -> null
+        }
+        LanguageSelectionDialog(
+            ctx, type, locales,
+            enabled = enabled,
+            dark = darkPanel,
+            onDisabledClick = when (type) {
+                1 -> { loc ->
+                    val supportedNames = OcrEngineGroup.entries
+                        .filter { it.sourceLangs.contains(loc.getOriCode()) }
+                        .joinToString(" / ") { getString(it.labelRes) }
+                    val msg = if (supportedNames.isEmpty()) "该语言当前 OCR 模型不支持"
+                    else "该语言当前 OCR 模型不支持，请使用 $supportedNames"
+                    showHintDialog(msg)
+                }
+                2 -> { _ -> showHintDialog("该语言当前翻译模型不支持，请使用 NLLB 或 API 翻译") }
+                else -> null
+            },
+            onLanguageSelected = { locale ->
+                if (type == 1) customPrefs.setString("Source_Language", locale.getOriCode())
+                else customPrefs.setString("Target_Language", locale.getOriCode())
+                refreshLangRow(requireView())
+            }
+        ).show()
+    }
+
+    /** 置灰语言提示弹窗（主题随 darkPanel；深浅文字重着色）。 */
+    private fun showHintDialog(msg: String) {
+        val dlg = AlertDialog.Builder(requireContext())
+            .setMessage(msg)
+            .setPositiveButton(R.string.user_known, null)
+            .create()
+        dlg.show()
+        dlg.window?.setBackgroundDrawableResource(if (darkPanel) R.drawable.bg_dialog_dark else R.drawable.dialog_background)
+        if (darkPanel) recolorLang(dlg.window?.decorView)
+    }
+
+    private fun recolorLang(v: View?) {
+        if (v == null) return
+        if (v is TextView) v.setTextColor(0xFFE2E2E4.toInt())
+        if (v is android.view.ViewGroup) for (i in 0 until v.childCount) recolorLang(v.getChildAt(i))
+    }
 
     private fun updateSummary(records: List<ImportedPageTranslation>) {
         val s = records.count { it.state == ImportedPageTranslation.STATE_SUCCESS }
