@@ -38,7 +38,7 @@ object MangaImporter {
             val id = nextId(context)
             val name = DocumentFile.fromSingleUri(context, contentUri)?.name
                 ?: contentUri.lastPathSegment
-                ?: context.getString(R.string.default_manga_title, id)
+                ?: context.getString(R.string.default_manga_title, id.toString())
             val title = name.substringBeforeLast('.', name)
 
             val manga = importArchiveToFile(context, contentUri, id, name, title)
@@ -108,7 +108,7 @@ object MangaImporter {
 
         return ImportedManga(
             id = id,
-            title = rootDoc.name ?: context.getString(R.string.default_manga_title, id),
+            title = rootDoc.name ?: context.getString(R.string.default_manga_title, id.toString()),
             localRoot = destDir.absolutePath,
             isArchive = false,
             coverPath = coverPath,

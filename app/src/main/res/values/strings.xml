@@ -96,7 +96,7 @@
     <string name="hymt2_help_batch_threads">CPU threads for the read-source (prefill/batch) stage (llama.cpp n_threads_batch). Defaults to all device cores. Independent of generation threads and adjustable separately; must not exceed the core count.</string>
     <string name="hymt2_help_context">Maximum context length. 1024≈500–700 Chinese characters, 2048≈1000–1400, 4096≈2000–2800.</string>
     <string name="hymt2_help_temperature">Randomness temperature. Controls creativity and diversity. For translation, 0.1 (strict literal, highly stable) to 0.7 (better for paraphrase, more natural) is recommended.</string>
-    <string name="hymt2_help_top_p">Nucleus sampling threshold: only candidates whose cumulative probability reaches 60% are considered. A lower top_p (e.g. 0.6) filters low-probability words for more rigorous translations.</string>
+    <string name="hymt2_help_top_p" formatted="false">Nucleus sampling threshold: only candidates whose cumulative probability reaches 60% are considered. A lower top_p (e.g. 0.6) filters low-probability words for more rigorous translations.</string>
     <string name="hymt2_help_top_k">Top-k: each generation draws only from the top 20 most probable candidates, preventing off-topic or wrong-word translations.</string>
     <string name="hymt2_help_rep_penalty">Repetition penalty. Mildly penalizes already-generated tokens. 1.05 avoids endless repetition without breaking legitimate repeats (layout, punctuation).</string>
     <string name="hymt2_help_max_tokens">Maximum output tokens per single request. Caps the output length of one translation; not the model context (-c).</string>

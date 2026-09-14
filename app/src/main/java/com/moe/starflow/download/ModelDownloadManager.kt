@@ -133,7 +133,7 @@ object ModelDownloadManager {
                 // 验证完整性
                 val downloadedBytes = tempFile.length()
                 if (actualTotalBytes > 0 && downloadedBytes != actualTotalBytes) {
-                    throw Exception(context.getString(R.string.error_download_incomplete, actualTotalBytes, downloadedBytes))
+                    throw Exception(context.getString(R.string.error_download_incomplete, actualTotalBytes.toString(), downloadedBytes.toString()))
                 }
 
                 // 移动到目标
