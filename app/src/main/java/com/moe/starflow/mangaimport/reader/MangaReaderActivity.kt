@@ -185,6 +185,9 @@ class MangaReaderActivity : AppCompatActivity() {
         // 竖排模式（Koto VERTICAL）= 竖向整页 Pager，逐页上/下切换；其余横向
         binding.viewPager.orientation =
             if (mode == 2) ViewPager2.ORIENTATION_VERTICAL else ViewPager2.ORIENTATION_HORIZONTAL
+        // 预绑定邻页：当前页停住后空闲期即后台解码下一页 → 滑动翻页时邻页图已就位，
+        // 消除「翻页瞬间旧页颜色/空白闪烁」（配 loadTo 绑定即清残留，快速连翻不显旧图）
+        binding.viewPager.offscreenPageLimit = 1
 
         val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         // 横屏双页仅对水平模式（LTR/RTL）生效；竖排保持单页竖向，不参与双页
