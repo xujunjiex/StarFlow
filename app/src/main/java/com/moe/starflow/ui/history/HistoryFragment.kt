@@ -178,7 +178,7 @@ class HistoryFragment : Fragment() {
         container.addView(android.widget.TextView(requireContext()).apply {
             text = getString(R.string.history_display_mode_label)
             textSize = 14f
-            setTextColor(android.graphics.Color.parseColor("#666666"))
+            setTextColor(androidx.core.content.ContextCompat.getColor(requireContext(), R.color.text_secondary))
             setPadding(0, 24, 0, 8)
         })
 
@@ -202,7 +202,7 @@ class HistoryFragment : Fragment() {
         val cacheLabel = android.widget.TextView(requireContext()).apply {
             text = getString(R.string.cache_count_title) + ": ${cacheCountValues[currentCacheIdx]}"
             textSize = 14f
-            setTextColor(android.graphics.Color.parseColor("#666666"))
+            setTextColor(androidx.core.content.ContextCompat.getColor(requireContext(), R.color.text_secondary))
             setPadding(0, 24, 0, 8)
         }
         container.addView(cacheLabel)
@@ -225,7 +225,7 @@ class HistoryFragment : Fragment() {
         container.addView(android.widget.TextView(requireContext()).apply {
             text = "重翻引擎"
             textSize = 14f
-            setTextColor(android.graphics.Color.parseColor("#666666"))
+            setTextColor(androidx.core.content.ContextCompat.getColor(requireContext(), R.color.text_secondary))
             setPadding(0, 24, 0, 8)
         })
         val engineValues = arrayOf("PP_OCR_V5", "MANGA_OCR", "MLKIT", "PP_OCR_V6")

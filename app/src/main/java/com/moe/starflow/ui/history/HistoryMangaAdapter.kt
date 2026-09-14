@@ -188,7 +188,7 @@ class HistoryMangaAdapter(
                 card.setCardBackgroundColor(bgColor)
                 val strokeWidthPx = (1 * itemView.resources.displayMetrics.density).toInt()
                 card.strokeWidth = strokeWidthPx
-                card.strokeColor = android.graphics.Color.parseColor("#E0E0E0")
+                card.strokeColor = androidx.core.content.ContextCompat.getColor(itemView.context, R.color.divider)
                 card.setBackgroundTintList(null)
             }
 
