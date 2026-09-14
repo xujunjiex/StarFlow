@@ -127,6 +127,11 @@ sealed class BallStatus {
 }
 
 class FloatingBallService : LifecycleService() {
+
+    /** 与 Activity 对称：Service 不走 attachBaseContext 的本地化，这里补上，悬浮菜单随应用语言。 */
+    override fun attachBaseContext(newBase: android.content.Context) {
+        super.attachBaseContext(com.moe.starflow.utils.LanguageManager.applyLanguage(newBase))
+    }
     private lateinit var windowManager: WindowManager
     private lateinit var floatingBallView: View
     private lateinit var translationResultView: TranslationResultView

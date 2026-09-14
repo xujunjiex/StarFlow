@@ -13,10 +13,21 @@
     </style>
 
     <style name="settheme" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="preferenceTheme">@style/AppPreferenceTheme</item>
         <item name="colorPrimary">@color/primary</item>
         <item name="colorPrimaryDark">@color/surface_variant</item>
         <item name="android:navigationBarColor">@color/surface_variant</item>
         <item name="colorAccent">@color/accent</item>
+    </style>
+
+    <!-- 设置页 Preference 条目统一样式：标题占满剩余宽度 + 单行省略（可 focus 滚动），
+         杜绝标题与右侧箭头/开关重叠或换行（父用 PreferenceThemeOverlay 保留全部 preference 表现） -->
+    <style name="AppPreferenceTheme" parent="@style/PreferenceThemeOverlay">
+        <item name="android:preferenceStyle">@style/AppPrefStyle</item>
+    </style>
+
+    <style name="AppPrefStyle">
+        <item name="android:layout">@layout/preference_item_fit</item>
     </style>
 
 </resources>

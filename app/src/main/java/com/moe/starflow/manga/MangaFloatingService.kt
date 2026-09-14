@@ -103,6 +103,11 @@ import kotlin.math.roundToInt
 
 class MangaFloatingService : LifecycleService() {
 
+    /** 与 Activity 对称：Service 不走 attachBaseContext 的本地化，这里补上，悬浮菜单随应用语言。 */
+    override fun attachBaseContext(newBase: android.content.Context) {
+        super.attachBaseContext(com.moe.starflow.utils.LanguageManager.applyLanguage(newBase))
+    }
+
     companion object {
         private const val TAG = "MangaFloatingService"
         private const val NOTIFICATION_CHANNEL_ID = "manga_floating_service"
