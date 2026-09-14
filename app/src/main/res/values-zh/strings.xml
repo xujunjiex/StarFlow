@@ -925,4 +925,8 @@
     <string name="reader_contrast">对比度</string>
     <string name="reader_preview_title">页面预览</string>
 
+    <string name="theme_follow_system">主题：跟随系统</string>
+    <string name="theme_light">主题：浅色</string>
+    <string name="theme_dark">主题：暗色</string>
+
 </resources>

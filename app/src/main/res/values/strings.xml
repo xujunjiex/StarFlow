@@ -1013,4 +1013,8 @@
     <string name="reader_contrast">Contrast</string>
     <string name="reader_preview_title">Page preview</string>
 
+    <string name="theme_follow_system">Theme: Follow system</string>
+    <string name="theme_light">Theme: Light</string>
+    <string name="theme_dark">Theme: Dark</string>
+
 </resources>

@@ -1,0 +1,10 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- 暗色：月亮（crescent） -->
+    <path
+        android:fillColor="#FF555555"
+        android:pathData="M12,3A9,9 0 1,0 21,12A7,7 0 0,1 12,3z" />
+</vector>

@@ -61,6 +61,7 @@ import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.NotificationChecker
 import com.moe.starflow.utils.NotificationResult
 import com.moe.starflow.utils.ServiceUtils
+import com.moe.starflow.utils.ThemeManager
 import com.moe.starflow.utils.UiUtils
 import com.moe.starflow.utils.UpdateResult
 import kotlinx.coroutines.launch
@@ -139,6 +140,9 @@ class TranslateFragment : Fragment() {
             }
         }
         prefs.getSharedPreferences().registerOnSharedPreferenceChangeListener(languagePrefsListener)
+
+        // 主题按钮图标随上次选择（跟随系统/浅/暗）
+        refreshThemeIcon(ThemeManager.currentMode(requireContext()))
     }
 
     override fun onCreateView(
@@ -228,6 +232,30 @@ class TranslateFragment : Fragment() {
         binding.tarLanguage.setOnClickListener {
             showLanguageListDialog(2)
         }
+
+        // 全局主题三态切换（跟随系统/浅色/暗色）：主页右上角按钮
+        binding.themeBtn.setOnClickListener {
+            val mode = ThemeManager.cycle(requireContext())
+            refreshThemeIcon(mode)
+            UiUtils.showToast(requireContext(), themeLabel(mode), isShort = true)
+        }
+    }
+
+    /** 主题三态按钮图标 + 无障碍描述（跟随系统/浅/暗）。 */
+    private fun refreshThemeIcon(mode: String) {
+        val res = when (mode) {
+            ThemeManager.MODE_LIGHT -> R.drawable.ic_theme_light
+            ThemeManager.MODE_DARK -> R.drawable.ic_theme_dark
+            else -> R.drawable.ic_theme_auto
+        }
+        binding.themeBtn.setImageResource(res)
+        binding.themeBtn.contentDescription = themeLabel(mode)
+    }
+
+    private fun themeLabel(mode: String): String = when (mode) {
+        ThemeManager.MODE_LIGHT -> getString(R.string.theme_light)
+        ThemeManager.MODE_DARK -> getString(R.string.theme_dark)
+        else -> getString(R.string.theme_follow_system)
     }
 
     /**
