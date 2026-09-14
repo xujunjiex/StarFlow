@@ -297,7 +297,7 @@
             android:layout_height="64dp"
             android:layout_marginTop="16dp"
             android:backgroundTint="#6200EE"
-            android:text="漫画翻译"
+            android:text="@string/manga_button"
             android:textSize="18sp"
             app:cornerRadius="16dp"
             app:elevation="4dp"

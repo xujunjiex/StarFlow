@@ -32,7 +32,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="中文模板"
+                        android:text="@string/template_cn"
                         android:textColor="#2E7D32"
                         android:textStyle="bold" />
 
@@ -63,7 +63,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="英文模板"
+                        android:text="@string/template_en"
                         android:textColor="#1565C0"
                         android:textStyle="bold" />
 
@@ -94,7 +94,7 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="变量说明"
+                        android:text="@string/template_vars"
                         android:textColor="@color/text_secondary"
                         android:textStyle="bold" />
 

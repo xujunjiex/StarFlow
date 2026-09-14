@@ -201,7 +201,7 @@
                         android:layout_centerVertical="true"
                         android:layout_marginStart="20dp"
                         android:layout_toEndOf="@id/debugModeIcon"
-                        android:text="调试模式"
+                        android:text="@string/debug_mode"
                         android:textColor="@color/primary"
                         android:textSize="20sp"
                         android:textStyle="bold" />
@@ -230,7 +230,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_centerVertical="true"
-                        android:text="RT-DETR-V2 调试"
+                        android:text="@string/dev_debug_rtdetr"
                         android:textColor="@color/text_secondary"
                         android:textSize="18sp" />
 
@@ -256,7 +256,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_centerVertical="true"
-                        android:text="ML Kit 调试"
+                        android:text="@string/dev_debug_mlkit"
                         android:textColor="@color/text_secondary"
                         android:textSize="18sp" />
 
@@ -282,7 +282,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_centerVertical="true"
-                        android:text="PP-OCRv5 调试"
+                        android:text="@string/dev_debug_ppocrv5"
                         android:textColor="@color/text_secondary"
                         android:textSize="18sp" />
 
@@ -308,7 +308,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_centerVertical="true"
-                        android:text="PP-OCRv6 调试"
+                        android:text="@string/dev_debug_ppocrv6"
                         android:textColor="@color/text_secondary"
                         android:textSize="18sp" />
 
@@ -334,7 +334,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_centerVertical="true"
-                        android:text="游戏/视频翻译调试"
+                        android:text="@string/dev_debug_game"
                         android:textColor="@color/text_secondary"
                         android:textSize="18sp" />
 
@@ -366,7 +366,7 @@
                         android:layout_centerVertical="true"
                         android:layout_marginStart="20dp"
                         android:layout_toEndOf="@id/crashTestIcon"
-                        android:text="崩溃日志测试"
+                        android:text="@string/dev_crash_test"
                         android:textColor="#E05252"
                         android:textSize="20sp"
                         android:textStyle="bold" />
@@ -395,7 +395,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_centerVertical="true"
-                        android:text="测试 Java 崩溃"
+                        android:text="@string/dev_crash_java"
                         android:textColor="@color/text_secondary"
                         android:textSize="18sp" />
 
@@ -422,7 +422,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_centerVertical="true"
-                        android:text="测试 Native 崩溃"
+                        android:text="@string/dev_crash_native"
                         android:textColor="@color/text_secondary"
                         android:textSize="18sp" />
 

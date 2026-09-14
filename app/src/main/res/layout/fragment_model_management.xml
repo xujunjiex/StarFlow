@@ -196,7 +196,7 @@
             <TextView
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
-    android:text="检测器"
+    android:text="@string/model_detector"
     android:textSize="13sp"
     android:textStyle="bold"/>
 
@@ -261,7 +261,7 @@
             <TextView
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
-    android:text="识别器"
+    android:text="@string/model_recognizer"
     android:textSize="13sp"
     android:textStyle="bold"/>
 
@@ -364,7 +364,7 @@
             <TextView
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
-    android:text="检测器"
+    android:text="@string/model_detector"
     android:textSize="14sp"
     android:textStyle="bold"/>
 
@@ -439,7 +439,7 @@
             <TextView
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
-    android:text="识别器（多语言）"
+    android:text="@string/model_recognizer_multi"
     android:textSize="14sp"
     android:textStyle="bold"/>
 
@@ -447,7 +447,7 @@
             <TextView
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
-    android:text="中日英"
+    android:text="@string/model_lang_zhjaen"
     android:textSize="13sp"
     android:textStyle="bold"/>
 
@@ -535,7 +535,7 @@
             <TextView
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
-    android:text="英文"
+    android:text="@string/model_lang_en"
     android:textSize="13sp"
     android:textStyle="bold"/>
 
@@ -623,7 +623,7 @@
             <TextView
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
-    android:text="韩文"
+    android:text="@string/model_lang_ko"
     android:textSize="13sp"
     android:textStyle="bold"/>
 
@@ -711,7 +711,7 @@
             <TextView
     android:layout_width="wrap_content"
     android:layout_height="wrap_content"
-    android:text="俄文"
+    android:text="@string/model_lang_ru"
     android:textSize="13sp"
     android:textStyle="bold"/>
 

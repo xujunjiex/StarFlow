@@ -929,4 +929,28 @@
     <string name="theme_light">主题：浅色</string>
     <string name="theme_dark">主题：暗色</string>
 
+    <string name="template_cn">中文模板</string>
+    <string name="template_en">英文模板</string>
+    <string name="template_vars">变量说明</string>
+    <string name="debug_mode">调试模式</string>
+    <string name="dev_debug_rtdetr">RT-DETR-V2 调试</string>
+    <string name="dev_debug_mlkit">ML Kit 调试</string>
+    <string name="dev_debug_ppocrv5">PP-OCRv5 调试</string>
+    <string name="dev_debug_ppocrv6">PP-OCRv6 调试</string>
+    <string name="dev_debug_game">游戏/视频翻译调试</string>
+    <string name="dev_crash_test">崩溃日志测试</string>
+    <string name="dev_crash_java">测试 Java 崩溃</string>
+    <string name="dev_crash_native">测试 Native 崩溃</string>
+    <string name="history_retranslate_engine_label">重翻引擎</string>
+    <string name="model_detector">检测器</string>
+    <string name="model_recognizer">识别器</string>
+    <string name="model_recognizer_multi">识别器（多语言）</string>
+    <string name="model_lang_zhjaen">中日英</string>
+    <string name="model_lang_en">英文</string>
+    <string name="model_lang_ko">韩文</string>
+    <string name="model_lang_ru">俄文</string>
+    <string name="text_translate_tab_translate">翻译</string>
+    <string name="text_translate_tab_chat">对话</string>
+    <string name="manga_button">漫画翻译</string>
+
 </resources>
