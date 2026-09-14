@@ -15,4 +15,15 @@
     <!-- Card背景颜色 -->
     <color name="card_background">#FFF7F7</color>
 
+    <!-- 语义色（暗色模式迁移统一源；夜间值见 values-night/colors.xml） -->
+    <color name="surface">#FFFFFF</color>
+    <color name="surface_variant">#EFF7FB</color>
+    <color name="surface_secondary">#F5F5F5</color>
+    <color name="text_primary">#333333</color>
+    <color name="text_secondary">#666666</color>
+    <color name="text_hint">#888888</color>
+    <color name="text_tertiary">#999999</color>
+    <color name="divider">#E0E0E0</color>
+    <color name="success">#4CAF50</color>
+
 </resources>

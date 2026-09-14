@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 暗色模式：语义色夜间变体（未列出的 white/black/primary/red/success 白天夜间一致回落 values/colors.xml） -->
+    <color name="surface">#121212</color>
+    <color name="surface_variant">#1E1E22</color>
+    <color name="surface_secondary">#2A2A2C</color>
+    <color name="text_primary">#E2E2E4</color>
+    <color name="text_secondary">#9A9A9F</color>
+    <color name="text_hint">#6E6E73</color>
+    <color name="text_tertiary">#5A5A5F</color>
+    <color name="divider">#333333</color>
+</resources>

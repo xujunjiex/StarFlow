@@ -1,8 +1,10 @@
 <resources xmlns:tools="http://schemas.android.com/tools" xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Base application theme. -->
-    <style name="Base.Theme.MT" parent="Theme.Material3.Light.NoActionBar">
-        <item name="colorPrimary">#55AEEA</item>
+    <!-- Base application theme. DayNight：暗色由 values-night/colors.xml 语义色翻转。
+         ⚠️ 阅读器（MangaReaderActivity）自身背景/面板独立，不受全局主题影响。 -->
+    <style name="Base.Theme.MT" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/primary</item>
+        <item name="android:windowBackground">@color/surface</item>
         <item name="android:navigationBarColor">
             @android:color/transparent
         </item>
@@ -10,10 +12,10 @@
         <item name= "android:enforceStatusBarContrast">false</item>
     </style>
 
-    <style name="settheme" parent="Theme.MaterialComponents.Light.NoActionBar">
+    <style name="settheme" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <item name="colorPrimary">@color/primary</item>
-        <item name="colorPrimaryDark">#EFF7FB</item>
-        <item name="android:navigationBarColor">#EFF7FB</item>
+        <item name="colorPrimaryDark">@color/surface_variant</item>
+        <item name="android:navigationBarColor">@color/surface_variant</item>
         <item name="colorAccent">@color/accent</item>
     </style>
 

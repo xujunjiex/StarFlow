@@ -1,8 +1,9 @@
 <resources xmlns:tools="http://schemas.android.com/tools" xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Base application theme. -->
-    <style name="Base.Theme.MT" parent="Theme.Material3.Light.NoActionBar">
-        <item name="colorPrimary">#55AEEA</item>
+    <!-- 夜间主题：与白天同构（DayNight），深色由 values-night/colors.xml 语义色翻转。 -->
+    <style name="Base.Theme.MT" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/primary</item>
+        <item name="android:windowBackground">@color/surface</item>
         <item name="android:navigationBarColor">
             @android:color/transparent
         </item>
@@ -10,10 +11,10 @@
         <item name= "android:enforceStatusBarContrast">false</item>
     </style>
 
-    <style name="settheme" parent="Theme.MaterialComponents.Light.NoActionBar">
+    <style name="settheme" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <item name="colorPrimary">@color/primary</item>
-        <item name="colorPrimaryDark">#EFF7FB</item>
-        <item name="android:navigationBarColor">#EFF7FB</item>
+        <item name="colorPrimaryDark">@color/surface_variant</item>
+        <item name="android:navigationBarColor">@color/surface_variant</item>
         <item name="colorAccent">@color/accent</item>
     </style>
 

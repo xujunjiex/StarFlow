@@ -8,6 +8,7 @@ import android.content.Context
 import android.os.Build
 import com.moe.starflow.download.ModelDownloadRepository
 import com.moe.starflow.utils.LogCollector
+import com.moe.starflow.utils.ThemeManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
@@ -19,6 +20,9 @@ class StarFlowApplication : Application() {
 
         // 日志文件落盘（native 崩溃后日志仍保留）——必须最先初始化
         LogCollector.init(this)
+
+        // 全局主题（跟随系统/浅色/暗色）：必须在任何 Activity 创建前应用
+        ThemeManager.apply(applicationContext)
 
         // Java 层未捕获异常 → 把堆栈写入 starflow.log（进程死亡前落盘），便于排查闪退。
         // 不打断系统默认处理：先写日志，再交给原 default handler（结束进程 + 系统崩溃报告）。
