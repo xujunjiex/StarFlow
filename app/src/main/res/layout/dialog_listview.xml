@@ -28,10 +28,12 @@
     </ImageView>
     <TextView
         android:layout_width="wrap_content"
-        android:layout_height="50dp"
+        android:layout_height="wrap_content"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp"
         android:layout_gravity="center_vertical"
         android:id="@+id/Introduce"
         android:gravity="start|center_vertical"
-        android:textSize="25sp">
+        android:textSize="15sp">
     </TextView>
 </LinearLayout>

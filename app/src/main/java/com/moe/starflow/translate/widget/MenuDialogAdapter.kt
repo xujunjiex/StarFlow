@@ -57,13 +57,9 @@ class MenuDialogAdapter(ctx: Context, private var str: Array<String>, private va
         val im:ImageView = newView.findViewById(R.id.smallIcon)
         txt.text = str[position]
         im.setImageResource(img[position])
+        // 统一 15sp（按 menuScale 缩放）；行高交给布局 wrap_content（两行值项不裁剪）
+        txt.textSize = 15f * menuScale
         if (menuScale < 1f) {
-            txt.textSize = 25f * menuScale
-            val rowHeightPx = (50 * menuScale * density).toInt()
-            txt.layoutParams?.let { lp ->
-                lp.height = rowHeightPx
-                txt.layoutParams = lp
-            }
             val iconSizePx = (40 * menuScale * density).toInt()
             im.layoutParams?.let { lp ->
                 lp.width = iconSizePx

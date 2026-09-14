@@ -84,11 +84,11 @@ object Dialogs {
         imgItems.add(R.drawable.result_size)
         // 2: OCR 模型（动态标签）
         if (ocrEngineLabel.isNotEmpty()) {
-            strItems.add(ctx.getString(R.string.game_ocr_engine_label) + "：" + ocrEngineLabel)
+            strItems.add(ctx.getString(R.string.game_ocr_engine_label) + "\n" + ocrEngineLabel)
             imgItems.add(R.drawable.ocr_engine)
         }
         // 3: 切换语言（动态标签）
-        strItems.add(ctx.getString(R.string.game_switch_language) + "：" + currentLangName)
+        strItems.add(ctx.getString(R.string.game_switch_language) + "\n" + currentLangName)
         imgItems.add(R.drawable.language_switch)
         // 4: 翻译历史
         strItems.add(ctx.getString(R.string.game_translation_history))
@@ -221,10 +221,10 @@ object Dialogs {
         // 动态拼接当前模式
         val strlist = Array(baseItems.size) { i ->
             when (i) {
-                0 -> "${baseItems[0]}：$cropLabel"
-                2 -> "${baseItems[2]}：$detModelLabel"
-                3 -> "${baseItems[3]}：$ocrEngineLabel"
-                4 -> "${baseItems[4]}：$currentLangName"
+                0 -> "${baseItems[0]}\n$cropLabel"
+                2 -> "${baseItems[2]}\n$detModelLabel"
+                3 -> "${baseItems[3]}\n$ocrEngineLabel"
+                4 -> "${baseItems[4]}\n$currentLangName"
                 else -> baseItems[i]
             }
         }
@@ -289,9 +289,9 @@ object Dialogs {
         }
         val strlist = Array(baseItems.size) { i ->
             when (i) {
-                0 -> "${baseItems[0]}：$cropLabel"
-                2 -> "${baseItems[2]}：$modelLabel"
-                3 -> "${baseItems[3]}：$currentLangName"
+                0 -> "${baseItems[0]}\n$cropLabel"
+                2 -> "${baseItems[2]}\n$modelLabel"
+                3 -> "${baseItems[3]}\n$currentLangName"
                 else -> baseItems[i]
             }
         }

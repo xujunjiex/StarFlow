@@ -856,7 +856,7 @@ class FloatingBallService : LifecycleService() {
                             // 循环切换，不关闭菜单
                             cycleOcrEngine()
                             val adapter = listView.adapter as MenuDialogAdapter
-                            adapter.updateLabel(ocrIdx, getString(R.string.game_ocr_engine_label) + "：" + getOcrEngineLabel())
+                            adapter.updateLabel(ocrIdx, getString(R.string.game_ocr_engine_label) + "\n" + getOcrEngineLabel())
                         }
                     }
                     langIdx -> {
@@ -866,7 +866,7 @@ class FloatingBallService : LifecycleService() {
                             // 循环切换源语言，不关闭菜单
                             cycleSourceLang()
                             val adapter = listView.adapter as MenuDialogAdapter
-                            adapter.updateLabel(langIdx, getString(R.string.game_switch_language) + "：" + getCurrentSourceLangName())
+                            adapter.updateLabel(langIdx, getString(R.string.game_switch_language) + "\n" + getCurrentSourceLangName())
                         }
                     }
                     historyIdx -> {
@@ -962,7 +962,7 @@ class FloatingBallService : LifecycleService() {
         val fromLabel = engineLabel(current)
 
         LogCollector.d(TAG, "OCR 引擎切换: $fromLabel($current) → $label($next)")
-        showToast(getString(R.string.game_ocr_engine_label) + "：" + label, true)
+        showToast(getString(R.string.game_ocr_engine_label) + "\n" + label, true)
 
         releaseEngine(current)
         initEngineAsync(next)
