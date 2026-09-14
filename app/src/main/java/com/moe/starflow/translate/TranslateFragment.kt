@@ -212,12 +212,12 @@ class TranslateFragment : Fragment() {
                 // 授权成功后由 ScreenCapturePermissionActivity 自动启动服务
                 if (checkAndroidSDK() && checkFloatingBall() && checkScreenshotMethod("manga")) {
                     MangaFloatingService.start(requireContext())
-                    UiUtils.showToast(requireContext(), "漫画翻译已启动", isShort = false)
+                    UiUtils.showToast(requireContext(), getString(R.string.manga_started), isShort = false)
                     setMangaButtonState(true)
                 }
             } else {
                 MangaFloatingService.stop(requireContext())
-                UiUtils.showToast(requireContext(), "漫画翻译已停止", isShort = false)
+                UiUtils.showToast(requireContext(), getString(R.string.manga_stopped), isShort = false)
                 setMangaButtonState(false)
             }
         }
@@ -359,11 +359,11 @@ class TranslateFragment : Fragment() {
 
     private fun setMangaButtonState(isRunning: Boolean) {
         if (isRunning) {
-            binding.mangaButton.text = "停止漫画翻译"
+            binding.mangaButton.text = getString(R.string.manga_button_stop)
             binding.mangaButton.backgroundTintList =
                 ColorStateList.valueOf(ContextCompat.getColor(requireContext(), R.color.red))
         } else {
-            binding.mangaButton.text = "漫画翻译"
+            binding.mangaButton.text = getString(R.string.manga_button)
             binding.mangaButton.backgroundTintList =
                 ColorStateList.valueOf(Color.parseColor("#6200EE"))
         }

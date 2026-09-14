@@ -965,4 +965,8 @@
 
     <string name="dev_debug_game_toast">游戏翻译调试模式已开启，请在游戏翻译界面测试</string>
 
+    <string name="manga_button_stop">停止漫画翻译</string>
+    <string name="manga_started">漫画翻译已启动</string>
+    <string name="manga_stopped">漫画翻译已停止</string>
+
 </resources>

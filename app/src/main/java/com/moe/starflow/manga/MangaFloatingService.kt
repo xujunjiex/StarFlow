@@ -3752,7 +3752,7 @@ class MangaFloatingService : LifecycleService() {
             val margin = dpToPx(12)
             val toggleButton = android.widget.TextView(this).apply {
                 text = "📊"
-                textSize = 18f
+                textSize = 15f
                 gravity = android.view.Gravity.CENTER
                 setTextColor(android.graphics.Color.argb(220, 255, 255, 255))
                 isClickable = true; isFocusable = true
@@ -3768,7 +3768,7 @@ class MangaFloatingService : LifecycleService() {
             })
             val paramsToggle = android.widget.TextView(this).apply {
                 text = "⚙"
-                textSize = 18f
+                textSize = 15f
                 gravity = android.view.Gravity.CENTER
                 setTextColor(android.graphics.Color.argb(220, 255, 255, 255))
                 isClickable = true; isFocusable = true

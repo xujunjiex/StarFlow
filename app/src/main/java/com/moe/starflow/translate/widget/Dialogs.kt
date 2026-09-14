@@ -135,7 +135,7 @@ object Dialogs {
                 lp.height = iconSizePx
                 img.layoutParams = lp
             }
-            welcome.textSize = 22f * menuScale
+            welcome.textSize = 18f * menuScale
         }
         return DialogResult(dialog, lv)
     }
@@ -343,7 +343,7 @@ object Dialogs {
                 lp.height = iconSizePx
                 img.layoutParams = lp
             }
-            welcome.textSize = 22f * menuScale
+            welcome.textSize = 18f * menuScale
         }
         return DialogResult(dialog, lv)
     }

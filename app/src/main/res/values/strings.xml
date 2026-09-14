@@ -1053,4 +1053,8 @@
 
     <string name="dev_debug_game_toast">Game translation debug mode enabled. Go to game translation to test.</string>
 
+    <string name="manga_button_stop">Stop Manga Translation</string>
+    <string name="manga_started">Manga translation started</string>
+    <string name="manga_stopped">Manga translation stopped</string>
+
 </resources>
