@@ -83,11 +83,13 @@
             android:lineSpacingExtra="2dp"/>
 
         <TextView
-            android:id="@+id/btn_copy_all"
-            android:layout_width="wrap_content"
+            android:id="@+id/tv_detail_collapse"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
+            android:gravity="center"
             android:padding="2dp"
+            android:text="@string/reader_translate_collapse"
             android:textSize="12sp"
             android:textColor="#55AEEA"/>
     </LinearLayout>

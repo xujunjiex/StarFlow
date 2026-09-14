@@ -1,7 +1,5 @@
 package com.moe.starflow.mangaimport.reader
 
-import android.content.ClipData
-import android.content.ClipboardManager
 import android.content.Context
 import android.text.SpannableStringBuilder
 import android.text.Spanned
@@ -14,7 +12,6 @@ import androidx.recyclerview.widget.RecyclerView
 import com.moe.starflow.R
 import com.moe.starflow.data.ImportedPageTranslation
 import com.moe.starflow.data.TranslationCacheUtils
-import com.moe.starflow.utils.UiUtils
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -84,7 +81,7 @@ class ReaderPageStateAdapter(
 
         val detail = item.findViewById<View>(R.id.detail_panel)
         if (expanded) {
-            fillDetail(item, row, labelColor, subColor, accent)
+            fillDetail(item, position, row, labelColor, subColor, accent)
             detail.visibility = View.VISIBLE
         } else {
             detail.visibility = View.GONE
@@ -100,8 +97,8 @@ class ReaderPageStateAdapter(
         }
     }
 
-    /** 像屏幕翻译历史那样：元数据（翻译器/语言/时间）+ 逐条 原文(淡)+译文(主) + 复制全部。 */
-    private fun fillDetail(item: View, row: ImportedPageTranslation, labelColor: Int, subColor: Int, accent: Int) {
+    /** 像屏幕翻译历史那样：元数据（翻译器/语言/时间）+ 逐条 原文(淡)+译文(主)。拖拽选择复制，无复制按钮。 */
+    private fun fillDetail(item: View, position: Int, row: ImportedPageTranslation, labelColor: Int, subColor: Int, accent: Int) {
         val meta = buildString {
             row.translatorName?.takeIf { it.isNotBlank() }?.let { append(it).append("\n") }
             val langs = listOfNotNull(row.sourceLang, row.targetLang)
@@ -128,15 +125,12 @@ class ReaderPageStateAdapter(
         item.findViewById<TextView>(R.id.tv_detail_list).text = sb
         item.findViewById<TextView>(R.id.tv_detail_list).setTextColor(labelColor)
 
-        item.findViewById<TextView>(R.id.btn_copy_all).apply {
-            text = contextString(item.context, R.string.reader_translate_copy_all)
+        // 底部收起（与顶部「详情/收起」同一逻辑）
+        item.findViewById<TextView>(R.id.tv_detail_collapse).apply {
             setTextColor(accent)
             setOnClickListener {
-                if (!row.translatedText.isNullOrBlank()) {
-                    val cm = item.context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    cm.setPrimaryClip(ClipData.newPlainText("translation", row.translatedText))
-                    UiUtils.showToast(item.context, contextString(item.context, R.string.reader_translate_copied))
-                }
+                expandedIndex = null
+                notifyItemChanged(position)
             }
         }
     }
