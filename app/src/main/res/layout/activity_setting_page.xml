@@ -22,7 +22,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#EFF7FB"
+    android:background="@color/surface_variant"
     tools:context=".me.settings.SettingPageActivity">
 
 

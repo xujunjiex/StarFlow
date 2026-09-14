@@ -19,7 +19,7 @@
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:paddingVertical="6dp"
-            android:textColor="#FF999999"
+            android:textColor="@color/text_tertiary"
             android:textSize="12sp" />
 
         <TextView
@@ -28,7 +28,7 @@
             android:layout_height="32dp"
             android:text="⬇ 下载"
             android:textSize="12sp"
-            android:textColor="#55AEEA"
+            android:textColor="@color/primary"
             android:gravity="center"
             android:paddingHorizontal="12dp"
             android:background="?attr/selectableItemBackgroundBorderless"

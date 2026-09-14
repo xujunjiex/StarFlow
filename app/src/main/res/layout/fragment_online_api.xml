@@ -21,7 +21,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#EFF7FB"
+    android:background="@color/surface_variant"
     android:fitsSystemWindows="true">
 
     <androidx.constraintlayout.widget.ConstraintLayout
@@ -141,7 +141,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/error_code_link"
-                android:textColor="#6A6464"
+                android:textColor="@color/text_secondary"
                 android:textSize="14sp" />
         </LinearLayout>
 

@@ -11,7 +11,7 @@
     app:cardElevation="0dp"
     app:strokeWidth="1dp"
     app:strokeColor="#E0E0E0"
-    app:cardBackgroundColor="#FFFFFF">
+    app:cardBackgroundColor="@color/surface">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -40,7 +40,7 @@
                 android:layout_marginTop="4dp"
                 android:text="🔄"
                 android:textSize="12sp"
-                android:textColor="#55AEEA"
+                android:textColor="@color/primary"
                 android:visibility="gone" />
 
             <LinearLayout
@@ -62,7 +62,7 @@
                     android:paddingEnd="5dp"
                     android:paddingTop="1dp"
                     android:paddingBottom="1dp"
-                    android:textColor="#FFFFFF"
+                    android:textColor="@color/white"
                     android:textSize="9sp"
                     android:textStyle="bold"
                     android:visibility="gone" />
@@ -85,7 +85,7 @@
                 android:id="@+id/tv_translator_name"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:textColor="#333333"
+                android:textColor="@color/text_primary"
                 android:textSize="13sp"
                 android:maxLines="1" />
 
@@ -94,7 +94,7 @@
                 android:id="@+id/tv_time"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:textColor="#999999"
+                android:textColor="@color/text_tertiary"
                 android:textSize="11sp"
                 android:layout_marginTop="2dp" />
 
@@ -103,7 +103,7 @@
                 android:id="@+id/tv_phash"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:textColor="#BBBBBB"
+                android:textColor="@color/text_tertiary"
                 android:textSize="9sp"
                 android:fontFamily="monospace"
                 android:maxLines="1"

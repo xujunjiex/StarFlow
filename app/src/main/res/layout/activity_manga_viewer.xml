@@ -20,7 +20,7 @@
         android:layout_height="wrap_content"
         android:layout_gravity="top|center_horizontal"
         android:layout_marginTop="48dp"
-        android:textColor="#FFFFFF"
+        android:textColor="@color/white"
         android:textSize="16sp"
         android:background="#80000000"
         android:paddingHorizontal="16dp"
@@ -35,7 +35,7 @@
         android:layout_margin="16dp"
         android:background="@drawable/bg_manga_toolbar_btn"
         android:src="@android:drawable/ic_menu_close_clear_cancel"
-        android:tint="#FFFFFF" />
+        android:tint="@color/white" />
 
     <!-- 右上角按钮组：旋转 + 原文/译文切换 + 删除（共享背景） -->
     <LinearLayout
@@ -53,7 +53,7 @@
             android:layout_height="48dp"
             android:background="@android:color/transparent"
             android:src="@android:drawable/ic_menu_rotate"
-            android:tint="#FFFFFF"
+            android:tint="@color/white"
             android:contentDescription="旋转视图" />
 
         <ImageButton
@@ -62,7 +62,7 @@
             android:layout_height="48dp"
             android:background="@android:color/transparent"
             android:src="@android:drawable/ic_menu_camera"
-            android:tint="#FFFFFF"
+            android:tint="@color/white"
             android:contentDescription="切换原图/译文" />
 
         <ImageButton
@@ -109,7 +109,7 @@
             android:layout_width="wrap_content"
             android:layout_height="40dp"
             android:text="@string/history_detail"
-            android:textColor="#FFFFFF"
+            android:textColor="@color/white"
             android:textSize="13sp"
             app:backgroundTint="#CC555555"
             app:cornerRadius="20dp" />
@@ -122,7 +122,7 @@
             android:layout_marginStart="8dp"
             android:paddingHorizontal="12dp"
             android:text="@string/history_retranslate"
-            android:textColor="#FFFFFF"
+            android:textColor="@color/white"
             android:textSize="13sp"
             app:backgroundTint="#CC55AEEA"
             app:cornerRadius="20dp" />
@@ -160,7 +160,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:text="@string/translation_detail"
-                android:textColor="#FFFFFF"
+                android:textColor="@color/white"
                 android:textSize="16sp"
                 android:textStyle="bold" />
 
@@ -170,7 +170,7 @@
                 android:layout_height="36dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:src="@android:drawable/ic_menu_close_clear_cancel"
-                android:tint="#FFFFFF" />
+                android:tint="@color/white" />
         </LinearLayout>
 
         <TextView

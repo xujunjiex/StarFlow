@@ -12,7 +12,7 @@
         android:id="@+id/history_time"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:textColor="#999999"
+        android:textColor="@color/text_tertiary"
         android:textSize="11sp" />
 
     <TextView
@@ -20,7 +20,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="2dp"
-        android:textColor="#666666"
+        android:textColor="@color/text_secondary"
         android:textSize="13sp"
         android:maxLines="2"
         android:ellipsize="end" />
@@ -30,7 +30,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="2dp"
-        android:textColor="#333333"
+        android:textColor="@color/text_primary"
         android:textSize="13sp"
         android:maxLines="3"
         android:ellipsize="end" />

@@ -20,7 +20,7 @@
             <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                app:cardBackgroundColor="#F5F5F5"
+                app:cardBackgroundColor="@color/surface_secondary"
                 app:cardCornerRadius="10dp">
 
                 <LinearLayout
@@ -51,7 +51,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
-                app:cardBackgroundColor="#F5F5F5"
+                app:cardBackgroundColor="@color/surface_secondary"
                 app:cardCornerRadius="10dp">
 
                 <LinearLayout
@@ -82,7 +82,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
-                app:cardBackgroundColor="#F5F5F5"
+                app:cardBackgroundColor="@color/surface_secondary"
                 app:cardCornerRadius="10dp">
 
                 <LinearLayout

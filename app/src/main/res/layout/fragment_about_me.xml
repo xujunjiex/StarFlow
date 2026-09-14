@@ -69,7 +69,7 @@
                     android:layout_marginStart="20dp"
                     android:layout_toEndOf="@id/apiselect"
                     android:text="@string/translation_mode"
-                    android:textColor="#6A6464"
+                    android:textColor="@color/text_secondary"
                     android:textSize="20sp" />
 
                 <ImageView
@@ -102,7 +102,7 @@
                     android:layout_marginStart="20dp"
                     android:layout_toEndOf="@id/apiset"
                     android:text="@string/api_configuration"
-                    android:textColor="#6A6464"
+                    android:textColor="@color/text_secondary"
                     android:textSize="20sp" />
 
                 <ImageView
@@ -135,7 +135,7 @@
                     android:layout_marginStart="20dp"
                     android:layout_toEndOf="@id/themeset"
                     android:text="@string/personalization_setting"
-                    android:textColor="#6A6464"
+                    android:textColor="@color/text_secondary"
                     android:textSize="20sp" />
 
                 <ImageView
@@ -168,7 +168,7 @@
                     android:layout_marginStart="20dp"
                     android:layout_toEndOf="@id/modelicon"
                     android:text="@string/model_management"
-                    android:textColor="#6A6464"
+                    android:textColor="@color/text_secondary"
                     android:textSize="20sp"/>
 
                 <ImageView
@@ -201,7 +201,7 @@
                     android:layout_marginStart="20dp"
                     android:layout_toEndOf="@id/faq"
                     android:text="@string/faq_title"
-                    android:textColor="#6A6464"
+                    android:textColor="@color/text_secondary"
                     android:textSize="20sp" />
 
                 <ImageView
@@ -249,7 +249,7 @@
                     android:layout_marginStart="20dp"
                     android:layout_toEndOf="@id/update"
                     android:text="@string/check_update"
-                    android:textColor="#6A6464"
+                    android:textColor="@color/text_secondary"
                     android:textSize="20sp"/>
 
                 <ImageView
@@ -282,7 +282,7 @@
                     android:layout_marginStart="20dp"
                     android:layout_toEndOf="@id/developer"
                     android:text="@string/about_page"
-                    android:textColor="#6A6464"
+                    android:textColor="@color/text_secondary"
                     android:textSize="20sp"/>
 
                 <ImageView
@@ -328,7 +328,7 @@
                     android:layout_marginStart="20dp"
                     android:layout_toEndOf="@id/logicon"
                     android:text="@string/view_logs"
-                    android:textColor="#6A6464"
+                    android:textColor="@color/text_secondary"
                     android:textSize="20sp"/>
 
                 <ImageView

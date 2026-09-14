@@ -44,7 +44,7 @@
             android:paddingBottom="14dp"
             android:gravity="center"
             android:text="@string/add_custom_model"
-            android:textColor="#55AEEA"
+            android:textColor="@color/primary"
             android:textSize="15sp"
             android:background="@drawable/ripple_item_bg"
             android:clickable="true"

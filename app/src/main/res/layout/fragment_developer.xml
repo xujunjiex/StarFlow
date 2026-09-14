@@ -62,7 +62,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginBottom="20dp"
                 android:text="@string/app_name"
-                android:textColor="#6A6464"
+                android:textColor="@color/text_secondary"
                 android:textSize="30sp"
                 app:layout_constraintBottom_toTopOf="@+id/imageView6"
                 app:layout_constraintEnd_toEndOf="parent"
@@ -104,7 +104,7 @@
                         android:layout_marginStart="20dp"
                         android:layout_toEndOf="@id/idea"
                         android:text="@string/feedback"
-                        android:textColor="#6A6464"
+                        android:textColor="@color/text_secondary"
                         android:textSize="20sp" />
 
                     <ImageView
@@ -137,7 +137,7 @@
                         android:layout_marginStart="20dp"
                         android:layout_toEndOf="@id/git"
                         android:text="GitHub"
-                        android:textColor="#6A6464"
+                        android:textColor="@color/text_secondary"
                         android:textSize="20sp" />
 
                     <ImageView
@@ -170,7 +170,7 @@
                         android:layout_marginStart="20dp"
                         android:layout_toEndOf="@id/os"
                         android:text="@string/open_source_statement"
-                        android:textColor="#6A6464"
+                        android:textColor="@color/text_secondary"
                         android:textSize="20sp" />
 
                     <ImageView
@@ -202,7 +202,7 @@
                         android:layout_marginStart="20dp"
                         android:layout_toEndOf="@id/debugModeIcon"
                         android:text="调试模式"
-                        android:textColor="#55AEEA"
+                        android:textColor="@color/primary"
                         android:textSize="20sp"
                         android:textStyle="bold" />
                 </RelativeLayout>
@@ -213,7 +213,7 @@
                     android:layout_height="1dp"
                     android:layout_marginTop="5dp"
                     android:layout_marginBottom="5dp"
-                    android:background="#E0E0E0" />
+                    android:background="@color/divider" />
 
                 <!-- 二级菜单：无图标 -->
                 <RelativeLayout
@@ -231,7 +231,7 @@
                         android:layout_height="wrap_content"
                         android:layout_centerVertical="true"
                         android:text="RT-DETR-V2 调试"
-                        android:textColor="#6A6464"
+                        android:textColor="@color/text_secondary"
                         android:textSize="18sp" />
 
                     <com.google.android.material.switchmaterial.SwitchMaterial
@@ -257,7 +257,7 @@
                         android:layout_height="wrap_content"
                         android:layout_centerVertical="true"
                         android:text="ML Kit 调试"
-                        android:textColor="#6A6464"
+                        android:textColor="@color/text_secondary"
                         android:textSize="18sp" />
 
                     <com.google.android.material.switchmaterial.SwitchMaterial
@@ -283,7 +283,7 @@
                         android:layout_height="wrap_content"
                         android:layout_centerVertical="true"
                         android:text="PP-OCRv5 调试"
-                        android:textColor="#6A6464"
+                        android:textColor="@color/text_secondary"
                         android:textSize="18sp" />
 
                     <com.google.android.material.switchmaterial.SwitchMaterial
@@ -309,7 +309,7 @@
                         android:layout_height="wrap_content"
                         android:layout_centerVertical="true"
                         android:text="PP-OCRv6 调试"
-                        android:textColor="#6A6464"
+                        android:textColor="@color/text_secondary"
                         android:textSize="18sp" />
 
                     <com.google.android.material.switchmaterial.SwitchMaterial
@@ -335,7 +335,7 @@
                         android:layout_height="wrap_content"
                         android:layout_centerVertical="true"
                         android:text="游戏/视频翻译调试"
-                        android:textColor="#6A6464"
+                        android:textColor="@color/text_secondary"
                         android:textSize="18sp" />
 
                     <com.google.android.material.switchmaterial.SwitchMaterial
@@ -378,7 +378,7 @@
                     android:layout_height="1dp"
                     android:layout_marginTop="5dp"
                     android:layout_marginBottom="5dp"
-                    android:background="#E0E0E0" />
+                    android:background="@color/divider" />
 
                 <!-- 测试 Java 崩溃 -->
                 <RelativeLayout
@@ -396,7 +396,7 @@
                         android:layout_height="wrap_content"
                         android:layout_centerVertical="true"
                         android:text="测试 Java 崩溃"
-                        android:textColor="#6A6464"
+                        android:textColor="@color/text_secondary"
                         android:textSize="18sp" />
 
                     <ImageView
@@ -423,7 +423,7 @@
                         android:layout_height="wrap_content"
                         android:layout_centerVertical="true"
                         android:text="测试 Native 崩溃"
-                        android:textColor="#6A6464"
+                        android:textColor="@color/text_secondary"
                         android:textSize="18sp" />
 
                     <ImageView
@@ -448,7 +448,7 @@
                         android:layout_height="wrap_content"
                         android:layout_centerVertical="true"
                         android:text="@string/cache_marker_title"
-                        android:textColor="#6A6464"
+                        android:textColor="@color/text_secondary"
                         android:textSize="18sp" />
 
                     <com.google.android.material.switchmaterial.SwitchMaterial
@@ -469,7 +469,7 @@
         android:id="@+id/konfettiViewd"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:backgroundTint="#55AEEA"
+        android:backgroundTint="@color/primary"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintHorizontal_bias="0.0"

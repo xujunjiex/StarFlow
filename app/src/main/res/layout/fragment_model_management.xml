@@ -28,7 +28,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/ocr_group_selected"
-            android:textColor="#4CAF50"
+            android:textColor="@color/success"
             android:textSize="12sp"
             android:visibility="gone"/>
 
@@ -58,7 +58,7 @@
                     android:layout_height="wrap_content"
                     android:text="@string/model_built_in_label"
                     android:textSize="13sp"
-                    android:textColor="#4CAF50"/>
+                    android:textColor="@color/success"/>
             </LinearLayout>
         </LinearLayout>
 
@@ -81,7 +81,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/ocr_group_selected"
-            android:textColor="#4CAF50"
+            android:textColor="@color/success"
             android:textSize="12sp"
             android:visibility="gone"/>
 
@@ -135,7 +135,7 @@
                     android:layout_height="wrap_content"
                     android:text="@string/model_built_in_label"
                     android:textSize="13sp"
-                    android:textColor="#4CAF50"
+                    android:textColor="@color/success"
                     android:layout_marginEnd="8dp"/>
 
                 <RadioButton
@@ -149,7 +149,7 @@
             <View
                 android:layout_width="match_parent"
                 android:layout_height="1dp"
-                android:background="#E0E0E0"
+                android:background="@color/divider"
                 android:layout_marginStart="4dp"
                 android:layout_marginEnd="4dp"
                 android:layout_marginTop="4dp"
@@ -340,7 +340,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/ocr_group_selected"
-            android:textColor="#4CAF50"
+            android:textColor="@color/success"
             android:textSize="12sp"
             android:visibility="gone"/>
 
@@ -429,7 +429,7 @@
             <View
                 android:layout_width="match_parent"
                 android:layout_height="1dp"
-                android:background="#E0E0E0"
+                android:background="@color/divider"
                 android:layout_marginStart="4dp"
                 android:layout_marginEnd="4dp"
                 android:layout_marginTop="10dp"
@@ -525,7 +525,7 @@
             <View
                 android:layout_width="match_parent"
                 android:layout_height="1dp"
-                android:background="#E0E0E0"
+                android:background="@color/divider"
                 android:layout_marginStart="4dp"
                 android:layout_marginEnd="4dp"
                 android:layout_marginTop="8dp"
@@ -613,7 +613,7 @@
             <View
                 android:layout_width="match_parent"
                 android:layout_height="1dp"
-                android:background="#E0E0E0"
+                android:background="@color/divider"
                 android:layout_marginStart="4dp"
                 android:layout_marginEnd="4dp"
                 android:layout_marginTop="8dp"
@@ -701,7 +701,7 @@
             <View
                 android:layout_width="match_parent"
                 android:layout_height="1dp"
-                android:background="#E0E0E0"
+                android:background="@color/divider"
                 android:layout_marginStart="4dp"
                 android:layout_marginEnd="4dp"
                 android:layout_marginTop="8dp"
@@ -805,7 +805,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="@string/ocr_group_selected"
-            android:textColor="#4CAF50"
+            android:textColor="@color/success"
             android:textSize="12sp"
             android:visibility="gone"/>
 
@@ -894,7 +894,7 @@
             <View
                 android:layout_width="match_parent"
                 android:layout_height="1dp"
-                android:background="#E0E0E0"
+                android:background="@color/divider"
                 android:layout_marginStart="4dp"
                 android:layout_marginEnd="4dp"
                 android:layout_marginTop="8dp"

@@ -27,7 +27,7 @@
             android:layout_height="wrap_content"
             android:lineSpacingExtra="3dp"
             android:text="@string/hymt2_intro"
-            android:textColor="#999999"
+            android:textColor="@color/text_tertiary"
             android:textSize="13sp" />
 
         <!-- ========== 模型下载 ========== -->
@@ -44,7 +44,7 @@
             android:id="@+id/statusText"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textColor="#999999"
+            android:textColor="@color/text_tertiary"
             android:textSize="13sp" />
 
         <ProgressBar
@@ -108,7 +108,7 @@
             android:layout_height="wrap_content"
             android:paddingTop="8dp"
             android:text="@string/hymt2_download_help"
-            android:textColor="#999999"
+            android:textColor="@color/text_tertiary"
             android:textSize="12sp" />
 
         <!-- ========== 翻译参数 ========== -->

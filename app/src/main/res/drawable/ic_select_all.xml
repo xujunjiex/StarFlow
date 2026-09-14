@@ -5,6 +5,6 @@
     android:viewportHeight="24">
     <!-- Material: done_all（全选，双对勾，Koto 式图标） -->
     <path
-        android:fillColor="#55AEEA"
+        android:fillColor="@color/primary"
         android:pathData="M18,7l-1.41,-1.41L6.41,16.17l-3.24,-3.24L1.76,14.34l4.65,4.65L18,7zM23.24,7.66l-1.41,-1.41L10.59,17.48l3.24,3.24L23.24,7.66z"/>
 </vector>

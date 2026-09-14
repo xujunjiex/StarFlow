@@ -3,7 +3,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#EFF7FB"
+    android:background="@color/surface_variant"
     android:orientation="vertical">
 
     <!-- 顶部栏：Tab + 清空按钮 -->
@@ -34,7 +34,7 @@
             android:layout_height="36dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:src="@android:drawable/ic_popup_sync"
-            android:tint="#55AEEA"
+            android:tint="@color/primary"
             android:contentDescription="@string/refresh_history" />
 
         <ImageButton
@@ -52,7 +52,7 @@
             android:layout_height="36dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:src="@android:drawable/ic_menu_manage"
-            android:tint="#666666"
+            android:tint="@color/text_secondary"
             android:contentDescription="Settings" />
     </LinearLayout>
 
@@ -80,7 +80,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="重翻引擎"
-            android:textColor="#666666"
+            android:textColor="@color/text_secondary"
             android:textSize="13sp"
             android:layout_marginEnd="8dp" />
 
@@ -90,7 +90,7 @@
             android:layout_height="36dp"
             android:layout_weight="1"
             android:inputType="none"
-            android:textColor="#333333"
+            android:textColor="@color/text_primary"
             android:textSize="13sp"
             android:background="@drawable/custom_radio_button_background"
             android:paddingHorizontal="12dp"
@@ -126,7 +126,7 @@
             android:layout_height="wrap_content"
             android:layout_gravity="center"
             android:text="@string/no_history"
-            android:textColor="#999999"
+            android:textColor="@color/text_tertiary"
             android:textSize="16sp"
             android:visibility="gone" />
     </FrameLayout>

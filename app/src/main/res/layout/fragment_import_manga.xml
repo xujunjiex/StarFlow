@@ -3,7 +3,7 @@
     xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#EFF7FB">
+    android:background="@color/surface_variant">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -65,7 +65,7 @@
                 android:paddingEnd="8dp"
                 android:paddingBottom="4dp"
                 android:textSize="20sp"
-                android:textColor="#666666"
+                android:textColor="@color/text_secondary"
                 android:clickable="true"
                 android:text="×"
                 android:contentDescription="@string/import_close_selection"
@@ -115,7 +115,7 @@
                         android:layout_marginTop="4dp"
                         android:text="@string/import_mark_read"
                         android:textSize="11sp"
-                        android:textColor="#333333"
+                        android:textColor="@color/text_primary"
                         android:maxLines="1"
                         android:singleLine="true"/>
                 </LinearLayout>
@@ -141,7 +141,7 @@
                         android:layout_marginTop="4dp"
                         android:text="@string/import_mark_unread"
                         android:textSize="11sp"
-                        android:textColor="#333333"
+                        android:textColor="@color/text_primary"
                         android:maxLines="1"
                         android:singleLine="true"/>
                 </LinearLayout>
@@ -182,7 +182,7 @@
                 android:layout_marginStart="8dp"
                 android:layout_marginTop="6dp"
                 android:layout_marginEnd="8dp"
-                android:background="#E0E0E0"
+                android:background="@color/divider"
                 android:visibility="gone"/>
 
             <!-- 第二行：封面 / 简介 / 重命名（仅单选显示） -->
@@ -214,7 +214,7 @@
                         android:layout_marginTop="4dp"
                         android:text="@string/import_change_cover"
                         android:textSize="11sp"
-                        android:textColor="#333333"
+                        android:textColor="@color/text_primary"
                         android:maxLines="1"
                         android:singleLine="true"/>
                 </LinearLayout>
@@ -240,7 +240,7 @@
                         android:layout_marginTop="4dp"
                         android:text="@string/import_edit_desc"
                         android:textSize="11sp"
-                        android:textColor="#333333"
+                        android:textColor="@color/text_primary"
                         android:maxLines="1"
                         android:singleLine="true"/>
                 </LinearLayout>
@@ -266,7 +266,7 @@
                         android:layout_marginTop="4dp"
                         android:text="@string/import_rename"
                         android:textSize="11sp"
-                        android:textColor="#333333"
+                        android:textColor="@color/text_primary"
                         android:maxLines="1"
                         android:singleLine="true"/>
                 </LinearLayout>

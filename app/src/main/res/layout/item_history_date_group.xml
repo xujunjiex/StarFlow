@@ -13,7 +13,7 @@
         android:background="#15000000"
         android:paddingHorizontal="16dp"
         android:paddingVertical="10dp"
-        android:textColor="#FF666666"
+        android:textColor="@color/text_secondary"
         android:textSize="14sp"
         android:textStyle="bold" />
 

@@ -50,7 +50,7 @@
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:textSize="18sp"
-                android:textColor="#333333"
+                android:textColor="@color/text_primary"
                 android:textStyle="bold"
                 android:visibility="gone" />
 
@@ -99,7 +99,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:textColor="#55AEEA"
+                    android:textColor="@color/primary"
                     android:textSize="12sp"
                     android:visibility="gone" />
             </LinearLayout>
@@ -146,7 +146,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
                     android:text="@string/base_url_tips"
-                    android:textColor="#999999"
+                    android:textColor="@color/text_tertiary"
                     android:textSize="12sp" />
 
                 <com.google.android.material.switchmaterial.SwitchMaterial
@@ -211,7 +211,7 @@
                         android:paddingVertical="12dp"
                         android:paddingHorizontal="4dp"
                         android:textSize="16sp"
-                        android:textColor="#333333"
+                        android:textColor="@color/text_primary"
                         android:background="?attr/selectableItemBackground"
                         android:drawableEnd="@drawable/baseline_expand_more"
                         android:drawableTint="#999999" />
@@ -223,7 +223,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
                     android:text="@string/model_tips"
-                    android:textColor="#999999"
+                    android:textColor="@color/text_tertiary"
                     android:textSize="12sp" />
 
             </LinearLayout>
@@ -258,7 +258,7 @@
                     android:paddingVertical="12dp"
                     android:paddingHorizontal="4dp"
                     android:textSize="16sp"
-                    android:textColor="#333333"
+                    android:textColor="@color/text_primary"
                     android:background="?attr/selectableItemBackground"
                     android:drawableEnd="@drawable/baseline_expand_more"
                     android:drawableTint="#999999" />
@@ -268,7 +268,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
                     android:text="@string/thinking_mode_summary"
-                    android:textColor="#999999"
+                    android:textColor="@color/text_tertiary"
                     android:textSize="12sp" />
 
             </LinearLayout>
@@ -320,7 +320,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
                     android:text="@string/reset_to_default"
-                    android:textColor="#55AEEA"
+                    android:textColor="@color/primary"
                     android:textSize="13sp"
                     android:visibility="gone"
                     android:background="?attr/selectableItemBackground" />
@@ -360,7 +360,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
                     android:text="@string/reset_to_default"
-                    android:textColor="#55AEEA"
+                    android:textColor="@color/primary"
                     android:textSize="13sp"
                     android:visibility="gone"
                     android:background="?attr/selectableItemBackground" />
@@ -370,7 +370,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
                     android:text="@string/openai_use_source_text"
-                    android:textColor="#999999"
+                    android:textColor="@color/text_tertiary"
                     android:textSize="12sp" />
 
             </LinearLayout>

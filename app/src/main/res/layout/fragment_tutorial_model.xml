@@ -21,7 +21,7 @@
         android:layout_height="wrap_content"
         android:layout_below="@+id/FrimageView"
         android:layout_marginTop="20dp"
-        android:textColor="#55AEEA"
+        android:textColor="@color/primary"
         android:textSize="18sp"
         android:textStyle="bold"
         android:includeFontPadding="false" />
@@ -43,7 +43,7 @@
         android:layout_height="wrap_content"
         android:layout_centerHorizontal="true"
         android:layout_alignParentBottom="true"
-        android:backgroundTint="#55AEEA"
+        android:backgroundTint="@color/primary"
         android:text="@string/tutorial_continue" />
 
 </RelativeLayout>

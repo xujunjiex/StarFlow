@@ -56,7 +56,7 @@
                 android:paddingEnd="6dp"
                 android:paddingBottom="2dp"
                 android:text="@string/import_read_badge"
-                android:textColor="#FFFFFF"
+                android:textColor="@color/white"
                 android:textSize="10sp"
                 android:visibility="gone"/>
 
@@ -73,7 +73,7 @@
                 android:paddingEnd="6dp"
                 android:paddingBottom="2dp"
                 android:text="@string/import_file_lost"
-                android:textColor="#FFFFFF"
+                android:textColor="@color/white"
                 android:textSize="10sp"
                 android:visibility="gone"/>
 

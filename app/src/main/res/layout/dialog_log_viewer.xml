@@ -4,14 +4,14 @@
     android:layout_height="wrap_content"
     android:orientation="vertical"
     android:padding="16dp"
-    android:background="#EFF7FB">
+    android:background="@color/surface_variant">
 
     <TextView
         android:id="@+id/log_count"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:textSize="14sp"
-        android:textColor="#6A6464"
+        android:textColor="@color/text_secondary"
         android:layout_marginBottom="12dp"/>
 
     <ScrollView
@@ -26,7 +26,7 @@
             android:layout_height="wrap_content"
             android:textSize="11sp"
             android:fontFamily="monospace"
-            android:textColor="#333333"
+            android:textColor="@color/text_primary"
             android:padding="12dp"
             android:lineSpacingExtra="2dp"/>
     </ScrollView>
@@ -45,7 +45,7 @@
             android:gravity="center"
             android:paddingHorizontal="16dp"
             android:text="@string/log_clear"
-            android:textColor="#6A6464"
+            android:textColor="@color/text_secondary"
             android:textSize="15sp"
             android:background="?attr/selectableItemBackground"/>
 
@@ -56,7 +56,7 @@
             android:gravity="center"
             android:paddingHorizontal="16dp"
             android:text="@string/log_copy"
-            android:textColor="#55AEEA"
+            android:textColor="@color/primary"
             android:textSize="15sp"
             android:textStyle="bold"
             android:background="?attr/selectableItemBackground"/>
@@ -68,7 +68,7 @@
             android:gravity="center"
             android:paddingHorizontal="16dp"
             android:text="@string/log_export"
-            android:textColor="#55AEEA"
+            android:textColor="@color/primary"
             android:textSize="15sp"
             android:textStyle="bold"
             android:background="?attr/selectableItemBackground"/>

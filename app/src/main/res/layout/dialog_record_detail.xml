@@ -16,7 +16,7 @@
             android:layout_height="wrap_content"
             android:text="@string/text_translate_copy_original"
             android:textSize="13sp"
-            android:textColor="#666666" />
+            android:textColor="@color/text_secondary" />
 
         <TextView
             android:id="@+id/detailOriginal"
@@ -32,7 +32,7 @@
             android:layout_height="wrap_content"
             android:text="@string/text_translate_copy_translated"
             android:textSize="13sp"
-            android:textColor="#666666" />
+            android:textColor="@color/text_secondary" />
 
         <TextView
             android:id="@+id/detailTranslated"
@@ -49,6 +49,6 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:textSize="12sp"
-            android:textColor="#999999" />
+            android:textColor="@color/text_tertiary" />
     </LinearLayout>
 </ScrollView>
