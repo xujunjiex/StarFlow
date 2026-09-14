@@ -38,6 +38,7 @@ class LanguageSelectionDialog(
     private val onDisabledClick: ((CustomLocale) -> Unit)? = null,
     private val dark: Boolean = false,
     private val lightBg: Int = R.drawable.dialog_background,
+    private val fixedLightText: Boolean = false,
     private val onLanguageSelected: (CustomLocale) -> Unit)
 {
     fun show() {
@@ -54,6 +55,7 @@ class LanguageSelectionDialog(
                 val locale = locales[position]
                 textView.text = locale.getDisplayName()
                 if (dark) textView.setTextColor(0xFFE2E2E4.toInt())
+                else if (fixedLightText) textView.setTextColor(0xFF333333.toInt())
                 // 置灰：当前 OCR/翻译模型不支持的语言（enabled[position]=false）
                 val isEnabled = enabled?.getOrNull(position) ?: true
                 textView.isEnabled = isEnabled
@@ -66,13 +68,13 @@ class LanguageSelectionDialog(
 
         builder.setView(dialogView)
 
-        // 深色：自定义浅色标题（避免默认标题文字不可见）
-        if (dark) {
+        // 深色/固定浅色：自定义标题色（避免默认标题随 app 主题在固定背景上不可见）
+        if (dark || fixedLightText) {
             builder.setCustomTitle(TextView(context).apply {
                 text = context.getString(
                     if (type == 1) R.string.select_source_language else R.string.select_target_language
                 )
-                setTextColor(0xFFE2E2E4.toInt())
+                setTextColor(if (dark) 0xFFE2E2E4.toInt() else 0xFF333333.toInt())
                 textSize = 18f
                 setPadding((16 * density).toInt(), (16 * density).toInt(), (16 * density).toInt(), (4 * density).toInt())
                 gravity = android.view.Gravity.CENTER_HORIZONTAL

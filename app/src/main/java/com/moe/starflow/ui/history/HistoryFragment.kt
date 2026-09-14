@@ -223,7 +223,7 @@ class HistoryFragment : Fragment() {
 
         // 重翻引擎选择
         container.addView(android.widget.TextView(requireContext()).apply {
-            text = "重翻引擎"
+            text = getString(R.string.history_retranslate_engine_label)
             textSize = 14f
             setTextColor(androidx.core.content.ContextCompat.getColor(requireContext(), R.color.text_secondary))
             setPadding(0, 24, 0, 8)

@@ -503,6 +503,7 @@ class ReaderMenuSheet(
             enabled = enabled,
             dark = darkPanel,
             lightBg = R.drawable.bg_dialog_white,
+            fixedLightText = !darkPanel,
             onDisabledClick = when (type) {
                 1 -> { loc ->
                     val supportedNames = OcrEngineGroup.entries

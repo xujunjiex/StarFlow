@@ -670,9 +670,8 @@ class MangaReaderActivity : AppCompatActivity() {
         3 -> Color.WHITE
         4 -> Color.BLACK
         5 -> {
-            val night = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
-                Configuration.UI_MODE_NIGHT_YES
-            if (night) Color.BLACK else Color.WHITE
+            // 自动：跟系统夜间（与 isDarkBackground() 同一判断源，避免 app 强制主题把两者拆散）
+            if (isSystemDark()) Color.BLACK else Color.WHITE
         }
         else -> if (isSystemDark()) Color.BLACK else Color.WHITE
     }
