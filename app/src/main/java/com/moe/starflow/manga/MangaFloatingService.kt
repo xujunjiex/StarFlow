@@ -543,7 +543,7 @@ class MangaFloatingService : LifecycleService() {
             translatorText = TranslatorFactory.create(this, prefs, TranslatorFactory.Mode.MANGA)
             if (translatorText == null) {
                 LogCollector.e(TAG, "initTranslator: 引擎创建失败")
-                showToast("翻译引擎初始化失败")
+                showToast(getString(R.string.toast_engine_init_failed))
             }
         } catch (e: Exception) {
             LogCollector.e(TAG, "initTranslator: Exception", e)
@@ -553,7 +553,7 @@ class MangaFloatingService : LifecycleService() {
         // 显示翻译 API 初始化成功的消息
         if (translatorText != null) {
             val apiName = translatorText!!::class.simpleName ?: "Translation API"
-            showToast("$apiName 初始化成功")
+            showToast(getString(R.string.toast_engine_init_ok, apiName))
         }
 
         LogCollector.d(TAG, "initTranslator: result translatorText=${translatorText?.javaClass?.simpleName}")
@@ -1259,7 +1259,7 @@ class MangaFloatingService : LifecycleService() {
             // MediaProjection 模式：需要已初始化（权限在服务启动时请求）
             if (!provider.ensureInitialized()) {
                 LogCollector.w(TAG, "MediaProjection not initialized, permission not granted yet")
-                showToast("录屏权限未授予，无法截图", true)
+                showToast(getString(R.string.toast_screen_capture_permission), true)
                 return false
             }
             // 手动模式：截图前隐藏悬浮球，避免遮挡页面内容影响 pHash
@@ -1783,7 +1783,7 @@ class MangaFloatingService : LifecycleService() {
         if (hint != null) withContext(Dispatchers.Main) { showToast(hint, true) }
         // 非默认模型时提示
         if (ppRecLang != null && ppRecLang != PPOcrV5Engine.RecLang.ZH && ppRecLang != PPOcrV5Engine.RecLang.JA) {
-            withContext(Dispatchers.Main) { showToast("使用专用识别模型: rec_${ppRecLang.code}", false) }
+            withContext(Dispatchers.Main) { showToast(getString(R.string.toast_using_dedicated_model, ppRecLang.code), false) }
         }
         if (ppRecLang == null) return false
 
@@ -2036,7 +2036,7 @@ class MangaFloatingService : LifecycleService() {
                 LogCollector.d(TAG, "processMangaScreenshot: 画面无内容（dHash全零），跳过翻译")
                 statusOverlay.showImmediate("未检测到文字")
                 ballStateManager?.setState(BallStateManager.State.Completed)
-                showToast("未检测到文字", false)
+                showToast(getString(R.string.toast_no_text_detected), false)
                 autoTranslateEngine.lastTranslatedHash = currentPHash
         autoTranslateEngine.lastTranslatedTime = System.currentTimeMillis()
                 if (autoTranslateEngine.isAutoTranslating) {
@@ -2105,7 +2105,7 @@ class MangaFloatingService : LifecycleService() {
                         }
                         // 非默认模型时提示
                         if (recLang != null && recLang != PPOcrV5Engine.RecLang.ZH && recLang != PPOcrV5Engine.RecLang.JA) {
-                            showToast("使用专用识别模型: rec_${recLang.code}", false)
+                            showToast(getString(R.string.toast_using_dedicated_model, recLang.code), false)
                         }
                         if (recLang != null) {
                             val ocrResult = withContext(Dispatchers.IO) {
@@ -2190,7 +2190,7 @@ class MangaFloatingService : LifecycleService() {
                             showPPOcrV5DebugView(bitmap, ocrResult, mergedRegions, debugDet)
                         } else {
                             LogCollector.w(TAG, "PP-OCRv5 Debug Mode: 不支持的语言 ${config.sourceLang}")
-                            showToast("PP-OCRv5 不支持语言: ${config.sourceLang}", true)
+                            showToast(getString(R.string.toast_lang_unsupported_v5, config.sourceLang), true)
                         }
                     }
                 }
@@ -2297,7 +2297,7 @@ class MangaFloatingService : LifecycleService() {
                 }
                 // 非默认模型时提示
                 if (ppRecLang != null && ppRecLang != PPOcrV5Engine.RecLang.ZH && ppRecLang != PPOcrV5Engine.RecLang.JA) {
-                    showToast("使用专用识别模型: rec_${ppRecLang.code}", false)
+                    showToast(getString(R.string.toast_using_dedicated_model, ppRecLang.code), false)
                 }
                 LogCollector.d(TAG, "Step 1 配置: detEngine=${config.detEngine}, ocrEngine=${config.ocrEngine}, sourceLang=${config.sourceLang}" +
                     if (config.ocrEngine == OcrEngine.PPOcrV5 || config.detEngine == DetEngine.PP_OCR_V5) ", PP-recModel=${ppRecLang?.code ?: "不支持"}" else "")

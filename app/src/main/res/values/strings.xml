@@ -1041,4 +1041,16 @@
     <string name="text_translate_tab_chat">Chat</string>
     <string name="manga_button">Manga Translation</string>
 
+    <string name="toast_screen_capture_permission">Screen capture permission not granted; cannot capture</string>
+    <string name="toast_capture_disconnected">Screen capture disconnected; please re-grant</string>
+    <string name="toast_capture_failed">Capture failed; please retry</string>
+    <string name="toast_engine_init_failed">Translation engine init failed</string>
+    <string name="toast_engine_init_ok">%1$s initialized</string>
+    <string name="toast_no_text_detected">No text detected</string>
+    <string name="toast_lang_unsupported_v5">PP-OCRv5 does not support language: %1$s</string>
+    <string name="toast_using_dedicated_model">Using dedicated model: rec_%1$s</string>
+    <string name="dev_debug_manga_toast">%1$s debug mode enabled. Go to manga translation to test.</string>
+
+    <string name="dev_debug_game_toast">Game translation debug mode enabled. Go to game translation to test.</string>
+
 </resources>

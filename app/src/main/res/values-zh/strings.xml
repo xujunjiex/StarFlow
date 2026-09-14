@@ -953,4 +953,16 @@
     <string name="text_translate_tab_chat">对话</string>
     <string name="manga_button">漫画翻译</string>
 
+    <string name="toast_screen_capture_permission">录屏权限未授予，无法截图</string>
+    <string name="toast_capture_disconnected">录屏已断开，请重新授权</string>
+    <string name="toast_capture_failed">截图失败，请重试</string>
+    <string name="toast_engine_init_failed">翻译引擎初始化失败</string>
+    <string name="toast_engine_init_ok">%1$s 初始化成功</string>
+    <string name="toast_no_text_detected">未检测到文字</string>
+    <string name="toast_lang_unsupported_v5">PP-OCRv5 不支持语言: %1$s</string>
+    <string name="toast_using_dedicated_model">使用专用识别模型: rec_%1$s</string>
+    <string name="dev_debug_manga_toast">%1$s 调试模式已开启，请在漫画翻译界面截图测试</string>
+
+    <string name="dev_debug_game_toast">游戏翻译调试模式已开启，请在游戏翻译界面测试</string>
+
 </resources>

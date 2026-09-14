@@ -116,7 +116,7 @@ class Developer : Fragment() {
         binding.rtdetrDebugSwitch.setOnCheckedChangeListener { _, isChecked ->
             prefs.setBoolean("RTDetrV2_Debug_View", isChecked)
             if (isChecked) {
-                UiUtils.showToast(requireContext(),"RT-DETR-V2 调试模式已开启，请在漫画翻译界面截图测试")
+                UiUtils.showToast(requireContext(), getString(R.string.dev_debug_manga_toast, "RT-DETR-V2"))
             }
         }
 
@@ -125,7 +125,7 @@ class Developer : Fragment() {
         binding.mlkitDebugSwitch.setOnCheckedChangeListener { _, isChecked ->
             prefs.setBoolean("MLKit_Debug_View", isChecked)
             if (isChecked) {
-                UiUtils.showToast(requireContext(),"ML Kit 调试模式已开启，请在漫画翻译界面截图测试")
+                UiUtils.showToast(requireContext(), getString(R.string.dev_debug_manga_toast, "ML Kit"))
             }
         }
 
@@ -134,7 +134,7 @@ class Developer : Fragment() {
         binding.ppocrv5DebugSwitch.setOnCheckedChangeListener { _, isChecked ->
             prefs.setBoolean("PPOcrV5_Debug_View", isChecked)
             if (isChecked) {
-                UiUtils.showToast(requireContext(),"PP-OCRv5 调试模式已开启，请在漫画翻译界面截图测试")
+                UiUtils.showToast(requireContext(), getString(R.string.dev_debug_manga_toast, "PP-OCRv5"))
             }
         }
 
@@ -143,7 +143,7 @@ class Developer : Fragment() {
         binding.ppocrv6DebugSwitch.setOnCheckedChangeListener { _, isChecked ->
             prefs.setBoolean("PPOcrV6_Debug_View", isChecked)
             if (isChecked) {
-                UiUtils.showToast(requireContext(),"PP-OCRv6 调试模式已开启，请在漫画翻译界面截图测试")
+                UiUtils.showToast(requireContext(), getString(R.string.dev_debug_manga_toast, "PP-OCRv6"))
             }
         }
 
@@ -152,7 +152,7 @@ class Developer : Fragment() {
         binding.gameTranslateDebugSwitch.setOnCheckedChangeListener { _, isChecked ->
             prefs.setBoolean("Game_Translate_Debug_View", isChecked)
             if (isChecked) {
-                UiUtils.showToast(requireContext(),"游戏翻译调试模式已开启，请在游戏翻译界面测试")
+                UiUtils.showToast(requireContext(), getString(R.string.dev_debug_game_toast))
             }
         }
 

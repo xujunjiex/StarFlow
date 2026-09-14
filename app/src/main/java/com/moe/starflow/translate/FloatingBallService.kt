@@ -282,7 +282,7 @@ class FloatingBallService : LifecycleService() {
             // MediaProjection 模式：需要已初始化（权限在服务启动时请求）
             if (!provider.ensureInitialized()) {
                 LogCollector.w(TAG, "MediaProjection not initialized, permission not granted yet")
-                showToast("录屏权限未授予，无法截图", true)
+                showToast(getString(R.string.toast_screen_capture_permission), true)
                 return false
             }
             lifecycleScope.launch {
@@ -295,7 +295,7 @@ class FloatingBallService : LifecycleService() {
                     // Shooter 已断开（系统回收录屏），停止自动翻译并提示重新授权
                     LogCollector.w(TAG, "Shooter not ready, stopping auto-translate")
                     withContext(Dispatchers.Main) {
-                        showToast("录屏已断开，请重新授权", true)
+                        showToast(getString(R.string.toast_capture_disconnected), true)
                         stopAutoTranslate()
                     }
                     isTranslating.set(false)
@@ -307,7 +307,7 @@ class FloatingBallService : LifecycleService() {
                         autoTranslateHandler.removeCallbacksAndMessages(null)
                         scheduleNextDetection(getPixelCheckInterval())
                     } else {
-                        showToast("截图失败，请重试", true)
+                        showToast(getString(R.string.toast_capture_failed), true)
                     }
                 }
             }
@@ -562,7 +562,7 @@ class FloatingBallService : LifecycleService() {
                 translatorText = TranslatorFactory.create(this, prefs, TranslatorFactory.Mode.GAME)
                 if (translatorText == null) {
                     LogCollector.e(TAG, "翻译 API 初始化失败")
-                    showToast("翻译引擎初始化失败")
+                    showToast(getString(R.string.toast_engine_init_failed))
                 }
             }else{
                 when (prefs.getInt("Pic_API", Constants.PicApi.BAIDU.id)){
@@ -604,7 +604,7 @@ class FloatingBallService : LifecycleService() {
                 translatorPic!!::class.simpleName ?: "Pic API"
             }
             LogCollector.d(TAG, "翻译 API 初始化成功: $apiName")
-            showToast("$apiName 初始化成功")
+            showToast(getString(R.string.toast_engine_init_ok, apiName))
         }
 
         // 初始化 OCR 引擎

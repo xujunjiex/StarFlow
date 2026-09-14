@@ -276,19 +276,19 @@
             app:layout_constraintTop_toBottomOf="@id/language_card"
             app:layout_constraintWidth_percent="0.7" />
 
-        <!-- 主题三态切换（跟随系统/浅/暗）：放在「准备开始翻译」右侧 -->
+        <!-- 主题三态切换（跟随系统/浅/暗）：主页右上角 -->
         <ImageView
             android:id="@+id/theme_btn"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
-            android:layout_marginEnd="8dp"
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:layout_marginTop="12dp"
+            android:layout_marginEnd="12dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:clickable="true"
-            android:padding="12dp"
+            android:padding="10dp"
             android:src="@drawable/ic_theme_auto"
-            app:layout_constraintBottom_toBottomOf="@id/start_button"
             app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintTop_toTopOf="@id/start_button" />
+            app:layout_constraintTop_toTopOf="parent" />
 
         <!-- 漫画翻译按钮 -->
         <com.google.android.material.button.MaterialButton
