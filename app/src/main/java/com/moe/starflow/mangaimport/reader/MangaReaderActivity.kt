@@ -677,8 +677,13 @@ class MangaReaderActivity : AppCompatActivity() {
         else -> if (isSystemDark()) Color.BLACK else Color.WHITE
     }
 
+    /**
+     * 系统是否深色（独立于 app 强制主题）。⚠️ 全局主题切换不得影响阅读器「默认/自动」背景——
+     * 读 Resources.getSystem()（框架系统资源），不受 AppCompat 强制日夜影响。
+     */
     private fun isSystemDark(): Boolean =
-        (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        (android.content.res.Resources.getSystem().configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
 
     private fun isDarkBackground(): Boolean = when (bgMode) {
         2, 4 -> true

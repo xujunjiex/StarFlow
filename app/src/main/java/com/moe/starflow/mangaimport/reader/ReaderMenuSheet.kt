@@ -84,9 +84,10 @@ class ReaderMenuSheet(
     private var currentRecords: List<ImportedPageTranslation> = emptyList()
     private var currentFilterKey = 0
 
+    /** 系统是否深色（独立于 app 强制主题）：读 Resources.getSystem()，避免全局主题切换影响面板默认深浅。 */
     private fun systemDark(): Boolean =
-        (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
-            android.content.res.Configuration.UI_MODE_NIGHT_YES
+        (android.content.res.Resources.getSystem().configuration.uiMode and
+            android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
 
     private fun isDarkBg(bg: Int): Boolean = when (bg) {
         1, 3 -> false                 // light / white
