@@ -86,12 +86,14 @@
             <!-- 模型名 -->
             <TextView
                 android:id="@+id/tv_translator_name"
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:textColor="@color/text_primary"
                 android:textSize="14sp"
                 android:textStyle="bold"
-                android:maxLines="1" />
+                android:singleLine="true"
+                android:ellipsize="marquee"
+                android:marqueeRepeatLimit="marquee_forever" />
 
             <!-- 创建时间 -->
             <TextView

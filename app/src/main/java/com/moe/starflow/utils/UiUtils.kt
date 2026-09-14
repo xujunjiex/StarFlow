@@ -4,6 +4,8 @@ import com.moe.starflow.translate.widget.*
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.view.View
+import android.widget.TextView
 import android.widget.Toast
 
 /**
@@ -12,6 +14,22 @@ import android.widget.Toast
 object UiUtils {
 
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    /**
+     * 单行标题统一规范：省略号 + 选中滚动动画。
+     *
+     * 给标题 TextView 设 singleLine + ellipsize=marquee + 无限重复：
+     * - 未选中 → 显示省略号（不溢出、不压图标、不缩字号）；
+     * - setSelected(true)（列表行被点选时由业务接线）→ 横向滚动展示完整标题。
+     *
+     * ⚠️ marquee 需要 singleLine（maxLines=1 不够）；复用 view 前记得先 isSelected=false。
+     * 多行描述/正文、按钮文案不套此函数。
+     */
+    fun marqueeTitle(tv: TextView) {
+        tv.setSingleLine(true)
+        tv.ellipsize = android.text.TextUtils.TruncateAt.MARQUEE
+        tv.marqueeRepeatLimit = -1  // marquee_forever
+    }
 
     /**
      * 显示 Toast（自动切换到主线程）

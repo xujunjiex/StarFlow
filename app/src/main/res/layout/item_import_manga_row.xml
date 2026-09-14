@@ -88,8 +88,9 @@
             android:layout_marginTop="2dp"
             android:textSize="15sp"
             android:textStyle="bold"
-            android:maxLines="2"
-            android:ellipsize="end"
+            android:singleLine="true"
+            android:ellipsize="marquee"
+            android:marqueeRepeatLimit="marquee_forever"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toEndOf="@id/thumb_frame"
             app:layout_constraintTop_toTopOf="parent"/>

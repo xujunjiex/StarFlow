@@ -11,6 +11,7 @@ import com.moe.starflow.R
 import com.moe.starflow.databinding.ItemImportMangaCardBinding
 import com.moe.starflow.databinding.ItemImportMangaRowBinding
 import com.moe.starflow.mangaimport.data.ImportedManga
+import com.moe.starflow.utils.UiUtils
 import java.io.File
 import java.util.Locale
 
@@ -144,6 +145,9 @@ class MangaGridAdapter(
 
     private fun bindCard(h: CardVH, item: ImportedManga) {
         h.binding.tvTitle.text = item.title
+        // 单行标题统一规范：省略号 + 选中滚动（见 UiUtils.marqueeTitle）
+        UiUtils.marqueeTitle(h.binding.tvTitle)
+        h.binding.tvTitle.isSelected = false
         h.binding.tvPageCount.text = h.itemView.context.getString(R.string.import_pages_count, item.pageCount)
         // 网格/紧凑网格不显示简介（详细信息列表才显示）
         bindCover(
@@ -153,12 +157,15 @@ class MangaGridAdapter(
             dim = h.binding.viewSelectionDim,
             check = h.binding.ivSelectionCheck,
             root = h.binding.root,
+            titleView = h.binding.tvTitle,
             item = item
         )
     }
 
     private fun bindRow(h: RowVH, item: ImportedManga) {
         h.binding.tvTitle.text = item.title
+        UiUtils.marqueeTitle(h.binding.tvTitle)
+        h.binding.tvTitle.isSelected = false
 
         // 详细信息：页数 · 大小
         val size = formatSize(item.sizeBytes)
@@ -192,6 +199,7 @@ class MangaGridAdapter(
             dim = h.binding.viewSelectionDim,
             check = h.binding.ivSelectionCheck,
             root = h.binding.root,
+            titleView = h.binding.tvTitle,
             item = item
         )
     }
@@ -204,6 +212,7 @@ class MangaGridAdapter(
         dim: View,
         check: View,
         root: View,
+        titleView: android.widget.TextView,
         item: ImportedManga
     ) {
         val lost = item.lost
@@ -224,6 +233,8 @@ class MangaGridAdapter(
         check.visibility = if (selected) View.VISIBLE else View.GONE
 
         root.setOnClickListener {
+            // 标题选中置位 → marquee 滚动显示完整标题；复用/取消时 bind 里复位
+            titleView.isSelected = true
             if (selectionMode) toggleSelection(item.id) else onItemClick(item)
         }
         root.setOnLongClickListener { toggleSelection(item.id); true }

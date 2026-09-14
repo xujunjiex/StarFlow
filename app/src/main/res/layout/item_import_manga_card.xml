@@ -86,8 +86,9 @@
             android:padding="8dp"
             android:paddingBottom="0dp"
             android:textSize="14sp"
-            android:maxLines="2"
-            android:ellipsize="end"/>
+            android:singleLine="true"
+            android:ellipsize="marquee"
+            android:marqueeRepeatLimit="marquee_forever"/>
 
         <TextView
             android:id="@+id/tv_page_count"

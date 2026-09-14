@@ -45,12 +45,13 @@
             android:orientation="horizontal"
             app:layout_constraintGuide_percent="0.02" />
 
+        <!-- 角色形象（与「关于」/「常见问题」页保持一致的 120dp） -->
         <ImageView
-            android:id="@+id/api_imageView"
-            android:layout_width="250dp"
-            android:layout_height="250dp"
-            android:src="@drawable/apiicon"
-            android:scaleType="centerCrop"
+            android:id="@+id/mascot_icon"
+            android:layout_width="120dp"
+            android:layout_height="120dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/fist_pump_star"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toBottomOf="@id/guideline" />
@@ -61,7 +62,7 @@
             android:layout_height="wrap_content"
             android:text="@string/choose_mode"
             android:textSize="14sp"
-            app:layout_constraintTop_toBottomOf="@id/api_imageView"
+            app:layout_constraintTop_toBottomOf="@id/mascot_icon"
             app:layout_constraintStart_toStartOf="parent" />
 
         <LinearLayout
@@ -88,7 +89,7 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical">
 
-                    <TextView  android:ellipsize="end" android:maxLines="1" 
+                    <TextView 
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/ocr_mode"
@@ -96,12 +97,10 @@
 						android:textStyle="bold"
                         android:textColorHighlight="@android:color/transparent"/>
 
-                    <TextView android:textSize="14sp" 
+                    <TextView android:textSize="14sp"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
-                        android:maxLines="2"
-                        android:ellipsize="end"
                         android:text="@string/ocr_mode_description" />
 
                 </LinearLayout>
@@ -121,19 +120,17 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical">
 
-                    <TextView  android:ellipsize="end" android:maxLines="1" 
+                    <TextView 
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/pic_mode"
                         android:textSize="14sp"
                         android:textStyle="bold" />
 
-                    <TextView android:textSize="14sp" 
+                    <TextView android:textSize="14sp"
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
-                        android:maxLines="2"
-                        android:ellipsize="end"
                         android:text="@string/pic_mode_description"
                         android:textColorHighlight="@android:color/transparent"/>
 
@@ -191,7 +188,7 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical">
 
-                    <TextView  android:ellipsize="end" android:maxLines="1" 
+                    <TextView 
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/screenshot_method_mediaprojection"
@@ -223,7 +220,7 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical">
 
-                    <TextView  android:ellipsize="end" android:maxLines="1" 
+                    <TextView 
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/screenshot_method_accessibility"

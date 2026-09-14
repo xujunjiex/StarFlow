@@ -26,9 +26,10 @@
 
     <ImageView
         android:id="@+id/faq_star"
-        android:layout_width="80dp"
-        android:layout_height="80dp"
+        android:layout_width="120dp"
+        android:layout_height="120dp"
         android:layout_marginTop="15dp"
+        android:scaleType="fitCenter"
         android:src="@drawable/thinking_star"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
