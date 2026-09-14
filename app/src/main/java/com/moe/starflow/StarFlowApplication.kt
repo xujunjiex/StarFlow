@@ -24,6 +24,10 @@ class StarFlowApplication : Application() {
         // 全局主题（跟随系统/浅色/暗色）：必须在任何 Activity 创建前应用
         ThemeManager.apply(applicationContext)
 
+        // 全局语言：就地改应用基资源 locale（悬浮球/漫画服务等 Service、阅读器/图库等非 BaseActivity
+        // 都读应用上下文资源，必须进程级应用，否则它们一直显示系统默认语言中文）
+        com.moe.starflow.utils.LanguageManager.applyLanguage(applicationContext)
+
         // Java 层未捕获异常 → 把堆栈写入 starflow.log（进程死亡前落盘），便于排查闪退。
         // 不打断系统默认处理：先写日志，再交给原 default handler（结束进程 + 系统崩溃报告）。
         val prevHandler = Thread.getDefaultUncaughtExceptionHandler()

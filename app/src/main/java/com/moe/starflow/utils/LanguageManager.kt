@@ -91,13 +91,17 @@ object LanguageManager {
     }
 
     /**
-     * 更新Context的语言资源
+     * 更新Context的语言资源：就地改传入 context 的 resources 配置（影响 Service/非 BaseActivity 等
+     * 不经过 attachBaseContext 的场景），再返回语言化的 Context 供 Activity attachBaseContext 使用。
+     * ⚠️ 悬浮球/漫画服务等 Service 用 applicationContext 的 Resources，若不就地改会一直拿系统默认语言（中文）。
      */
     private fun updateResources(context: Context, locale: Locale): Context {
         Locale.setDefault(locale)
 
         val configuration = Configuration(context.resources.configuration)
         configuration.setLocale(locale)
+        @Suppress("DEPRECATION")
+        context.resources.updateConfiguration(configuration, context.resources.displayMetrics)
 
         return context.createConfigurationContext(configuration)
     }
