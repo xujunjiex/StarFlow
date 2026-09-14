@@ -869,6 +869,10 @@
     <string name="reader_translate_mode_auto">自动</string>
     <string name="reader_translate_mode_incremental">增量</string>
     <string name="reader_translate_summary">共 %1$d 页 · 已译 %2$d · 翻译中 %3$d · 失败 %4$d</string>
+    <string name="reader_translate_ocr_model">OCR模型：%1$s</string>
+    <string name="reader_translate_translator_model">翻译模型：%1$s</string>
+    <string name="reader_translate_source_lang">源语言：%1$s</string>
+    <string name="reader_translate_target_lang">目标语言：%1$s</string>
     <string name="reader_translate_filter_all">全部</string>
     <string name="reader_translate_filter_failed">失败</string>
     <string name="reader_translate_filter_ocr">OCR空</string>
