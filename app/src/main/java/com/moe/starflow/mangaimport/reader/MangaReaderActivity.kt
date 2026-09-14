@@ -631,7 +631,15 @@ class MangaReaderActivity : AppCompatActivity() {
                         .putExtra(SettingPageActivity.EXTRA_FRAGMENT_TYPE, SettingPageActivity.TYPE_FRAGMENT_PERSONALIZATION))
                 },
                 onTranslateMode = { _ -> },   // 阶段一手动模式固定，无需动作
-                onTranslatePageJump = { page -> goToPage(page) }
+                onTranslatePageJump = { page -> goToPage(page) },
+                onOpenModelManagement = {
+                    startActivity(Intent(this@MangaReaderActivity, SettingPageActivity::class.java)
+                        .putExtra(SettingPageActivity.EXTRA_FRAGMENT_TYPE, SettingPageActivity.TYPE_FRAGMENT_MODEL_MANAGEMENT))
+                },
+                onOpenApiConfig = {
+                    startActivity(Intent(this@MangaReaderActivity, SettingPageActivity::class.java)
+                        .putExtra(SettingPageActivity.EXTRA_FRAGMENT_TYPE, SettingPageActivity.TYPE_FRAGMENT_API_CONFIG))
+                }
             )
         )
         sheet.show(supportFragmentManager, ReaderMenuSheet.TAG)

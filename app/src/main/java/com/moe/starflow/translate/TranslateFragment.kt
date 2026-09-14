@@ -260,27 +260,9 @@ class TranslateFragment : Fragment() {
         binding.engineSubtitle.text = getString(R.string.engine_status_translator, getCurrentTranslatorName())
     }
 
-    /** 当前翻译模型名（NLLB/Hy-MT2/各 API），从 Text_API/Text_AI 判断，不带「（OCR）」后缀 */
-    private fun getCurrentTranslatorName(): String {
-        return when (prefs.getInt("Text_API", Constants.TextApi.BING.id)) {
-            Constants.TextApi.AI.id ->
-                if (prefs.getInt("Text_AI", Constants.TextAI.NLLB.id) == Constants.TextAI.HYMT2.id) "Hy-MT2" else "NLLB"
-            Constants.TextApi.BING.id -> getString(R.string.bingapi_name)
-            Constants.TextApi.NIUTRANS.id -> getString(R.string.niuapi_name)
-            Constants.TextApi.OPENAI.id -> {
-                val list = com.moe.starflow.me.apiconfig.ConfigurationStorage.loadAllProviders(prefs)
-                val i = prefs.getInt("OpenAI_Selected_Provider", 0)
-                if (i < list.size) list[i].name else getString(R.string.uniaiapi_name)
-            }
-            Constants.TextApi.VOLC.id -> getString(R.string.volcapi_name)
-            Constants.TextApi.AZURE.id -> getString(R.string.azureapi_name)
-            Constants.TextApi.DEEPL.id -> getString(R.string.deeplapi_name)
-            Constants.TextApi.BAIDU.id -> getString(R.string.baiduapi_name)
-            Constants.TextApi.TENCENT.id -> getString(R.string.tencentapi_name)
-            Constants.TextApi.CUSTOM_TEXT.id -> getString(R.string.custom)
-            else -> getString(R.string.bingapi_name)
-        }
-    }
+    /** 当前翻译模型名（NLLB/Hy-MT2/各 API），统一走 TranslatorNames。 */
+    private fun getCurrentTranslatorName(): String =
+        com.moe.starflow.translate.TranslatorNames.of(requireContext(), prefs)
 
     private fun checkForUpdate() {
         viewLifecycleOwner.lifecycleScope.launch {
