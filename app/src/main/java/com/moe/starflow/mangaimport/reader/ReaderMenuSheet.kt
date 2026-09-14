@@ -1,5 +1,6 @@
 package com.moe.starflow.mangaimport.reader
 
+import android.content.SharedPreferences
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.drawable.GradientDrawable
@@ -74,6 +75,9 @@ class ReaderMenuSheet(
     /** 面板深浅（随阅读背景切换即时更新）。 */
     private var darkPanel = state.isDarkPanel
 
+    /** 默认 SharedPreferences 监听（模型/语言 prefs 变化 → 刷新面板；跳设置页返回后也能生效）。 */
+    private var appPrefsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
+
     private val pageAdapter by lazy {
         ReaderPageStateAdapter(onJump = { cb.onTranslatePageJump(it) })
     }
@@ -92,9 +96,56 @@ class ReaderMenuSheet(
 
     override fun onStart() {
         super.onStart()
+        // 面板容器背景初始跟随当前深浅（此后由 applyPanelTheme 实时维护）
+        reapplySheetContainerBg()
+        // 模型/语言 prefs 变化（跳设置页返回等）→ 即时刷新模型名；无需关面板
+        refreshModelRows()
+        view?.let { refreshLangRow(it) }
+        val sp = PreferenceManager.getDefaultSharedPreferences(requireContext())
+        appPrefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == "Text_API" || key == "Text_AI" || key == "OpenAI_Selected_Provider" || key == OcrEngineManager.PREF_KEY) {
+                refreshModelRows()
+            } else if (key == "Source_Language" || key == "Target_Language") {
+                view?.let { refreshLangRow(it) }
+            }
+        }
+        sp.registerOnSharedPreferenceChangeListener(appPrefsListener)
+    }
+
+    override fun onStop() {
+        appPrefsListener?.let {
+            PreferenceManager.getDefaultSharedPreferences(requireContext()).unregisterOnSharedPreferenceChangeListener(it)
+        }
+        appPrefsListener = null
+        super.onStop()
+    }
+
+    /** 外层 BottomSheet 容器背景随当前深浅（onStart 初始化 + applyPanelTheme 实时维护）。 */
+    private fun reapplySheetContainerBg() {
         (dialog as? BottomSheetDialog)
             ?.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)
-            ?.setBackgroundResource(if (state.isDarkPanel) R.drawable.bg_bottom_sheet_dark else R.drawable.bg_bottom_sheet)
+            ?.setBackgroundResource(if (darkPanel) R.drawable.bg_bottom_sheet_dark else R.drawable.bg_bottom_sheet)
+    }
+
+    /** 重新读模型名到两行（onStart / prefs 变化时调用）。 */
+    private fun refreshModelRows() {
+        val v = view ?: return
+        v.findViewById<TextView>(R.id.tv_ocr_model_row).text =
+            getString(R.string.reader_translate_ocr_model, ReaderTranslationInfo.ocrModelLabel(requireContext()))
+        v.findViewById<TextView>(R.id.tv_translator_model_row).text =
+            getString(R.string.reader_translate_translator_model, ReaderTranslationInfo.translatorModelLabel(requireContext()))
+    }
+
+    /** Webtoon(3) 下翻页动画/自动翻页不生效：即时禁用置灰，切回分页模式自动恢复。 */
+    private fun applyModeDependence(view: View, mode: Int) {
+        val isWebtoon = mode == 3
+        setSegEnabled(view.findViewById<ViewGroup>(R.id.seg_animation), !isWebtoon)
+        val sw = view.findViewById<Switch>(R.id.sw_auto_turn)
+        sw.isEnabled = !isWebtoon
+        sw.alpha = if (isWebtoon) 0.4f else 1f
+        val tv = view.findViewById<TextView>(R.id.tv_interval_value)
+        tv.isEnabled = !isWebtoon
+        tv.alpha = if (isWebtoon) 0.4f else 1f
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
@@ -131,12 +182,14 @@ class ReaderMenuSheet(
             R.id.seg_mode_vertical to (state.mode == 2),
             R.id.seg_mode_webtoon to (state.mode == 3)
         )) { id ->
-            cb.onMode(when (id) {
+            val m = when (id) {
                 R.id.seg_mode_rtl -> 1
                 R.id.seg_mode_vertical -> 2
                 R.id.seg_mode_webtoon -> 3
                 else -> 0
-            })
+            }
+            applyModeDependence(view, m)   // 切 Webtoon 即时置灰翻页动画/自动翻页（无需关面板）
+            cb.onMode(m)
         }
         // 翻页动画
         setupSeg(view, R.id.seg_animation, listOf(
@@ -205,27 +258,29 @@ class ReaderMenuSheet(
         setupTranslateFilter(view)
         updateSummary(currentRecords)
 
-        // 模型区：OCR/翻译模型 快速跳转（跳转前先 dismiss 面板）
+        // 模型区：OCR/翻译模型 快速跳转（保持面板打开，返回后 onStart/prefs 监听刷新模型名）
         view.findViewById<TextView>(R.id.tv_ocr_model_row).text =
             getString(R.string.reader_translate_ocr_model, ReaderTranslationInfo.ocrModelLabel(requireContext()))
         view.findViewById<TextView>(R.id.tv_translator_model_row).text =
             getString(R.string.reader_translate_translator_model, ReaderTranslationInfo.translatorModelLabel(requireContext()))
-        view.findViewById<View>(R.id.btn_model_ocr).setOnClickListener { dismiss(); cb.onOpenModelManagement() }
-        view.findViewById<View>(R.id.btn_model_translate).setOnClickListener { dismiss(); cb.onOpenApiConfig() }
+        view.findViewById<View>(R.id.btn_model_ocr).setOnClickListener { cb.onOpenModelManagement() }
+        view.findViewById<View>(R.id.btn_model_translate).setOnClickListener { cb.onOpenApiConfig() }
 
-        // 语言区：源/目标语言选择（下拉弹窗，随面板深浅主题）
+        // 语言区：源/目标语言选择（两格下拉弹窗 + 互换，随面板深浅主题）
         refreshLangRow(view)
         view.findViewById<View>(R.id.btn_source_lang).setOnClickListener { showLangDialog(1) }
         view.findViewById<View>(R.id.btn_target_lang).setOnClickListener { showLangDialog(2) }
-
-        // Webtoon 滚动模式下翻页动画/自动翻页不生效：禁用并置灰（切回分页模式自动恢复）
-        if (state.mode == 3) {
-            setSegEnabled(view.findViewById<ViewGroup>(R.id.seg_animation), false)
-            swAutoTurn.isEnabled = false
-            swAutoTurn.alpha = 0.4f
-            tvInterval.isEnabled = false
-            tvInterval.alpha = 0.4f
+        view.findViewById<View>(R.id.btn_swap_lang).setOnClickListener {
+            val prefs = CustomPreference.getInstance(requireContext())
+            val s = prefs.getString("Source_Language", "ja")
+            val t = prefs.getString("Target_Language", "zh")
+            prefs.setString("Source_Language", t)
+            prefs.setString("Target_Language", s)
+            refreshLangRow(view)
         }
+
+        // Webtoon 滚动模式下翻页动画/自动翻页不生效：禁用并置灰（切回分页模式自动恢复；此处初始化，切模式时 applyModeDependence 即时同步）
+        applyModeDependence(view, state.mode)
 
         // 调色
         val swInvert = view.findViewById<Switch>(R.id.sw_invert)
@@ -291,7 +346,8 @@ class ReaderMenuSheet(
         }
         listOf(
             R.id.tv_brightness_value, R.id.tv_contrast_value, R.id.tv_color_hint,
-            R.id.tv_rotate_value, R.id.tv_interval_value, R.id.tv_download_value
+            R.id.tv_rotate_value, R.id.tv_interval_value, R.id.tv_download_value,
+            R.id.tv_source_caption, R.id.tv_target_caption
         ).forEach { id ->
             view.findViewById<TextView>(id).setTextColor(subColor)
         }
@@ -311,6 +367,16 @@ class ReaderMenuSheet(
         val spinnerColor = if (dark) 0xFFB8BCC2.toInt() else 0xFF777777.toInt()
         listOf(R.id.iv_source_spinner, R.id.iv_target_spinner).forEach { id ->
             view.findViewById<ImageView>(id).setColorFilter(spinnerColor)
+        }
+        // 外层面板容器背景实时跟随深浅（不再只用 onStart 初始值）
+        reapplySheetContainerBg()
+        // 语言两格圆角背景随深浅
+        val langCellBg = GradientDrawable().apply {
+            cornerRadius = 10f * resources.displayMetrics.density
+            setColor(if (dark) 0xFF2A2A2C.toInt() else 0xFFF2F4F7.toInt())
+        }
+        listOf(R.id.btn_source_lang, R.id.btn_target_lang).forEach { id ->
+            view.findViewById<View>(id).background = langCellBg
         }
     }
 
@@ -410,14 +476,10 @@ class ReaderMenuSheet(
 
     private fun refreshLangRow(view: View) {
         val prefs = CustomPreference.getInstance(requireContext())
-        view.findViewById<TextView>(R.id.tv_source_lang_value).text = getString(
-            R.string.reader_translate_source_lang,
+        view.findViewById<TextView>(R.id.tv_source_lang_value).text =
             CustomLocale.getInstance(prefs.getString("Source_Language", "ja")).getDisplayName()
-        )
-        view.findViewById<TextView>(R.id.tv_target_lang_value).text = getString(
-            R.string.reader_translate_target_lang,
+        view.findViewById<TextView>(R.id.tv_target_lang_value).text =
             CustomLocale.getInstance(prefs.getString("Target_Language", "zh")).getDisplayName()
-        )
     }
 
     /** 语言选择弹窗（复刻主页 showLanguageListDialog，主题随 darkPanel）。 */

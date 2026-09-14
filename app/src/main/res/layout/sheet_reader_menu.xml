@@ -226,22 +226,40 @@
                 </LinearLayout>
                 <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000"/>
 
-                <!-- 语言区：源/目标语言选择（下拉弹窗） -->
-                <LinearLayout android:id="@+id/btn_source_lang" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:paddingTop="10dp" android:paddingBottom="10dp"
-                    android:gravity="center_vertical" android:clickable="true">
-                    <TextView android:id="@+id/tv_source_lang_value" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="14sp" android:textColor="#333333"/>
-                    <ImageView android:id="@+id/iv_source_spinner" android:layout_width="20dp" android:layout_height="20dp"
-                        android:src="@drawable/spinnericon"/>
-                </LinearLayout>
-                <LinearLayout android:id="@+id/btn_target_lang" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:paddingTop="10dp" android:paddingBottom="10dp"
-                    android:gravity="center_vertical" android:clickable="true">
-                    <TextView android:id="@+id/tv_target_lang_value" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="14sp" android:textColor="#333333"/>
-                    <ImageView android:id="@+id/iv_target_spinner" android:layout_width="20dp" android:layout_height="20dp"
-                        android:src="@drawable/spinnericon"/>
+                <!-- 语言区：源/目标语言选择（两格圆角并排 + 互换），下拉弹窗 -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical"
+                    android:paddingTop="8dp" android:paddingBottom="4dp">
+
+                    <LinearLayout android:id="@+id/btn_source_lang" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:orientation="vertical" android:padding="10dp" android:clickable="true">
+                        <TextView android:id="@+id/tv_source_caption" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:text="@string/reader_translate_source_lang_label" android:textSize="10sp" android:textColor="#888888"/>
+                        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="2dp">
+                            <TextView android:id="@+id/tv_source_lang_value" android:layout_width="0dp" android:layout_height="wrap_content"
+                                android:layout_weight="1" android:textSize="14sp" android:textColor="#333333"/>
+                            <ImageView android:id="@+id/iv_source_spinner" android:layout_width="16dp" android:layout_height="16dp"
+                                android:src="@drawable/spinnericon"/>
+                        </LinearLayout>
+                    </LinearLayout>
+
+                    <TextView android:id="@+id/btn_swap_lang" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="⇄" android:textSize="20sp" android:textColor="#55AEEA"
+                        android:paddingStart="12dp" android:paddingEnd="12dp" android:clickable="true"/>
+
+                    <LinearLayout android:id="@+id/btn_target_lang" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:orientation="vertical" android:padding="10dp" android:clickable="true">
+                        <TextView android:id="@+id/tv_target_caption" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:text="@string/reader_translate_target_lang_label" android:textSize="10sp" android:textColor="#888888"/>
+                        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                            android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="2dp">
+                            <TextView android:id="@+id/tv_target_lang_value" android:layout_width="0dp" android:layout_height="wrap_content"
+                                android:layout_weight="1" android:textSize="14sp" android:textColor="#333333"/>
+                            <ImageView android:id="@+id/iv_target_spinner" android:layout_width="16dp" android:layout_height="16dp"
+                                android:src="@drawable/spinnericon"/>
+                        </LinearLayout>
+                    </LinearLayout>
                 </LinearLayout>
                 <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000"/>
 

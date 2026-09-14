@@ -959,8 +959,8 @@
     <string name="reader_translate_summary">%1$d pages · %2$d done · %3$d ongoing · %4$d failed</string>
     <string name="reader_translate_ocr_model">OCR Model: %1$s</string>
     <string name="reader_translate_translator_model">Translation Model: %1$s</string>
-    <string name="reader_translate_source_lang">Source Language: %1$s</string>
-    <string name="reader_translate_target_lang">Target Language: %1$s</string>
+    <string name="reader_translate_source_lang_label">Source</string>
+    <string name="reader_translate_target_lang_label">Target</string>
     <string name="reader_translate_filter_all">All</string>
     <string name="reader_translate_filter_failed">Failed</string>
     <string name="reader_translate_filter_ocr">No OCR</string>
