@@ -83,7 +83,7 @@
                 android:layout_marginTop="4dp"
                 android:orientation="horizontal">
 
-                <TextView
+                <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="12sp" android:autoSizeStepGranularity="1sp" 
                     android:id="@+id/download_percent"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
@@ -139,7 +139,7 @@
         android:layout_marginBottom="12dp"
         android:gravity="center_vertical">
 
-        <TextView
+        <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="14sp" android:autoSizeStepGranularity="1sp" 
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
@@ -172,7 +172,7 @@
         android:layout_marginBottom="8dp">
 
         <!-- 百度网盘 -->
-        <TextView
+        <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="13sp" android:autoSizeStepGranularity="1sp" 
             android:id="@+id/btn_baidu"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
@@ -187,7 +187,7 @@
             android:visibility="gone"/>
 
         <!-- 夸克网盘 -->
-        <TextView
+        <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="13sp" android:autoSizeStepGranularity="1sp" 
             android:id="@+id/btn_quark"
             android:layout_width="0dp"
             android:layout_height="wrap_content"

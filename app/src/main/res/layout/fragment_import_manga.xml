@@ -28,7 +28,7 @@
                 android:textStyle="bold"
                 android:text="@string/import_manga_page"/>
 
-            <TextView
+            <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="15sp" android:autoSizeStepGranularity="1sp" 
                 android:id="@+id/tv_selection_count"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"

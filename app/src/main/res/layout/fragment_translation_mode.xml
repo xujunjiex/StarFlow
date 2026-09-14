@@ -88,7 +88,7 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical">
 
-                    <TextView android:ellipsize="end" android:maxLines="1" 
+                    <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="13sp" android:autoSizeStepGranularity="1sp"  android:ellipsize="end" android:maxLines="1" 
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/ocr_mode"
@@ -121,7 +121,7 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical">
 
-                    <TextView android:ellipsize="end" android:maxLines="1" 
+                    <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="13sp" android:autoSizeStepGranularity="1sp"  android:ellipsize="end" android:maxLines="1" 
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/pic_mode"
@@ -191,7 +191,7 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical">
 
-                    <TextView android:ellipsize="end" android:maxLines="1" 
+                    <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="13sp" android:autoSizeStepGranularity="1sp"  android:ellipsize="end" android:maxLines="1" 
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/screenshot_method_mediaprojection"
@@ -223,7 +223,7 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical">
 
-                    <TextView android:ellipsize="end" android:maxLines="1" 
+                    <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="14sp" android:autoSizeStepGranularity="1sp"  android:ellipsize="end" android:maxLines="1" 
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:text="@string/screenshot_method_accessibility"

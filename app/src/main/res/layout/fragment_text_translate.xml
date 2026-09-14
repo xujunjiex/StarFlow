@@ -41,7 +41,7 @@
             android:layout_height="wrap_content"
             android:orientation="horizontal">
 
-            <TextView
+            <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="14sp" android:autoSizeStepGranularity="1sp" 
                 android:id="@+id/engineDisplay"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
@@ -155,7 +155,7 @@
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
-            <TextView
+            <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="16sp" android:autoSizeStepGranularity="1sp" 
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
@@ -208,7 +208,7 @@
                 android:text="@string/text_translate_page_prev"
                 android:textSize="13sp" />
 
-            <TextView
+            <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="13sp" android:autoSizeStepGranularity="1sp" 
                 android:id="@+id/pageIndicator"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"

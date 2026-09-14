@@ -46,7 +46,7 @@
             android:orientation="horizontal"
             android:gravity="center_vertical">
 
-            <TextView
+            <TextView android:ellipsize="end" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="11sp" android:autoSizeStepGranularity="1sp" 
                 android:id="@+id/tv_translator_name"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"

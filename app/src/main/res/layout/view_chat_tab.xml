@@ -13,7 +13,7 @@
         android:paddingHorizontal="16dp"
         android:paddingVertical="8dp">
 
-        <TextView
+        <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="14sp" android:autoSizeStepGranularity="1sp" 
             android:id="@+id/chatModelDisplay"
             android:layout_width="0dp"
             android:layout_height="wrap_content"

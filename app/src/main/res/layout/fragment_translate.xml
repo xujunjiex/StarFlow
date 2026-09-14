@@ -83,7 +83,7 @@
                     app:layout_constraintStart_toStartOf="parent"
                     app:layout_constraintTop_toTopOf="parent" />
 
-                <TextView
+                <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="15sp" android:autoSizeStepGranularity="1sp" 
                     android:id="@+id/selected_API"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
@@ -102,7 +102,7 @@
                     app:layout_constraintVertical_chainStyle="packed"
                     tools:text="OCR模型：PP-OCRv6" />
 
-                <TextView
+                <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="15sp" android:autoSizeStepGranularity="1sp" 
                     android:id="@+id/engine_subtitle"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
@@ -267,6 +267,11 @@
             android:layout_height="64dp"
             android:layout_marginTop="32dp"
             android:backgroundTint="@color/primary"
+            android:autoSizeTextType="uniform"
+            android:autoSizeMinTextSize="12sp"
+            android:autoSizeMaxTextSize="18sp"
+            android:autoSizeStepGranularity="1sp"
+            android:maxLines="1"
             android:text="@string/start_ball"
             android:textSize="18sp"
             app:cornerRadius="16dp"
@@ -297,6 +302,11 @@
             android:layout_height="64dp"
             android:layout_marginTop="16dp"
             android:backgroundTint="#6200EE"
+            android:autoSizeTextType="uniform"
+            android:autoSizeMinTextSize="12sp"
+            android:autoSizeMaxTextSize="18sp"
+            android:autoSizeStepGranularity="1sp"
+            android:maxLines="1"
             android:text="@string/manga_button"
             android:textSize="18sp"
             app:cornerRadius="16dp"

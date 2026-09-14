@@ -14,7 +14,7 @@
         android:paddingHorizontal="24dp"
         android:paddingVertical="6dp">
 
-        <TextView
+        <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="12sp" android:autoSizeStepGranularity="1sp" 
             android:id="@+id/tvSessionHeader"
             android:layout_width="0dp"
             android:layout_height="wrap_content"

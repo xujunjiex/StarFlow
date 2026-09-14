@@ -209,7 +209,7 @@
                 android:layout_marginTop="6dp"
                 android:gravity="center_vertical">
 
-                <TextView android:maxLines="1" android:ellipsize="end" 
+                <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="12sp" android:autoSizeStepGranularity="1sp"  android:maxLines="1" android:ellipsize="end" 
                     android:id="@+id/ppocrv6_medium_det_status"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
@@ -272,7 +272,7 @@
                 android:layout_marginTop="6dp"
                 android:gravity="center_vertical">
 
-                <TextView android:maxLines="1" android:ellipsize="end" 
+                <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="12sp" android:autoSizeStepGranularity="1sp"  android:maxLines="1" android:ellipsize="end" 
                     android:id="@+id/ppocrv6_medium_rec_status"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
@@ -377,7 +377,7 @@
                 android:layout_marginTop="6dp"
                 android:gravity="center_vertical">
 
-                <TextView android:maxLines="1" android:ellipsize="end" 
+                <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="12sp" android:autoSizeStepGranularity="1sp"  android:maxLines="1" android:ellipsize="end" 
                     android:id="@+id/v5_det_status"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
@@ -460,7 +460,7 @@
                 android:layout_marginTop="6dp"
                 android:gravity="center_vertical">
 
-                <TextView android:maxLines="1" android:ellipsize="end" 
+                <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="12sp" android:autoSizeStepGranularity="1sp"  android:maxLines="1" android:ellipsize="end" 
                     android:id="@+id/v5_rec_zh_status"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
@@ -548,7 +548,7 @@
                 android:layout_marginTop="6dp"
                 android:gravity="center_vertical">
 
-                <TextView android:maxLines="1" android:ellipsize="end" 
+                <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="12sp" android:autoSizeStepGranularity="1sp"  android:maxLines="1" android:ellipsize="end" 
                     android:id="@+id/v5_rec_en_status"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
@@ -636,7 +636,7 @@
                 android:layout_marginTop="6dp"
                 android:gravity="center_vertical">
 
-                <TextView android:maxLines="1" android:ellipsize="end" 
+                <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="12sp" android:autoSizeStepGranularity="1sp"  android:maxLines="1" android:ellipsize="end" 
                     android:id="@+id/v5_rec_ko_status"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
@@ -724,7 +724,7 @@
                 android:layout_marginTop="6dp"
                 android:gravity="center_vertical">
 
-                <TextView android:maxLines="1" android:ellipsize="end" 
+                <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="12sp" android:autoSizeStepGranularity="1sp"  android:maxLines="1" android:ellipsize="end" 
                     android:id="@+id/v5_rec_ru_status"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
@@ -842,7 +842,7 @@
                 android:layout_marginTop="6dp"
                 android:gravity="center_vertical">
 
-                <TextView android:maxLines="1" android:ellipsize="end" 
+                <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="12sp" android:autoSizeStepGranularity="1sp"  android:maxLines="1" android:ellipsize="end" 
                     android:id="@+id/rtdetr_status"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
@@ -914,7 +914,7 @@
                     android:textSize="14sp"
                     android:textStyle="bold"/>
 
-                <TextView android:maxLines="1" android:ellipsize="end" 
+                <TextView android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="12sp" android:autoSizeStepGranularity="1sp"  android:maxLines="1" android:ellipsize="end" 
                     android:id="@+id/manga_ocr_status"
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"

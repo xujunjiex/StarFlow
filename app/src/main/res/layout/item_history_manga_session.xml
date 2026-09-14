@@ -13,7 +13,7 @@
         android:paddingStart="24dp"
         android:paddingEnd="8dp">
 
-        <TextView
+        <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="12sp" android:autoSizeStepGranularity="1sp" 
             android:id="@+id/tvMangaSessionHeader"
             android:layout_width="0dp"
             android:layout_height="wrap_content"

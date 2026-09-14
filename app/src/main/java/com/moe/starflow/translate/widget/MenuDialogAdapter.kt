@@ -57,8 +57,13 @@ class MenuDialogAdapter(ctx: Context, private var str: Array<String>, private va
         val im:ImageView = newView.findViewById(R.id.smallIcon)
         txt.text = str[position]
         im.setImageResource(img[position])
-        // 统一 18sp（按 menuScale 缩放，两行值项不裁剪）；行高交给布局 wrap_content
-        txt.textSize = 18f * menuScale
+        // 自动字号 10~18sp（按 menuScale 缩放），长英文自动缩小不换行/不裁
+        txt.setAutoSizeTextTypeUniformWithConfiguration(
+            (10 * menuScale).toInt().coerceAtLeast(8),
+            (18 * menuScale).toInt().coerceAtLeast(12),
+            1,
+            android.util.TypedValue.COMPLEX_UNIT_SP
+        )
         if (menuScale < 1f) {
             val iconSizePx = (40 * menuScale * density).toInt()
             im.layoutParams?.let { lp ->

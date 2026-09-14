@@ -30,7 +30,7 @@
     android:background="@drawable/selector_model_background"
     android:gravity="center_vertical">
 
-    <TextView
+    <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="16sp" android:autoSizeStepGranularity="1sp" 
         android:id="@+id/text_name"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
