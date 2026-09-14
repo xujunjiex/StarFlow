@@ -6,6 +6,7 @@ import android.app.Application
 import android.app.ApplicationExitInfo
 import android.content.Context
 import android.os.Build
+import androidx.annotation.RequiresApi
 import com.moe.starflow.download.ModelDownloadRepository
 import com.moe.starflow.utils.LogCollector
 import com.moe.starflow.utils.ThemeManager
@@ -99,6 +100,7 @@ class StarFlowApplication : Application() {
      * ⚠️ 只引用 API 30 就存在的常量；FREEZER/PERMISSION_CHANGE/INITIALIZATION_FAILURE 等
      * 高版本常量直接引用会在低版本设备 NoSuchFieldError，统一走 else（未知，仍记 E 级）。
      */
+    @RequiresApi(Build.VERSION_CODES.R)
     private fun exitReasonLabel(r: ApplicationExitInfo): Pair<String, Boolean> = when (r.reason) {
         ApplicationExitInfo.REASON_CRASH -> "崩溃 CRASH" to true
         ApplicationExitInfo.REASON_ANR -> "无响应 ANR" to true

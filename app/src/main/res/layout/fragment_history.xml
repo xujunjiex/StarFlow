@@ -34,7 +34,7 @@
             android:layout_height="36dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:src="@android:drawable/ic_popup_sync"
-            android:tint="@color/primary"
+            app:tint="@color/primary"
             android:contentDescription="@string/refresh_history" />
 
         <ImageButton
@@ -43,7 +43,7 @@
             android:layout_height="36dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:src="@drawable/bin_clean"
-            android:tint="#FF5722"
+            app:tint="#FF5722"
             android:contentDescription="Clear All Cache" />
 
         <ImageButton
@@ -52,7 +52,7 @@
             android:layout_height="36dp"
             android:background="?attr/selectableItemBackgroundBorderless"
             android:src="@android:drawable/ic_menu_manage"
-            android:tint="@color/text_secondary"
+            app:tint="@color/text_secondary"
             android:contentDescription="Settings" />
     </LinearLayout>
 

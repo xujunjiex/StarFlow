@@ -2045,7 +2045,7 @@ class MangaFloatingService : LifecycleService() {
                 ballStateManager?.setState(BallStateManager.State.Completed)
                 showToast(getString(R.string.toast_no_text_detected), false)
                 autoTranslateEngine.lastTranslatedHash = currentPHash
-        autoTranslateEngine.lastTranslatedTime = System.currentTimeMillis()
+                autoTranslateEngine.lastTranslatedTime = System.currentTimeMillis()
                 if (autoTranslateEngine.isAutoTranslating) {
                     autoTranslateEngine.scheduleNextDetection(MangaAutoTranslateEngine.DETECT_INTERVAL_MS)
                 }
@@ -2243,7 +2243,7 @@ class MangaFloatingService : LifecycleService() {
                     statusOverlay.showImmediate(getString(R.string.cache_hit))
                     ballStateManager?.setState(BallStateManager.State.Completed)
                     autoTranslateEngine.lastTranslatedHash = currentPHash
-        autoTranslateEngine.lastTranslatedTime = System.currentTimeMillis()
+                    autoTranslateEngine.lastTranslatedTime = System.currentTimeMillis()
                     withContext(Dispatchers.Main) {
                         currentOriginalBitmap?.recycle()
                         currentOriginalBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, false)
@@ -2402,7 +2402,7 @@ class MangaFloatingService : LifecycleService() {
 
             // 更新区域缓存和 pHash
             autoTranslateEngine.lastTranslatedHash = currentPHash
-        autoTranslateEngine.lastTranslatedTime = System.currentTimeMillis()
+            autoTranslateEngine.lastTranslatedTime = System.currentTimeMillis()
             if (autoTranslateEngine.isAutoTranslating) {
                 // 翻译完成后用短间隔快速重新检测，响应翻页
                 autoTranslateEngine.scheduleNextDetection(MangaAutoTranslateEngine.DETECT_INTERVAL_MS)
@@ -2423,7 +2423,7 @@ class MangaFloatingService : LifecycleService() {
             // 自动翻译模式：确保 autoTranslateEngine.lastTranslatedHash 被更新，避免异常后状态机卡住
             if (autoTranslateEngine.isAutoTranslating && currentPHash != 0L) {
                 autoTranslateEngine.lastTranslatedHash = currentPHash
-        autoTranslateEngine.lastTranslatedTime = System.currentTimeMillis()
+                autoTranslateEngine.lastTranslatedTime = System.currentTimeMillis()
             }
             LogCollector.d(TAG, "processMangaScreenshot: FINALLY - dismissing progress, isProcessing=false")
             isProcessing = false
@@ -2901,7 +2901,7 @@ class MangaFloatingService : LifecycleService() {
                 dismissCacheOverlay()
                 forceRefresh = true
                 autoTranslateEngine.lastTranslatedHash = 0L
-        autoTranslateEngine.lastTranslatedTime = 0L
+                autoTranslateEngine.lastTranslatedTime = 0L
                 regionCache.clear()  // 清空内存缓存，避免 ⚡ 标志
                 triggerTranslation()
             }

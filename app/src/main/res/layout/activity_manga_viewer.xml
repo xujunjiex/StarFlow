@@ -35,7 +35,7 @@
         android:layout_margin="16dp"
         android:background="@drawable/bg_manga_toolbar_btn"
         android:src="@android:drawable/ic_menu_close_clear_cancel"
-        android:tint="@color/white" />
+        app:tint="@color/white" />
 
     <!-- 右上角按钮组：旋转 + 原文/译文切换 + 删除（共享背景） -->
     <LinearLayout
@@ -53,7 +53,7 @@
             android:layout_height="48dp"
             android:background="@android:color/transparent"
             android:src="@android:drawable/ic_menu_rotate"
-            android:tint="@color/white"
+            app:tint="@color/white"
             android:contentDescription="旋转视图" />
 
         <ImageButton
@@ -62,7 +62,7 @@
             android:layout_height="48dp"
             android:background="@android:color/transparent"
             android:src="@android:drawable/ic_menu_camera"
-            android:tint="@color/white"
+            app:tint="@color/white"
             android:contentDescription="切换原图/译文" />
 
         <ImageButton
@@ -71,7 +71,7 @@
             android:layout_height="48dp"
             android:background="@android:color/transparent"
             android:src="@android:drawable/ic_menu_delete"
-            android:tint="#FFFF6B6B"
+            app:tint="#FFFF6B6B"
             android:contentDescription="@string/delete" />
     </LinearLayout>
 
@@ -170,7 +170,7 @@
                 android:layout_height="36dp"
                 android:background="?attr/selectableItemBackgroundBorderless"
                 android:src="@android:drawable/ic_menu_close_clear_cancel"
-                android:tint="@color/white" />
+                app:tint="@color/white" />
         </LinearLayout>
 
         <TextView
