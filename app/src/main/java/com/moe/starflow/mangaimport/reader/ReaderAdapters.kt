@@ -57,7 +57,8 @@ private fun resetItemTransform(root: View) {
 }
 
 /** 在一个 ZoomableImageView 上：上滤镜、异步载全图。shared.visibleImage 供实时预览。
- *  不清图：切页/重绑瞬间保留旧图直到新图就绪，避免该帧空底黑闪。 */
+ *  绑定新页时若复用池残留别页图 → 立即清掉，杜绝滑动翻页时「旧页颜色/内容闪一瞬」；
+ *  同页重绑（applyPageVisual 的 notifyItemChanged）保留既有图，避免当前页空一帧（对齐 Webtoon 绑定即清）。 */
 private fun loadTo(
     img: ZoomableImageView,
     shared: Shared,
@@ -67,6 +68,10 @@ private fun loadTo(
     img.colorFilter = shared.filter()?.toColorFilter()
     shared.visibleImage = img
     val slot = page
+    if ((img.tag as? Int) != slot) {
+        img.tag = slot
+        img.setImageBitmap(null)
+    }
     shared.scope.launch {
         val bmp = withContext(Dispatchers.IO) {
             shared.pageImage?.invoke(slot) ?: shared.source.loadFull(slot)
