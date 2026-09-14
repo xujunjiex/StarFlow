@@ -156,41 +156,6 @@ class Developer : Fragment() {
             }
         }
 
-        // 测试 Java 崩溃：抛未捕获异常 → StarFlowApplication 的 handler 写 starflow.log 后交系统
-        binding.javaCrashTest.setOnClickListener {
-            AlertDialog.Builder(requireContext())
-                .setTitle(R.string.crash_test_java_title)
-                .setMessage(R.string.crash_test_java_message)
-                .setPositiveButton(R.string.crash_test_trigger) { _, _ ->
-                    Thread {
-                        throw RuntimeException("【崩溃测试】Java 未捕获异常（验证日志落盘）")
-                    }.start()
-                }
-                .setNegativeButton(R.string.user_cancel, null)
-                .show()
-        }
-
-        // 测试 Native 崩溃：SIGSEGV → hymt2_bridge crash_handler 写 backtrace 后 re-raise → 系统崩溃报告
-        binding.nativeCrashTest.setOnClickListener {
-            AlertDialog.Builder(requireContext())
-                .setTitle(R.string.crash_test_native_title)
-                .setMessage(R.string.crash_test_native_message)
-                .setPositiveButton(R.string.crash_test_trigger) { _, _ ->
-                    val path = LogCollector.logFilePath
-                    if (path == null) {
-                        UiUtils.showToast(requireContext(), "日志文件未初始化")
-                        return@setPositiveButton
-                    }
-                    try {
-                        HyMt2Native.nativeTriggerNativeCrash(path)
-                    } catch (e: Throwable) {
-                        UiUtils.showToast(requireContext(), "native 崩溃测试失败: ${e.message}")
-                    }
-                }
-                .setNegativeButton(R.string.user_cancel, null)
-                .show()
-        }
-
         // 缓存命中标记（⚡）开关：控制内存缓存命中的译文前是否显示 ⚡（默认关闭）
         binding.cacheMarkerSwitch.isChecked =
             prefs.getBoolean(com.moe.starflow.data.TranslationCacheManager.KEY_CACHE_MARKER, false)
