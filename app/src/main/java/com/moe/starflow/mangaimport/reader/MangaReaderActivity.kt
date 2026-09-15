@@ -413,6 +413,15 @@ class MangaReaderActivity : AppCompatActivity() {
 
         // 分页进度：只注册一次（applyPager 会重建 adapter，但回调挂在 viewPager 上，无需重复注册）
         binding.viewPager.registerOnPageChangeCallback(pageChangeCallback)
+        // Webtoon：行高是按「绑定那一刻的 View 宽度」钉死的，宽度一变（旋转/分屏）旧值就失真
+        // （图片按错误宽高比 fitCenter，两侧留白带），必须重绑让适配器按新宽度重算。
+        // 只注册一次；重绑后宽度不变 → 不会再次触发，无循环风险。
+        binding.webtoonList.addOnLayoutChangeListener { _, l, _, r, _, ol, _, or_, _ ->
+            if (r - l != or_ - ol && mode == 3) {
+                val a = binding.webtoonList.adapter ?: return@addOnLayoutChangeListener
+                if (a.itemCount > 0) a.notifyItemRangeChanged(0, a.itemCount)
+            }
+        }
         // 手势：仿真记录折线触点（返回 false 不打断手势）
         binding.viewPager.setOnTouchListener { _, e ->
             if (animationMode == 3 && mode != 3) {

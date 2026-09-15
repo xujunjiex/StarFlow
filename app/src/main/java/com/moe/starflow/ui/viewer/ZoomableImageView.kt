@@ -94,6 +94,19 @@ class ZoomableImageView @JvmOverloads constructor(
         requestLayout()
     }
 
+    /**
+     * 视口尺寸变化（旋转 / 分屏 / 折叠）时复位适配标记。
+     *
+     * ⚠️ 不复位会**静默错位**：`isInitialized` 为 true 时 [onLayout] 不会重算，`imageMatrix` 仍是按
+     * 旧视口算出来的 → 图片按旧 scale 画进新视口（偏左 + 上下被裁），直到下一次 setImageDrawable
+     * （翻页 / 重绑）才自愈。`onSizeChanged` 在 `layout()` 里先于 `onLayout` 触发，复位后同一次
+     * 布局就会重新 fitCenter。
+     */
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (w != oldw || h != oldh) isInitialized = false
+    }
+
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         super.onLayout(changed, left, top, right, bottom)
         if (!isInitialized && drawable != null) {
