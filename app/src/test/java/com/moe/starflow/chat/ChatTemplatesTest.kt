@@ -26,7 +26,7 @@ class ChatTemplatesTest {
     fun `默认翻译模板含目标语言占位符`() {
         val default = ChatTemplates.all.first { it.id == "default" }
         assertTrue(default.zh.contains("{target_lang}"))
-        assertTrue(default.variableHints.containsKey("{target_lang}"))
+        assertTrue(default.variableHints.any { it.first == "{target_lang}" })
     }
 
     @Test
