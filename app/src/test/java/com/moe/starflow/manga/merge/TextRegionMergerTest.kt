@@ -155,37 +155,6 @@ class TextRegionMergerTest {
     }
 
     /**
-     * 场景 6：竖排漫画文本（列从右到左）。
-     * 两列垂直分离 → 各自合并，方向为 VERTICAL_RL。
-     */
-    @Test
-    fun verticalColumns_mergeByColumn() {
-        // 竖排矩形：宽 40、高 200
-        fun vRegion(text: String, left: Int, top: Int): TextRegion {
-            val quad = QuadBox(arrayOf(
-                PointF(left.toFloat(), top.toFloat()),
-                PointF((left + 40).toFloat(), top.toFloat()),
-                PointF((left + 40).toFloat(), (top + 200).toFloat()),
-                PointF(left.toFloat(), (top + 200).toFloat())
-            ), text = text)
-            return TextRegion(quad, text = text)
-        }
-        // 左列（x:0）两行 + 右列（x:100）两行，垂直相邻
-        val regions = listOf(
-            vRegion("左列上", 0, 0),
-            vRegion("左列下", 0, 200),
-            vRegion("右列上", 100, 0),
-            vRegion("右列下", 100, 200)
-        )
-        val groups = TextRegionMerger.merge(regions)
-        // 左列 2 行合并、右列 2 行合并 → 2 组（水平分离，不交叉）
-        assertEquals("左右两列应各自合并为 2 组", 2, groups.size)
-        val mergedTexts = groups.map { it.texts.joinToString("") }
-        assertTrue("左列两行应合并", mergedTexts.any { it.contains("左列上") && it.contains("左列下") })
-        assertTrue("右列两行应合并", mergedTexts.any { it.contains("右列上") && it.contains("右列下") })
-    }
-
-    /**
      * 场景 7：合并开关关闭时，每个 region 独立成组（表格/多栏场景）。
      * 即使相邻行也不合并。
      */

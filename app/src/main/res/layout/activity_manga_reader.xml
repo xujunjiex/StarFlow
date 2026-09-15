@@ -163,6 +163,25 @@
                 android:contentDescription="@string/reader_toggle_desc"/>
         </FrameLayout>
 
+        <!-- 失败页：与三态按钮同位置显示感叹号；点击弹小气泡说明失败原因（不弹窗） -->
+        <FrameLayout
+            android:id="@+id/btn_fail_translate"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:gravity="center"
+            android:clickable="true"
+            android:visibility="gone"
+            android:contentDescription="@string/reader_translate_failed_badge">
+            <ImageView
+                android:id="@+id/iv_fail_translate"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_reader_warn"
+                app:tint="#FF8A80"
+                android:contentDescription="@string/reader_translate_failed_badge"/>
+        </FrameLayout>
+
         <FrameLayout
             android:id="@+id/btn_translate"
             android:layout_width="40dp"

@@ -1,5 +1,6 @@
 package com.moe.starflow.manga.state
 
+import com.moe.starflow.R
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -80,7 +81,9 @@ class MangaAutoTranslateEngineTest {
         // 完全不同的 hash → sim≈0 < 0.95 → 进入 MOTION，显示"检测中"，本次跳过
         assertFalse(engine.processAutoDetectPHash(-1L))
         assertEquals(DetectState.MOTION, engine.detectState)
-        assertEquals("检测中...", progressShown)
+        // ⚠️ 断言资源字符串而非硬编码中文：文案已 i18n（2026-09-14 外提到 values/values-zh），
+        // 测试环境下 locale 是默认英文，写死 "检测中..." 会永远失败
+        assertEquals(RuntimeEnvironment.getApplication().getString(R.string.detecting), progressShown)
     }
 
     @Test

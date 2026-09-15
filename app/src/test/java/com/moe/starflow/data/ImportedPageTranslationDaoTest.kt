@@ -86,4 +86,37 @@ class ImportedPageTranslationDaoTest {
         assertEquals(0, dao().forManga(7L, "manga|1").size)
         assertEquals(1, dao().forManga(99L, "manga|1").size)
     }
+
+    /**
+     * `resetTranslating` 是「记录永久卡在翻译中」的唯一兜底：该状态在翻译**开始时**写库，
+     * 退出阅读器/崩溃会让它停在 TRANSLATING，之后该页既不显示译文也再也翻不了。
+     *
+     * ⚠️ @Query 里写的是字面量 `state = 0` / `state = 1`（注解里引用不了 Kotlin 常量），
+     * 所以这条断言同时也锁住「常量值 ↔ 查询字面量」这个契约：改常量必须同步改查询。
+     */
+    @Test
+    fun resetTranslatingOnlyClearsTranslatingOfSameMangaKey() = runBlocking {
+        db = Room.inMemoryDatabaseBuilder(
+            RuntimeEnvironment.getApplication(), TranslationHistoryDatabase::class.java
+        ).build()
+        // 契约守卫：查询把 1 当 TRANSLATING、0 当 IDLE
+        assertEquals(1, ImportedPageTranslation.STATE_TRANSLATING)
+        assertEquals(0, ImportedPageTranslation.STATE_IDLE)
+
+        dao().upsert(row(1, ImportedPageTranslation.STATE_TRANSLATING))
+        dao().upsert(row(2, ImportedPageTranslation.STATE_SUCCESS))
+        dao().upsert(row(3, ImportedPageTranslation.STATE_FAILED))
+        // 别的漫画（指纹不同）不得被清
+        dao().upsert(row(4, ImportedPageTranslation.STATE_TRANSLATING).copy(mangaKey = "other|9"))
+
+        dao().resetTranslating(7L, "manga|1")
+
+        assertEquals(ImportedPageTranslation.STATE_IDLE, dao().get(7L, 1)?.state)
+        assertEquals(ImportedPageTranslation.STATE_SUCCESS, dao().get(7L, 2)?.state)
+        assertEquals(ImportedPageTranslation.STATE_FAILED, dao().get(7L, 3)?.state)
+        assertEquals(
+            "不同 mangaKey 的记录不得被清",
+            ImportedPageTranslation.STATE_TRANSLATING, dao().get(7L, 4)?.state
+        )
+    }
 }

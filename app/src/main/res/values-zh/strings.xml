@@ -496,7 +496,7 @@
     <string name="manga_text_direction_rl">竖排（列从右到左）</string>
     <string name="manga_text_direction_lr">竖排（列从左到右）</string>
     <string name="incremental_render_title">分批渲染</string>
-    <string name="incremental_render_summary">气泡超过6个时分两批翻译，提前显示首批结果，但可能造成总翻译时长略微增加。仅对PP-OCRv5独立模式和RT-DETR-V2+MangaOcr组合生效。</string>
+    <string name="incremental_render_summary">气泡超过6个时分两批翻译，提前显示首批结果，但可能造成总翻译时长略微增加。支持 PP-OCRv5/PP-OCRv6 独立模式、RT-DETR-V2+MangaOcr 组合（分两批），以及 Hy-MT2 翻译模型（逐句流式）。</string>
     <string name="manga_keep_text_free_title">识别自由文字</string>
     <string name="manga_keep_text_free_summary">开启后，RT-DETR-V2 检测到的自由文字（如旁白、音效）也会被识别和翻译</string>
     <string name="manga_text_merge_title">文本合并</string>
@@ -865,7 +865,6 @@
     <string name="reader_translate_ocr_empty">本页未识别到文字</string>
     <string name="reader_translate_empty">未生成译文</string>
     <string name="reader_toggle_desc">切换 译文/原文/原图</string>
-    <string name="reader_translate_translating">翻译中…</string>
     <string name="reader_translate_mode_title">翻译模式</string>
     <string name="reader_translate_mode_manual">手动</string>
     <string name="reader_translate_mode_auto">自动</string>
@@ -899,6 +898,26 @@
     <string name="reader_translate_failed">翻译失败</string>
     <string name="reader_translate_collapse">收起</string>
     <string name="reader_translate_copied">已复制</string>
+
+    <!-- 三种翻译模式的按钮提示 / 面板 / 失败标识 -->
+    <string name="reader_translate_hint_auto">正在自动翻译中，双击暂停翻译</string>
+    <string name="reader_translate_hint_ahead">正在增量翻译中，双击暂停翻译</string>
+    <string name="reader_translate_hint_auto_page">正在自动翻译 P%1$d 页，双击暂停翻译</string>
+    <string name="reader_translate_hint_ahead_page">正在翻译 P%1$d 页，双击暂停翻译</string>
+    <string name="reader_translate_hint_auto_idle">请双击退出自动翻译后重试</string>
+    <string name="reader_translate_hint_ahead_idle">请双击退出增量翻译后重试</string>
+    <string name="reader_translate_status_page">%1$s · P%2$d</string>
+    <string name="reader_translate_batch_detect">识别中（%1$d/2）…</string>
+    <string name="reader_translate_batch_translate">翻译中（%1$d/2）…</string>
+    <string name="reader_translate_queue_drained">翻译队列已耗尽，翻页后继续</string>
+    <string name="reader_translate_waiting_other">等待其他翻译任务完成…</string>
+    <string name="reader_translate_paused_to_manual">翻译已暂停，回退到手动翻译</string>
+    <string name="reader_translate_cancelled">已停止，退回手动翻译</string>
+    <string name="reader_translate_debounce">启动延迟</string>
+    <string name="reader_translate_ahead_pages">向后翻译页数</string>
+    <string name="reader_translate_failed_badge">本页翻译失败</string>
+    <string name="reader_translate_disabled_mode">连续滚动 / 双页模式下暂不支持翻译</string>
+    <string name="reader_translate_failed_page_hint">第 %1$d 页翻译失败：%2$s</string>
     <string name="reader_debug_placeholder">调试选项（不含 AI 超分）</string>
     <string name="reader_rotate">旋转屏幕</string>
     <string name="reader_rotate_portrait">竖屏</string>
