@@ -307,15 +307,23 @@ class ReaderTranslationController(
         return TranslateClick.StartedManual
     }
 
-    /** 单击提示文案：带上是第几页，用户才知道进度。 */
+    /**
+     * 单击提示文案。判据是**有没有正在翻的页**，不是"队列在不在跑"：
+     * - `queuePage >= 0`：正在翻某一页 → 报状态 + 页码
+     * - `queuePage < 0`（**队列耗尽 / 防抖等待 / 稳定性检测中**）：其实没在翻 →
+     *   提示"请双击退出…后重试"。若这里仍报"正在翻译中"，用户会看到一条永远不动的假进度。
+     */
     private fun busyHintText(mode: Int): String {
         val p = queuePage.value
         return when {
-            mode == MODE_AUTO && p >= 0 ->
+            p >= 0 && mode == MODE_AUTO ->
                 context.getString(R.string.reader_translate_hint_auto_page, p + 1)
-            mode == MODE_AUTO -> context.getString(R.string.reader_translate_hint_auto)
-            p >= 0 -> context.getString(R.string.reader_translate_hint_ahead_page, p + 1)
-            else -> context.getString(R.string.reader_translate_hint_ahead)
+            p >= 0 ->
+                context.getString(R.string.reader_translate_hint_ahead_page, p + 1)
+            mode == MODE_AUTO ->
+                context.getString(R.string.reader_translate_hint_auto_idle)
+            else ->
+                context.getString(R.string.reader_translate_hint_ahead_idle)
         }
     }
 
