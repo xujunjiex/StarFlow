@@ -906,6 +906,10 @@
     <string name="reader_translate_hint_auto_page">正在自动翻译 P%1$d 页，双击暂停翻译</string>
     <string name="reader_translate_hint_ahead_page">正在翻译 P%1$d 页，双击暂停翻译</string>
     <string name="reader_translate_status_page">%1$s · P%2$d</string>
+    <string name="reader_translate_batch_detect">识别中（%1$d/2）…</string>
+    <string name="reader_translate_batch_translate">翻译中（%1$d/2）…</string>
+    <string name="reader_translate_queue_drained">翻译队列已耗尽，翻页后继续</string>
+    <string name="reader_translate_paused_to_manual">翻译已暂停，回退到手动翻译</string>
     <string name="reader_translate_cancelled">已停止，退回手动翻译</string>
     <string name="reader_translate_stopped">已停止翻译</string>
     <string name="reader_translate_debounce">启动延迟</string>

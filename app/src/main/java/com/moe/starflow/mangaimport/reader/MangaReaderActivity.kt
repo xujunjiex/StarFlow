@@ -148,6 +148,12 @@ class MangaReaderActivity : AppCompatActivity() {
             )
             c.onVisual = { runOnUiThread { applyPageVisual(currentPage) } }
             c.onPhase = ::onTranslatePhase
+            // 打开面板 / 退出阅读器暂停翻译并回退手动 → 系统底部提示
+            c.onPaused = {
+                runOnUiThread {
+                    UiUtils.showToast(this, getString(R.string.reader_translate_paused_to_manual))
+                }
+            }
         }
         lifecycleScope.launch {
             translationController?.load()
@@ -285,12 +291,14 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        // 退出阅读器：停止翻译并回退手动模式（模式本就不持久化，这里显式收尾让队列立刻停）
-        translationController?.setMode(ReaderTranslationController.MODE_MANUAL)
+        // 退出阅读器：停止翻译并回退手动模式，有在跑则底部提示
+        val wasActive = translationController?.translateMode?.value != ReaderTranslationController.MODE_MANUAL
+        translationController?.shutdown()
         // ⚠️ 必须清掉状态浮层：它是**进程级单例 + TYPE_APPLICATION_OVERLAY 系统窗口**，
         // 退出阅读器后「检测中…／翻译中…」会挂在桌面/其它页面上，且没有任何入口能消掉
         // （直到下一次翻译成功或失败）。翻译在途时退出阅读器就会触发。
         TranslationStatusOverlay.getInstance(this@MangaReaderActivity).dismiss()
+        if (wasActive) UiUtils.showToast(this, getString(R.string.reader_translate_paused_to_manual))
         super.onDestroy()
     }
 
@@ -563,24 +571,19 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun onTranslatePhase(phase: ReaderTranslatePhase, message: String?) {
         runOnUiThread {
             val overlay = TranslationStatusOverlay.getInstance(this)
+            val p = translationController?.queuePage?.value ?: -1
+            // 带页码：增量连续翻页时用户要看得出进度走到哪一页
+            fun withPage(base: String) =
+                if (p >= 0) getString(R.string.reader_translate_status_page, base, p + 1) else base
+
             when (phase) {
-                ReaderTranslatePhase.DETECTING -> {
-                    // 带页码：增量连续翻页时，用户要能看出进度走到哪一页了
-                    val p = translationController?.queuePage?.value ?: -1
-                    val base = getString(R.string.reader_translate_detecting)
-                    overlay.showImmediate(
-                        if (p >= 0) getString(R.string.reader_translate_status_page, base, p + 1) else base,
-                        autoDismiss = false
-                    )
-                }
-                ReaderTranslatePhase.TRANSLATING -> {
-                    val p = translationController?.queuePage?.value ?: -1
-                    val base = getString(R.string.reader_translate_in_progress)
-                    overlay.showImmediate(
-                        if (p >= 0) getString(R.string.reader_translate_status_page, base, p + 1) else base,
-                        autoDismiss = false
-                    )
-                }
+                // message 优先：分批时管线会给出「识别中（1/2）…」这类带批次的文案（与截屏翻译对齐）
+                ReaderTranslatePhase.DETECTING -> overlay.showImmediate(
+                    withPage(message ?: getString(R.string.reader_translate_detecting)), autoDismiss = false
+                )
+                ReaderTranslatePhase.TRANSLATING -> overlay.showImmediate(
+                    withPage(message ?: getString(R.string.reader_translate_in_progress)), autoDismiss = false
+                )
                 ReaderTranslatePhase.SUCCESS -> {
                     overlay.dismiss()
                     overlay.show(getString(R.string.reader_translate_done))
@@ -589,6 +592,12 @@ class MangaReaderActivity : AppCompatActivity() {
                 ReaderTranslatePhase.FAILED -> {
                     overlay.dismiss()
                     overlay.showError(message ?: getString(R.string.reader_translate_failed))
+                    refreshProgressTranslation()
+                }
+                // 队列跑完：提示一下随即消失，翻页后队列会自动重启
+                ReaderTranslatePhase.QUEUE_DRAINED -> {
+                    overlay.dismiss()
+                    overlay.show(getString(R.string.reader_translate_queue_drained))
                     refreshProgressTranslation()
                 }
             }

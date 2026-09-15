@@ -994,6 +994,10 @@
     <string name="reader_translate_hint_auto_page">Auto-translating P%1$d. Double-tap to pause.</string>
     <string name="reader_translate_hint_ahead_page">Translating P%1$d. Double-tap to pause.</string>
     <string name="reader_translate_status_page">%1$s · P%2$d</string>
+    <string name="reader_translate_batch_detect">Recognizing (%1$d/2)…</string>
+    <string name="reader_translate_batch_translate">Translating (%1$d/2)…</string>
+    <string name="reader_translate_queue_drained">Translation queue finished. Turn the page to continue.</string>
+    <string name="reader_translate_paused_to_manual">Translation paused, switched to manual mode.</string>
     <string name="reader_translate_cancelled">Stopped. Switched to manual mode.</string>
     <string name="reader_translate_stopped">Translation stopped</string>
     <string name="reader_translate_debounce">Start delay</string>

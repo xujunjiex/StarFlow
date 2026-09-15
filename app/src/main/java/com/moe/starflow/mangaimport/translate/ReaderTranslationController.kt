@@ -40,8 +40,15 @@ import java.util.LinkedList
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** 翻译阶段（供状态浮层显示进度：检测/翻译/成功/失败）。 */
-enum class ReaderTranslatePhase { DETECTING, TRANSLATING, SUCCESS, FAILED }
+/** 翻译阶段（供状态浮层显示进度：检测/翻译/成功/失败/队列耗尽）。 */
+enum class ReaderTranslatePhase {
+    DETECTING,
+    TRANSLATING,
+    SUCCESS,
+    FAILED,
+    /** 增量队列跑完（窗口内无可翻页）—— 提示用户"翻页后继续"，随后自动消失。 */
+    QUEUE_DRAINED,
+}
 
 /** 翻译按钮点击的结果，由 Activity 负责呈现（提示/浮层）。 */
 sealed interface TranslateClick {
@@ -168,20 +175,36 @@ class ReaderTranslationController(
 
     /**
      * 翻译面板开合。
-     * - 打开：**暂停**队列与在途翻译（用户要调设置，后台不该继续烧）
-     * - 关闭：恢复队列（模式仍是自动/增量的话）—— 即"翻译要等退出面板后才开始"
+     * - 打开：**暂停并回退到手动模式**（用户要调设置，后台不该继续烧），并回调 [onPaused] 弹提示
+     * - 关闭：恢复队列（模式已是手动则不动）—— 即"翻译要等退出面板后才开始"
      */
     fun setPanelOpen(open: Boolean) {
         if (panelOpen == open) return
         panelOpen = open
         if (open) {
-            cancelFlag.set(true)
-            queueJob?.cancel(); queueJob = null
-            manualJob?.cancel(); manualJob = null
-            queuePage.value = -1
+            pauseToManual()
         } else {
             restartQueue()
         }
+    }
+
+    /** 退出阅读器时调用：停止翻译并回退手动（不弹提示，由调用方决定）。 */
+    fun shutdown() {
+        cancelEverything()
+        translateMode.value = MODE_MANUAL
+        version.value += 1
+    }
+
+    /** 停止一切在途翻译并回退到手动模式；原本有在跑则回调 [onPaused]。 */
+    private fun pauseToManual() {
+        val wasActive = translateMode.value != MODE_MANUAL ||
+            queueJob?.isActive == true || manualJob?.isActive == true
+        cancelEverything()
+        if (translateMode.value != MODE_MANUAL) {
+            translateMode.value = MODE_MANUAL
+            version.value += 1
+        }
+        if (wasActive) onPaused()
     }
 
     /**
@@ -208,6 +231,8 @@ class ReaderTranslationController(
 
         queueJob = scope.launch(Dispatchers.IO) {
             LogCollector.d(TAG, "queue start mode=${translateMode.value}")
+            // 窗口跑完（而非被取消/切模式）→ 收官时提示"队列已耗尽，翻页后继续"
+            var drained = false
             try {
                 while (isActive) {
                     // 防抖：翻页期间反复重算也没关系，停留够久才开始翻
@@ -222,7 +247,8 @@ class ReaderTranslationController(
 
                     val target = (cur until end).firstOrNull { p -> isTranslatable(p) }
                     if (target == null) {
-                        LogCollector.d(TAG, "queue idle: 窗口 [$cur, $end) 无待翻页")
+                        LogCollector.d(TAG, "queue drained: 窗口 [$cur, $end) 无待翻页")
+                        drained = true
                         break
                     }
                     queuePage.value = target
@@ -235,6 +261,7 @@ class ReaderTranslationController(
             } finally {
                 queuePage.value = -1
                 LogCollector.d(TAG, "queue end")
+                if (drained) onPhase(ReaderTranslatePhase.QUEUE_DRAINED, null)
             }
         }
     }
@@ -590,12 +617,21 @@ class ReaderTranslationController(
             TranslationEngineInit.ensureReady(this@ReaderTranslationController.context)
         }
 
+        /** 当前是第几批（1/2）。首批结果上屏后置 2 —— 管线的进度回调只给 resId，不带批次。 */
+        private var batchIndex = 1
+
         override fun onProgress(textRes: Int) {
-            val text = context.getString(textRes)
-            val p = when (textRes) {
-                R.string.translating_do_not_tap, R.string.manga_translating ->
-                    ReaderTranslatePhase.TRANSLATING
-                else -> ReaderTranslatePhase.DETECTING
+            val (p, text) = when (textRes) {
+                // 与截屏翻译对齐：分批时明确写出「第几批」，用户才知道现在在干什么
+                R.string.recognizing_half -> ReaderTranslatePhase.DETECTING to
+                    context.getString(R.string.reader_translate_batch_detect, batchIndex)
+                R.string.translating_do_not_tap -> ReaderTranslatePhase.TRANSLATING to
+                    context.getString(R.string.reader_translate_batch_translate, 1)
+                R.string.manga_translating -> ReaderTranslatePhase.TRANSLATING to
+                    context.getString(R.string.reader_translate_batch_translate, batchIndex)
+                R.string.manga_reading -> ReaderTranslatePhase.TRANSLATING to
+                    context.getString(R.string.manga_reading)
+                else -> ReaderTranslatePhase.DETECTING to context.getString(textRes)
             }
             phase(p, text)
         }
@@ -615,6 +651,8 @@ class ReaderTranslationController(
             val cfg = cacheManager.getOverlayConfig(appPrefs)
             val out = renderBubbles(pageBitmap, bubbles, TranslationCacheManager.OverlayMode.TRANSLATED, cfg)
             renderLru.put(partialKey(page), out)
+            // 首批已出 → 后续进度就是第二批（管线回调不带批次，只能这样推）
+            batchIndex = 2
             withContext(Dispatchers.Main) { onVisual() }
         }
 
@@ -743,8 +781,11 @@ class ReaderTranslationController(
     /** 页面显示需要刷新（三态切换 / 翻译完成）。 */
     var onVisual: () -> Unit = {}
 
-    /** 翻译阶段变化（检测中/翻译中/完成/失败）。 */
+    /** 翻译阶段变化（检测中/翻译中/完成/失败/队列耗尽）。 */
     var onPhase: (ReaderTranslatePhase, String?) -> Unit = { _, _ -> }
+
+    /** 翻译被暂停并回退到手动（打开面板 / 退出阅读器）→ Activity 弹底部提示。 */
+    var onPaused: () -> Unit = {}
 
     // ========== 私有：写记录 ==========
 
