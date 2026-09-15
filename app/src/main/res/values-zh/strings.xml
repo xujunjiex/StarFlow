@@ -919,7 +919,7 @@
     <string name="reader_translate_debounce">启动延迟</string>
     <string name="reader_translate_ahead_pages">向后翻译页数</string>
     <string name="reader_translate_failed_badge">本页翻译失败</string>
-    <string name="reader_translate_disabled_mode">连续滚动 / 双页模式下暂不支持翻译</string>
+    <string name="reader_translate_disabled_mode">连续滚动模式下暂不支持翻译</string>
     <string name="reader_translate_failed_page_hint">第 %1$d 页翻译失败：%2$s</string>
     <string name="reader_debug_placeholder">调试选项（不含 AI 超分）</string>
     <string name="reader_rotate">旋转屏幕</string>

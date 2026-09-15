@@ -1007,7 +1007,7 @@
     <string name="reader_translate_debounce">Start delay</string>
     <string name="reader_translate_ahead_pages">Pages ahead</string>
     <string name="reader_translate_failed_badge">Translation failed</string>
-    <string name="reader_translate_disabled_mode">Translation is not available in Webtoon or two-page mode</string>
+    <string name="reader_translate_disabled_mode">Translation is not available in Webtoon mode</string>
     <string name="reader_translate_failed_page_hint">P%1$d translation failed: %2$s</string>
     <string name="reader_debug_placeholder">Debug options (no AI super-resolution)</string>
     <string name="reader_rotate">Rotate screen</string>

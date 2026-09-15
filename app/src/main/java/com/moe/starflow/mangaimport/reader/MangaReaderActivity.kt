@@ -49,9 +49,9 @@ import java.io.FileOutputStream
 import java.util.zip.ZipOutputStream
 
 /**
- * 漫画阅读器（复刻 Kototoro）：4 阅读模式(LTR/RTL/竖排/Webtoon) + 横屏双页 +
+ * 漫画阅读器（复刻 Kototoro）：4 阅读模式(LTR/RTL/竖排/Webtoon) +
  * 4 翻页动画 + 6 阅读背景 + 颜色矫正 + 自动翻页 + 底部四图标工具栏 + 薄进度条(拖拽/长按预览) +
- * 右下角单个翻页按钮 + 右上角菜单键。
+ * 右下角单个翻页按钮 + 右上角菜单键。横屏与竖屏同为单页（双页显示已移除）。
  */
 class MangaReaderActivity : AppCompatActivity() {
 
@@ -60,7 +60,7 @@ class MangaReaderActivity : AppCompatActivity() {
 
         private const val PREFS = "manga_reader"
         private const val KEY_MODE = "reader_mode"          // 0 LTR 1 RTL 2 竖排 3 Webtoon
-        /** Webtoon（连续滑动）显示态：false=原图 true=译文。由模式分段器上「连续滑动」按钮两态控制。 */
+        /** Webtoon（连续滑动）显示态：false=原图 true=译文（默认译文）。由模式分段器上「连续滑动」按钮两态控制。 */
         private const val KEY_WEBTOON_TRANSLATED = "reader_webtoon_translated"
         private const val KEY_ANIM = "reader_animation"     // 0 无 1 默认 2 高级 3 仿真
         private const val KEY_BG = "reader_background"      // 0 默认 1 浅 2 深 3 白 4 黑 5 自动
@@ -98,8 +98,6 @@ class MangaReaderActivity : AppCompatActivity() {
     private var bgMode = 0
 
     private var pageAdapter: ReaderPageAdapter? = null
-    private var doubleAdapter: DoublePageAdapter? = null
-    private var isDoublePage = false
 
     /** 翻译按钮双击判定用的上次单击时刻（elapsedRealtime）。 */
     private var lastTranslateClickMs = 0L
@@ -119,7 +117,7 @@ class MangaReaderActivity : AppCompatActivity() {
 
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
         mode = prefs.getInt(KEY_MODE, 0)
-        webtoonTranslated = prefs.getBoolean(KEY_WEBTOON_TRANSLATED, false)
+        webtoonTranslated = prefs.getBoolean(KEY_WEBTOON_TRANSLATED, true)
         animationMode = prefs.getInt(KEY_ANIM, 1)
         bgMode = prefs.getInt(KEY_BG, 0)
         autoTurnEnabled = prefs.getBoolean(KEY_AUTO_TURN, false)
@@ -202,12 +200,6 @@ class MangaReaderActivity : AppCompatActivity() {
         TranslationStatusOverlay.getInstance(this@MangaReaderActivity).dismiss()
     }
 
-    override fun onResume() {
-        super.onResume()
-        // 横竖屏切换后保持正确的分页/双页布局
-        refreshPagerForOrientation()
-    }
-
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) {
@@ -219,7 +211,7 @@ class MangaReaderActivity : AppCompatActivity() {
         }
     }
 
-    // ===== 分页 / 双页 / Webtoon 切换 =====
+    // ===== 分页 / Webtoon 切换 =====
 
     private fun applyPager() {
         if (mode == 3) {
@@ -230,6 +222,10 @@ class MangaReaderActivity : AppCompatActivity() {
                 a.setPageImageProvider { p -> translationController?.webtoonCachedBitmap(p) }
             }
             binding.webtoonList.layoutManager = LinearLayoutManager(this)
+            // ⚠️ 必须关掉默认 item 动画。Webtoon 靠 notifyItemChanged（译图渲染完成）刷新单页，
+            // 默认的 DefaultItemAnimator 会给每次刷新叠一层**淡出淡入** → 页面持续闪、像"一直在变"。
+            // 同理 notifyDataSetChanged（切原图/译文）也会整体过一遍淡入淡出。
+            binding.webtoonList.itemAnimator = null
             binding.webtoonList.visibility = View.VISIBLE
             binding.viewPager.visibility = View.GONE
             translationController?.prewarmWebtoon(currentPage)
@@ -251,16 +247,9 @@ class MangaReaderActivity : AppCompatActivity() {
         // 淡入淡出 → 刚落定的页「透明渐变、轻微变白/变黑」。分页器无 item 动画需求，直接关掉。
         (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)?.itemAnimator = null
 
-        val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        // 横屏双页仅对水平模式（LTR/RTL）生效；竖排保持单页竖向，不参与双页
-        isDoublePage = landscape && mode != 2
-        if (isDoublePage) {
-            doubleAdapter = DoublePageAdapter(source, { colorFilter }, ::onInteraction, ::handleTap)
-            binding.viewPager.adapter = doubleAdapter
-        } else {
-            pageAdapter = ReaderPageAdapter(source, { colorFilter }, ::onInteraction, ::handleTap)
-            binding.viewPager.adapter = pageAdapter
-        }
+        // 横竖屏都是单页（双页显示已移除）：旋转不需要重建 adapter
+        pageAdapter = ReaderPageAdapter(source, { colorFilter }, ::onInteraction, ::handleTap)
+        binding.viewPager.adapter = pageAdapter
         applyDirection()
         applyAnimation()
         applyPageImageSource()
@@ -280,11 +269,6 @@ class MangaReaderActivity : AppCompatActivity() {
         animState.navigationProgress = 0f
         animState.isBackward = false
         animState.foldStartFraction = 0.85f
-        if (isDoublePage) {
-            // 双页阅读：只用默认滑动（不叠加封面/翻页动画）
-            binding.viewPager.setPageTransformer(null)
-            return
-        }
         binding.viewPager.setPageTransformer(
             when (animationMode) {
                 0 -> NoneTransformer(isVertical = mode == 2, animState)   // 无动画：全程静止，落整直接换页
@@ -320,13 +304,7 @@ class MangaReaderActivity : AppCompatActivity() {
         super.onConfigurationChanged(newConfig)
         applyBackground()
         applyAnimation()
-        refreshPagerForOrientation()
-        // 横竖屏切换会改变 isDoublePage：进双页后翻译按钮被禁用，
-        // 此刻必须把队列停掉，否则会在用户看不到的地方继续翻、而按钮已禁用停不掉
-        if (isTranslateDisabledByMode()) {
-            translationController?.setMode(ReaderTranslationController.MODE_MANUAL)
-            TranslationStatusOverlay.getInstance(this@MangaReaderActivity).dismiss()
-        }
+        // 横竖屏都是单页、翻译也不再按朝向禁用 → 旋转后无需重建 adapter，也不用停翻译队列
         refreshTranslationChrome()
     }
 
@@ -341,16 +319,6 @@ class MangaReaderActivity : AppCompatActivity() {
         if (wasActive) UiUtils.showToast(this, getString(R.string.reader_translate_paused_to_manual))
         super.onDestroy()
     }
-
-    private fun refreshPagerForOrientation() {
-        // 复用现有 adapter 或切换双页
-        val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        if (mode == 3) return
-        if (landscape != isDoublePage) applyPager()
-    }
-
-    /** 当前「进度条」用的页码：分页=当前页；双页=左页；Webtoon=首个可见页(简化为进度条拖动页)。 */
-    private var doublePageIndex = 0
 
     private val pageChangeCallback = object : ViewPager2.OnPageChangeCallback() {
         override fun onPageScrolled(position: Int, positionOffset: Float, positionOffsetPixels: Int) {
@@ -371,8 +339,7 @@ class MangaReaderActivity : AppCompatActivity() {
         }
 
         override fun onPageSelected(position: Int) {
-            val page = if (isDoublePage) position * 2 else position
-            currentPage = page.coerceIn(0, (source.size - 1).coerceAtLeast(0))
+            currentPage = position.coerceIn(0, (source.size - 1).coerceAtLeast(0))
             // 无动画模式：选中后锚点同步到新页，避免下次拖拽时还把上一页钉在中心
             if (animationMode == 0) animState.anchorPage = currentPage
             ImportedMangaStore.update(applicationContext, manga.copy(lastReadPage = currentPage))
@@ -416,14 +383,8 @@ class MangaReaderActivity : AppCompatActivity() {
 
     private fun turnPage(delta: Int) {
         if (mode == 3) return // webtoon 用滚动，不含自动翻页
-        val step = if (isDoublePage) 2 else 1
-        val target = (currentPage + delta * step)
-        val clamped = target.coerceIn(0, (source.size - 1).coerceAtLeast(0))
-        if (isDoublePage) {
-            binding.viewPager.setCurrentItem(clamped / 2, animationSupportsAnim())
-        } else {
-            binding.viewPager.setCurrentItem(clamped, animationSupportsAnim())
-        }
+        val clamped = (currentPage + delta).coerceIn(0, (source.size - 1).coerceAtLeast(0))
+        binding.viewPager.setCurrentItem(clamped, animationSupportsAnim())
     }
 
     /** 动画开关：无动画(0)时点击/自动翻页直接跳（setCurrentItem 无平滑），其余模式走 transformer 补间。 */
@@ -439,8 +400,7 @@ class MangaReaderActivity : AppCompatActivity() {
             refreshOverlay()
             return
         }
-        if (isDoublePage) binding.viewPager.setCurrentItem(p / 2, false)
-        else binding.viewPager.setCurrentItem(p, false)
+        binding.viewPager.setCurrentItem(p, false)
     }
 
     // ===== 覆盖层 =====
@@ -628,8 +588,8 @@ class MangaReaderActivity : AppCompatActivity() {
         applyPageImageSource()
     }
 
-    /** Webtoon / 横屏双页暂不支持翻译（"当前页"语义不唯一，见 Spec）。 */
-    private fun isTranslateDisabledByMode(): Boolean = mode == 3 || isDoublePage
+    /** Webtoon（连续滚动）暂不支持单页翻译（"当前页"语义不唯一）。横竖屏都是单页，翻译不受朝向影响。 */
+    private fun isTranslateDisabledByMode(): Boolean = mode == 3
 
     /** 状态浮层总开关（关闭后所有 Hint 必须改走 Toast，否则用户点按钮毫无反馈）。 */
     private fun statusOverlayEnabled(): Boolean =
@@ -642,7 +602,6 @@ class MangaReaderActivity : AppCompatActivity() {
         val controller = translationController ?: return
         val provider: (Int) -> android.graphics.Bitmap? = { page -> controller.cachedDisplayBitmap(page) }
         pageAdapter?.setPageImageProvider(provider)
-        doubleAdapter?.setPageImageProvider(provider)
     }
 
     /** 状态浮层（与截屏翻译路线一致）：检测中 / 翻译中 / 完成 / 失败。
@@ -691,7 +650,7 @@ class MangaReaderActivity : AppCompatActivity() {
             .show(getString(R.string.reader_translate_failed_page_hint, currentPage + 1, reason))
     }
 
-    /** 同步翻译浮层组：成功页显示三态按钮、失败页显示感叹号；Webtoon 整组隐藏；双页置灰。 */
+    /** 同步翻译浮层组：成功页显示三态按钮、失败页显示感叹号；Webtoon 整组隐藏。 */
     private fun refreshTranslationChrome() {
         // Webtoon（连续滚动）不支持单页翻译，也没有单页三态 → 整个浮层组（翻译/重翻 +
         // 三态 + 失败感叹号）隐藏，只留底部模式分段器上「连续滑动」按钮的两态角标。
@@ -716,10 +675,7 @@ class MangaReaderActivity : AppCompatActivity() {
         if (translated) {
             binding.ivToggleTranslate.setImageResource(overlayModeIcon(controller.currentVisual(currentPage)))
         }
-        val translateDisabled = isTranslateDisabledByMode()
-        binding.btnTranslate.alpha = if (translateDisabled) 0.4f else 1f
-        binding.btnFailTranslate.alpha = if (translateDisabled) 0.4f else 1f
-        binding.btnToggleTranslate.alpha = if (translateDisabled) 0.4f else 1f
+        // 走到这里说明是分页模式（Webtoon 在上面已整组隐藏）→ 按钮恒可用，无需置灰
     }
 
     /** 三态图标（与截屏翻译一致：相机=译文 / 图库=原文 / 眼睛=纯原图）。 */
@@ -757,7 +713,6 @@ class MangaReaderActivity : AppCompatActivity() {
             }
             runOnUiThread {
                 pageAdapter?.notifyItemChanged(pageIndex)
-                doubleAdapter?.notifyItemChanged(pageIndex / 2)
             }
         }
     }
@@ -803,7 +758,7 @@ class MangaReaderActivity : AppCompatActivity() {
                     translationController?.setWebtoonTranslated(webtoonTranslated)
                     applyPager()
                     goToPage(currentPage)
-                    // Webtoon / 横屏双页不支持翻译：切过去时把队列停掉并退回手动。
+                    // Webtoon 不支持翻译：切过去时把队列停掉并退回手动。
                     // 否则队列会在用户看不到的地方继续往后翻，而按钮已被禁用、用户停不掉。
                     if (isTranslateDisabledByMode()) {
                         translationController?.setMode(ReaderTranslationController.MODE_MANUAL)
@@ -819,10 +774,15 @@ class MangaReaderActivity : AppCompatActivity() {
                     webtoonTranslated = v
                     prefs.edit().putBoolean(KEY_WEBTOON_TRANSLATED, v).apply()
                     translationController?.setWebtoonTranslated(v)
-                    // ⚠️ 两个方向都必须主动重绑：
-                    //  - 切到原图：没有任何渲染回调（原图不经渲染），不重绑就停在旧译图上
-                    //  - 切到译文：先把槽位清回原图，再由预热逐页渲染回调刷上译文
-                    refreshWebtoonRange(currentPage)
+                    // **全量重绑**：所有已附着页一次性换到新状态，不做逐页增量刷新。
+                    // 每次 onBindViewHolder 都会 cancel 掉该 holder 上一次的取图 → 旧状态的在途结果
+                    // 不会晚一步落回来。行高已按原图宽高比钉死 + 关掉了 itemAnimator，重绑不闪不跳。
+                    // ⚠️ 用 notifyItemRangeChanged（update 事件）而不是 notifyDataSetChanged：
+                    // 后者是 structure-changed 事件，会重置布局锚点、把滚动位置弹掉。
+                    val wl = binding.webtoonList
+                    val n = wl.adapter?.itemCount ?: 0
+                    if (n > 0) wl.adapter?.notifyItemRangeChanged(0, n)
+                    // 切到译文：补齐附近还没渲染的页（已渲染的在缓存里，秒回）；切到原图无需渲染
                     translationController?.prewarmWebtoon(currentPage)
                 },
                 onAnimation = { a -> prefs.edit().putInt(KEY_ANIM, a).apply(); animationMode = a; applyAnimation() },
@@ -954,12 +914,10 @@ class MangaReaderActivity : AppCompatActivity() {
         colorFilter = f
         // 实时预览当前可见页
         pageAdapter?.applyLiveColor(f)
-        doubleAdapter?.applyLiveColor(f)
     }
 
     private fun reloadCurrentPageColor() {
         pageAdapter?.notifyItemChanged(currentPage)
-        doubleAdapter?.notifyItemChanged(currentPage / 2)
     }
 
     // ===== 旋转（configChanges 声明，不重建 Activity） =====

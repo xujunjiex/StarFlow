@@ -42,8 +42,8 @@ class ReaderMenuState(
     val downloadLabel: String = "",
     val isDarkPanel: Boolean = false,
     val previewBitmap: Bitmap? = null,
-    /** Webtoon（连续滑动）的显示态：false=原图，true=译文。决定模式图标上是否带「译」角标。 */
-    val webtoonTranslated: Boolean = false,
+    /** Webtoon（连续滑动）的显示态：false=原图，true=译文（默认）。决定模式图标上是否带「译」角标。 */
+    val webtoonTranslated: Boolean = true,
     val translateMode: Int = 0,                 // 0 手动 1 自动 2 增量
     val debounceMs: Int = 500,                  // 自动/增量的启动延迟
     val aheadPages: Int = 5,                    // 增量向后翻多少页（1..10）

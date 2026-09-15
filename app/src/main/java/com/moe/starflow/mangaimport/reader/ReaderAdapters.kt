@@ -6,7 +6,6 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.recyclerview.widget.RecyclerView
 import com.moe.starflow.databinding.ItemMangaReaderPageBinding
-import com.moe.starflow.databinding.ItemReaderDoublePageBinding
 import com.moe.starflow.databinding.ItemWebtoonPageBinding
 import com.moe.starflow.ui.viewer.ZoomableImageView
 import kotlinx.coroutines.CoroutineScope
@@ -131,65 +130,6 @@ class ReaderPageAdapter(
     }
 }
 
-/** 横屏双页适配器：每个 item 是一对页（左=2i，右=2i+1）。 */
-class DoublePageAdapter(
-    private val source: ReaderPageSource,
-    filter: () -> ReaderColorFilter?,
-    onInteraction: () -> Unit,
-    onTap: (Float, Float) -> Unit
-) : RecyclerView.Adapter<DoublePageAdapter.VH>() {
-
-    private val shared = Shared(source).apply {
-        this.filter = filter
-        this.onInteraction = onInteraction
-        this.onTap = onTap
-    }
-
-    /** 展开数量 = ceil(页数/2)。 */
-    override fun getItemCount(): Int = (source.size + 1) / 2
-
-    fun applyLiveColor(f: ReaderColorFilter?) {
-        shared.visibleImage?.colorFilter = f?.toColorFilter()
-    }
-
-    /** 最近绑定的页面图片（供阅读器内嵌翻译直接 setImageBitmap）。双页时近似取最近一张。 */
-    val visibleImage: ZoomableImageView?
-        get() = shared.visibleImage
-
-    /** 注入页图提供者（译文/原文渲染图，null=原图）。 */
-    fun setPageImageProvider(provider: (Int) -> Bitmap?) {
-        shared.pageImage = provider
-    }
-
-    class VH(val binding: ItemReaderDoublePageBinding) : RecyclerView.ViewHolder(binding.root)
-
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH =
-        VH(ItemReaderDoublePageBinding.inflate(LayoutInflater.from(parent.context), parent, false))
-
-    override fun onBindViewHolder(holder: VH, position: Int) {
-        resetItemTransform(holder.itemView)
-        val left = position * 2
-        val right = left + 1
-        bindImageCommon(holder.binding.zoomableLeft, shared, left) {
-            holder.adapterPosition == position
-        }
-        if (right < source.size) {
-            holder.binding.zoomableRight.visibility = View.VISIBLE
-            bindImageCommon(holder.binding.zoomableRight, shared, right) {
-                holder.adapterPosition == position
-            }
-        } else {
-            holder.binding.zoomableRight.setImageBitmap(null)
-            holder.binding.zoomableRight.visibility = View.INVISIBLE
-        }
-    }
-
-    override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
-        shared.scope.cancel()
-        super.onDetachedFromRecyclerView(recyclerView)
-    }
-}
-
 /** Webtoon 连续滚动适配器（竖列表，懒加载，图片按宽度铺满）。 */
 class WebtoonAdapter(
     private val source: ReaderPageSource,
@@ -201,6 +141,9 @@ class WebtoonAdapter(
     class VH(val binding: ItemWebtoonPageBinding) : RecyclerView.ViewHolder(binding.root) {
         /** 本次绑定的取图任务。重绑前必须取消，见 [onBindViewHolder]。 */
         var loadJob: Job? = null
+
+        /** 当前 holder 正在显示哪一页（-1 = 还没绑过）。用于区分「同页重绑」与「复用去显示别页」。 */
+        var boundPage = -1
     }
 
     /**
@@ -222,12 +165,36 @@ class WebtoonAdapter(
     override fun onBindViewHolder(holder: VH, position: Int) {
         val img = holder.binding.webtoonImage
         val loading = holder.binding.webtoonLoading
-        img.setImageDrawable(null)
-        img.colorFilter = shared.filter()?.toColorFilter()
-        loading.visibility = View.VISIBLE
         // 按实际/屏幕宽度降采样解码（大漫画防卡死）；宽在首次绑定可能为 0，回退屏幕宽度
-        val targetW = (holder.binding.webtoonImage.width.takeIf { it > 0 }
+        val targetW = (img.width.takeIf { it > 0 }
             ?: holder.itemView.context.resources.displayMetrics.widthPixels).coerceAtLeast(1)
+
+        // ⚠️ 必须先把行高按【页图原始宽高比】钉死，再清图/加载。
+        // ImageView 是 wrap_content + adjustViewBounds：`setImageDrawable(null)` 会让行高塌成 0，
+        // 图片到达后再撑开 → 列表连锁重排，用户看到的就是「页面一直跳、旧图清不掉、新图不进来」。
+        // 原图与译图的宽高比一致（译图渲在按屏宽采样出来的原图上），所以钉一次就够、永久有效。
+        val ow = source.originalWidth(position)
+        val oh = source.originalHeight(position)
+        val pinned = if (ow > 0 && oh > 0) {
+            (targetW.toLong() * oh / ow).toInt().coerceIn(1, MAX_WEBTOON_ITEM_HEIGHT)
+        } else {
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        }
+        val lp = img.layoutParams
+        if (lp.height != pinned) {
+            lp.height = pinned
+            img.layoutParams = lp
+        }
+
+        img.colorFilter = shared.filter()?.toColorFilter()
+        // **同一个 holder 重新绑定同一页**（切显示态 / 预热刷新）→ 保留当前图，等新图到了原地替换：
+        // 既不闪一帧空白，也不让列表跳动。只有 holder 被复用去显示**别的页**时才清图 + 转圈。
+        // ⚠️ 别改回无条件 `setImageDrawable(null)`：每次重绑都会闪白。
+        if (holder.boundPage != position) {
+            holder.boundPage = position
+            img.setImageDrawable(null)
+            loading.visibility = View.VISIBLE
+        }
         // ⚠️ 重绑前先取消上一次取图。切换「原图 ↔ 译文」时本页会被连续重绑两次：
         // 第一次（provider 未命中）去慢速解码原图，第二次（缓存已热）秒回译图；
         // 不取消的话慢的那次最后落地，把译图覆盖回原图 —— 用户看到的就是"点了没反应/
@@ -252,5 +219,10 @@ class WebtoonAdapter(
     override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
         shared.scope.cancel()
         super.onDetachedFromRecyclerView(recyclerView)
+    }
+
+    private companion object {
+        /** 单页最大行高：防宽高比读错（或异常页）时把行高算成天文数字撑爆列表。 */
+        const val MAX_WEBTOON_ITEM_HEIGHT = 20_000
     }
 }

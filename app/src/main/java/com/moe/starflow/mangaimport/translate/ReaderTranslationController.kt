@@ -64,7 +64,7 @@ sealed interface TranslateClick {
     data object StartedManual : TranslateClick
     /** OCR 引擎被占用（截屏翻译正在翻 / 上一次取消的任务还没退出 native）→ 提示用户稍后。 */
     data object Busy : TranslateClick
-    /** 无事可做（空闲时双击 / Webtoon、双页模式禁用）。 */
+    /** 无事可做（空闲时双击 / Webtoon 模式禁用）。 */
     data object Ignored : TranslateClick
 }
 
@@ -914,13 +914,13 @@ class ReaderTranslationController(
     // ========== Webtoon 原图/译文切换 ==========
 
     /**
-     * Webtoon 的整屏显示态：false = 原图，true = 译文。
+     * Webtoon 的整屏显示态：false = 原图，true = 译文（**默认译文**）。
      *
      * Webtoon 是连续滚动，"当前页"语义不唯一，因此**不支持单页翻译**，也没有单页三态；
      * 只有一个全局开关，且**只对状态为 SUCCESS 的页**生效（未翻译页永远显示原图）。
      * 该开关由阅读模式分段器上的「连续滑动」按钮两态控制（原图图标 ↔ 带「译」角标图标）。
      */
-    private val _webtoonTranslated = MutableStateFlow(false)
+    private val _webtoonTranslated = MutableStateFlow(true)
     val webtoonTranslated: StateFlow<Boolean> get() = _webtoonTranslated
 
     /** Webtoon 译图缓存（key = pageIndex）。只放当前位置附近的几页，见 [prewarmWebtoon]。 */
@@ -932,21 +932,22 @@ class ReaderTranslationController(
     private var webtoonPrewarmJob: Job? = null
 
     /**
-     * 切换 Webtoon 显示态（原图 ↔ 译文）。值未变时直接返回，不做任何作废。
+     * 切换 Webtoon 显示态（原图 ↔ 译文）。值未变时直接返回，不做任何事。
      *
-     * ⚠️ 不在这里调 [onVisual]：切到译文时预热会逐页渲染并各自回调 `onVisual` 触发重绑，
-     * 提前重绑只会让用户先看到一闪的原图。切到原图时没有渲染回调，由 Activity 主动重绑。
+     * ⚠️ **不 evict 缓存**：这个 LRU 里只有译图（原图由适配器直接采样解码，从不进缓存），
+     * 切到原图时 [webtoonCachedBitmap] 会按 flag 短路返回 null —— 缓存留着不碍事，
+     * 切回译文还能秒回，不必重渲。曾经在这里 evictAll，导致每次切换都要重渲附近几页，
+     * 切换期间新旧图交替闪跳。
+     *
+     * ⚠️ 也不在这里调 [onVisual]：重绑由调用方（Activity）一次性全量触发，见 `onWebtoonTranslated`。
      */
     fun setWebtoonTranslated(value: Boolean) {
         if (_webtoonTranslated.value == value) return
         _webtoonTranslated.value = value
-        // 换态后旧渲染作废（原图无渲染，译图是另一张图），必须清掉重渲。
-        // ⚠️ 同时停掉在途预热：它渲染的是**上一态**的图，会在 evictAll 之后又把旧图 put 回来
-        // （`if (!isActive) break` 在循环头，取消后仍可能多 put 一张），既白烧 CPU，
-        // 又让该页在下次 prewarm 时被 `lru.get(p) == null` 过滤掉 → 永远不重渲、一直显示旧图。
+        // 停掉在途预热：它可能还在渲染一批已经滚过去的页，切态后没必要继续烧 CPU。
+        // 已渲染好的那些留在缓存里（切回译文直接可用）。
         webtoonPrewarmJob?.cancel()
         webtoonPrewarmJob = null
-        webtoonLru.evictAll()
         version.value += 1
     }
 
