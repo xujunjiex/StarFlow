@@ -198,6 +198,17 @@ class WebtoonAdapter(
 
     class VH(val binding: ItemWebtoonPageBinding) : RecyclerView.ViewHolder(binding.root)
 
+    /**
+     * 注入「页图提供者」：已翻译页返回**已经渲染好的译图**（无则 null → 回落未缩放原图）。
+     *
+     * ⚠️ Webtoon 原本直连 `source.loadWebtoon`，绕过了译图层 —— 即使该页已翻译也永远显示原图。
+     * 提供者只读缓存、不做渲染；渲染由 `ReaderTranslationController.prewarmWebtoon` 在后台
+     * 按当前位置上下几页限范围预热。
+     */
+    fun setPageImageProvider(provider: (Int) -> Bitmap?) {
+        shared.pageImage = provider
+    }
+
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH =
         VH(ItemWebtoonPageBinding.inflate(LayoutInflater.from(parent.context), parent, false))
 
@@ -213,7 +224,12 @@ class WebtoonAdapter(
         val targetW = (holder.binding.webtoonImage.width.takeIf { it > 0 }
             ?: holder.itemView.context.resources.displayMetrics.widthPixels).coerceAtLeast(1)
         shared.scope.launch {
-            val bmp = runCatching { withContext(Dispatchers.IO) { shared.source.loadWebtoon(position, targetW) } }.getOrNull()
+            // 已翻译页优先用渲染好的译图；否则回落到按宽度降采样的原图
+            val bmp = runCatching {
+                withContext(Dispatchers.IO) {
+                    shared.pageImage?.invoke(position) ?: shared.source.loadWebtoon(position, targetW)
+                }
+            }.getOrNull()
             // 校验 holder 仍绑定同一 position，避免复用 holder 残留旧页图/转圈状态
             if (holder.adapterPosition == position) {
                 if (bmp != null) img.setImageBitmap(bmp)

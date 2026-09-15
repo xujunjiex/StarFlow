@@ -146,6 +146,15 @@ class MangaReaderActivity : AppCompatActivity() {
                 currentPage = { currentPage },
                 pageCount = { source.size },
             )
+            // Webtoon 译图走采样解码（超长页直接全解析会 OOM），气泡坐标按采样比例缩放
+            c.bindWebtoonSource(
+                loadWebtoon = { p ->
+                    val w = binding.webtoonList.width.takeIf { it > 0 }
+                        ?: resources.displayMetrics.widthPixels
+                    source.loadWebtoon(p, w)
+                },
+                originalWidth = { p -> source.originalWidth(p) },
+            )
             c.onVisual = { runOnUiThread { applyPageVisual(currentPage) } }
             c.onPhase = ::onTranslatePhase
             // 打开面板 / 退出阅读器暂停翻译并回退手动 → 系统底部提示
@@ -159,6 +168,12 @@ class MangaReaderActivity : AppCompatActivity() {
             translationController?.load()
             refreshTranslationChrome()
             refreshProgressTranslation()
+            // ⚠️ 启动就处于 Webtoon 时，onCreate 里的 applyPager() 早于控制器创建 → 那次预热是空跑。
+            // 等 load() 拿到记录后再预热一次（此时才知道哪些页是已翻译的）。
+            if (mode == 3) {
+                translationController?.prewarmWebtoon(currentPage)
+                refreshWebtoonRange(currentPage)
+            }
         }
         setupTranslationUi()
     }
@@ -201,12 +216,19 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun applyPager() {
         if (mode == 3) {
             // Webtoon：连续竖滚列表（无翻页动画/自动翻页，滚动即翻页）
-            binding.webtoonList.adapter = WebtoonAdapter(source) { colorFilter }
+            binding.webtoonList.adapter = WebtoonAdapter(source) { colorFilter }.also { a ->
+                // 已翻译页显示渲染好的译图（未翻译页回落原图）。
+                // 渲染由 prewarmWebtoon 按当前位置上下几页限范围预热，适配器只读缓存。
+                a.setPageImageProvider { p -> translationController?.webtoonCachedBitmap(p) }
+            }
             binding.webtoonList.layoutManager = LinearLayoutManager(this)
             binding.webtoonList.visibility = View.VISIBLE
             binding.viewPager.visibility = View.GONE
+            translationController?.prewarmWebtoon(currentPage)
             return
         }
+        // 离开 Webtoon：作废 Webtoon 渲染缓存（换回翻页模式后不再需要）
+        translationController?.clearWebtoonCache()
         binding.webtoonList.adapter = null
         binding.webtoonList.visibility = View.GONE
         binding.viewPager.visibility = View.VISIBLE
@@ -476,7 +498,7 @@ class MangaReaderActivity : AppCompatActivity() {
         }
     }
 
-    /** Webtoon 模式滚动后：把当前可见页同步到 currentPage / 进度条 / 断点续读。 */
+    /** 滚动后：把当前可见页同步到 currentPage / 进度条 / 断点续读，并预热附近几页的译图。 */
     private fun updateFromWebtoonScroll() {
         if (mode != 3) return
         val lm = binding.webtoonList.layoutManager as? androidx.recyclerview.widget.LinearLayoutManager ?: return
@@ -487,6 +509,17 @@ class MangaReaderActivity : AppCompatActivity() {
         currentPage = page
         ImportedMangaStore.update(applicationContext, manga.copy(lastReadPage = currentPage))
         refreshOverlay()
+        // 只预热当前位置上下几页：Webtoon 可能上百页，一次渲染全部会爆内存
+        translationController?.prewarmWebtoon(currentPage)
+    }
+
+    /** Webtoon：把当前位置附近几页重绑（译图渲染完成后刷上去）。 */
+    private fun refreshWebtoonRange(center: Int) {
+        val a = binding.webtoonList.adapter ?: return
+        val radius = ReaderTranslationController.WEBTOON_PREWARM_RADIUS
+        val from = (center - radius).coerceAtLeast(0)
+        val to = (center + radius).coerceAtMost((source.size - 1).coerceAtLeast(0))
+        for (p in from..to) a.notifyItemChanged(p)
     }
 
     /** Webtoon 点击：点下半屏=平滑滚动到下一页顶部，上半屏=上一页顶部；右上角菜单位仍弹菜单。 */
@@ -562,9 +595,19 @@ class MangaReaderActivity : AppCompatActivity() {
                 TranslateClick.StartedManual, TranslateClick.Ignored -> Unit
             }
         }
-        // 成功页：三态循环（译文/原文/纯原图）
+        // 成功页：三态循环（译文/原文/纯原图）。Webtoon 是连续滚动，"当前页"语义不唯一，
+        // 因此走全局三态（整屏切换），只对已翻译页生效。
         binding.btnToggleTranslate.setOnClickListener {
-            controller.cycleVisual(currentPage)
+            if (mode == 3) {
+                controller.cycleWebtoonVisual()
+                refreshTranslationChrome()
+                // ⚠️ 必须主动重绑：切到「纯原图」时 prewarmWebtoon 直接返回（不需要渲染），
+                // 不会有任何回调触发重绑 → 画面会停在上一层态的旧图上
+                refreshWebtoonRange(currentPage)
+                controller.prewarmWebtoon(currentPage)
+            } else {
+                controller.cycleVisual(currentPage)
+            }
         }
         // 失败页：感叹号 → 小气泡显示失败原因（不弹窗）
         binding.btnFailTranslate.setOnClickListener { showFailBubble() }
@@ -641,25 +684,40 @@ class MangaReaderActivity : AppCompatActivity() {
         val translated = state == ImportedPageTranslation.STATE_SUCCESS
         val failed = state == ImportedPageTranslation.STATE_FAILED
 
-        binding.btnToggleTranslate.visibility = if (translated) View.VISIBLE else View.GONE
-        binding.btnFailTranslate.visibility = if (failed) View.VISIBLE else View.GONE
-        // 翻译按钮图标：成功 → 重翻图标；未译/失败 → 翻译图标
-        binding.ivTranslate.setImageResource(
-            if (translated) R.drawable.ic_refresh else R.drawable.ic_reader_translate
-        )
-        if (translated) {
-            binding.ivToggleTranslate.setImageResource(
-                when (controller.currentVisual(currentPage)) {
-                    TranslationCacheManager.OverlayMode.TRANSLATED -> android.R.drawable.ic_menu_camera
-                    TranslationCacheManager.OverlayMode.ORIGINAL -> android.R.drawable.ic_menu_gallery
-                    else -> android.R.drawable.ic_menu_view
-                }
+        if (mode == 3) {
+            // Webtoon：连续滚动，"当前页"语义不唯一 → 不按单页判断。
+            // 只要本书有任意已翻译页就显示三态按钮（整屏切换 原图 ↔ 译文）。
+            val any = controller.hasAnyTranslation()
+            binding.btnToggleTranslate.visibility = if (any) View.VISIBLE else View.GONE
+            binding.btnFailTranslate.visibility = View.GONE
+            // Webtoon 不支持翻译，翻译按钮恒为"翻译"图标（置灰）
+            binding.ivTranslate.setImageResource(R.drawable.ic_reader_translate)
+            if (any) {
+                binding.ivToggleTranslate.setImageResource(overlayModeIcon(controller.webtoonVisual.value))
+            }
+        } else {
+            binding.btnToggleTranslate.visibility = if (translated) View.VISIBLE else View.GONE
+            binding.btnFailTranslate.visibility = if (failed) View.VISIBLE else View.GONE
+            // 翻译按钮图标：成功 → 重翻图标；未译/失败 → 翻译图标
+            binding.ivTranslate.setImageResource(
+                if (translated) R.drawable.ic_refresh else R.drawable.ic_reader_translate
             )
+            if (translated) {
+                binding.ivToggleTranslate.setImageResource(overlayModeIcon(controller.currentVisual(currentPage)))
+            }
         }
-        val alpha = if (isTranslateDisabledByMode()) 0.4f else 1f
-        binding.btnTranslate.alpha = alpha
-        binding.btnToggleTranslate.alpha = alpha
-        binding.btnFailTranslate.alpha = alpha
+        val translateDisabled = isTranslateDisabledByMode()
+        binding.btnTranslate.alpha = if (translateDisabled) 0.4f else 1f
+        binding.btnFailTranslate.alpha = if (translateDisabled) 0.4f else 1f
+        // 三态按钮在 Webtoon 下**仍可用**（整屏切换 原图↔译文），不置灰
+        binding.btnToggleTranslate.alpha = if (mode == 3) 1f else if (translateDisabled) 0.4f else 1f
+    }
+
+    /** 三态图标（与截屏翻译一致：相机=译文 / 图库=原文 / 眼睛=纯原图）。 */
+    private fun overlayModeIcon(mode: TranslationCacheManager.OverlayMode): Int = when (mode) {
+        TranslationCacheManager.OverlayMode.TRANSLATED -> android.R.drawable.ic_menu_camera
+        TranslationCacheManager.OverlayMode.ORIGINAL -> android.R.drawable.ic_menu_gallery
+        else -> android.R.drawable.ic_menu_view
     }
 
     /** 刷新进度条上的「已翻译」绿色区间。 */
@@ -677,11 +735,16 @@ class MangaReaderActivity : AppCompatActivity() {
         // ⚠️ 必须挂在这里：后台队列页翻完时 `onPhase` 被有意静音（不给非当前页刷状态浮层），
         // 而本方法由控制器的 onVisual 对**每一页**完成都会调用 → 是唯一能覆盖队列页的刷新点。
         refreshProgressTranslation()
-        val mode = if (controller.stateOf(pageIndex) == ImportedPageTranslation.STATE_SUCCESS)
+        // Webtoon：译图由 prewarmWebtoon 限范围预热，这里只把附近几页重绑即可
+        if (mode == 3) {
+            refreshWebtoonRange(pageIndex)
+            return
+        }
+        val visual = if (controller.stateOf(pageIndex) == ImportedPageTranslation.STATE_SUCCESS)
             controller.currentVisual(pageIndex) else null
         lifecycleScope.launch(Dispatchers.IO) {
-            if (mode != null && mode != TranslationCacheManager.OverlayMode.PLAIN) {
-                controller.visualBitmap(pageIndex, mode) // 渲染 + 预热缓存
+            if (visual != null && visual != TranslationCacheManager.OverlayMode.PLAIN) {
+                controller.visualBitmap(pageIndex, visual) // 渲染 + 预热缓存
             }
             runOnUiThread {
                 pageAdapter?.notifyItemChanged(pageIndex)

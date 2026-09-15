@@ -120,6 +120,36 @@ class ReaderPageSource(
         }
     }
 
+    /** 页图**原始**宽度缓存（只读元数据，不解码像素）。 */
+    private val originalWidths = HashMap<Int, Int>()
+
+    /**
+     * 该页**原图**宽度（只读元数据，不解码像素）。读不到返回 0。
+     *
+     * 用途：Webtoon 译图必须按屏宽**采样解码**（Webtoon 页可能是 1080×12000，全解析一页就
+     * 50MB+），而气泡坐标是在**原图空间**算出来的 —— 渲染到采样图时必须按
+     * `采样图宽 ÷ 原图宽` 等比缩放，否则译文会整体偏移、字号也不对。
+     */
+    fun originalWidth(position: Int): Int {
+        originalWidths[position]?.let { return it }
+        val key = pageKeys.getOrNull(position) ?: return 0
+        val w = try {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            if (isArchive) {
+                val zip = zip() ?: return 0
+                val entry = zip.getEntry(key) ?: return 0
+                zip.getInputStream(entry).use { BitmapFactory.decodeStream(it, null, bounds) }
+            } else {
+                BitmapFactory.decodeFile(File(localRoot, key).absolutePath, bounds)
+            }
+            bounds.outWidth
+        } catch (e: Exception) {
+            0
+        }
+        originalWidths[position] = w
+        return w
+    }
+
     /** 采样率：按目标宽度适配 + 限制超高页 + 限制总像素（防超大页 OOM 卡死）。 */
     private fun computeSample(boundsW: Int, boundsH: Int, targetWidth: Int): Int {
         val w = boundsW.coerceAtLeast(1)
