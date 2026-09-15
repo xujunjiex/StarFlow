@@ -166,8 +166,8 @@ class IncrementalBatchPipelineTest {
 
         override suspend fun ensureEnginesReady(det: DetEngine, ocr: OcrEngine) {}
         override fun onProgress(textRes: Int) { progress += textRes }
-        override fun onToast(text: CharSequence, long: Boolean) { toasts += text }
-        override fun onError(text: CharSequence) { errors += text }
+        override fun onToast(text: String, long: Boolean) { toasts += text }
+        override fun onError(text: String) { errors += text }
         override fun onBallState(state: BallStateManager.State) { ballStates += state }
         override fun onPartialRender(bubbles: List<TranslatedBubble>) { partialRenders += bubbles.size }
         override suspend fun onBatchResult(bubbles: List<TranslatedBubble>) { batchResults += bubbles.size }
