@@ -901,9 +901,11 @@
     <string name="reader_translate_copied">已复制</string>
 
     <!-- 三种翻译模式的按钮提示 / 面板 / 失败标识 -->
-    <string name="reader_translate_hint_auto">正在自动翻译中，再次点击可停止并退回手动</string>
-    <string name="reader_translate_hint_ahead">正在增量翻译中，再次点击可停止并退回手动</string>
-    <string name="reader_translate_hint_ahead_idle">增量翻译已停止，再次点击退回手动</string>
+    <string name="reader_translate_hint_auto">正在自动翻译中，双击暂停翻译</string>
+    <string name="reader_translate_hint_ahead">正在增量翻译中，双击暂停翻译</string>
+    <string name="reader_translate_hint_auto_page">正在自动翻译 P%1$d 页，双击暂停翻译</string>
+    <string name="reader_translate_hint_ahead_page">正在翻译 P%1$d 页，双击暂停翻译</string>
+    <string name="reader_translate_status_page">%1$s · P%2$d</string>
     <string name="reader_translate_cancelled">已停止，退回手动翻译</string>
     <string name="reader_translate_stopped">已停止翻译</string>
     <string name="reader_translate_debounce">启动延迟</string>

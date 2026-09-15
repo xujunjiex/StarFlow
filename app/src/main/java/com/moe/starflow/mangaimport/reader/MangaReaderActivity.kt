@@ -70,6 +70,9 @@ class MangaReaderActivity : AppCompatActivity() {
         private const val KEY_GRAY = "reader_color_grayscale"
         private const val KEY_BOOK = "reader_color_book"
         private const val KEY_ROTATE = "reader_rotate_mode"
+
+        /** 翻译按钮双击判定窗口（与悬浮球 LONG/DOUBLE 语义一致）。 */
+        private const val DOUBLE_CLICK_MS = 300L
     }
 
     private lateinit var binding: ActivityMangaReaderBinding
@@ -92,6 +95,9 @@ class MangaReaderActivity : AppCompatActivity() {
     private var pageAdapter: ReaderPageAdapter? = null
     private var doubleAdapter: DoublePageAdapter? = null
     private var isDoublePage = false
+
+    /** 翻译按钮双击判定用的上次单击时刻（elapsedRealtime）。 */
+    private var lastTranslateClickMs = 0L
 
     /** 仿真/高级动画共享状态（折线触点 + 翻页方向）。 */
     private val animState = ReaderAnimationState()
@@ -279,6 +285,8 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        // 退出阅读器：停止翻译并回退手动模式（模式本就不持久化，这里显式收尾让队列立刻停）
+        translationController?.setMode(ReaderTranslationController.MODE_MANUAL)
         // ⚠️ 必须清掉状态浮层：它是**进程级单例 + TYPE_APPLICATION_OVERLAY 系统窗口**，
         // 退出阅读器后「检测中…／翻译中…」会挂在桌面/其它页面上，且没有任何入口能消掉
         // （直到下一次翻译成功或失败）。翻译在途时退出阅读器就会触发。
@@ -505,11 +513,15 @@ class MangaReaderActivity : AppCompatActivity() {
                 UiUtils.showToast(this, getString(R.string.reader_translate_disabled_mode))
                 return@setOnClickListener
             }
-            // 三模式统一：第一次点击只提示，第二次点击强制取消并回退手动模式
-            when (val r = controller.onTranslateButtonClick()) {
+            // 单击 = **只提示，绝不打断**；快速双击 = 取消并回退手动（用户明确要求）
+            val now = SystemClock.elapsedRealtime()
+            val isDouble = now - lastTranslateClickMs <= DOUBLE_CLICK_MS
+            lastTranslateClickMs = if (isDouble) 0L else now
+
+            when (val r = controller.onTranslateButtonClick(isDouble)) {
                 is TranslateClick.Hint -> {
                     TranslationStatusOverlay.getInstance(this)
-                        .showImmediate(getString(r.textRes), autoDismiss = true)
+                        .showImmediate(r.text, autoDismiss = true)
                 }
                 TranslateClick.CancelledToManual -> {
                     val overlay = TranslationStatusOverlay.getInstance(this)
@@ -552,13 +564,22 @@ class MangaReaderActivity : AppCompatActivity() {
         runOnUiThread {
             val overlay = TranslationStatusOverlay.getInstance(this)
             when (phase) {
-                ReaderTranslatePhase.DETECTING ->
-                    overlay.showImmediate(getString(R.string.reader_translate_detecting), autoDismiss = false)
+                ReaderTranslatePhase.DETECTING -> {
+                    // 带页码：增量连续翻页时，用户要能看出进度走到哪一页了
+                    val p = translationController?.queuePage?.value ?: -1
+                    val base = getString(R.string.reader_translate_detecting)
+                    overlay.showImmediate(
+                        if (p >= 0) getString(R.string.reader_translate_status_page, base, p + 1) else base,
+                        autoDismiss = false
+                    )
+                }
                 ReaderTranslatePhase.TRANSLATING -> {
-                    // 增量队列连续翻页时带上页码，让用户知道进度到哪了
                     val p = translationController?.queuePage?.value ?: -1
                     val base = getString(R.string.reader_translate_in_progress)
-                    overlay.showImmediate(if (p >= 0) "$base · P${p + 1}" else base, autoDismiss = false)
+                    overlay.showImmediate(
+                        if (p >= 0) getString(R.string.reader_translate_status_page, base, p + 1) else base,
+                        autoDismiss = false
+                    )
                 }
                 ReaderTranslatePhase.SUCCESS -> {
                     overlay.dismiss()
@@ -719,6 +740,13 @@ class MangaReaderActivity : AppCompatActivity() {
                 onDebounceMs = { ms -> translationController?.debounceMs?.value = ms },
                 onAheadPages = { n -> translationController?.aheadPages?.value = n },
                 onTranslatePageJump = { page -> goToPage(page) },
+                // 翻译面板开合：打开时暂停队列（用户在调设置），关闭后才恢复 ——
+                // 即"选了自动/增量也要等退出面板才开始翻"
+                onPanelOpened = {
+                    translationController?.setPanelOpen(true)
+                    TranslationStatusOverlay.getInstance(this@MangaReaderActivity).dismiss()
+                },
+                onPanelClosed = { translationController?.setPanelOpen(false) },
                 onOpenModelManagement = {
                     startActivity(Intent(this@MangaReaderActivity, SettingPageActivity::class.java)
                         .putExtra(SettingPageActivity.EXTRA_FRAGMENT_TYPE, SettingPageActivity.TYPE_FRAGMENT_MODEL_MANAGEMENT))

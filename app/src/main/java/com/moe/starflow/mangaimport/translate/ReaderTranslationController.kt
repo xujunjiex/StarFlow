@@ -45,15 +45,15 @@ enum class ReaderTranslatePhase { DETECTING, TRANSLATING, SUCCESS, FAILED }
 
 /** 翻译按钮点击的结果，由 Activity 负责呈现（提示/浮层）。 */
 sealed interface TranslateClick {
-    /** 第一次点击：仅提示，不打断。 */
-    data class Hint(val textRes: Int) : TranslateClick
-    /** 第二次点击：已强制取消并回退到手动模式。 */
+    /** 单击：**只提示，不打断**（取消必须双击）。[text] 已含页码等信息。 */
+    data class Hint(val text: String) : TranslateClick
+    /** 双击：已强制取消并回退到手动模式。 */
     data object CancelledToManual : TranslateClick
     /** 手动模式下开始翻译当前页（已在控制器内启动）。 */
     data object StartedManual : TranslateClick
     /** OCR 引擎被占用（截屏翻译正在翻 / 上一次取消的任务还没退出 native）→ 提示用户稍后。 */
     data object Busy : TranslateClick
-    /** 无事可做（如 Webtoon/双页模式禁用、或当前页状态不可翻）。 */
+    /** 无事可做（空闲时双击 / Webtoon、双页模式禁用）。 */
     data object Ignored : TranslateClick
 }
 
@@ -145,7 +145,9 @@ class ReaderTranslationController(
 
     /** 用户取消标志：翻译与队列都读它。 */
     private val cancelFlag = AtomicBoolean(false)
-    private var cancelArmed = false
+
+    /** 翻译面板是否打开：打开时暂停队列（用户在调设置，不该后台继续翻），关闭时恢复。 */
+    private var panelOpen = false
 
     /** 是否有翻译在途（队列在跑或手动翻译中）。 */
     val isBusy: Boolean get() = queueJob?.isActive == true || manualJob?.isActive == true
@@ -160,21 +162,37 @@ class ReaderTranslationController(
             manualJob = null
         }
         translateMode.value = mode
-        cancelArmed = false
         restartQueue()
         version.value += 1
+    }
+
+    /**
+     * 翻译面板开合。
+     * - 打开：**暂停**队列与在途翻译（用户要调设置，后台不该继续烧）
+     * - 关闭：恢复队列（模式仍是自动/增量的话）—— 即"翻译要等退出面板后才开始"
+     */
+    fun setPanelOpen(open: Boolean) {
+        if (panelOpen == open) return
+        panelOpen = open
+        if (open) {
+            cancelFlag.set(true)
+            queueJob?.cancel(); queueJob = null
+            manualJob?.cancel(); manualJob = null
+            queuePage.value = -1
+        } else {
+            restartQueue()
+        }
     }
 
     /**
      * 翻页落定后调用。
      *
      * 两件事：
-     * 1. 重置「第二次点击才取消」的连击状态，否则下次点一下就直接取消了
-     * 2. **若队列已跑完（窗口没活了）而模式仍是自动/增量，则重新启动** ——
+     * 1. **若队列已跑完（窗口没活了）而模式仍是自动/增量，则重新启动** ——
      *    窗口是跟着当前页滑动的，翻页后就有了新工作，不重启的话用户翻到新页会一直不翻。
+     * 2. 面板打开期间不启动（等退出面板）。
      */
     fun onCurrentPageChanged() {
-        cancelArmed = false
         if (translateMode.value != MODE_MANUAL && queueJob?.isActive != true) {
             restartQueue()
         }
@@ -185,6 +203,8 @@ class ReaderTranslationController(
         queueJob = null
         queuePage.value = -1
         if (translateMode.value == MODE_MANUAL) return
+        // 面板打开时不启动：翻译要等用户退出面板后才开始
+        if (panelOpen) return
 
         queueJob = scope.launch(Dispatchers.IO) {
             LogCollector.d(TAG, "queue start mode=${translateMode.value}")
@@ -230,49 +250,46 @@ class ReaderTranslationController(
     // ========== 翻译按钮 ==========
 
     /**
-     * 翻译按钮点击。规则（三模式统一）：
-     * **第一次点击只提示，第二次点击强制取消并回退到手动模式。**
-     * 只有回到手动模式后才能手动翻译 / 重新翻译。
+     * 翻译按钮点击（三模式统一）：
+     * - **单击** → 只弹提示，**绝不打断**（提示"正在翻译 Pxx 页，双击暂停翻译"）
+     * - **双击** → 强制取消当前翻译并回退到手动模式
+     * - 手动模式空闲时单击 → 开始翻译当前页
+     *
+     * [isDouble] 由 Activity 按双击时间窗判定后传入。
      */
-    fun onTranslateButtonClick(): TranslateClick {
+    fun onTranslateButtonClick(isDouble: Boolean): TranslateClick {
         val mode = translateMode.value
+        val busy = mode != MODE_MANUAL || manualJob?.isActive == true
 
-        if (mode != MODE_MANUAL) {
-            if (!cancelArmed) {
-                cancelArmed = true
-                val res = when {
-                    queueJob?.isActive != true -> R.string.reader_translate_hint_ahead_idle
-                    mode == MODE_AUTO -> R.string.reader_translate_hint_auto
-                    else -> R.string.reader_translate_hint_ahead
-                }
-                return TranslateClick.Hint(res)
-            }
-            // 第二次点击：强制取消 + 回退手动
-            cancelArmed = false
+        if (busy) {
+            if (!isDouble) return TranslateClick.Hint(busyHintText(mode))
+            // 双击：强制取消 + 回退手动
             cancelEverything()
             translateMode.value = MODE_MANUAL
             version.value += 1
             return TranslateClick.CancelledToManual
         }
 
-        // 手动模式
-        if (manualJob?.isActive == true) {
-            if (!cancelArmed) {
-                cancelArmed = true
-                return TranslateClick.Hint(R.string.reader_translate_translating)
-            }
-            cancelArmed = false
-            cancelEverything()
-            return TranslateClick.CancelledToManual
-        }
-
-        cancelArmed = false
+        // 手动模式且空闲
+        if (isDouble) return TranslateClick.Ignored
         // 引擎被占用（截屏翻译在翻 / 上一次取消的任务仍卡在 native OCR 中，PP-OCR 要 1~3s 才退出）：
         // 直接反馈，否则这一击被静默吞掉、按钮看起来像坏了。
         if (OcrLock.isRunning) return TranslateClick.Busy
         val page = currentPageProvider()
         manualJob = scope.launch(Dispatchers.IO) { runTranslate(page, fromQueue = false) }
         return TranslateClick.StartedManual
+    }
+
+    /** 单击提示文案：带上是第几页，用户才知道进度。 */
+    private fun busyHintText(mode: Int): String {
+        val p = queuePage.value
+        return when {
+            mode == MODE_AUTO && p >= 0 ->
+                context.getString(R.string.reader_translate_hint_auto_page, p + 1)
+            mode == MODE_AUTO -> context.getString(R.string.reader_translate_hint_auto)
+            p >= 0 -> context.getString(R.string.reader_translate_hint_ahead_page, p + 1)
+            else -> context.getString(R.string.reader_translate_hint_ahead)
+        }
     }
 
     /** 取消在途翻译与队列，并把「翻译中」的记录退回「未翻译」。 */
@@ -345,8 +362,13 @@ class ReaderTranslationController(
         // ⚠️ 必须在 try 之外定义：catch 分支也要用它上报失败阶段
         val shouldRender = { page == currentPageProvider() }
         val phase: (ReaderTranslatePhase, String?) -> Unit = { p, msg ->
-            // 后台队列页不刷状态浮层，否则屏幕上会一直挂着"翻译中"
-            if (!fromQueue || shouldRender()) onPhase(p, msg)
+            // 队列页的**检测/翻译阶段照常上报**（用户要求顶部状态栏实时跟随当前页数），
+            // 但成功/失败不弹 —— 连续翻 10 页会弹 10 次"翻译完成"，太吵。
+            if (fromQueue && (p == ReaderTranslatePhase.SUCCESS || p == ReaderTranslatePhase.FAILED)) {
+                if (shouldRender()) onPhase(p, msg)
+            } else {
+                onPhase(p, msg)
+            }
         }
 
         try {
@@ -396,7 +418,6 @@ class ReaderTranslationController(
                     bitmap = bitmap, det = det, ocr = ocr,
                     srcLang = srcLang, tgtLang = tgtLang,
                     translator = translator,
-                    shouldRender = shouldRender,
                     phase = phase,
                     page = page,
                 ) ?: return   // 已写失败记录
@@ -469,7 +490,6 @@ class ReaderTranslationController(
         srcLang: String,
         tgtLang: String,
         translator: TranslationTextAPI,
-        shouldRender: () -> Boolean,
         phase: (ReaderTranslatePhase, String?) -> Unit,
         page: Int,
     ): List<TranslatedBubble>? {
@@ -485,7 +505,7 @@ class ReaderTranslationController(
             incrementalEnabled = enabled && appPrefs.getBoolean("Incremental_Render", true),
             isAutoTranslating = false,
         )
-        val host = ReaderBatchHost(bitmap, translator, shouldRender, phase, page)
+        val host = ReaderBatchHost(bitmap, translator, phase, page)
         val pipeline = IncrementalBatchPipeline(host, scope, cfg)
 
         val outcome = try {
@@ -560,7 +580,6 @@ class ReaderTranslationController(
     private inner class ReaderBatchHost(
         private val pageBitmap: Bitmap,
         override val translator: TranslationTextAPI,
-        private val shouldRender: () -> Boolean,
         private val phase: (ReaderTranslatePhase, String?) -> Unit,
         private val page: Int,
     ) : BatchPipelineHost {
@@ -588,10 +607,15 @@ class ReaderTranslationController(
         override fun onPartialRender(bubbles: List<TranslatedBubble>) = showPartial(page, bubbles)
 
         override suspend fun onBatchResult(bubbles: List<TranslatedBubble>) {
-            if (!shouldRender()) return
+            // ⚠️ 必须写 PARTIAL key，不能走 renderInto（后者写 renderKey 且要求 state==SUCCESS）。
+            // 此刻本页状态还是 TRANSLATING，而 cachedDisplayBitmap 对 TRANSLATING 只查 PARTIAL ——
+            // 写错 key 会让首批结果**根本显示不出来**，分批形同虚设（这就是"分批没生效"的根因）。
+            if (bubbles.isEmpty()) return
+            if (page != currentPageProvider()) return   // 后台队列页不渲染
             val cfg = cacheManager.getOverlayConfig(appPrefs)
-            renderInto(page, bubbles, TranslationCacheManager.OverlayMode.TRANSLATED, pageBitmap, cfg)
-            kotlinx.coroutines.withContext(Dispatchers.Main) { onVisual() }
+            val out = renderBubbles(pageBitmap, bubbles, TranslationCacheManager.OverlayMode.TRANSLATED, cfg)
+            renderLru.put(partialKey(page), out)
+            withContext(Dispatchers.Main) { onVisual() }
         }
 
         override fun isCancelled(): Boolean = cancelFlag.get()

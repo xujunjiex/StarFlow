@@ -63,6 +63,10 @@ class ReaderMenuCallbacks(
     val onDebounceMs: (Int) -> Unit = {},
     val onAheadPages: (Int) -> Unit = {},
     val onTranslatePageJump: (Int) -> Unit = {},
+    /** 面板打开：宿主应暂停翻译队列。 */
+    val onPanelOpened: () -> Unit = {},
+    /** 面板关闭：宿主可恢复队列。 */
+    val onPanelClosed: () -> Unit = {},
     val onOpenModelManagement: () -> Unit = {},
     val onOpenApiConfig: () -> Unit = {},
 )
@@ -101,6 +105,8 @@ class ReaderMenuSheet(
 
     override fun onStart() {
         super.onStart()
+        // 面板打开 → 暂停翻译队列（用户在调设置，不该后台继续翻）
+        cb.onPanelOpened()
         // 面板容器背景初始跟随当前深浅（此后由 applyPanelTheme 实时维护）
         reapplySheetContainerBg()
         // 模型/语言 prefs 变化（跳设置页返回等）→ 即时刷新模型名；无需关面板
@@ -122,6 +128,8 @@ class ReaderMenuSheet(
             PreferenceManager.getDefaultSharedPreferences(requireContext()).unregisterOnSharedPreferenceChangeListener(it)
         }
         appPrefsListener = null
+        // 面板关闭 → 恢复队列：这就是"选了自动/增量也要等退出面板才开始翻"
+        cb.onPanelClosed()
         super.onStop()
     }
 

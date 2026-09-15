@@ -989,9 +989,11 @@
     <string name="reader_translate_copied">Copied</string>
 
     <!-- 三种翻译模式的按钮提示 / 面板 / 失败标识 -->
-    <string name="reader_translate_hint_auto">Auto-translating. Tap again to stop and switch to manual.</string>
-    <string name="reader_translate_hint_ahead">Translating ahead. Tap again to stop and switch to manual.</string>
-    <string name="reader_translate_hint_ahead_idle">Translate-ahead is idle. Tap again to switch to manual.</string>
+    <string name="reader_translate_hint_auto">Auto-translating. Double-tap to pause.</string>
+    <string name="reader_translate_hint_ahead">Translating ahead. Double-tap to pause.</string>
+    <string name="reader_translate_hint_auto_page">Auto-translating P%1$d. Double-tap to pause.</string>
+    <string name="reader_translate_hint_ahead_page">Translating P%1$d. Double-tap to pause.</string>
+    <string name="reader_translate_status_page">%1$s · P%2$d</string>
     <string name="reader_translate_cancelled">Stopped. Switched to manual mode.</string>
     <string name="reader_translate_stopped">Translation stopped</string>
     <string name="reader_translate_debounce">Start delay</string>
