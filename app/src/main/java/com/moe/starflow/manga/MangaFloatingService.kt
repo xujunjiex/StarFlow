@@ -2127,8 +2127,12 @@ class MangaFloatingService : LifecycleService() {
             LogCollector.d(TAG, "processMangaScreenshot: Step 3 - Translate ${allBubbles.size} bubbles")
             // BUGFIX (2026-07-06): 调翻译函数之前立刻切 Translating 图标（之前遗漏，自动模式从 Idle 直接到翻译完成）。
             ballStateManager?.setState(BallStateManager.State.Translating)
+            // 流式局部结果仅在「分批渲染」开关开启时上屏。
+            // 该开关同时管辖两种增量显示：PP 系列/RT+manga 的分两批、Hy-MT2 的逐句流式。
+            // 关闭时 Hy-MT2 不再逐句冒出，而是一次性返回全部译文（与分批关闭时的行为一致）。
+            val incrementalEnabled = prefs.getBoolean("Incremental_Render", true)
             val newTranslatedBubbles = batchPipeline(bitmap).translateWithCache(allBubbles) { partialBubbles ->
-                if (partialBubbles.isNotEmpty()) {
+                if (incrementalEnabled && partialBubbles.isNotEmpty()) {
                     launchPartialRender { renderAndShowMergedOverlay(bitmap, partialBubbles, saveCache = false, showCopyButton = false) }
                 }
             }

@@ -582,7 +582,7 @@
     <string name="manga_text_direction_rl">Vertical (columns right to left)</string>
     <string name="manga_text_direction_lr">Vertical (columns left to right)</string>
     <string name="incremental_render_title">Incremental Render</string>
-    <string name="incremental_render_summary">When more than 6 bubbles detected, translate in two batches to show first results earlier, but total translation time may slightly increase. Only works with PP-OCRv5 standalone and RT-DETR-V2+MangaOcr combinations.</string>
+    <string name="incremental_render_summary">When more than 6 bubbles are detected, translate in two batches to show first results earlier; total translation time may slightly increase. Works with PP-OCRv5/PP-OCRv6 standalone, RT-DETR-V2+MangaOcr (two batches), and the Hy-MT2 model (token-by-token streaming).</string>
     <string name="manga_keep_text_free_title">Recognize Free Text</string>
     <string name="manga_keep_text_free_summary">When enabled, free text (narration, sound effects) detected by RT-DETR-V2 will also be recognized and translated</string>
     <string name="manga_text_merge_title">Merge Text Lines</string>

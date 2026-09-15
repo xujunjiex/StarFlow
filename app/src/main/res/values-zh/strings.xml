@@ -496,7 +496,7 @@
     <string name="manga_text_direction_rl">竖排（列从右到左）</string>
     <string name="manga_text_direction_lr">竖排（列从左到右）</string>
     <string name="incremental_render_title">分批渲染</string>
-    <string name="incremental_render_summary">气泡超过6个时分两批翻译，提前显示首批结果，但可能造成总翻译时长略微增加。仅对PP-OCRv5独立模式和RT-DETR-V2+MangaOcr组合生效。</string>
+    <string name="incremental_render_summary">气泡超过6个时分两批翻译，提前显示首批结果，但可能造成总翻译时长略微增加。支持 PP-OCRv5/PP-OCRv6 独立模式、RT-DETR-V2+MangaOcr 组合（分两批），以及 Hy-MT2 翻译模型（逐句流式）。</string>
     <string name="manga_keep_text_free_title">识别自由文字</string>
     <string name="manga_keep_text_free_summary">开启后，RT-DETR-V2 检测到的自由文字（如旁白、音效）也会被识别和翻译</string>
     <string name="manga_text_merge_title">文本合并</string>
