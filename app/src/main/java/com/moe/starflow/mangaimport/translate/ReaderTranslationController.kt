@@ -51,6 +51,8 @@ sealed interface TranslateClick {
     data object CancelledToManual : TranslateClick
     /** 手动模式下开始翻译当前页（已在控制器内启动）。 */
     data object StartedManual : TranslateClick
+    /** OCR 引擎被占用（截屏翻译正在翻 / 上一次取消的任务还没退出 native）→ 提示用户稍后。 */
+    data object Busy : TranslateClick
     /** 无事可做（如 Webtoon/双页模式禁用、或当前页状态不可翻）。 */
     data object Ignored : TranslateClick
 }
@@ -265,6 +267,9 @@ class ReaderTranslationController(
         }
 
         cancelArmed = false
+        // 引擎被占用（截屏翻译在翻 / 上一次取消的任务仍卡在 native OCR 中，PP-OCR 要 1~3s 才退出）：
+        // 直接反馈，否则这一击被静默吞掉、按钮看起来像坏了。
+        if (OcrLock.isRunning) return TranslateClick.Busy
         val page = currentPageProvider()
         manualJob = scope.launch(Dispatchers.IO) { runTranslate(page, fromQueue = false) }
         return TranslateClick.StartedManual
@@ -346,6 +351,8 @@ class ReaderTranslationController(
 
         try {
             upsertState(page, ImportedPageTranslation.STATE_TRANSLATING)
+            // 清掉上一轮可能残留的半成品：否则重翻时 cachedDisplayBitmap 会先把旧半成品显示出来
+            renderLru.remove(partialKey(page))
 
             phase(ReaderTranslatePhase.DETECTING, null)
 
@@ -484,6 +491,10 @@ class ReaderTranslationController(
         val outcome = try {
             pipeline.run(bitmap)
         } catch (e: TranslationCancelledException) {
+            throw e
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // 协程取消（切模式 / 退出阅读器）：必须重抛，不能当"处理异常"写成 FAILED ——
+            // 那会先污染一次内存态（UI 闪一下失败），再由外层 catch 改回 IDLE，日志也会误导。
             throw e
         } catch (e: Exception) {
             LogCollector.e(TAG, "pipeline failed page=$page", e)

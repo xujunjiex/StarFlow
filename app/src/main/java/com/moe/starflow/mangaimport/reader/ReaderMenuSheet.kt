@@ -261,7 +261,9 @@ class ReaderMenuSheet(
         rbManual.isChecked = state.translateMode == 0
         rbAuto.isChecked = state.translateMode == 1
         rbAhead.isChecked = state.translateMode == 2
-        rbManual.setOnCheckedChangeListener { _, c -> if (c) cb.onTranslateMode(0) }
+        rbManual.setOnCheckedChangeListener { _, c ->
+            if (c) { cb.onTranslateMode(0); applyAheadRowVisibility(view, 0) }
+        }
         rbAuto.setOnCheckedChangeListener { _, c ->
             if (c) { cb.onTranslateMode(1); applyAheadRowVisibility(view, 1) }
         }
@@ -272,10 +274,12 @@ class ReaderMenuSheet(
         // 启动延迟（防抖）：翻页停留多久才开翻。自动/增量共用。
         val sbDebounce = view.findViewById<SeekBar>(R.id.sb_debounce)
         val tvDebounce = view.findViewById<TextView>(R.id.tv_debounce_value)
-        sbDebounce.progress = (state.debounceMs - DEBOUNCE_MIN).coerceIn(0, DEBOUNCE_MAX - DEBOUNCE_MIN)
+        // ⚠️ 设了 android:min 的 SeekBar，progress 是**绝对值**（不是相对 0 的偏移）。
+        // 写成 `progress = value - MIN` 会让滑块初始位置与右侧数值不符，且可取范围整体偏移。
+        sbDebounce.progress = state.debounceMs.coerceIn(DEBOUNCE_MIN, DEBOUNCE_MAX)
         tvDebounce.text = "${state.debounceMs} ms"
         sbDebounce.setOnSeekBarChangeListener(slider {
-            val ms = sbDebounce.progress + DEBOUNCE_MIN
+            val ms = sbDebounce.progress
             tvDebounce.text = "$ms ms"
             cb.onDebounceMs(ms)
         })
@@ -283,10 +287,10 @@ class ReaderMenuSheet(
         // 向后翻译页数：仅增量模式显示
         val sbAhead = view.findViewById<SeekBar>(R.id.sb_ahead)
         val tvAhead = view.findViewById<TextView>(R.id.tv_ahead_value)
-        sbAhead.progress = (state.aheadPages - AHEAD_MIN).coerceIn(0, AHEAD_MAX - AHEAD_MIN)
+        sbAhead.progress = state.aheadPages.coerceIn(AHEAD_MIN, AHEAD_MAX)
         tvAhead.text = "${state.aheadPages}"
         sbAhead.setOnSeekBarChangeListener(slider {
-            val n = sbAhead.progress + AHEAD_MIN
+            val n = sbAhead.progress
             tvAhead.text = "$n"
             cb.onAheadPages(n)
         })

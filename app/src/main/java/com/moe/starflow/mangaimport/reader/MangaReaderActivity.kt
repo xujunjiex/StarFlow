@@ -274,6 +274,16 @@ class MangaReaderActivity : AppCompatActivity() {
         applyBackground()
         applyAnimation()
         refreshPagerForOrientation()
+        // 横竖屏切换会改变 isDoublePage → 翻译按钮的置灰态要跟着重刷
+        refreshTranslationChrome()
+    }
+
+    override fun onDestroy() {
+        // ⚠️ 必须清掉状态浮层：它是**进程级单例 + TYPE_APPLICATION_OVERLAY 系统窗口**，
+        // 退出阅读器后「检测中…／翻译中…」会挂在桌面/其它页面上，且没有任何入口能消掉
+        // （直到下一次翻译成功或失败）。翻译在途时退出阅读器就会触发。
+        TranslationStatusOverlay.getInstance(this@MangaReaderActivity).dismiss()
+        super.onDestroy()
     }
 
     private fun refreshPagerForOrientation() {
@@ -508,6 +518,10 @@ class MangaReaderActivity : AppCompatActivity() {
                     refreshTranslationChrome()
                     refreshProgressTranslation()
                 }
+                TranslateClick.Busy -> {
+                    UiUtils.showToast(this, getString(R.string.reader_translate_busy))
+                    refreshTranslationChrome()
+                }
                 TranslateClick.StartedManual, TranslateClick.Ignored -> Unit
             }
         }
@@ -662,7 +676,13 @@ class MangaReaderActivity : AppCompatActivity() {
                     mode = m
                     applyPager()
                     goToPage(currentPage)
-                    // Webtoon / 横屏双页要禁用翻译按钮，切模式后必须重刷
+                    // Webtoon / 横屏双页不支持翻译：切过去时把队列停掉并退回手动。
+                    // 否则队列会在用户看不到的地方继续往后翻，而按钮已被禁用、用户停不掉。
+                    if (isTranslateDisabledByMode()) {
+                        translationController?.setMode(ReaderTranslationController.MODE_MANUAL)
+                        TranslationStatusOverlay.getInstance(this@MangaReaderActivity).dismiss()
+                    }
+                    // 切模式后按钮的置灰态要重刷
                     refreshTranslationChrome()
                     // Webtoon ↔ 分页切换后重算自动翻页（webtoon 禁用、分页按开关恢复）
                     updateAutoTurn()
@@ -690,6 +710,10 @@ class MangaReaderActivity : AppCompatActivity() {
                 },
                 onTranslateMode = { m ->
                     translationController?.setMode(m)
+                    // 切回手动时队列已停，「翻译中…」常驻芯片必须清掉，否则会一直挂在屏幕上
+                    if (m == ReaderTranslationController.MODE_MANUAL) {
+                        TranslationStatusOverlay.getInstance(this@MangaReaderActivity).dismiss()
+                    }
                     refreshTranslationChrome()
                 },
                 onDebounceMs = { ms -> translationController?.debounceMs?.value = ms },
