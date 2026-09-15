@@ -58,6 +58,9 @@ class IncrementalBatchPipelineTest {
         var bubbleCount = 10
         var resolveRecLang: PPOcrV5Engine.RecLang? = PPOcrV5Engine.RecLang.JA
 
+        /** true 时识别返回空白文本 → 合并后无文字块，用于验证"首批为空"分支。 */
+        var blankRec = false
+
         override fun resolveRecLangV5(context: Context, lang: String): Pair<PPOcrV5Engine.RecLang?, String?> {
             calls += Call("resolveRecLangV5")
             return resolveRecLang to null
@@ -82,12 +85,12 @@ class IncrementalBatchPipelineTest {
             context: Context, crops: List<Bitmap>, lang: PPOcrV5Engine.RecLang,
         ): List<RecResult> {
             calls += Call("recognizeV5", crops.size)
-            return crops.mapIndexed { i, _ -> RecResult("v5-$i", 1f) }
+            return crops.mapIndexed { i, _ -> RecResult(if (blankRec) "" else "v5-$i", 1f) }
         }
 
         override suspend fun recognizeV6(context: Context, crops: List<Bitmap>): List<RecResult> {
             calls += Call("recognizeV6", crops.size)
-            return crops.mapIndexed { i, _ -> RecResult("v6-$i", 1f) }
+            return crops.mapIndexed { i, _ -> RecResult(if (blankRec) "" else "v6-$i", 1f) }
         }
 
         override suspend fun recognizeCroppedBubbles(
@@ -246,12 +249,46 @@ class IncrementalBatchPipelineTest {
     }
 
     @Test
-    fun `未检测到文字时已处理且提示`() = runTest {
+    fun `未检测到文字时返回 HandledEmpty 且提示`() = runTest {
         ops.lineCount = 0
         val host = FakeHost(ctx, FakeTranslator())
         val outcome = pipeline(host, config(), this).run(bitmap())
-        assertEquals(BatchOutcome.Handled(emptyList()), outcome)
+        assertEquals(BatchOutcome.HandledEmpty, outcome)
         assertEquals(1, host.toasts.size)
+    }
+
+    /**
+     * 关键回归：未检测到文字的出口【绝不可】返回 Handled ——
+     * 调用方会对 Handled 调 finalizeIncremental，而后者即使收到空列表也会写
+     * `lastTranslatedHash = currentPHash`，导致自动翻译把空页误判为"已翻译"而永久跳过该页。
+     */
+    @Test
+    fun `未检测到文字不得走收尾路径`() = runTest {
+        ops.lineCount = 0
+        val host = FakeHost(ctx, FakeTranslator())
+        val outcome = pipeline(host, config(), this).run(bitmap())
+        assertTrue("未检测到文字必须用 HandledEmpty，实得 $outcome", outcome !is BatchOutcome.Handled)
+    }
+
+    @Test
+    fun `未检测到气泡同样返回 HandledEmpty`() = runTest {
+        ops.bubbleCount = 0
+        val host = FakeHost(ctx, FakeTranslator())
+        val cfg = config(det = DetEngine.RT_DETR_V2, ocr = OcrEngine.MangaOcr)
+        assertEquals(BatchOutcome.HandledEmpty, pipeline(host, cfg, this).run(bitmap()))
+    }
+
+    /**
+     * 对照用例：首批识别为空（识别返回空白文本）时，旧实现【会】调 finalizeIncremental，
+     * 所以这里必须是 Handled(emptyList())，不能一并归到 HandledEmpty。
+     */
+    @Test
+    fun `首批识别为空仍走收尾路径`() = runTest {
+        ops.lineCount = 10
+        ops.blankRec = true
+        val host = FakeHost(ctx, FakeTranslator())
+        val outcome = pipeline(host, config(), this).run(bitmap())
+        assertEquals(BatchOutcome.Handled(emptyList()), outcome)
     }
 
     @Test

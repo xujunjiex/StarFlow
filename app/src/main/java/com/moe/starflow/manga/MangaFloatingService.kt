@@ -124,11 +124,6 @@ class MangaFloatingService : LifecycleService() {
         private const val LONG_PRESS_SLOP = 10f
         private const val DOUBLE_CLICK_DELAY = 300L
 
-
-        // 分批渲染常量
-        const val INCREMENTAL_THRESHOLD = 6       // 触发分批的气泡数量阈值
-
-
         fun start(context: Context) {
             androidx.core.content.ContextCompat.startForegroundService(
                 context, Intent(context, MangaFloatingService::class.java)
@@ -1653,12 +1648,26 @@ class MangaFloatingService : LifecycleService() {
      * @return true 如果执行了分批流程，false 如果不满足条件（应回退到原有流程）
      */
     private suspend fun incrementalTranslateFlow(bitmap: Bitmap): Boolean {
-        val outcome = batchPipeline(bitmap).run(bitmap)
-        return when (outcome) {
+        return when (val outcome = batchPipeline(bitmap).run(bitmap)) {
             is BatchOutcome.NotApplicable -> false
+
+            // 未检测到文字/气泡：已弹过提示。跳过原流程，但【绝不调 finalizeIncremental】——
+            // 旧实现在这两个出口是直接 return true。finalizeIncremental 即使收到空列表也会执行
+            // `lastTranslatedHash = currentPHash`，会让自动翻译状态机把空页误判为"已翻译"而永久跳过。
+            is BatchOutcome.HandledEmpty -> true
+
             is BatchOutcome.Handled -> {
-                finalizeIncremental(bitmap, outcome.translated)
-                true
+                // 收尾必须留在 try 内：旧实现里 finalizeIncremental 位于三条路线各自的 try 中，
+                // 抛异常 → 被 catch 吞掉 → return false → 回退走普通流程。此处复刻该语义。
+                try {
+                    finalizeIncremental(bitmap, outcome.translated)
+                    true
+                } catch (e: TranslationCancelledException) {
+                    throw e
+                } catch (e: Exception) {
+                    LogCollector.e(TAG, "incrementalTranslateFlow: 分批收尾失败，回退普通流程", e)
+                    false
+                }
             }
         }
     }

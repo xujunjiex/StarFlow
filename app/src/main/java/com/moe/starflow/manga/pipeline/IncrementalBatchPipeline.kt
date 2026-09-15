@@ -154,7 +154,8 @@ class IncrementalBatchPipeline(
             if (!config.isAutoTranslating) {
                 withContext(Dispatchers.Main) { host.onToast(host.context.getString(R.string.no_text_found), true) }
             }
-            return BatchOutcome.Handled(emptyList())
+            // 旧实现此处直接 return true（不调 finalizeIncremental）—— 见 BatchOutcome.HandledEmpty
+            return BatchOutcome.HandledEmpty
         }
 
         if (croppedBubbles.size <= INCREMENTAL_THRESHOLD) {
@@ -218,7 +219,8 @@ class IncrementalBatchPipeline(
             if (!config.isAutoTranslating) {
                 withContext(Dispatchers.Main) { host.onToast(host.context.getString(R.string.no_text_found), true) }
             }
-            return BatchOutcome.Handled(emptyList())
+            // 旧实现此处直接 return true（不调 finalizeIncremental）—— 见 BatchOutcome.HandledEmpty
+            return BatchOutcome.HandledEmpty
         }
 
         if (textLines.size <= INCREMENTAL_THRESHOLD) {
@@ -273,7 +275,8 @@ class IncrementalBatchPipeline(
             if (!config.isAutoTranslating) {
                 withContext(Dispatchers.Main) { host.onToast(host.context.getString(R.string.no_text_found), true) }
             }
-            return BatchOutcome.Handled(emptyList())
+            // 旧实现此处直接 return true（不调 finalizeIncremental）—— 见 BatchOutcome.HandledEmpty
+            return BatchOutcome.HandledEmpty
         }
 
         if (textLines.size <= INCREMENTAL_THRESHOLD) {
