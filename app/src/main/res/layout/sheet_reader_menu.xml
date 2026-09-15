@@ -108,7 +108,16 @@
                     <FrameLayout android:id="@+id/seg_mode_webtoon" android:layout_width="0dp" android:layout_height="48dp" android:layout_weight="1"
                         android:gravity="center" android:clickable="true">
             <ImageView android:id="@+id/sel_seg_mode_webtoon" android:layout_width="40dp" android:layout_height="40dp" android:layout_gravity="center" android:src="@drawable/ic_sel_circle" android:visibility="gone"/>
-                        <ImageView android:layout_width="24dp" android:layout_height="24dp" android:layout_gravity="center" android:src="@drawable/ic_gesture_vertical" android:contentDescription="@string/reader_mode_webtoon"/>
+                        <!-- 图标包一层容器：角标要贴「图标」的右上角，直接放进 48dp 的 cell 会贴到 cell 角上 -->
+                        <FrameLayout android:layout_width="26dp" android:layout_height="26dp" android:layout_gravity="center">
+                            <ImageView android:layout_width="24dp" android:layout_height="24dp" android:layout_gravity="center" android:src="@drawable/ic_gesture_vertical" android:contentDescription="@string/reader_mode_webtoon"/>
+                            <TextView android:id="@+id/tv_webtoon_translated_badge" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                                android:layout_gravity="top|end" android:minWidth="11dp" android:paddingStart="3dp" android:paddingEnd="3dp"
+                                android:gravity="center" android:background="@drawable/bg_reader_translated_badge"
+                                android:text="@string/reader_webtoon_badge" android:textSize="9sp" android:textStyle="bold" android:textColor="#FFFFFF"
+                                android:includeFontPadding="false" android:visibility="gone"
+                                android:contentDescription="@string/reader_webtoon_badge_desc"/>
+                        </FrameLayout>
                     </FrameLayout>
                 </LinearLayout>
 

@@ -935,6 +935,9 @@
     <string name="reader_mode_rtl">RTL</string>
     <string name="reader_mode_vertical">Vertical</string>
     <string name="reader_mode_webtoon">Webtoon</string>
+    <!-- 连续滑动的两态：无角标=原图，带角标=译文。角标只放一个字，取 "T"(ranslated) -->
+    <string name="reader_webtoon_badge">T</string>
+    <string name="reader_webtoon_badge_desc">Translated pages</string>
     <string name="reader_anim_advanced">Advanced</string>
     <string name="reader_anim_simulation">Simulation</string>
     <string name="reader_bg_default">Default</string>

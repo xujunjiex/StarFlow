@@ -847,6 +847,9 @@
     <string name="reader_mode_rtl">右→左</string>
     <string name="reader_mode_vertical">竖排</string>
     <string name="reader_mode_webtoon">Webtoon</string>
+    <!-- 连续滑动的两态：无角标=原图，带角标=译文 -->
+    <string name="reader_webtoon_badge">译</string>
+    <string name="reader_webtoon_badge_desc">译文页面</string>
     <string name="reader_anim_advanced">高级</string>
     <string name="reader_anim_simulation">仿真</string>
     <string name="reader_bg_default">默认</string>

@@ -11,8 +11,10 @@ import com.moe.starflow.databinding.ItemWebtoonPageBinding
 import com.moe.starflow.ui.viewer.ZoomableImageView
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -196,7 +198,10 @@ class WebtoonAdapter(
 
     private val shared = Shared(source).apply { this.filter = filter }
 
-    class VH(val binding: ItemWebtoonPageBinding) : RecyclerView.ViewHolder(binding.root)
+    class VH(val binding: ItemWebtoonPageBinding) : RecyclerView.ViewHolder(binding.root) {
+        /** 本次绑定的取图任务。重绑前必须取消，见 [onBindViewHolder]。 */
+        var loadJob: Job? = null
+    }
 
     /**
      * 注入「页图提供者」：已翻译页返回**已经渲染好的译图**（无则 null → 回落未缩放原图）。
@@ -223,13 +228,19 @@ class WebtoonAdapter(
         // 按实际/屏幕宽度降采样解码（大漫画防卡死）；宽在首次绑定可能为 0，回退屏幕宽度
         val targetW = (holder.binding.webtoonImage.width.takeIf { it > 0 }
             ?: holder.itemView.context.resources.displayMetrics.widthPixels).coerceAtLeast(1)
-        shared.scope.launch {
+        // ⚠️ 重绑前先取消上一次取图。切换「原图 ↔ 译文」时本页会被连续重绑两次：
+        // 第一次（provider 未命中）去慢速解码原图，第二次（缓存已热）秒回译图；
+        // 不取消的话慢的那次最后落地，把译图覆盖回原图 —— 用户看到的就是"点了没反应/
+        // 状态自己弹回去"。同理，切到原图时在途的译图取回后也会盖住新绑定的原图。
+        holder.loadJob?.cancel()
+        holder.loadJob = shared.scope.launch {
             // 已翻译页优先用渲染好的译图；否则回落到按宽度降采样的原图
             val bmp = runCatching {
                 withContext(Dispatchers.IO) {
                     shared.pageImage?.invoke(position) ?: shared.source.loadWebtoon(position, targetW)
                 }
             }.getOrNull()
+            if (!isActive) return@launch
             // 校验 holder 仍绑定同一 position，避免复用 holder 残留旧页图/转圈状态
             if (holder.adapterPosition == position) {
                 if (bmp != null) img.setImageBitmap(bmp)

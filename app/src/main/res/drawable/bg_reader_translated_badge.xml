@@ -1,0 +1,7 @@
+<!-- 「连续滑动已切换到译文」角标底：实心圆角小片。
+     固定色（非语义色）——阅读器面板有浅色/深色两套，语义色翻转后会与其中一套撞色。 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <corners android:radius="6dp" />
+    <solid android:color="@color/success" />
+</shape>

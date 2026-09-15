@@ -42,6 +42,8 @@ class ReaderMenuState(
     val downloadLabel: String = "",
     val isDarkPanel: Boolean = false,
     val previewBitmap: Bitmap? = null,
+    /** Webtoon（连续滑动）的显示态：false=原图，true=译文。决定模式图标上是否带「译」角标。 */
+    val webtoonTranslated: Boolean = false,
     val translateMode: Int = 0,                 // 0 手动 1 自动 2 增量
     val debounceMs: Int = 500,                  // 自动/增量的启动延迟
     val aheadPages: Int = 5,                    // 增量向后翻多少页（1..10）
@@ -60,6 +62,8 @@ class ReaderMenuCallbacks(
     val onDownload: () -> Unit,
     val onSettings: () -> Unit,
     val onTranslateMode: (Int) -> Unit = {},
+    /** 「连续滑动」按钮再次点击：在 原图 ↔ 译文 之间切换（不进模式，只换显示态）。 */
+    val onWebtoonTranslated: (Boolean) -> Unit = {},
     val onDebounceMs: (Int) -> Unit = {},
     val onAheadPages: (Int) -> Unit = {},
     val onTranslatePageJump: (Int) -> Unit = {},
@@ -188,19 +192,36 @@ class ReaderMenuSheet(
         tabMore.setOnClickListener { show(tabMore, panelMore) }
         show(tabPaging, panelPaging)
 
-        // 阅读模式
+        // 阅读模式。
+        // ⚠️ Webtoon 这一格是**两态开关**：未选中时点它 = 进入连续滑动（看原图）；
+        // 已选中时再点 = 同一模式内切换 原图 ↔ 译文（图标右上角出现「译」角标），
+        // 不重走 onMode（模式没变，重走会重建适配器、丢失滚动位置）。
+        var curMode = state.mode
+        var webtoonTranslated = state.webtoonTranslated
+        fun applyWebtoonBadge() {
+            view.findViewById<View>(R.id.tv_webtoon_translated_badge).visibility =
+                if (webtoonTranslated) View.VISIBLE else View.GONE
+        }
+        applyWebtoonBadge()
         setupSeg(view, R.id.seg_mode, listOf(
             R.id.seg_mode_ltr to (state.mode == 0),
             R.id.seg_mode_rtl to (state.mode == 1),
             R.id.seg_mode_vertical to (state.mode == 2),
             R.id.seg_mode_webtoon to (state.mode == 3)
         )) { id ->
+            if (id == R.id.seg_mode_webtoon && curMode == 3) {
+                webtoonTranslated = !webtoonTranslated
+                applyWebtoonBadge()
+                cb.onWebtoonTranslated(webtoonTranslated)
+                return@setupSeg
+            }
             val m = when (id) {
                 R.id.seg_mode_rtl -> 1
                 R.id.seg_mode_vertical -> 2
                 R.id.seg_mode_webtoon -> 3
                 else -> 0
             }
+            curMode = m
             applyModeDependence(view, m)   // 切 Webtoon 即时置灰翻页动画/自动翻页（无需关面板）
             cb.onMode(m)
         }
@@ -495,8 +516,12 @@ class ReaderMenuSheet(
     }
 
     private fun setSegStyle(cell: View, id: Int, selected: Boolean, dark: Boolean) {
-        val sel = (cell as? ViewGroup)?.getChildAt(0) as? ImageView
-        val icon = (cell as? ViewGroup)?.getChildAt(1) as? ImageView
+        val group = cell as? ViewGroup
+        val sel = group?.getChildAt(0) as? ImageView
+        // 图标通常是 cell 的第 2 个子 View；Webtoon 图标外面包了一层容器（要挂「译」角标），
+        // 那时 getChildAt(1) 拿到的是容器而非 ImageView。
+        // ⚠️ 不要省掉兜底：取不到 icon 时选中态**不染色也不报错**，静默变成"点了没反应"。
+        val icon = (group?.getChildAt(1) as? ImageView) ?: findDescendantIcon(group, skip = sel)
         // 面板选中：柔和圆表面（无边框）
         if (selected) {
             sel?.visibility = View.VISIBLE
@@ -510,6 +535,20 @@ class ReaderMenuSheet(
                 if (selected) 0xFF55AEEA.toInt() else if (dark) 0xFFB8BCC2.toInt() else 0xFF777777.toInt()
             )
         }
+    }
+
+    /**
+     * 在分段 cell 里递归找图标 ImageView（跳过选中圆所在的子树）。
+     * 只有图标被额外包了一层容器时才走到这里，常规 cell 直接 `getChildAt(1)` 命中。
+     */
+    private fun findDescendantIcon(v: View?, skip: View?): ImageView? {
+        if (v == null || v === skip) return null
+        if (v is ImageView) return v
+        if (v !is ViewGroup) return null
+        for (i in 0 until v.childCount) {
+            findDescendantIcon(v.getChildAt(i), skip)?.let { return it }
+        }
+        return null
     }
 
     /** 向后翻译页数滑块只在「增量」模式显示。 */

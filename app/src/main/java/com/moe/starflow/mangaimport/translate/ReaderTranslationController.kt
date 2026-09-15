@@ -33,6 +33,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -910,16 +911,17 @@ class ReaderTranslationController(
                 TranslationCacheManager.OverlayMode.PLAIN
             })
 
-    // ========== Webtoon 整屏译文切换 ==========
+    // ========== Webtoon 原图/译文切换 ==========
 
     /**
-     * Webtoon 模式的全局显示态。
+     * Webtoon 的整屏显示态：false = 原图，true = 译文。
      *
-     * Webtoon 是连续滚动，"当前页"语义不唯一，因此**不支持单页翻译**；
-     * 但已翻译的页面应当能在原图/译文之间整屏切换。这里用一个全局开关，
-     * 只对**状态为 SUCCESS 的页**生效（未翻译页永远显示原图）。
+     * Webtoon 是连续滚动，"当前页"语义不唯一，因此**不支持单页翻译**，也没有单页三态；
+     * 只有一个全局开关，且**只对状态为 SUCCESS 的页**生效（未翻译页永远显示原图）。
+     * 该开关由阅读模式分段器上的「连续滑动」按钮两态控制（原图图标 ↔ 带「译」角标图标）。
      */
-    val webtoonVisual = MutableStateFlow(TranslationCacheManager.OverlayMode.TRANSLATED)
+    private val _webtoonTranslated = MutableStateFlow(false)
+    val webtoonTranslated: StateFlow<Boolean> get() = _webtoonTranslated
 
     /** Webtoon 译图缓存（key = pageIndex）。只放当前位置附近的几页，见 [prewarmWebtoon]。 */
     private val webtoonLru = object : LruCache<Int, Bitmap>(WEBTOON_CACHE_KB) {
@@ -929,32 +931,33 @@ class ReaderTranslationController(
 
     private var webtoonPrewarmJob: Job? = null
 
-    /** 本书是否有任意已翻译页（决定 Webtoon 下是否显示三态按钮）。 */
-    fun hasAnyTranslation(): Boolean =
-        rows.value.values.any { it.state == ImportedPageTranslation.STATE_SUCCESS }
+    /**
+     * 切换 Webtoon 显示态（原图 ↔ 译文）。值未变时直接返回，不做任何作废。
+     *
+     * ⚠️ 不在这里调 [onVisual]：切到译文时预热会逐页渲染并各自回调 `onVisual` 触发重绑，
+     * 提前重绑只会让用户先看到一闪的原图。切到原图时没有渲染回调，由 Activity 主动重绑。
+     */
+    fun setWebtoonTranslated(value: Boolean) {
+        if (_webtoonTranslated.value == value) return
+        _webtoonTranslated.value = value
+        // 换态后旧渲染作废（原图无渲染，译图是另一张图），必须清掉重渲。
+        // ⚠️ 同时停掉在途预热：它渲染的是**上一态**的图，会在 evictAll 之后又把旧图 put 回来
+        // （`if (!isActive) break` 在循环头，取消后仍可能多 put 一张），既白烧 CPU，
+        // 又让该页在下次 prewarm 时被 `lru.get(p) == null` 过滤掉 → 永远不重渲、一直显示旧图。
+        webtoonPrewarmJob?.cancel()
+        webtoonPrewarmJob = null
+        webtoonLru.evictAll()
+        version.value += 1
+    }
 
     /**
      * Webtoon 适配器同步取图（IO 线程安全）：该页**已渲染好**的译图，无则 null → 适配器回落原图。
      * 只读缓存，不做渲染（渲染由 [prewarmWebtoon] 在后台限范围预热）。
      */
     fun webtoonCachedBitmap(pageIndex: Int): Bitmap? {
-        if (webtoonVisual.value == TranslationCacheManager.OverlayMode.PLAIN) return null
+        if (!_webtoonTranslated.value) return null
         if (stateOf(pageIndex) != ImportedPageTranslation.STATE_SUCCESS) return null
         return webtoonLru.get(pageIndex)
-    }
-
-    /** Webtoon 三态循环：译文 → 原文 → 纯原图 → 译文（整屏切换）。 */
-    fun cycleWebtoonVisual() {
-        val order = listOf(
-            TranslationCacheManager.OverlayMode.TRANSLATED,
-            TranslationCacheManager.OverlayMode.ORIGINAL,
-            TranslationCacheManager.OverlayMode.PLAIN,
-        )
-        val cur = order.indexOf(webtoonVisual.value).let { if (it < 0) 0 else it }
-        webtoonVisual.value = order[(cur + 1) % order.size]
-        // 换态后旧渲染作废（译文/原文是两张不同的图），必须清掉重渲
-        webtoonLru.evictAll()
-        version.value += 1
     }
 
     /**
@@ -966,8 +969,7 @@ class ReaderTranslationController(
      */
     fun prewarmWebtoon(center: Int, radius: Int = WEBTOON_PREWARM_RADIUS) {
         webtoonPrewarmJob?.cancel()
-        val mode = webtoonVisual.value
-        if (mode == TranslationCacheManager.OverlayMode.PLAIN) return
+        if (!_webtoonTranslated.value) return
         val total = pageCount()
         if (total <= 0) return
 
@@ -991,7 +993,9 @@ class ReaderTranslationController(
                 val fullW = widthOf(p)
                 val scale = if (fullW > 0) src.width.toFloat() / fullW else 1f
                 val scaled = if (scale != 1f && scale > 0f) bubbles.map { it.scaledBy(scale) } else bubbles
-                val out = renderBubbles(src, scaled, mode, cfg)
+                // Webtoon 只有「原图」与「译文」两态：原图不经渲染（适配器直出采样图），
+                // 所以这里恒按译文渲染
+                val out = renderBubbles(src, scaled, TranslationCacheManager.OverlayMode.TRANSLATED, cfg)
                 webtoonLru.put(p, out)
                 withContext(Dispatchers.Main) { onVisual() }
             }
