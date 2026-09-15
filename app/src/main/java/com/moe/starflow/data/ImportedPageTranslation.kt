@@ -59,6 +59,14 @@ interface ImportedPageTranslationDao {
     @Query("SELECT DISTINCT mangaId FROM imported_page_translation")
     suspend fun allMangaIds(): List<Long>
 
+    /** 某漫画下出现过的全部身份指纹（供旧指纹一次性迁移）。 */
+    @Query("SELECT DISTINCT mangaKey FROM imported_page_translation WHERE mangaId = :mangaId")
+    suspend fun mangaKeysFor(mangaId: Long): List<String>
+
+    /** 把某漫画下一页记录的指纹从 [oldKey] 改写成 [newKey]（只改指纹，不动译文载荷）。 */
+    @Query("UPDATE imported_page_translation SET mangaKey = :newKey WHERE mangaId = :mangaId AND mangaKey = :oldKey")
+    suspend fun rewriteMangaKey(mangaId: Long, oldKey: String, newKey: String)
+
     @Query("DELETE FROM imported_page_translation WHERE mangaId = :mangaId")
     suspend fun deleteManga(mangaId: Long)
 

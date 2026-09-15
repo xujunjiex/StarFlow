@@ -119,8 +119,16 @@ class ReaderTranslationController(
     private val appPrefs get() = PreferenceManager.getDefaultSharedPreferences(context)
     private val customPrefs get() = CustomPreference.getInstance(context)
 
-    /** 漫画身份指纹（title|addedAt）：重导复用 id 时旧记录指纹不匹配 → 忽略，杜绝串数据。 */
-    private val mangaKey: String = "${manga.title}|${manga.addedAt}"
+    /**
+     * 漫画身份指纹。
+     *
+     * ⚠️ **只用 `addedAt`，绝不要把 `title` 拼进来**：书架有「重命名」功能
+     * （`ImportMangaFragment.renameSelected` → `manga.copy(title = name)`），
+     * 一旦标题变化，含 title 的指纹就全部失配 → 整本书的译文读不出来（数据还在库里，
+     * 但显示为未翻译，且 `purgeOrphanTranslations` 也清不到它们，会永久堆积）。
+     * `addedAt` 每次导入唯一，本身已足够区分。
+     */
+    private val mangaKey: String = manga.addedAt.toString()
 
     private val renderLru = object : LruCache<String, Bitmap>(RENDER_CACHE_KB) {
         override fun sizeOf(key: String, value: Bitmap) =
@@ -401,8 +409,31 @@ class ReaderTranslationController(
         } catch (e: Exception) {
             LogCollector.e(TAG, "resetTranslating failed", e)
         }
+        try {
+            migrateLegacyMangaKey()
+        } catch (e: Exception) {
+            LogCollector.e(TAG, "migrateLegacyMangaKey failed", e)
+        }
         rows.value = dao.forManga(manga.id, mangaKey).associateBy { it.pageIndex }
         version.value += 1
+    }
+
+    /**
+     * 一次性迁移旧指纹：`title|addedAt` → `addedAt`（见 [mangaKey] 的说明）。
+     *
+     * 不做的话，升级后老用户的译文会全部「消失」（行还在，但按新指纹查不到）。
+     * 以 `|addedAt` 后缀匹配旧行，因此**用户改过名也能救回来**（旧行里存的是改名前的标题）。
+     */
+    private suspend fun migrateLegacyMangaKey() {
+        val legacySuffix = "|${manga.addedAt}"
+        val keys = dao.mangaKeysFor(manga.id)
+        for (k in keys) {
+            if (k.isNullOrEmpty() || k == mangaKey) continue
+            if (k.endsWith(legacySuffix)) {
+                dao.rewriteMangaKey(manga.id, k, mangaKey)
+                LogCollector.d(TAG, "migrated legacy mangaKey '$k' → '$mangaKey'")
+            }
+        }
     }
 
     fun stateOf(pageIndex: Int): Int =

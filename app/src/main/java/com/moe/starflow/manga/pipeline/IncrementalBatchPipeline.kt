@@ -26,7 +26,9 @@ import com.moe.starflow.utils.LogCollector
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.withContext
 import translationapi.hymt2translation.HyMT2Translation
 
@@ -141,6 +143,24 @@ class IncrementalBatchPipeline(
         return firstTranslated
     }
 
+    /**
+     * 取消并行 OCR 并**等它真正退出**后才返回。
+     *
+     * ⚠️ 不能只 `cancel()` 就去回收裁剪图：`cancel()` 只是置协程取消标志，而引擎的
+     * `recognizeBatchWithCls` 是**同步 native 调用**（`synchronized` 块里），不会在调用中途
+     * 响应取消 —— worker 可能仍在读那些像素缓冲，此时 `recycle()` 就是 use-after-recycle，
+     * 表现为 native 崩溃/garbage（不是 Java 层能捕获的 IllegalStateException）。
+     * 必须 join 等它退出后才安全回收。
+     *
+     * 用 [NonCancellable]：调用方自己可能正处于取消状态，否则 `cancelAndJoin` 会立刻抛出。
+     */
+    private suspend fun cancelAndJoinQuietly(job: Deferred<*>?) {
+        if (job == null) return
+        withContext(NonCancellable) {
+            runCatching { job.cancelAndJoin() }
+        }
+    }
+
     // ========== 路线③ RT-DETR-V2 + MangaOcr ==========
 
     /** 检测气泡 → 分批 MangaOcr encoder+decoder → 翻译+渲染。 */
@@ -169,6 +189,7 @@ class IncrementalBatchPipeline(
         val (firstBatch, secondBatch) = MangaSpatialGrouping.splitAtGroupBoundaries(groups)
         LogCollector.d(TAG, "rtDetrMangaOcr: 第一批 ${firstBatch.size}，第二批 ${secondBatch.size}")
 
+        var ocrJob: Deferred<List<TextBlockInfo>>? = null
         try {
             host.onProgress(R.string.recognizing_half)
             val firstTextBlocks = ops.recognizeCroppedBubbles(firstBatch, config.sourceLang)
@@ -180,18 +201,21 @@ class IncrementalBatchPipeline(
                 val firstBubbleRegions = MangaSpatialGrouping.textBlocksToBubbleRegions(
                     firstTextBlocks, config.textDirection
                 )
-                val ocrJob = scope.async(Dispatchers.IO) {
+                val ocr = scope.async(Dispatchers.IO) {
                     ops.recognizeCroppedBubbles(secondBatch, config.sourceLang)
                 }
-                translateFirstThenSecondBatch(firstBubbleRegions, ocrJob)
+                ocrJob = ocr
+                translateFirstThenSecondBatch(firstBubbleRegions, ocr)
             }
 
             return BatchOutcome.Handled(firstTranslated)
         } catch (e: TranslationCancelledException) {
             // 用户停止翻译：重抛让 collector 识别为取消，绝不回退重新 OCR
+            cancelAndJoinQuietly(ocrJob)
             throw e
         } catch (e: Exception) {
             LogCollector.e(TAG, "rtDetrMangaOcr: 失败", e)
+            cancelAndJoinQuietly(ocrJob)
             return BatchOutcome.NotApplicable
         }
     }
@@ -252,11 +276,12 @@ class IncrementalBatchPipeline(
             return BatchOutcome.Handled(firstTranslated)
         } catch (e: TranslationCancelledException) {
             // 用户停止翻译：重抛让 collector 识别为取消，绝不回退重新 OCR
+            cancelAndJoinQuietly(ocrJob)
             throw e
         } catch (e: Exception) {
             LogCollector.e(TAG, "ppOcrV5: 失败", e)
-            // 取消正在运行的 OCR 任务，避免 use-after-recycle
-            ocrJob?.cancel()
+            // 必须先 join 等第二批 OCR 真正退出，再回收它的裁剪图（见 cancelAndJoinQuietly）
+            cancelAndJoinQuietly(ocrJob)
             // 回收未处理的裁剪图片（firstBatch 已在 recognizePpBatchV5 内部回收，跳过）
             secondBatch.forEach { if (!it.croppedBitmap.isRecycled) it.croppedBitmap.recycle() }
             return BatchOutcome.NotApplicable
@@ -307,11 +332,12 @@ class IncrementalBatchPipeline(
 
             return BatchOutcome.Handled(firstTranslated)
         } catch (e: TranslationCancelledException) {
-            ocrJob?.cancel()
+            cancelAndJoinQuietly(ocrJob)
             throw e
         } catch (e: Exception) {
             LogCollector.e(TAG, "ppOcrV6: 失败", e)
-            ocrJob?.cancel()
+            // 必须先 join 等第二批 OCR 真正退出，再回收它的裁剪图（见 cancelAndJoinQuietly）
+            cancelAndJoinQuietly(ocrJob)
             secondBatch.forEach { if (!it.croppedBitmap.isRecycled) it.croppedBitmap.recycle() }
             return BatchOutcome.NotApplicable
         }
