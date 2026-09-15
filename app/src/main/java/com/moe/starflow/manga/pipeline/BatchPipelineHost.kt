@@ -36,10 +36,10 @@ interface BatchPipelineHost {
     fun onProgress(textRes: Int)
 
     /** 提示（旧 `showToast(text, long)`）。 */
-    fun onToast(text: CharSequence, long: Boolean)
+    fun onToast(text: String, long: Boolean)
 
     /** 错误（旧 `statusOverlay.showError(text)`）。 */
-    fun onError(text: CharSequence)
+    fun onError(text: String)
 
     /** 悬浮球状态（旧 `ballStateManager?.setState(state)`）。阅读器场景可不实现（没有球）。 */
     fun onBallState(state: BallStateManager.State)
