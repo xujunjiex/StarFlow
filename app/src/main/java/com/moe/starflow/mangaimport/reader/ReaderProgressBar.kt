@@ -27,26 +27,25 @@ class ReaderProgressBar @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
 
+    // 配色固定：进度条始终压在深色半透明胶囊（bg_progress_pill）上，不受页面背景深浅影响，
+    // 因此不再有 darkBackground 分支（那个开关是历史遗留，早已是 no-op）。
     /** 粗带：已读（当前页之前）。 */
-    private val readPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = dp(5f) }
+    private val readPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        strokeWidth = dp(5f); color = 0xFFFFFFFF.toInt()
+    }
 
     /** 粗带：未读（当前页之后）。 */
-    private val unreadPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = dp(5f) }
+    private val unreadPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        strokeWidth = dp(5f); color = 0x59FFFFFF
+    }
 
     /** 细绿条：已翻译页。 */
-    private val translatedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeWidth = dp(2f) }
+    private val translatedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        strokeWidth = dp(2f); color = 0xFF34C759.toInt()
+    }
 
     init {
         isClickable = true
-        updateColors()
-    }
-
-    private fun updateColors() {
-        // 进度条始终压在深色半透明胶囊（bg_progress_pill）上，因此三色固定即可，
-        // 不受页面背景深浅影响。darkBackground 仅用于保留外部既有调用。
-        readPaint.color = 0xFFFFFFFF.toInt()
-        unreadPaint.color = 0x59FFFFFF
-        translatedPaint.color = 0xFF34C759.toInt()
     }
 
     private var pageCount = 0
@@ -55,21 +54,14 @@ class ReaderProgressBar @JvmOverloads constructor(
     /** 已成功翻译的页码集合（可能不连续 —— 跳翻/预翻）。 */
     private var translatedPages: Set<Int> = emptySet()
 
+    /** 预计算的「连续段」。⚠️ 不能在 onDraw 里算：拖动进度条时每帧都会 invalidate， */
+    private var translatedRuns: List<IntRange> = emptyList()
+
     /** 拖拽/点击寻页回调（页码索引）。 */
     var onSeek: ((Int) -> Unit)? = null
 
     /** 长按回调（打开预览）。 */
     var onLongPress: (() -> Unit)? = null
-
-    /** 是否深色背景（历史字段，配色现已固定，见 [updateColors]）。 */
-    var darkBackground = true
-        set(value) {
-            if (field != value) {
-                field = value
-                updateColors()
-                invalidate()
-            }
-        }
 
     private var tracking = false
     private var dragging = false
@@ -104,26 +96,13 @@ class ReaderProgressBar @JvmOverloads constructor(
     }
 
     private fun drawTranslatedRuns(canvas: Canvas, cy: Float, w: Float, span: Int) {
-        if (translatedPages.isEmpty()) return
+        if (translatedRuns.isEmpty()) return
         val slot = w / span
         // 单页至少给 2dp 可见宽度（几百页时一个 slot 可能不足 1px）
         val half = (slot / 2f).coerceAtLeast(dp(1f))
-        val sorted = translatedPages.filter { it in 0 until pageCount }.sorted()
-        if (sorted.isEmpty()) return
-
-        var runStart = sorted[0]
-        var prev = sorted[0]
-        for (i in 1 until sorted.size) {
-            val p = sorted[i]
-            if (p == prev + 1) {
-                prev = p
-                continue
-            }
-            drawRun(canvas, cy, w, span, runStart, prev, half)
-            runStart = p
-            prev = p
+        for (run in translatedRuns) {
+            drawRun(canvas, cy, w, span, run.first, run.last, half)
         }
-        drawRun(canvas, cy, w, span, runStart, prev, half)
     }
 
     private fun drawRun(canvas: Canvas, cy: Float, w: Float, span: Int, a: Int, b: Int, half: Float) {
@@ -183,7 +162,10 @@ class ReaderProgressBar @JvmOverloads constructor(
     /** 更新页码（不影响触摸）。 */
     fun setPage(current: Int, total: Int) {
         currentPage = current.coerceIn(0, (total - 1).coerceAtLeast(0))
-        pageCount = total
+        if (pageCount != total) {
+            pageCount = total
+            translatedRuns = computeTranslatedRuns(translatedPages, total)
+        }
         invalidate()
     }
 
@@ -191,7 +173,35 @@ class ReaderProgressBar @JvmOverloads constructor(
     fun setTranslatedPages(pages: Set<Int>) {
         if (translatedPages == pages) return
         translatedPages = pages
+        translatedRuns = computeTranslatedRuns(pages, pageCount)
         invalidate()
+    }
+
+    companion object {
+        /**
+         * 把「已翻译页集合」压成若干连续段（供绿条绘制）。
+         * 越界页过滤掉；空集合返回空表。纯函数，便于单测。
+         */
+        internal fun computeTranslatedRuns(pages: Set<Int>, total: Int): List<IntRange> {
+            if (pages.isEmpty() || total <= 0) return emptyList()
+            val sorted = pages.filter { it in 0 until total }.sorted()
+            if (sorted.isEmpty()) return emptyList()
+            val runs = mutableListOf<IntRange>()
+            var start = sorted[0]
+            var prev = sorted[0]
+            for (i in 1 until sorted.size) {
+                val p = sorted[i]
+                if (p == prev + 1) {
+                    prev = p
+                    continue
+                }
+                runs += start..prev
+                start = p
+                prev = p
+            }
+            runs += start..prev
+            return runs
+        }
     }
 
     private fun dp(v: Float): Float = v * resources.displayMetrics.density

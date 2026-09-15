@@ -32,6 +32,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -156,8 +157,29 @@ class ReaderTranslationController(
     /** 翻译面板是否打开：打开时暂停队列（用户在调设置，不该后台继续翻），关闭时恢复。 */
     private var panelOpen = false
 
-    /** 是否有翻译在途（队列在跑或手动翻译中）。 */
-    val isBusy: Boolean get() = queueJob?.isActive == true || manualJob?.isActive == true
+    /** 已切到后台（onStop）：暂停队列但**保留模式**，回前台自动恢复。 */
+    private var backgroundPaused = false
+
+    /**
+     * 切到后台：暂停队列与在途翻译，**保留翻译模式**。
+     *
+     * ⚠️ 必须做：队列挂在 `lifecycleScope` 上，`onStop` 并不会取消它 ——
+     * 按 Home / 息屏后 OCR + 翻译 + HyMT2 推理会整段在后台跑，
+     * 而且常驻状态芯片（`TYPE_APPLICATION_OVERLAY` 系统窗口）会一直盖在别的应用上。
+     */
+    fun pauseForBackground() {
+        if (backgroundPaused) return
+        backgroundPaused = true
+        cancelEverything()
+    }
+
+    /** 回到前台：恢复队列（模式不变）。 */
+    fun resumeFromBackground() {
+        if (!backgroundPaused) return
+        backgroundPaused = false
+        restartQueue()
+    }
+
     private var manualJob: Job? = null
 
     /** 切换模式。离开手动模式会启动队列；回到手动模式会停止队列。 */
@@ -226,18 +248,36 @@ class ReaderTranslationController(
         queueJob = null
         queuePage.value = -1
         if (translateMode.value == MODE_MANUAL) return
-        // 面板打开时不启动：翻译要等用户退出面板后才开始
-        if (panelOpen) return
+        // 面板打开 / 已切后台时都不启动
+        if (panelOpen || backgroundPaused) return
 
         queueJob = scope.launch(Dispatchers.IO) {
             LogCollector.d(TAG, "queue start mode=${translateMode.value}")
             // 窗口跑完（而非被取消/切模式）→ 收官时提示"队列已耗尽，翻页后继续"
             var drained = false
+            // 引擎被别的翻译占用时只提示一次，避免每轮都刷同一条
+            var waitingNotified = false
             try {
                 while (isActive) {
                     // 防抖：翻页期间反复重算也没关系，停留够久才开始翻
                     delay(debounceMs.value.toLong().coerceAtLeast(QUEUE_IDLE_TICK_MS))
                     if (translateMode.value == MODE_MANUAL) break
+
+                    // ⚠️ 必须先查锁：runTranslate 拿不到锁会直接 return（本页没翻），
+                    // 而循环下一轮又会重选到同一个仍是 IDLE 的页 → **每 500ms 空转一次，
+                    // 永远翻不动、也永远走不到"队列耗尽"**。这里原地等待并提示，锁一释放就继续。
+                    if (OcrLock.isRunning) {
+                        if (!waitingNotified) {
+                            waitingNotified = true
+                            LogCollector.d(TAG, "queue: OcrLock busy, waiting")
+                            onPhase(
+                                ReaderTranslatePhase.TRANSLATING,
+                                context.getString(R.string.reader_translate_waiting_other)
+                            )
+                        }
+                        continue
+                    }
+                    waitingNotified = false
 
                     val total = pageCount()
                     if (total <= 0) break
@@ -370,8 +410,6 @@ class ReaderTranslationController(
 
     fun failMessageOf(pageIndex: Int): String? = rows.value[pageIndex]?.failMessage
 
-    fun recordOf(pageIndex: Int): ImportedPageTranslation? = rows.value[pageIndex]
-
     /** 全部记录（pageIndex 升序），供面板。 */
     fun records(): List<ImportedPageTranslation> = rows.value.values.sortedBy { it.pageIndex }
 
@@ -468,6 +506,9 @@ class ReaderTranslationController(
             if (shouldRender()) {
                 renderInto(page, translated, TranslationCacheManager.OverlayMode.TRANSLATED, bitmap, overlayConfig)
             }
+            // 半成品不论是否上屏都要清：用户翻走后整页渲染不执行，那个 PARTIAL 会永久占着
+            // 100MB 渲染缓存（只能靠 LRU 淘汰），且同页重翻时会先闪出旧半成品
+            renderLru.remove(partialKey(page))
 
             val row = ImportedPageTranslation(
                 mangaId = manga.id, pageIndex = page,
@@ -482,7 +523,7 @@ class ReaderTranslationController(
                 sourceLang = srcLang,
                 targetLang = tgtLang,
             )
-            rows.value = rows.value + (page to row)
+            rows.update { it + (page to row) }
             dao.upsert(row)
             version.value += 1
             onVisual()
@@ -558,7 +599,10 @@ class ReaderTranslationController(
 
         when (outcome) {
             null -> {
-                val msg = context.getString(R.string.reader_translate_ocr_empty)
+                // 管线抛异常（非取消）：用通用失败文案。**不能**用 reader_translate_ocr_empty ——
+                // 那条文案属于下面的 OCR_EMPTY 分支，而这里记的是 PROCESS_EXCEPTION，
+                // 文案与 failCode 不一致会让翻译面板把它归到「异常」却显示"未识别到文字"。
+                val msg = context.getString(R.string.reader_translate_failed)
                 fail(page, "PROCESS_EXCEPTION", msg)
                 phase(ReaderTranslatePhase.FAILED, msg)
                 return null
@@ -607,7 +651,7 @@ class ReaderTranslationController(
             translator, bubbleRegions, srcLang, tgtLang, customPrefs,
             isCancelled = { cancelFlag.get() },
             // 流式局部结果：仅非增量模式 + 开关打开时上屏
-            onPartialBubbles = { partial -> if (streamingOn) showPartial(page, partial) },
+            onPartialBubbles = { partial -> if (streamingOn) showPartial(page, partial, bitmap) },
         )
     }
 
@@ -633,8 +677,10 @@ class ReaderTranslationController(
                 // 与截屏翻译对齐：分批时明确写出「第几批」，用户才知道现在在干什么
                 R.string.recognizing_half -> ReaderTranslatePhase.DETECTING to
                     context.getString(R.string.reader_translate_batch_detect, batchIndex)
+                // translating_do_not_tap 只在第一批翻译前发（translateFirstThenSecondBatch 里），
+                // 用 batchIndex 而非字面量 1，避免管线将来改发射时机后这里静默出错
                 R.string.translating_do_not_tap -> ReaderTranslatePhase.TRANSLATING to
-                    context.getString(R.string.reader_translate_batch_translate, 1)
+                    context.getString(R.string.reader_translate_batch_translate, batchIndex)
                 R.string.manga_translating -> ReaderTranslatePhase.TRANSLATING to
                     context.getString(R.string.reader_translate_batch_translate, batchIndex)
                 R.string.manga_reading -> ReaderTranslatePhase.TRANSLATING to
@@ -648,7 +694,8 @@ class ReaderTranslationController(
         override fun onError(text: String) = Unit                  // 错误由 fail() 记录，不弹浮层
         override fun onBallState(state: BallStateManager.State) = Unit  // 阅读器没有悬浮球
 
-        override fun onPartialRender(bubbles: List<TranslatedBubble>) = showPartial(page, bubbles)
+        override fun onPartialRender(bubbles: List<TranslatedBubble>) =
+            showPartial(page, bubbles, pageBitmap)
 
         override suspend fun onBatchResult(bubbles: List<TranslatedBubble>) {
             // ⚠️ 必须写 PARTIAL key，不能走 renderInto（后者写 renderKey 且要求 state==SUCCESS）。
@@ -691,20 +738,28 @@ class ReaderTranslationController(
         else -> null
     }
 
+    /** 在途的半成品渲染（每页只允许一个，见 [showPartial]）。 */
+    private var partialJob: Job? = null
+
     /**
      * 把「首批/流式半成品」渲染上屏 —— 仅当该页正是用户在看的那页。
      *
-     * 后台队列预翻的页面渲染出来没人看，纯烧 CPU 和 100MB 渲染缓存，因此直接跳过。
+     * ⚠️ 必须传**已经解码好的** [bitmap]，不能在这里再调 `loadFull`：
+     * `ReaderPageSource.loadFull` 对 zip 会**每次重开 ZipFile 并全尺寸解码**（~10-30MB），
+     * 而本方法由流式回调**每出一个气泡调用一次** → 20 气泡的页 = 20 次重解码 + 20 次全页渲染。
+     *
+     * ⚠️ 同时做**合并**：已有渲染在途就直接丢弃本次回调（最终整页结果走 [renderInto]，不会丢）。
+     * 否则并发的全页渲染会把内存顶爆（截屏翻译路径复用同一张截图 bitmap，无此问题）。
      */
-    private fun showPartial(page: Int, bubbles: List<TranslatedBubble>) {
+    private fun showPartial(page: Int, bubbles: List<TranslatedBubble>, bitmap: Bitmap) {
         if (bubbles.isEmpty()) return
         if (page != currentPageProvider()) return
-        scope.launch(Dispatchers.IO) {
+        if (partialJob?.isActive == true) return
+        partialJob = scope.launch(Dispatchers.IO) {
             val cfg = cacheManager.getOverlayConfig(appPrefs)
-            val bmp = loadFull(page) ?: return@launch
-            val out = renderBubbles(bmp, bubbles, TranslationCacheManager.OverlayMode.TRANSLATED, cfg)
+            val out = renderBubbles(bitmap, bubbles, TranslationCacheManager.OverlayMode.TRANSLATED, cfg)
             renderLru.put(partialKey(page), out)
-            kotlinx.coroutines.withContext(Dispatchers.Main) { onVisual() }
+            withContext(Dispatchers.Main) { onVisual() }
         }
     }
 
@@ -806,18 +861,30 @@ class ReaderTranslationController(
             failMessage = old?.failMessage, updatedAtMs = System.currentTimeMillis(),
             mangaKey = mangaKey,
         )
-        rows.value = rows.value + (pageIndex to row)
+        // ⚠️ 用 update{} 而非 `rows.value = rows.value + x`：
+        // 后者是「读-改-写」，与取消清理协程并发时会丢更新。
+        rows.update { it + (pageIndex to row) }
         dao.upsert(row)
         version.value += 1
     }
 
     private suspend fun fail(pageIndex: Int, code: String, message: String) {
-        rows.value = rows.value + (pageIndex to ImportedPageTranslation(
+        val old = rows.value[pageIndex]
+        val row = ImportedPageTranslation(
             mangaId = manga.id, pageIndex = pageIndex, state = ImportedPageTranslation.STATE_FAILED,
+            // ⚠️ 必须保留上一次成功的译文载荷：行主键是 (mangaId, pageIndex) 且用 REPLACE 写入，
+            // 若不带上这些字段，**重翻一次失败就会把已有译文整行抹掉**（用户之前花过 API 额度的结果
+            // 不可恢复）。upsertState 一直是有意保留的，fail 必须与之一致。
+            sourceText = old?.sourceText, translatedText = old?.translatedText,
+            bubbleRects = old?.bubbleRects,
             failCode = code, failMessage = message, updatedAtMs = System.currentTimeMillis(),
             mangaKey = mangaKey,
-        ))
-        dao.upsert(rows.value.getValue(pageIndex))
+            translatorName = old?.translatorName, sourceLang = old?.sourceLang, targetLang = old?.targetLang,
+        )
+        // ⚠️ 必须 upsert 局部变量 row，不能写 `dao.upsert(rows.value.getValue(pageIndex))`：
+        // 并发写入下 rows.value 可能已被别的协程换成不含本页的新 map → NoSuchElementException 崩溃。
+        rows.update { it + (pageIndex to row) }
+        dao.upsert(row)
         version.value += 1
     }
 }

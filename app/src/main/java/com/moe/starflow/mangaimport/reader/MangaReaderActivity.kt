@@ -166,12 +166,17 @@ class MangaReaderActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         updateAutoTurn()
+        translationController?.resumeFromBackground()
     }
 
     override fun onStop() {
         super.onStop()
         autoTurnJob?.cancel()
         autoTurnJob = null
+        // 切后台必须暂停队列：lifecycleScope 不会因 onStop 取消，否则 OCR + 翻译 + HyMT2 推理
+        // 会在后台整段跑，且常驻状态芯片（系统窗口）会一直盖在别的应用上
+        translationController?.pauseForBackground()
+        TranslationStatusOverlay.getInstance(this@MangaReaderActivity).dismiss()
     }
 
     override fun onResume() {
@@ -286,7 +291,12 @@ class MangaReaderActivity : AppCompatActivity() {
         applyBackground()
         applyAnimation()
         refreshPagerForOrientation()
-        // 横竖屏切换会改变 isDoublePage → 翻译按钮的置灰态要跟着重刷
+        // 横竖屏切换会改变 isDoublePage：进双页后翻译按钮被禁用，
+        // 此刻必须把队列停掉，否则会在用户看不到的地方继续翻、而按钮已禁用停不掉
+        if (isTranslateDisabledByMode()) {
+            translationController?.setMode(ReaderTranslationController.MODE_MANUAL)
+            TranslationStatusOverlay.getInstance(this@MangaReaderActivity).dismiss()
+        }
         refreshTranslationChrome()
     }
 
@@ -336,7 +346,9 @@ class MangaReaderActivity : AppCompatActivity() {
             // 无动画模式：选中后锚点同步到新页，避免下次拖拽时还把上一页钉在中心
             if (animationMode == 0) animState.anchorPage = currentPage
             ImportedMangaStore.update(applicationContext, manga.copy(lastReadPage = currentPage))
-            // 翻页后重置「第二次点击才取消」的连击状态，否则下次点一下就直接取消了
+            // 翻页后重置双击判定窗口：否则「单击 → 翻页 → 300ms 内再单击」会被当成双击，
+            // 直接取消翻译（连击状态在 Activity 这侧，controller 的 onCurrentPageChanged 管不到）
+            lastTranslateClickMs = 0L
             translationController?.onCurrentPageChanged()
             refreshOverlay()
             refreshTranslationChrome()
@@ -528,8 +540,13 @@ class MangaReaderActivity : AppCompatActivity() {
 
             when (val r = controller.onTranslateButtonClick(isDouble)) {
                 is TranslateClick.Hint -> {
-                    TranslationStatusOverlay.getInstance(this)
-                        .showImmediate(r.text, autoDismiss = true)
+                    // ⚠️ 状态浮层受 status_overlay_enabled 开关控制，关掉后 showImmediate 直接 return，
+                    // 用户点按钮会**毫无反馈**（像坏了）。所以开关关闭时退回系统 Toast。
+                    if (statusOverlayEnabled()) {
+                        TranslationStatusOverlay.getInstance(this).showImmediate(r.text, autoDismiss = true)
+                    } else {
+                        UiUtils.showToast(this, r.text)
+                    }
                 }
                 TranslateClick.CancelledToManual -> {
                     val overlay = TranslationStatusOverlay.getInstance(this)
@@ -556,6 +573,11 @@ class MangaReaderActivity : AppCompatActivity() {
 
     /** Webtoon / 横屏双页暂不支持翻译（"当前页"语义不唯一，见 Spec）。 */
     private fun isTranslateDisabledByMode(): Boolean = mode == 3 || isDoublePage
+
+    /** 状态浮层总开关（关闭后所有 Hint 必须改走 Toast，否则用户点按钮毫无反馈）。 */
+    private fun statusOverlayEnabled(): Boolean =
+        androidx.preference.PreferenceManager.getDefaultSharedPreferences(this)
+            .getBoolean("status_overlay_enabled", true)
 
     /** 注入「页图提供者」：适配器绑定页时优先取译文/原文渲染图（无则原图），
      *  避免 RecyclerView 重绑/复用把已显示的译图覆盖回原图。 */
@@ -777,8 +799,7 @@ class MangaReaderActivity : AppCompatActivity() {
         binding.root.setBackgroundColor(bg)
         binding.viewPager.setBackgroundColor(bg)
         binding.webtoonList.setBackgroundColor(bg)
-        // 进度条轨道/手柄取反色适配背景 + 页面指示文字
-        binding.readerProgress.darkBackground = isDarkBackground()
+        // 进度条配色固定（压在半透明深色胶囊上），不随页面背景深浅变化
         binding.tvPageIndicator.setTextColor(if (isDarkBackground()) Color.WHITE else Color.BLACK)
     }
 

@@ -953,7 +953,6 @@
     <string name="reader_translate_ocr_empty">No text detected on this page</string>
     <string name="reader_translate_empty">No translation produced</string>
     <string name="reader_toggle_desc">Toggle translated/original/plain</string>
-    <string name="reader_translate_translating">Translating…</string>
     <string name="reader_translate_mode_title">Translation mode</string>
     <string name="reader_translate_mode_manual">Manual</string>
     <string name="reader_translate_mode_auto">Auto</string>
@@ -999,9 +998,9 @@
     <string name="reader_translate_batch_detect">Recognizing (%1$d/2)…</string>
     <string name="reader_translate_batch_translate">Translating (%1$d/2)…</string>
     <string name="reader_translate_queue_drained">Translation queue finished. Turn the page to continue.</string>
+    <string name="reader_translate_waiting_other">Waiting for another translation to finish…</string>
     <string name="reader_translate_paused_to_manual">Translation paused, switched to manual mode.</string>
     <string name="reader_translate_cancelled">Stopped. Switched to manual mode.</string>
-    <string name="reader_translate_stopped">Translation stopped</string>
     <string name="reader_translate_debounce">Start delay</string>
     <string name="reader_translate_ahead_pages">Pages ahead</string>
     <string name="reader_translate_failed_badge">Translation failed</string>

@@ -865,7 +865,6 @@
     <string name="reader_translate_ocr_empty">本页未识别到文字</string>
     <string name="reader_translate_empty">未生成译文</string>
     <string name="reader_toggle_desc">切换 译文/原文/原图</string>
-    <string name="reader_translate_translating">翻译中…</string>
     <string name="reader_translate_mode_title">翻译模式</string>
     <string name="reader_translate_mode_manual">手动</string>
     <string name="reader_translate_mode_auto">自动</string>
@@ -911,9 +910,9 @@
     <string name="reader_translate_batch_detect">识别中（%1$d/2）…</string>
     <string name="reader_translate_batch_translate">翻译中（%1$d/2）…</string>
     <string name="reader_translate_queue_drained">翻译队列已耗尽，翻页后继续</string>
+    <string name="reader_translate_waiting_other">等待其他翻译任务完成…</string>
     <string name="reader_translate_paused_to_manual">翻译已暂停，回退到手动翻译</string>
     <string name="reader_translate_cancelled">已停止，退回手动翻译</string>
-    <string name="reader_translate_stopped">已停止翻译</string>
     <string name="reader_translate_debounce">启动延迟</string>
     <string name="reader_translate_ahead_pages">向后翻译页数</string>
     <string name="reader_translate_failed_badge">本页翻译失败</string>

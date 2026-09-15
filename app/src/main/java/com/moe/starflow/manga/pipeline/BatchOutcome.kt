@@ -22,10 +22,11 @@ sealed interface BatchOutcome {
      * 分批路径已处理，但**无结果可收尾**（本页未检测到文字/气泡，已弹过提示）。
      *
      * 调用方应跳过原有流程，**但绝不可调用 `finalizeIncremental`** ——
-     * 旧实现在这两个出口是直接 `return true`（见 `MangaFloatingService` 中 RT-DETR/V5/V6 的
-     * "未检测到" 分支），而 `finalizeIncremental` 即使收到空列表也会执行
-     * `lastTranslatedHash = currentPHash` → 自动翻译状态机把空页误判为"已翻译"，
-     * **该页之后不会再被翻译**。这是本管线最容易踩的坑。
+     * 旧实现在这三个出口是直接 `return true`（对应 [IncrementalBatchPipeline] 的
+     * `rtDetrMangaOcr` / `ppOcrV5` / `ppOcrV6` 各自的"未检测到"分支），
+     * 而 `finalizeIncremental` 即使收到空列表也会执行 `lastTranslatedHash = currentPHash`
+     * → 自动翻译状态机把空页误判为"已翻译"，**该页之后不会再被翻译**。
+     * 这是本管线最容易踩的坑。
      */
     data object HandledEmpty : BatchOutcome
 
