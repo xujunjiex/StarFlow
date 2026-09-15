@@ -61,4 +61,20 @@ interface ImportedPageTranslationDao {
 
     @Query("DELETE FROM imported_page_translation WHERE mangaId = :mangaId")
     suspend fun deleteManga(mangaId: Long)
+
+    /**
+     * 把残留的「翻译中」重置为「未翻译」。
+     *
+     * ⚠️ 必要性：`STATE_TRANSLATING` 是在翻译**开始时**写库的，只有跑完才改成 SUCCESS。
+     * 若期间退出阅读器 / 进程被杀 / 崩溃，协程被直接掐死，记录会**永久停在「翻译中」**——
+     * 该页从此既不显示译文（取图要求 state==SUCCESS），翻译按钮也只会弹「正在翻译中」而再也翻不了。
+     *
+     * 放在**进入阅读器时**清理（而非退出时），因为进程被杀/崩溃时「退出时」的清理根本不会执行，
+     * 「进入时」能覆盖所有异常退出路径。
+     *
+     * state 字面量 0/1 与 [ImportedPageTranslation.STATE_IDLE] / [STATE_TRANSLATING] 对应
+     * —— @Query 里不能引用 Kotlin 常量，改这两个值时必须同步改这里。
+     */
+    @Query("UPDATE imported_page_translation SET state = 0 WHERE mangaId = :mangaId AND mangaKey = :mangaKey AND state = 1")
+    suspend fun resetTranslating(mangaId: Long, mangaKey: String)
 }

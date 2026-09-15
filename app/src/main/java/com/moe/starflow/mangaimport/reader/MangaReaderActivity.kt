@@ -32,6 +32,7 @@ import com.moe.starflow.mangaimport.data.ImportedManga
 import com.moe.starflow.mangaimport.data.ImportedMangaStore
 import com.moe.starflow.mangaimport.translate.ReaderTranslatePhase
 import com.moe.starflow.mangaimport.translate.ReaderTranslationController
+import com.moe.starflow.mangaimport.translate.TranslateClick
 import com.moe.starflow.me.settings.SettingPageActivity
 import com.moe.starflow.translate.TranslationStatusOverlay
 import com.moe.starflow.utils.LogCollector
@@ -132,11 +133,20 @@ class MangaReaderActivity : AppCompatActivity() {
 
         goToPage(manga.lastReadPage.coerceIn(0, (source.size - 1).coerceAtLeast(0)))
 
-        // 阅读器内嵌翻译：载入每页记录（含失败/成功态），接左下角三态按钮与右下角翻译按钮
-        translationController = ReaderTranslationController(this, manga, lifecycleScope)
+        // 阅读器内嵌翻译：载入每页记录（含失败/成功态），接右下角翻译按钮与进度条
+        translationController = ReaderTranslationController(this, manga, lifecycleScope).also { c ->
+            c.bind(
+                loadFull = { source.loadFull(it) },
+                currentPage = { currentPage },
+                pageCount = { source.size },
+            )
+            c.onVisual = { runOnUiThread { applyPageVisual(currentPage) } }
+            c.onPhase = ::onTranslatePhase
+        }
         lifecycleScope.launch {
             translationController?.load()
             refreshTranslationChrome()
+            refreshProgressTranslation()
         }
         setupTranslationUi()
     }
@@ -300,6 +310,8 @@ class MangaReaderActivity : AppCompatActivity() {
             // 无动画模式：选中后锚点同步到新页，避免下次拖拽时还把上一页钉在中心
             if (animationMode == 0) animState.anchorPage = currentPage
             ImportedMangaStore.update(applicationContext, manga.copy(lastReadPage = currentPage))
+            // 翻页后重置「第二次点击才取消」的连击状态，否则下次点一下就直接取消了
+            translationController?.onCurrentPageChanged()
             refreshOverlay()
             refreshTranslationChrome()
             applyPageVisual(currentPage)
@@ -475,21 +487,41 @@ class MangaReaderActivity : AppCompatActivity() {
 
     // ===== 阅读器内嵌翻译 =====
 
-    /** 右下角翻译按钮 + 左下角三态按钮接线（逻辑走 ReaderTranslationController）。 */
+    /** 右下角翻译浮层组接线（逻辑走 ReaderTranslationController）。 */
     private fun setupTranslationUi() {
         val controller = translationController ?: return
         binding.btnTranslate.setOnClickListener {
-            when (controller.stateOf(currentPage)) {
-                ImportedPageTranslation.STATE_TRANSLATING ->
-                    UiUtils.showToast(this, getString(R.string.reader_translate_translating))
-                else -> translateNow()   // 未翻译/失败→翻译；已成功→重翻
+            if (isTranslateDisabledByMode()) {
+                UiUtils.showToast(this, getString(R.string.reader_translate_disabled_mode))
+                return@setOnClickListener
+            }
+            // 三模式统一：第一次点击只提示，第二次点击强制取消并回退手动模式
+            when (val r = controller.onTranslateButtonClick()) {
+                is TranslateClick.Hint -> {
+                    TranslationStatusOverlay.getInstance(this)
+                        .showImmediate(getString(r.textRes), autoDismiss = true)
+                }
+                TranslateClick.CancelledToManual -> {
+                    val overlay = TranslationStatusOverlay.getInstance(this)
+                    overlay.dismiss()
+                    overlay.show(getString(R.string.reader_translate_cancelled))
+                    refreshTranslationChrome()
+                    refreshProgressTranslation()
+                }
+                TranslateClick.StartedManual, TranslateClick.Ignored -> Unit
             }
         }
+        // 成功页：三态循环（译文/原文/纯原图）
         binding.btnToggleTranslate.setOnClickListener {
-            controller.cycleVisual(currentPage) { applyPageVisual(currentPage) }
+            controller.cycleVisual(currentPage)
         }
+        // 失败页：感叹号 → 小气泡显示失败原因（不弹窗）
+        binding.btnFailTranslate.setOnClickListener { showFailBubble() }
         applyPageImageSource()
     }
+
+    /** Webtoon / 横屏双页暂不支持翻译（"当前页"语义不唯一，见 Spec）。 */
+    private fun isTranslateDisabledByMode(): Boolean = mode == 3 || isDoublePage
 
     /** 注入「页图提供者」：适配器绑定页时优先取译文/原文渲染图（无则原图），
      *  避免 RecyclerView 重绑/复用把已显示的译图覆盖回原图。 */
@@ -508,42 +540,43 @@ class MangaReaderActivity : AppCompatActivity() {
             when (phase) {
                 ReaderTranslatePhase.DETECTING ->
                     overlay.showImmediate(getString(R.string.reader_translate_detecting), autoDismiss = false)
-                ReaderTranslatePhase.TRANSLATING ->
-                    overlay.showImmediate(getString(R.string.reader_translate_in_progress), autoDismiss = false)
+                ReaderTranslatePhase.TRANSLATING -> {
+                    // 增量队列连续翻页时带上页码，让用户知道进度到哪了
+                    val p = translationController?.queuePage?.value ?: -1
+                    val base = getString(R.string.reader_translate_in_progress)
+                    overlay.showImmediate(if (p >= 0) "$base · P${p + 1}" else base, autoDismiss = false)
+                }
                 ReaderTranslatePhase.SUCCESS -> {
                     overlay.dismiss()
                     overlay.show(getString(R.string.reader_translate_done))
+                    refreshProgressTranslation()
                 }
                 ReaderTranslatePhase.FAILED -> {
                     overlay.dismiss()
                     overlay.showError(message ?: getString(R.string.reader_translate_failed))
+                    refreshProgressTranslation()
                 }
             }
         }
     }
 
-    /** 翻译/重翻当前页。 */
-    private fun translateNow() = translateNow(currentPage)
-
-    /** 翻译/重翻指定页（IO 线程跑管线）。 */
-    private fun translateNow(page: Int) {
+    /** 翻到失败页时点感叹号：小气泡显示失败原因（不用弹窗）。 */
+    private fun showFailBubble() {
         val controller = translationController ?: return
-        lifecycleScope.launch(Dispatchers.IO) {
-            controller.translatePage(
-                page,
-                loadFull = { source.loadFull(it) },
-                onToast = { msg -> runOnUiThread { UiUtils.showToast(this@MangaReaderActivity, msg) } },
-                onVisual = { runOnUiThread { applyPageVisual(page) } },
-                onPhase = ::onTranslatePhase,
-            )
-        }
+        val reason = controller.failMessageOf(currentPage) ?: getString(R.string.reader_translate_failed)
+        TranslationStatusOverlay.getInstance(this)
+            .show(getString(R.string.reader_translate_failed_page_hint, currentPage + 1, reason))
     }
 
-    /** 同步三态按钮可见性 + 翻译/重翻图标 + 三态图标（照搬截屏翻译：译文/原文/纯原图）。 */
+    /** 同步翻译浮层组：成功页显示三态按钮、失败页显示感叹号、Webtoon/双页置灰。 */
     private fun refreshTranslationChrome() {
         val controller = translationController ?: return
-        val translated = controller.stateOf(currentPage) == ImportedPageTranslation.STATE_SUCCESS
+        val state = controller.stateOf(currentPage)
+        val translated = state == ImportedPageTranslation.STATE_SUCCESS
+        val failed = state == ImportedPageTranslation.STATE_FAILED
+
         binding.btnToggleTranslate.visibility = if (translated) View.VISIBLE else View.GONE
+        binding.btnFailTranslate.visibility = if (failed) View.VISIBLE else View.GONE
         // 翻译按钮图标：成功 → 重翻图标；未译/失败 → 翻译图标
         binding.ivTranslate.setImageResource(
             if (translated) R.drawable.ic_refresh else R.drawable.ic_reader_translate
@@ -557,6 +590,15 @@ class MangaReaderActivity : AppCompatActivity() {
                 }
             )
         }
+        val alpha = if (isTranslateDisabledByMode()) 0.4f else 1f
+        binding.btnTranslate.alpha = alpha
+        binding.btnToggleTranslate.alpha = alpha
+        binding.btnFailTranslate.alpha = alpha
+    }
+
+    /** 刷新进度条上的「已翻译」绿色区间。 */
+    private fun refreshProgressTranslation() {
+        binding.readerProgress.setTranslatedPages(translationController?.translatedPages() ?: emptySet())
     }
 
     /** 把指定页显示切到 controller 的当前态（译文/原文/原图）。
@@ -565,11 +607,15 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun applyPageVisual(pageIndex: Int) {
         val controller = translationController ?: return
         refreshTranslationChrome()
+        // 进度条的绿色「已翻译」区间在每次翻译完成后都要刷新。
+        // ⚠️ 必须挂在这里：后台队列页翻完时 `onPhase` 被有意静音（不给非当前页刷状态浮层），
+        // 而本方法由控制器的 onVisual 对**每一页**完成都会调用 → 是唯一能覆盖队列页的刷新点。
+        refreshProgressTranslation()
         val mode = if (controller.stateOf(pageIndex) == ImportedPageTranslation.STATE_SUCCESS)
             controller.currentVisual(pageIndex) else null
         lifecycleScope.launch(Dispatchers.IO) {
             if (mode != null && mode != TranslationCacheManager.OverlayMode.PLAIN) {
-                controller.visualBitmap(pageIndex, mode) { source.loadFull(it) } // 渲染 + 预热缓存
+                controller.visualBitmap(pageIndex, mode) // 渲染 + 预热缓存
             }
             runOnUiThread {
                 pageAdapter?.notifyItemChanged(pageIndex)
@@ -606,6 +652,8 @@ class MangaReaderActivity : AppCompatActivity() {
                     isDarkPanel = dark,
                     previewBitmap = previewBmp,
                     translateMode = translationController?.translateMode?.value ?: 0,
+                    debounceMs = translationController?.debounceMs?.value ?: 500,
+                    aheadPages = translationController?.aheadPages?.value ?: 5,
                     pageTranslations = translationController?.records() ?: emptyList()
                 ),
             ReaderMenuCallbacks(
@@ -614,6 +662,8 @@ class MangaReaderActivity : AppCompatActivity() {
                     mode = m
                     applyPager()
                     goToPage(currentPage)
+                    // Webtoon / 横屏双页要禁用翻译按钮，切模式后必须重刷
+                    refreshTranslationChrome()
                     // Webtoon ↔ 分页切换后重算自动翻页（webtoon 禁用、分页按开关恢复）
                     updateAutoTurn()
                 },
@@ -638,7 +688,12 @@ class MangaReaderActivity : AppCompatActivity() {
                     startActivity(Intent(this@MangaReaderActivity, SettingPageActivity::class.java)
                         .putExtra(SettingPageActivity.EXTRA_FRAGMENT_TYPE, SettingPageActivity.TYPE_FRAGMENT_PERSONALIZATION))
                 },
-                onTranslateMode = { _ -> },   // 阶段一手动模式固定，无需动作
+                onTranslateMode = { m ->
+                    translationController?.setMode(m)
+                    refreshTranslationChrome()
+                },
+                onDebounceMs = { ms -> translationController?.debounceMs?.value = ms },
+                onAheadPages = { n -> translationController?.aheadPages?.value = n },
                 onTranslatePageJump = { page -> goToPage(page) },
                 onOpenModelManagement = {
                     startActivity(Intent(this@MangaReaderActivity, SettingPageActivity::class.java)

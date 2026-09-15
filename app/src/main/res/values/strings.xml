@@ -987,6 +987,18 @@
     <string name="reader_translate_failed">Translation failed</string>
     <string name="reader_translate_collapse">Collapse</string>
     <string name="reader_translate_copied">Copied</string>
+
+    <!-- 三种翻译模式的按钮提示 / 面板 / 失败标识 -->
+    <string name="reader_translate_hint_auto">Auto-translating. Tap again to stop and switch to manual.</string>
+    <string name="reader_translate_hint_ahead">Translating ahead. Tap again to stop and switch to manual.</string>
+    <string name="reader_translate_hint_ahead_idle">Translate-ahead is idle. Tap again to switch to manual.</string>
+    <string name="reader_translate_cancelled">Stopped. Switched to manual mode.</string>
+    <string name="reader_translate_stopped">Translation stopped</string>
+    <string name="reader_translate_debounce">Start delay</string>
+    <string name="reader_translate_ahead_pages">Pages ahead</string>
+    <string name="reader_translate_failed_badge">Translation failed</string>
+    <string name="reader_translate_disabled_mode">Translation is not available in Webtoon or two-page mode</string>
+    <string name="reader_translate_failed_page_hint">P%1$d translation failed: %2$s</string>
     <string name="reader_debug_placeholder">Debug options (no AI super-resolution)</string>
     <string name="reader_rotate">Rotate screen</string>
     <string name="reader_rotate_portrait">Portrait</string>

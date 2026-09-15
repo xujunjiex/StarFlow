@@ -42,7 +42,9 @@ class ReaderMenuState(
     val downloadLabel: String = "",
     val isDarkPanel: Boolean = false,
     val previewBitmap: Bitmap? = null,
-    val translateMode: Int = 0,                 // 0 手动 1 自动 2 增量（阶段一恒 0）
+    val translateMode: Int = 0,                 // 0 手动 1 自动 2 增量
+    val debounceMs: Int = 500,                  // 自动/增量的启动延迟
+    val aheadPages: Int = 5,                    // 增量向后翻多少页（1..10）
     val pageTranslations: List<ImportedPageTranslation> = emptyList()  // 每页翻译记录快照
 )
 
@@ -58,6 +60,8 @@ class ReaderMenuCallbacks(
     val onDownload: () -> Unit,
     val onSettings: () -> Unit,
     val onTranslateMode: (Int) -> Unit = {},
+    val onDebounceMs: (Int) -> Unit = {},
+    val onAheadPages: (Int) -> Unit = {},
     val onTranslatePageJump: (Int) -> Unit = {},
     val onOpenModelManagement: () -> Unit = {},
     val onOpenApiConfig: () -> Unit = {},
@@ -252,10 +256,42 @@ class ReaderMenuSheet(
         rvPages.adapter = pageAdapter
         pageAdapter.rows = filteredRows()
         val rbManual = view.findViewById<RadioButton>(R.id.translate_mode_manual)
+        val rbAuto = view.findViewById<RadioButton>(R.id.translate_mode_auto)
+        val rbAhead = view.findViewById<RadioButton>(R.id.translate_mode_incremental)
         rbManual.isChecked = state.translateMode == 0
-        view.findViewById<RadioButton>(R.id.translate_mode_auto).isEnabled = false
-        view.findViewById<RadioButton>(R.id.translate_mode_incremental).isEnabled = false
-        rbManual.setOnCheckedChangeListener { _, checked -> if (checked) cb.onTranslateMode(0) }
+        rbAuto.isChecked = state.translateMode == 1
+        rbAhead.isChecked = state.translateMode == 2
+        rbManual.setOnCheckedChangeListener { _, c -> if (c) cb.onTranslateMode(0) }
+        rbAuto.setOnCheckedChangeListener { _, c ->
+            if (c) { cb.onTranslateMode(1); applyAheadRowVisibility(view, 1) }
+        }
+        rbAhead.setOnCheckedChangeListener { _, c ->
+            if (c) { cb.onTranslateMode(2); applyAheadRowVisibility(view, 2) }
+        }
+
+        // 启动延迟（防抖）：翻页停留多久才开翻。自动/增量共用。
+        val sbDebounce = view.findViewById<SeekBar>(R.id.sb_debounce)
+        val tvDebounce = view.findViewById<TextView>(R.id.tv_debounce_value)
+        sbDebounce.progress = (state.debounceMs - DEBOUNCE_MIN).coerceIn(0, DEBOUNCE_MAX - DEBOUNCE_MIN)
+        tvDebounce.text = "${state.debounceMs} ms"
+        sbDebounce.setOnSeekBarChangeListener(slider {
+            val ms = sbDebounce.progress + DEBOUNCE_MIN
+            tvDebounce.text = "$ms ms"
+            cb.onDebounceMs(ms)
+        })
+
+        // 向后翻译页数：仅增量模式显示
+        val sbAhead = view.findViewById<SeekBar>(R.id.sb_ahead)
+        val tvAhead = view.findViewById<TextView>(R.id.tv_ahead_value)
+        sbAhead.progress = (state.aheadPages - AHEAD_MIN).coerceIn(0, AHEAD_MAX - AHEAD_MIN)
+        tvAhead.text = "${state.aheadPages}"
+        sbAhead.setOnSeekBarChangeListener(slider {
+            val n = sbAhead.progress + AHEAD_MIN
+            tvAhead.text = "$n"
+            cb.onAheadPages(n)
+        })
+        applyAheadRowVisibility(view, state.translateMode)
+
         setupTranslateFilter(view)
         updateSummary(currentRecords)
 
@@ -341,14 +377,16 @@ class ReaderMenuSheet(
             R.id.tv_brightness_label, R.id.tv_contrast_label,
             R.id.tv_rotate_label, R.id.tv_auto_turn_label, R.id.tv_download_label, R.id.tv_settings_label,
             R.id.tv_ocr_model_row, R.id.tv_translator_model_row,
-            R.id.tv_source_lang_value, R.id.tv_target_lang_value
+            R.id.tv_source_lang_value, R.id.tv_target_lang_value,
+            R.id.tv_debounce_label, R.id.tv_ahead_label
         ).forEach { id ->
             view.findViewById<TextView>(id).setTextColor(labelColor)
         }
         listOf(
             R.id.tv_brightness_value, R.id.tv_contrast_value, R.id.tv_color_hint,
             R.id.tv_rotate_value, R.id.tv_interval_value, R.id.tv_download_value,
-            R.id.tv_source_caption, R.id.tv_target_caption
+            R.id.tv_source_caption, R.id.tv_target_caption,
+            R.id.tv_debounce_value, R.id.tv_ahead_value
         ).forEach { id ->
             view.findViewById<TextView>(id).setTextColor(subColor)
         }
@@ -460,6 +498,12 @@ class ReaderMenuSheet(
                 if (selected) 0xFF55AEEA.toInt() else if (dark) 0xFFB8BCC2.toInt() else 0xFF777777.toInt()
             )
         }
+    }
+
+    /** 向后翻译页数滑块只在「增量」模式显示。 */
+    private fun applyAheadRowVisibility(view: View, mode: Int) {
+        view.findViewById<View>(R.id.row_ahead_pages).visibility =
+            if (mode == 2) View.VISIBLE else View.GONE
     }
 
     private fun slider(onRefresh: () -> Unit) = object : SeekBar.OnSeekBarChangeListener {
@@ -625,5 +669,13 @@ class ReaderMenuSheet(
 
     companion object {
         const val TAG = "ReaderMenuSheet"
+
+        /** 启动延迟范围（ms），与 sheet_reader_menu.xml 的 sb_debounce min/max 一致。 */
+        private const val DEBOUNCE_MIN = 200
+        private const val DEBOUNCE_MAX = 2000
+
+        /** 向后翻译页数范围，与 sheet_reader_menu.xml 的 sb_ahead min/max 一致。 */
+        private const val AHEAD_MIN = 1
+        private const val AHEAD_MAX = 10
     }
 }
