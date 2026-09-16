@@ -72,6 +72,7 @@ import com.moe.starflow.utils.Constants
 import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.KeystoreManager
 import com.moe.starflow.utils.TextSimilarity
+import com.moe.starflow.utils.ThemeManager
 import com.moe.starflow.translate.TranslationStatusOverlay
 import com.moe.starflow.utils.UtilTools
 import kotlinx.coroutines.Dispatchers
@@ -3133,7 +3134,9 @@ class MangaFloatingService : LifecycleService() {
      * 翻译进行中点击 overlay 时弹窗：询问是否停止。停止 → 终止翻译且不保存结果。
      */
     private fun showStopTranslationDialog() {
-        val dialog = android.app.AlertDialog.Builder(this)
+        // ⚠️ 必须用 ThemeManager.dialogContext：Service 自己拿的是系统默认浅色主题，
+        // 标题/正文恒为深色字，压在 dialog_background 翻出来的深色背景上会看不清
+        val dialog = android.app.AlertDialog.Builder(ThemeManager.dialogContext(this))
             .setTitle(getString(R.string.dlg_translation_unfinished_title))
             .setMessage(getString(R.string.dlg_translation_unfinished_msg))
             .setPositiveButton(getString(R.string.stop)) { _, _ -> stopTranslationNow() }
