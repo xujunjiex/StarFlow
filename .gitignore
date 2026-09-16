@@ -41,10 +41,8 @@ markdown/
 superpowers/
 backup/
 .superpowers/
-# docs/docs/ 提交到 GitHub，docs/ 其余（superpowers 草稿等）忽略
-docs/*
-!docs/docs/
-docs/superpowers/
+# docs/ 一律只留本地，不提交到远端（含 docs/docs/ 架构文档与 superpowers 草稿）
+docs/
 
 # Claude Code
 CLAUDE.md

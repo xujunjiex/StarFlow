@@ -306,7 +306,6 @@ app/src/main/java/
 - `translationapi/` 是历史遗留的独立顶层包（不在 `com.moe.starflow` 下）：JNI 符号与 proguard keep 规则硬编码该包名，直接移动会导致 `UnsatisfiedLinkError`
 - 原生代码：`app/src/main/cpp/`（CMake 构建）
 - 测试：`app/src/test/java/`（JUnit + Robolectric，与主源码同包名子目录）
-- 详细架构见 [`docs/docs/ARCHITECTURE.md`](docs/docs/ARCHITECTURE.md)（设计与踩坑记录见 `CLAUDE.md`）
 
 ---
 
