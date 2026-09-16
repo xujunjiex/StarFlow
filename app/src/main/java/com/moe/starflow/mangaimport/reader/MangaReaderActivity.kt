@@ -20,6 +20,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.LinearSmoothScroller
@@ -231,6 +232,11 @@ class MangaReaderActivity : AppCompatActivity() {
     // ===== 分页 / Webtoon 切换 =====
 
     private fun applyPager() {
+        // 重建分页器（含 Webtoon ↔ 翻页互切）后，尺寸变化前记下的那一页已无意义：
+        // ⚠️ Webtoon 下 viewPager 是 GONE → 它的布局回调**永远不触发** → realignPagerAfterResize
+        // 拿不到机会清空，pendingRealignPage 会一直武装着；等用户切回左右/竖排时 viewPager
+        // 首次布局就命中「有 old 尺寸」的分支 → 把阅读位置拽回旋转时那一页，还会写回 lastReadPage
+        pendingRealignPage = -1
         if (mode == 3) {
             // Webtoon：连续竖滚列表（无翻页动画/自动翻页，滚动即翻页）
             binding.webtoonList.adapter = WebtoonAdapter(source) { colorFilter }.also { a ->
@@ -337,8 +343,11 @@ class MangaReaderActivity : AppCompatActivity() {
         val rv = binding.viewPager.getChildAt(0) as? RecyclerView ?: return
         rv.scrollToPosition(target)
         // 上面那次重排若让 ViewPager2 派发了 onPageSelected，currentPage 会漂到别页 → 拉回来
+        // （与 onPageSelected 相同的副作用集合：断点续读 / 队列窗口 / 页码；无动画模式的锚点也要同步）
         if (currentPage != target) {
             currentPage = target
+            if (animationMode == 0) animState.anchorPage = target
+            lastTranslateClickMs = 0L
             ImportedMangaStore.update(applicationContext, manga.copy(lastReadPage = target))
             translationController?.onCurrentPageChanged()
             refreshOverlay()
@@ -478,6 +487,10 @@ class MangaReaderActivity : AppCompatActivity() {
 
     /** 淡出并在结束后置 GONE —— ⚠️ 只把 alpha 打到 0 的话控件**仍然可点**（会误触到看不见的按钮）。 */
     private fun fadeOutChrome(v: View) {
+        // 淡出的 160ms 里控件还在屏上（alpha 渐到 0），期间点上去仍会触发返回/菜单/翻译 ——
+        // 必须**立刻**关掉可交互（GONE 要等动画结束才设得上）。禁用后可点控件只吞事件不响应，
+        // 所以这段窗口最多丢一次点击，不会误触发任何动作。
+        setChromeInteractive(v, false)
         v.animate().cancel()
         v.animate().alpha(0f).setDuration(CHROME_FADE_MS)
             // 动画被新动画打断时 end action 也会跑，用「已确实淡到 0」兜住，避免提前 GONE
@@ -489,7 +502,18 @@ class MangaReaderActivity : AppCompatActivity() {
         v.animate().cancel()
         v.alpha = 0f
         v.visibility = View.VISIBLE
+        setChromeInteractive(v, true)
         v.animate().alpha(1f).setDuration(CHROME_FADE_MS).start()
+    }
+
+    /**
+     * 递归开关整棵子树的 `isEnabled`（含 SubView 上的可点控件：返回/菜单在 FrameLayout 里，
+     * 上一页/下一页与三个翻译按钮是各容器里的叶子）。禁用而不是改 `isClickable`：恢复时把
+     * clickable 一律置 true 会让原本**不可点**的层开始吞事件，反而挡住底下翻页器的手势。
+     */
+    private fun setChromeInteractive(v: View, interactive: Boolean) {
+        v.isEnabled = interactive
+        if (v is ViewGroup) for (i in 0 until v.childCount) setChromeInteractive(v.getChildAt(i), interactive)
     }
 
     private fun onInteraction() {
@@ -507,6 +531,8 @@ class MangaReaderActivity : AppCompatActivity() {
 
     private fun goToPage(page: Int) {
         val p = page.coerceIn(0, (source.size - 1).coerceAtLeast(0))
+        // 显式跳页后，尺寸变化前记下的「待对齐页」已过期（见 realignPagerAfterResize）
+        pendingRealignPage = -1
         if (mode == 3) {
             // Webtoon：定位到顶部（scrollToPosition 不保证贴顶）
             (binding.webtoonList.layoutManager as? LinearLayoutManager)?.scrollToPositionWithOffset(p, 0)
@@ -1136,57 +1162,99 @@ class MangaReaderActivity : AppCompatActivity() {
             val tmp = File(cacheDir, "manga_export_${System.currentTimeMillis()}.zip")
             val overlay = TranslationStatusOverlay.getInstance(this@MangaReaderActivity)
             val showProgress = statusOverlayEnabled()
-            if (showProgress) {
+            // 进度只在**前台**显示：状态浮层是进程级 TYPE_APPLICATION_OVERLAY 窗口，而导出是
+            // lifecycleScope 上**跨 onStop 继续跑**的任务（翻译队列 onStop 会暂停，导出不会）——
+            // 不在前台还继续 showImmediate，就会把「正在导出」芯片重新贴到别的应用上挂到导出结束。
+            fun progressVisible() = showProgress && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+            if (progressVisible()) {
                 overlay.showImmediate(getString(R.string.reader_download_progress, 0, total), autoDismiss = false)
             }
-            val ok = ReaderExport.exportTranslated(source, controller, both, tmp) { done, sum ->
-                if (showProgress) {
-                    overlay.showImmediate(getString(R.string.reader_download_progress, done, sum), autoDismiss = false)
+            try {
+                val outcome = ReaderExport.exportTranslated(
+                    source = source,
+                    controller = controller,
+                    both = both,
+                    // 后缀随界面语言（中文 `_译文` / 英文 `_translated`），不在导出层硬编码
+                    translatedSuffix = getString(R.string.reader_export_suffix_translated),
+                    tempFile = tmp,
+                ) { done, sum ->
+                    if (progressVisible()) {
+                        overlay.showImmediate(getString(R.string.reader_download_progress, done, sum), autoDismiss = false)
+                    }
                 }
-            }
-            overlay.dismiss()
-            if (!ok) {
+                // ⚠️ 只在自己显示过时才 dismiss：浮层是共享单例且 dismiss() 清空**全部**堆叠消息，
+                // 开关关闭时只会误伤同时在显示的翻译状态芯片
+                if (showProgress) overlay.dismiss()
+                UiUtils.showToast(this@MangaReaderActivity, exportMessage(outcome, both, tmp))
+            } finally {
+                // ⚠️ 清理必须在 finally：导出中途退出阅读器会取消 lifecycleScope，上面所有
+                // delete 都跑不到 —— 几百 MB 的临时包会一直躺在 cacheDir 里没人清
                 tmp.delete()
-                UiUtils.showToast(this@MangaReaderActivity, getString(R.string.reader_download_failed))
-                return@launch
             }
-            val display = displayNameFor(both)
-            val saved = withContext(Dispatchers.IO) { writeToDownloads(display, tmp) }
-            tmp.delete()
-            UiUtils.showToast(this@MangaReaderActivity,
-                if (saved) getString(R.string.reader_download_done, display)
-                else getString(R.string.reader_download_failed))
         }
     }
 
-    /** 下载文件名（书名已过滤掉文件名非法字符）——与原文包同一命名风格。 */
-    private fun displayNameFor(both: Boolean): String =
-        safeTitle() + if (both) "-双语.zip" else "-译文.zip"
-
-    /** 书名取出用于文件名：过滤 `\ / : * ? " < > |`（Windows/Android 都不允许）。 */
-    private fun safeTitle(): String = manga.title.replace(Regex("[\\\\/:*?\"<>|]"), "_")
-
-    private fun exportOriginalZip(): String? = try {
-        val display = safeTitle() + "-原文.zip"
-        val tmp = File(cacheDir, "manga_export_${System.currentTimeMillis()}.zip")
-        if (manga.isArchive) {
-            File(manga.localRoot).inputStream().use { i -> FileOutputStream(tmp).use { o -> i.copyTo(o) } }
-        } else {
-            ZipOutputStream(FileOutputStream(tmp)).use { zip ->
-                for (i in 0 until source.size) {
-                    val key = source.key(i) ?: continue
-                    val file = File(manga.localRoot, key); if (!file.isFile) continue
-                    zip.putNextEntry(java.util.zip.ZipEntry(key.substringAfterLast('/')))
-                    file.inputStream().use { it.copyTo(zip) }
-                    zip.closeEntry()
+    /** 导出结束后的用户可见结果：区分「没得导」「失败」「成功但跳过了页」。 */
+    private suspend fun exportMessage(outcome: ExportOutcome, both: Boolean, tmp: File): String = when (outcome) {
+        ExportOutcome.Empty -> getString(R.string.reader_download_nothing)
+        ExportOutcome.Failed -> getString(R.string.reader_download_failed)
+        is ExportOutcome.Done -> {
+            if (outcome.written == 0) {
+                // 一页都没成功 → 不能把空包当成功交付（跳过的页已在日志里）
+                getString(R.string.reader_download_failed)
+            } else {
+                val display = displayNameFor(both)
+                val saved = withContext(Dispatchers.IO) { writeToDownloads(display, tmp) }
+                when {
+                    !saved -> getString(R.string.reader_download_failed)
+                    // 跳过的页必须说出来：包不完整时用户得知道
+                    outcome.skipped > 0 -> getString(R.string.reader_download_done_skipped, display, outcome.skipped)
+                    else -> getString(R.string.reader_download_done, display)
                 }
             }
         }
-        val ok = writeToDownloads(display, tmp)
-        tmp.delete()
-        if (ok) display else null
-    } catch (e: Exception) {
-        null
+    }
+
+    /** 下载文件名：书名（已过滤非法字符）+ 后缀（后缀随界面语言，见 strings）。 */
+    private fun displayNameFor(both: Boolean): String = safeTitle() + getString(
+        if (both) R.string.reader_export_zip_suffix_both else R.string.reader_export_zip_suffix_translated
+    )
+
+    /**
+     * 书名取出用于文件名：过滤 `\ / : * ? " < > |` 与**控制字符**（换行/制表符同样非法），
+     * 结果为空时给个兜底名 —— MediaStore 对非法 DISPLAY_NAME 会直接抛异常，表现为「导出失败」。
+     */
+    private fun safeTitle(): String =
+        manga.title.replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "_").ifBlank { "manga" }
+
+    private fun exportOriginalZip(): String? {
+        val display = safeTitle() + getString(R.string.reader_export_zip_suffix_original)
+        val tmp = File(cacheDir, "manga_export_${System.currentTimeMillis()}.zip")
+        return try {
+            if (manga.isArchive) {
+                File(manga.localRoot).inputStream().use { i -> FileOutputStream(tmp).use { o -> i.copyTo(o) } }
+            } else {
+                ZipOutputStream(FileOutputStream(tmp)).use { zip ->
+                    for (i in 0 until source.size) {
+                        val key = source.key(i) ?: continue
+                        val file = File(manga.localRoot, key); if (!file.isFile) continue
+                        // ⚠️ 用**原 key**（含子目录）而不是扁平化成文件名：目录导入的子目录漫画
+                        // ch1/001.jpg 与 ch2/001.jpg 拍平后会撞名，ZipOutputStream 直接抛
+                        // duplicate entry → 整包导出失败（与 ReaderExport 的规则保持一致）
+                        zip.putNextEntry(java.util.zip.ZipEntry(key))
+                        file.inputStream().use { it.copyTo(zip) }
+                        zip.closeEntry()
+                    }
+                }
+            }
+            val ok = writeToDownloads(display, tmp)
+            if (ok) display else null
+        } catch (e: Exception) {
+            LogCollector.e("MangaReader", "exportOriginalZip failed tmp=$tmp", e)
+            null
+        } finally {
+            tmp.delete()
+        }
     }
 
     private fun writeToDownloads(displayName: String, file: File): Boolean {
@@ -1195,10 +1263,21 @@ class MangaReaderActivity : AppCompatActivity() {
             put(MediaStore.Downloads.MIME_TYPE, "application/zip")
             put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
         }
-        val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+        var uri: Uri? = null
         return try {
-            uri?.let { contentResolver.openOutputStream(it)?.use { o -> file.inputStream().use { s -> s.copyTo(o) } } != null } ?: false
+            // ⚠️ insert 也必须在 try 里：MediaProvider 不可用（存储未挂载/受限）会抛
+            // SecurityException / IllegalArgumentException，而本方法由协程直接调用 ——
+            // 抛出去就是未捕获异常 → 进程崩溃
+            uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            val ok = uri?.let {
+                contentResolver.openOutputStream(it)?.use { o -> file.inputStream().use { s -> s.copyTo(o) } } != null
+            } ?: false
+            // 写失败要把 MediaStore 里的空行删掉，否则下载目录留一个 0 字节的「已导出」幽灵文件
+            if (!ok) uri?.let { runCatching { contentResolver.delete(it, null, null) } }
+            ok
         } catch (e: Exception) {
+            LogCollector.e("MangaReader", "writeToDownloads failed name=$displayName", e)
+            uri?.let { runCatching { contentResolver.delete(it, null, null) } }
             false
         }
     }

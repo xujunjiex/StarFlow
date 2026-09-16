@@ -944,9 +944,15 @@
     <string name="reader_download_started">正在导出…</string>
     <string name="reader_download_progress">正在导出 %1$d/%2$d…</string>
     <string name="reader_download_done">已保存到下载目录：%1$s</string>
+    <string name="reader_download_done_skipped">已保存到下载目录：%1$s（%2$d 页跳过）</string>
     <string name="reader_download_failed">导出失败</string>
     <string name="reader_download_nothing">还没有已翻译的页面</string>
     <string name="reader_download_busy">正在导出中，请稍候</string>
+    <!-- 导出文件名后缀：随界面语言，不要硬编码进代码 -->
+    <string name="reader_export_suffix_translated">_译文</string>
+    <string name="reader_export_zip_suffix_original">-原文.zip</string>
+    <string name="reader_export_zip_suffix_translated">-译文.zip</string>
+    <string name="reader_export_zip_suffix_both">-双语.zip</string>
     <string name="reader_color_title">颜色矫正</string>
     <string name="reader_color_custom">自定义</string>
     <string name="reader_brightness">亮度</string>

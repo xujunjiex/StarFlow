@@ -1027,14 +1027,20 @@
     <string name="reader_download_translated">Translated</string>
     <string name="reader_download_translated_hint">Translated pages only, keeping the original numbering (JPEG)</string>
     <string name="reader_download_both">Both</string>
-    <string name="reader_download_both_hint">Originals + translations in one zip (translations get a _译文 suffix)</string>
+    <string name="reader_download_both_hint">Originals + translations in one zip (translations get a _translated suffix)</string>
     <string name="reader_download_dialog">Download manga</string>
     <string name="reader_download_started">Exporting…</string>
     <string name="reader_download_progress">Exporting %1$d/%2$d…</string>
     <string name="reader_download_done">Saved to Downloads: %1$s</string>
+    <string name="reader_download_done_skipped">Saved to Downloads: %1$s (%2$d pages skipped)</string>
     <string name="reader_download_failed">Export failed</string>
     <string name="reader_download_nothing">No translated pages yet</string>
     <string name="reader_download_busy">Export already running</string>
+    <!-- 导出文件名后缀：随界面语言，不要硬编码进代码 -->
+    <string name="reader_export_suffix_translated">_translated</string>
+    <string name="reader_export_zip_suffix_original">-original.zip</string>
+    <string name="reader_export_zip_suffix_translated">-translated.zip</string>
+    <string name="reader_export_zip_suffix_both">-bilingual.zip</string>
     <string name="reader_color_title">Color correction</string>
     <string name="reader_color_custom">Custom</string>
     <string name="reader_brightness">Brightness</string>
