@@ -209,7 +209,7 @@
 
 | 项 | 版本 | 说明 |
 |----|------|------|
-| JDK | **17** | Gradle 与 AGP 要求；`JAVA_HOME` 指过去即可（Temurin / Microsoft 都行） |
+| JDK | **17** | Gradle 与 AGP 要求；任意 JDK 17 发行版（Temurin / Zulu / Microsoft 等）都可以 |
 | Android SDK | compileSdk 35 / targetSdk 35（minSdk 29） | 路径写在 `local.properties` |
 | **NDK** | **25.2.9519653** | 原生代码必需，**版本必须完全一致**（`app/build.gradle` 里写死） |
 | CMake | 3.22.1 | 在 SDK Manager 里勾选安装 |
@@ -217,16 +217,17 @@
 
 ### 首次配置
 
-1. **`local.properties`**（已 gitignore，路径用正斜杠）：
+1. **`local.properties`**（已 gitignore，指向你自己的 Android SDK，路径用正斜杠）：
    ```properties
+   # Windows
    sdk.dir=C:/Users/<username>/AppData/Local/Android/Sdk
+   # macOS
+   sdk.dir=/Users/<username>/Library/Android/sdk
+   # Linux
+   sdk.dir=/home/<username>/Android/Sdk
    ```
 2. **SDK Manager** 里装 `NDK 25.2.9519653` + `CMake 3.22.1`（版本不对会直接构建失败）
-3. **国内网络**：Gradle 拉依赖慢或失败时给 git 配代理（用 Cloudflare WARP 时**不要**设代理）
-   ```bash
-   git config --global http.proxy http://127.0.0.1:7897   # Clash
-   ```
-4. 验证：`./gradlew assembleDebug`
+3. 验证：`./gradlew assembleDebug`
 
 ### 常用命令
 
@@ -240,7 +241,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb logcat --pid=$(adb shell pidof com.moe.starflow)      # 实时日志
 ```
 
-Windows 下 `adb` 建议用完整路径：
+`adb` 未加入 PATH 时用完整路径，例如 Windows：
 
 ```powershell
 & "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" install -r app\build\outputs\apk\debug\app-debug.apk
@@ -250,17 +251,19 @@ Windows 下 `adb` 建议用完整路径：
 
 ### 单元测试
 
-⚠️ **Git Bash 里直接跑 `./gradlew test` 会挂** —— Git Bash 会弄乱 `PATH`，test worker 抛
-`ClassNotFoundException: Files\Git\mingw64\bin;...`。用 PowerShell + 干净 PATH：
+⚠️ **Windows + Git Bash 里直接跑 `./gradlew test` 会挂** —— Git Bash 会弄乱 `PATH`，test worker 抛
+`ClassNotFoundException: Files\Git\mingw64\bin;...`。改用 PowerShell + 干净 PATH（`JAVA_HOME` 指向你自己的 JDK 17）：
 
 ```powershell
-$env:JAVA_HOME='C:\Program Files\Microsoft\jdk-17.0.19.10-hotspot'   # 换成本机 JDK 17 路径
+$env:JAVA_HOME='C:\Program Files\Java\jdk-17'
 $env:PATH='C:\Windows\System32;C:\Windows;'+$env:JAVA_HOME+'\bin'
 .\gradlew.bat --no-daemon :app:testDebugUnitTest
 
 # 只跑一个类
 .\gradlew.bat --no-daemon :app:testDebugUnitTest --tests com.moe.starflow.mangaimport.reader.ExportNamingTest
 ```
+
+Linux / macOS 直接 `./gradlew test` 即可。
 
 Robolectric 的 SDK 统一配在 `app/src/test/resources/robolectric.properties`（`sdk=34`，因为 Robolectric 4.11 最高支持 targetSdk 34；项目是 35，不配会在初始化直接报错）。
 
