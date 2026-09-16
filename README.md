@@ -320,6 +320,7 @@ app/src/main/java/
 - [RT-DETR](https://github.com/lyuwenyu/RT-DETR) — 实时目标检测 Transformer
 - [manga-ocr](https://github.com/kha-white/manga-ocr) — 日漫竖排文字 OCR
 - [manga-image-translator](https://github.com/zyddnys/manga-image-translator) — 漫画图片翻译
+- [Kototoro](https://github.com/Kototoro-app/Kototoro) — 漫画阅读器（阅读模式 / 翻页动画 / 页脚卷曲 / 进度条 / 点击分区）
 - [pixelmatch](https://github.com/mapbox/pixelmatch) — YIQ 感知像素比较
 - [ONNX Runtime](https://onnxruntime.ai/) — 模型推理引擎
 - [JTS](https://locationtech.github.io/jts/) — 多边形几何运算
