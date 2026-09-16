@@ -133,6 +133,7 @@
 **AI 大模型接口：**
 - 内置 DeepSeek、通义千问、豆包（火山）、智谱 GLM 等国内主流大模型接口
 - 支持自定义 OpenAI 兼容 API（填地址 + Key + 模型名即可）
+- 「获取模型列表」一键拉取账号可用模型（内置厂商同样支持；DeepSeek 与通义千问不预置模型，按需拉取）
 - 游戏/漫画提示词独立配置，AI 上下文携带历史翻译对提升连贯性
 - 友好的 API 配置页面，支持快速选择模型和填入 Key
 
@@ -184,7 +185,8 @@
 ### 其他功能
 
 - **首次启动引导** — 权限申请 + API 配置引导
-- **悬浮窗个性化** — 手势自定义（单击/双击/长按）、可穿透性、长按延迟、字体大小背景
+- **深色模式** — 跟随系统 / 浅色 / 暗色三态切换（主页右上角），全 app 界面与弹窗配色适配；阅读器与翻译结果悬浮窗保持自身配色
+- **悬浮窗个性化** — 手势自定义（单击/双击/长按）、可穿透性、长按延迟、字体大小背景、UI 同步字体
 - **检查更新** — GitHub Releases 自动检测，支持直接下载 / 百度网盘 / 夸克网盘
 - **应用内公告** — 开发者通过 Gist 推送公告，启动时自动检查
 - **FAQ 页面** — 常见问题解答，含 PP-OCRv5 调试面板参数详解
@@ -197,7 +199,7 @@
 
 | 方式 | 链接 |
 |------|------|
-| GitHub Releases | [最新版本 v0.10.5](https://github.com/xujunjiex/StarFlow/releases/tag/v0.10.5) |
+| GitHub Releases | [最新版本 v0.11.0](https://github.com/xujunjiex/StarFlow/releases/tag/v0.11.0) |
 | 百度网盘 | https://pan.baidu.com/s/1Zi-o2mHhgJEqhk8UzxRoSA?pwd=star |
 | 夸克网盘 | https://pan.quark.cn/s/cbac92882d82?pwd=E9P8 |
 
