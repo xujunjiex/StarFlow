@@ -310,13 +310,6 @@ app/src/main/java/
 
 ---
 
-## 后续计划
-
-- **整本批量翻译** —— 后台一次性翻完整本（当前阅读器是「翻到哪翻哪」的按需翻译）
-- 更多本地离线翻译模型支持（NLLB 之外的语种扩展）
-
----
-
 ## 致谢
 
 本项目 forked 自 [MoeTranslate](https://github.com/murangogo/MoeTranslate)。
