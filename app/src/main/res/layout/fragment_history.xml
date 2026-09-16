@@ -56,14 +56,32 @@
             android:contentDescription="Settings" />
     </LinearLayout>
 
-    <!-- 视图模式 Tab 和引擎选择器 -->
-    <com.google.android.material.tabs.TabLayout
-        android:id="@+id/viewModeTabLayout"
+    <!-- 视图模式 Tab（右侧 ⓘ 说明排序方式）和引擎选择器 -->
+    <LinearLayout
+        android:id="@+id/viewModeBarLayout"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:background="?android:colorBackground"
-        app:tabMode="fixed"
-        app:tabGravity="fill" />
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="?android:colorBackground">
+
+        <com.google.android.material.tabs.TabLayout
+            android:id="@+id/viewModeTabLayout"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            app:tabMode="fixed"
+            app:tabGravity="fill" />
+
+        <ImageButton
+            android:id="@+id/btnViewModeSortInfo"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginEnd="8dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_param_info"
+            android:contentDescription="@string/history_sort_info_title" />
+    </LinearLayout>
 
     <LinearLayout
         android:id="@+id/engineSelectorLayout"

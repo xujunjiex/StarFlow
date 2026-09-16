@@ -284,6 +284,22 @@ class HistoryFragment : Fragment() {
             override fun onTabUnselected(tab: TabLayout.Tab?) {}
             override fun onTabReselected(tab: TabLayout.Tab?) {}
         })
+
+        // ⓘ 排序方式说明
+        binding.btnViewModeSortInfo.setOnClickListener { showSortInfoDialog() }
+    }
+
+    /**
+     * 说明「默认视图」与「管理视图」各自的排序/分组依据。
+     * 与 getHistoryGrouped 的实现保持一致：默认视图按 updatedAt，管理视图按 createdAt + sessionId。
+     */
+    private fun showSortInfoDialog() {
+        showDarkDialog(
+            title = getString(R.string.history_sort_info_title),
+            message = getString(R.string.history_sort_info_default) + "\n\n" +
+                getString(R.string.history_sort_info_manage),
+            positiveText = getString(R.string.confirm)
+        )
     }
 
     // 引擎选择已移入设置弹窗，不再在主界面显示
@@ -299,7 +315,7 @@ class HistoryFragment : Fragment() {
         currentTab = tab
         // Game tab: hide view mode switching and engine selector
         val isManga = tab == TranslationCacheManager.MODE_MANGA
-        binding.viewModeTabLayout.visibility = if (isManga) View.VISIBLE else View.GONE
+        binding.viewModeBarLayout.visibility = if (isManga) View.VISIBLE else View.GONE
         if (!isManga) {
             binding.engineSelectorLayout.visibility = View.GONE
         }
