@@ -10,6 +10,7 @@
     app:strokeWidth="0dp">
 
     <LinearLayout
+        android:id="@+id/model_popup_content"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:orientation="vertical"
@@ -36,19 +37,49 @@
             android:layout_marginEnd="12dp"
             android:background="@color/divider" />
 
-        <TextView
-            android:id="@+id/btn_add_custom"
+        <!-- 两个入口同一行：手动添加 / 从服务端拉取（后者仅 supportsModelFetch 的厂商可见）
+             ⚠️ 这一行必须给**确定高度**：行内分隔线用了 layout_height="match_parent"，
+             若本行是 wrap_content，横向 LinearLayout 会把 match_parent 解析成「可用高度」
+             （≈屏幕高）→ 按钮下方撑出一大片空白。 -->
+        <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:paddingTop="14dp"
-            android:paddingBottom="14dp"
-            android:gravity="center"
-            android:text="@string/add_custom_model"
-            android:textColor="@color/primary"
-            android:textSize="15sp"
-            android:background="@drawable/ripple_item_bg"
-            android:clickable="true"
-            android:focusable="true" />
+            android:layout_height="48dp"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/btn_add_custom"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="@string/add_custom_model"
+                android:textColor="@color/primary"
+                android:textSize="15sp"
+                android:background="@drawable/ripple_item_bg"
+                android:clickable="true"
+                android:focusable="true" />
+
+            <View
+                android:layout_width="1dp"
+                android:layout_height="match_parent"
+                android:layout_marginTop="10dp"
+                android:layout_marginBottom="10dp"
+                android:background="@color/divider" />
+
+            <TextView
+                android:id="@+id/btn_fetch_models"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="@string/fetch_model_list"
+                android:textColor="@color/primary"
+                android:textSize="15sp"
+                android:background="@drawable/ripple_item_bg"
+                android:clickable="true"
+                android:focusable="true"
+                android:visibility="gone" />
+        </LinearLayout>
     </LinearLayout>
 
 </com.google.android.material.card.MaterialCardView>

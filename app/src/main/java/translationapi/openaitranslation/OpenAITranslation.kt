@@ -61,6 +61,8 @@ class OpenAITranslation(
     companion object {
         private const val TAG = "OpenAITranslation"
         private const val SOCKET_TIMEOUT = 90L // 90秒，AI接口（尤其第三方代理）冷启动/长文本响应偶尔超过 30s
+        /** 列表接口超时：只查元数据，够不到基本就是网络/key 不通，早失败早反馈 */
+        private const val MODELS_TIMEOUT = 15L
     }
 
     // 上下文相关（动态更新，每次翻译前通过 updateContext 设置）
@@ -86,6 +88,16 @@ class OpenAITranslation(
         .connectTimeout(SOCKET_TIMEOUT, TimeUnit.SECONDS)
         .readTimeout(SOCKET_TIMEOUT, TimeUnit.SECONDS)
         .writeTimeout(SOCKET_TIMEOUT, TimeUnit.SECONDS)
+        .build()
+
+    /**
+     * 「获取模型列表」专用客户端：共享 [client] 的连接池与线程池，只是超时短得多。
+     * 用 90s 的话网络不通时按钮会卡在「获取中…」一分半，用户以为死机了。
+     */
+    private val modelsClient = client.newBuilder()
+        .connectTimeout(MODELS_TIMEOUT, TimeUnit.SECONDS)
+        .readTimeout(MODELS_TIMEOUT, TimeUnit.SECONDS)
+        .writeTimeout(MODELS_TIMEOUT, TimeUnit.SECONDS)
         .build()
 
     override fun getTranslation(
@@ -319,20 +331,23 @@ class OpenAITranslation(
      */
     fun getSupportedModels(callback: (List<String>?, String?) -> Unit) {
         coroutineScope.launch {
+            val url = "$baseUrl/models"
             try {
+                // 打 apiKey 长度而不是内容：401 排查时"key 是不是空的/是不是被截断"是最常见原因
+                LogCollector.d(TAG, "获取模型列表: GET $url（apiKey 长度=${apiKey.length}）")
                 val request = Request.Builder()
-                    .url("$baseUrl/models")
+                    .url(url)
                     .get()
                     .addHeader("Authorization", "Bearer $apiKey")
                     .build()
 
-                client.newCall(request).execute().use { response ->
+                modelsClient.newCall(request).execute().use { response ->
+                    val responseBody = response.body?.string().orEmpty()
                     if (!response.isSuccessful) {
-                        throw IOException("Failed to get models: ${response.code}")
+                        val detail = extractServerError(responseBody, response.code)
+                        LogCollector.e(TAG, "获取模型列表失败 $detail")
+                        throw IOException(detail)
                     }
-
-                    val responseBody = response.body?.string()
-                        ?: throw IOException("Empty response")
 
                     val jsonObject = JSONObject(responseBody)
                     val data = jsonObject.getJSONArray("data")
@@ -343,15 +358,38 @@ class OpenAITranslation(
                         models.add(model.getString("id"))
                     }
 
+                    LogCollector.d(TAG, "获取模型列表成功: ${models.size} 个")
                     withContext(Dispatchers.Main) {
                         callback(models, null)
                     }
                 }
             } catch (e: Exception) {
+                LogCollector.e(TAG, "获取模型列表异常: $url", e)
                 withContext(Dispatchers.Main) {
                     callback(null, e.message)
                 }
             }
+        }
+    }
+
+    /**
+     * 从错误响应里取一句能直接展示给用户的说明。
+     *
+     * OpenAI 兼容格式是 `{"error":{"message":"..."}}` —— 服务端那句话本身最有用
+     * （如 DeepSeek 的 "Authentication Fails, Your api key: xxx is invalid"），
+     * 直接把原始 JSON 丢给用户既难看又难读。取不到才退回状态码 + 响应体片段。
+     */
+    private fun extractServerError(body: String, code: Int): String {
+        val message = try {
+            JSONObject(body).optJSONObject("error")?.optString("message").orEmpty()
+        } catch (e: Exception) {
+            ""   // 响应体不是 JSON（网关/代理返回的 HTML 等）
+        }
+        return when {
+            message.isNotBlank() && (code == 401 || code == 403) ->
+                "HTTP $code 未授权（API Key 无效）：$message"
+            message.isNotBlank() -> "HTTP $code：$message"
+            else -> "HTTP $code：${body.take(200)}"
         }
     }
 }

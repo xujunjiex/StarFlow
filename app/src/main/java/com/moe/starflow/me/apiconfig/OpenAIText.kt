@@ -29,11 +29,16 @@ import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Bundle
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ArrayAdapter
+import android.widget.CheckBox
 import android.widget.EditText
+import android.widget.ListView
 import java.util.concurrent.atomic.AtomicBoolean
 import android.widget.PopupWindow
 import android.widget.TextView
@@ -45,6 +50,7 @@ import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.LogCollector
 import com.moe.starflow.utils.UiUtils
 import kotlinx.coroutines.launch
+import translationapi.openaitranslation.OpenAITranslation
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 
@@ -359,7 +365,8 @@ class OpenAIText :Fragment() {
         val initialCustoms = ConfigurationStorage.loadBuiltInProviderMods(prefs)
             .find { it.name == provider.name }?.customModels ?: emptyList()
         val initialDisplay = provider.models + initialCustoms
-        binding.modelSelector.text = initialDisplay.getOrElse(selectedModelIndex) { initialDisplay[0] }
+        binding.modelSelector.text = initialDisplay.getOrNull(selectedModelIndex)
+            ?: getString(R.string.model_none_selected)
         // 关键：每次点击都从 prefs 重新读取 customModels（否则闭包会持有旧 list，
         // 添加/删除自定义模型后再次打开 popup 会看不到最新列表）
         binding.modelSelector.setOnClickListener { anchor ->
@@ -483,8 +490,18 @@ class OpenAIText :Fragment() {
         val popupView = LayoutInflater.from(context).inflate(R.layout.popup_model_selector, null)
         val container = popupView.findViewById<android.widget.LinearLayout>(R.id.model_list_container)
         val btnAddCustom = popupView.findViewById<TextView>(R.id.btn_add_custom)
+        val btnFetchModels = popupView.findViewById<TextView>(R.id.btn_fetch_models)
 
-        val freeModels = setOf("glm-4-flash-250414")
+        // 「获取模型列表」只对不预置模型的厂商显示（DeepSeek）；两个按钮同行，需要更宽才放得下
+        if (provider.supportsModelFetch) {
+            btnFetchModels.visibility = View.VISIBLE
+            popupView.findViewById<android.widget.LinearLayout>(R.id.model_popup_content)
+                .minimumWidth = (300 * density).toInt()
+        }
+
+        // 模型标注（如「免费·文本」）来自 provider.modelLabels，不要在这里硬编码模型名 ——
+        // 内置列表改了（改版本/加减模型）硬编码就会静默失效
+        val modelLabels = provider.modelLabels
         val presetSize = provider.models.size
 
         // 用可变 List 容器持有「当前展示列表」，方便添加 / 删除后整体重画
@@ -494,10 +511,20 @@ class OpenAIText :Fragment() {
 
         fun refreshItems() {
             container.removeAllViews()
+            // 不预置模型的厂商（DeepSeek）初始列表是空的 —— 给一行提示，两个入口照常可点
+            if (displayModelsState.isEmpty()) {
+                container.addView(TextView(context).apply {
+                    text = context.getString(R.string.model_list_empty_hint)
+                    textSize = 13f
+                    setTextColor(androidx.core.content.ContextCompat.getColor(context, R.color.text_secondary))
+                    gravity = android.view.Gravity.CENTER
+                    setPadding(0, (16 * density).toInt(), 0, (16 * density).toInt())
+                })
+            }
             displayModelsState.forEachIndexed { index, model ->
                 val isSelected = index == selectedModelIndex
                 val isCustom = index >= presetSize
-                val displayName = if (model in freeModels) "$model（免费）" else model
+                val displayName = modelLabels[model]?.let { "$model（$it）" } ?: model
 
                 if (!isCustom) {
                     // ===== 预设条目：纯文本 =====
@@ -700,6 +727,57 @@ class OpenAIText :Fragment() {
             )
         }
 
+        // 「获取模型列表」：用编辑框里**当前**的 key 调 GET {baseUrl}/models，勾选后加入模型列表
+        btnFetchModels.setOnClickListener {
+            val apiKey = binding.editApiKey.text.toString().trim()
+            if (apiKey.isBlank()) {
+                UiUtils.showToast(requireContext(), getString(R.string.model_fetch_need_api_key), isShort = true)
+                return@setOnClickListener
+            }
+            // 立刻给反馈：按钮就地变「获取中…」并禁用。用户的眼睛就在按钮上，
+            // 这是最直接的进度提示 —— 不要用 TranslationStatusOverlay，
+            // 那是 TYPE_APPLICATION_OVERLAY 系统窗口，配置页未必有悬浮窗权限，会静默不显示。
+            val fetchBtnText = btnFetchModels.text
+            btnFetchModels.isEnabled = false
+            btnFetchModels.text = getString(R.string.model_fetching)
+
+            OpenAITranslation(
+                apiKey = apiKey,
+                baseUrl = provider.baseUrl,
+                model = "",
+                systemPrompt = "",
+                userPrompt = ""
+            ).getSupportedModels { fetched, error ->
+                // 先无条件复原按钮，再做后续判断，避免任何提前 return 让按钮卡在「获取中…」
+                btnFetchModels.isEnabled = true
+                btnFetchModels.text = fetchBtnText
+                if (!isAdded) return@getSupportedModels
+                when {
+                    error != null -> UiUtils.showToast(
+                        requireContext(),
+                        getString(R.string.model_fetch_failed, error),
+                        isShort = false
+                    )
+                    fetched.isNullOrEmpty() -> UiUtils.showToast(
+                        requireContext(),
+                        getString(R.string.model_fetch_empty),
+                        isShort = true
+                    )
+                    else -> showFetchedModelsDialog(provider, fetched) {
+                        // 关掉弹窗，用最新的 customModels 重开（与「添加自定义」一致）
+                        popupWindow?.dismiss()
+                        val latest = ConfigurationStorage.loadBuiltInProviderMods(prefs)
+                            .find { it.name == provider.name }?.customModels ?: emptyList()
+                        binding.modelSelector.post {
+                            // post 是延迟执行的，期间 Fragment 视图可能已销毁
+                            if (!isAdded || view == null) return@post
+                            showModelPopup(provider, provider.models + latest, binding.modelSelector)
+                        }
+                    }
+                }
+            }
+        }
+
         val popup = PopupWindow(popupView, ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, true)
         popup.isOutsideTouchable = true
         popup.elevation = 8f * density
@@ -748,7 +826,13 @@ class OpenAIText :Fragment() {
             val customModels = ConfigurationStorage.loadBuiltInProviderMods(prefs)
                 .find { it.name == provider.name }?.customModels ?: emptyList()
             val displayModels = provider.models + customModels
-            modelName = displayModels.getOrElse(selectedModelIndex) { displayModels[0] }
+            // 不预置模型的厂商可能一个模型都没加 —— 拦在这里，不要把空模型名存下去
+            modelName = displayModels.getOrNull(selectedModelIndex) ?: run {
+                UiUtils.showToast(
+                    requireContext(), getString(R.string.model_pick_at_least_one), isShort = true
+                )
+                return
+            }
         } else {
             baseUrl = binding.editBaseUrl.text.toString().trim()
             modelName = binding.editModelName.text.toString().trim()
@@ -898,6 +982,112 @@ class OpenAIText :Fragment() {
      * @param onAdded 校验通过后回调，传入 trim 后的新模型名
      * @param onDismiss dialog 关闭后回调（无论是否成功添加都触发）
      */
+    /**
+     * 从服务端拉到的模型多选弹窗。确认后把勾选项写进 customModels（跳过已在列表里的），再回调 [onDone]。
+     * 一个都没勾时提示而不是静默关闭。
+     */
+    private fun showFetchedModelsDialog(
+        provider: OpenAIProviderConfig,
+        fetched: List<String>,
+        onDone: () -> Unit
+    ) {
+        val density = resources.displayMetrics.density
+        val candidates = fetched.distinct()
+        // 选中态按**模型名**记，不按下标 —— 搜索过滤后下标会变，用下标会串
+        val selected = linkedSetOf<String>()
+
+        val view = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_model_picker, null)
+        val searchInput = view.findViewById<EditText>(R.id.picker_search)
+        val listView = view.findViewById<ListView>(R.id.picker_list)
+        val emptyHint = view.findViewById<TextView>(R.id.picker_empty)
+
+        // ⚠️ ArrayAdapter(context, res, textViewId, objects) **直接持有**传入的 list（源码里 mObjects = objects，
+        // 不做拷贝）。所以必须给它一份拷贝 —— 传 candidates 本身的话，过滤时的 adapter.clear()
+        // 会把 candidates 一并清空，之后列表恒为空、只剩「没有匹配的模型」。
+        val adapter = object : ArrayAdapter<String>(
+            requireContext(), R.layout.item_model_picker, R.id.picker_item_text, candidates.toMutableList()
+        ) {
+            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                val row = super.getView(position, convertView, parent)
+                // 用 getItem 而不是外部变量：adapter 内部容器才是唯一真相
+                row.findViewById<CheckBox>(R.id.picker_item_check).isChecked = getItem(position) in selected
+                return row
+            }
+        }
+        listView.adapter = adapter
+
+        val rowHeightPx = (48 * density).toInt()   // 与 item_model_picker.xml 的行高一致
+        val maxRows = 6
+
+        fun applyFilter(keyword: String) {
+            val kw = keyword.trim()
+            val filtered = if (kw.isEmpty()) candidates
+            else candidates.filter { it.contains(kw, ignoreCase = true) }
+            // clear()/addAll() 各自会触发一次 notifyDataSetChanged（notifyOnChange 默认开），
+            // 加上显式那次就是 3 次重排 / 每次按键 —— 批量期间先关掉，结束再统一通知一次
+            adapter.setNotifyOnChange(false)
+            adapter.clear()
+            adapter.addAll(filtered)
+            adapter.setNotifyOnChange(true)
+            adapter.notifyDataSetChanged()
+            emptyHint.visibility = if (adapter.count == 0) View.VISIBLE else View.GONE
+            // 高度按行数算：wrap_content 会被上百个模型撑爆，android:maxHeight 又不是 View 的属性。
+            // 用 coerceAtMost 而不是 coerceIn(1,..)：列表为空时高度必须是 0，
+            // 否则「没有匹配的模型」上方会多出一条 48dp 的空白。
+            listView.layoutParams = listView.layoutParams.apply {
+                height = adapter.count.coerceAtMost(maxRows) * rowHeightPx
+            }
+        }
+        applyFilter("")
+
+        searchInput.addTextChangedListener(object : TextWatcher {
+            override fun afterTextChanged(s: Editable?) = applyFilter(s?.toString().orEmpty())
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+        })
+
+        listView.setOnItemClickListener { _, _, position, _ ->
+            val model = adapter.getItem(position) ?: return@setOnItemClickListener
+            // Set.add 返回 false 说明已存在 —— 正好用来做切换
+            if (!selected.add(model)) selected.remove(model)
+            adapter.notifyDataSetChanged()
+        }
+
+        val dialog = AlertDialog.Builder(requireContext()).setView(view).create()
+        // 圆角由 dialog_background 提供，窗口本体必须透明，否则四角露出方角底色
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+
+        view.findViewById<TextView>(R.id.picker_cancel).setOnClickListener { dialog.dismiss() }
+        view.findViewById<TextView>(R.id.picker_confirm).setOnClickListener {
+            if (selected.isEmpty()) {
+                UiUtils.showToast(
+                    requireContext(), getString(R.string.model_pick_at_least_one), isShort = true
+                )
+                return@setOnClickListener
+            }
+            val existing = ConfigurationStorage.loadBuiltInProviderMods(prefs)
+                .find { it.name == provider.name }?.customModels ?: emptyList()
+            // 预置列表里的模型不进 customModels，否则展示列表里会出现两条同名项
+            val preset = provider.models.toSet()
+            val merged = (existing + selected.filterNot { it in preset }).distinct()
+            if (merged.size == existing.size) {
+                UiUtils.showToast(
+                    requireContext(), getString(R.string.model_fetch_all_duplicated), isShort = true
+                )
+            } else {
+                persistCustomModels(provider, merged)
+            }
+            dialog.dismiss()
+            onDone()
+        }
+        dialog.show()
+        // 宽度在 show 之后设才生效；上限 420dp，避免平板/横屏下拉成一整条
+        dialog.window?.setLayout(
+            minOf((resources.displayMetrics.widthPixels * 0.88f).toInt(), (420 * density).toInt()),
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+    }
+
     private fun showAddCustomDialog(
         provider: OpenAIProviderConfig,
         existingDisplay: List<String>,

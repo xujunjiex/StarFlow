@@ -198,6 +198,116 @@ class CustomStorageTest {
 
     // ============ 思考模式（thinkingMode） ============
 
+    // ============ 模型名一致性（面板显示 == 引擎实际调用） ============
+    //
+    // `OpenAIProviderConfig` 同时有 modelName 和 models + selectedModelIndex：
+    //   面板显示 models[selectedModelIndex]（OpenAIText）
+    //   引擎调用 modelName（TranslatorFactory）
+    // 两者必须永远一致。内置列表改版后老用户存的 selectedModelIndex 会越界，
+    // 这时**必须把 modelName 与 selectedModelIndex 一起归一** —— 只归一一个的话，
+    // 弹窗里没有任何模型高亮，用户看不到自己实际在跑哪个模型。
+
+    @Test
+    fun outOfRangeSelectedIndex_fallsBackToFirstModel_indexAndNameStayInSync() {
+        // 内置列表改版前存的下标（新列表只有 3 项 → 越界）
+        ConfigurationStorage.saveBuiltInProviderMods(
+            prefs, listOf(BuiltInProviderMod(name = "智谱AI", selectedModelIndex = 3))
+        )
+        val zhipu = ConfigurationStorage.loadAllProviders(prefs).first { it.name == "智谱AI" }
+
+        assertEquals("越界下标必须归一到 0", 0, zhipu.selectedModelIndex)
+        assertEquals("下标必须落在 models 范围内", zhipu.models[zhipu.selectedModelIndex], zhipu.modelName)
+        assertEquals("glm-4-flash-250414", zhipu.modelName)
+    }
+
+    @Test
+    fun inRangeSelectedIndex_isPreservedAndNameMatchesIndex() {
+        ConfigurationStorage.saveBuiltInProviderMods(
+            prefs, listOf(BuiltInProviderMod(name = "智谱AI", selectedModelIndex = 2))
+        )
+        val zhipu = ConfigurationStorage.loadAllProviders(prefs).first { it.name == "智谱AI" }
+
+        assertEquals(2, zhipu.selectedModelIndex)
+        assertEquals("glm-4.7-flash", zhipu.modelName)
+    }
+
+    @Test
+    fun selectedIndexPointingIntoCustomModels_staysConsistent() {
+        ConfigurationStorage.saveBuiltInProviderMods(
+            prefs,
+            listOf(
+                BuiltInProviderMod(
+                    name = "智谱AI",
+                    selectedModelIndex = 3,               // 预设 3 项 → 落进自定义区第一项
+                    customModels = listOf("my-finetune")
+                )
+            )
+        )
+        val zhipu = ConfigurationStorage.loadAllProviders(prefs).first { it.name == "智谱AI" }
+
+        assertEquals(3, zhipu.selectedModelIndex)
+        assertEquals("my-finetune", zhipu.modelName)
+    }
+
+    /**
+     * 全量兜底：任何来源的 provider，`modelName` 必须等于**展示列表**里 selectedModelIndex 指的那一项。
+     *
+     * ⚠️ 展示列表 = `provider.models`（预设）**+** `BuiltInProviderMod.customModels`（自定义）——
+     * 自定义模型不挂在 config 上，所以 `selectedModelIndex` 完全可能 ≥ `models.size`。
+     * 面板（OpenAIText）与引擎（TranslatorFactory→modelName）必须取同一个元素。
+     */
+    @Test
+    fun everyLoadedProviderKeepsIndexAndNameInSync() {
+        val mods = listOf(
+            BuiltInProviderMod(name = "智谱AI", selectedModelIndex = 99),                    // 越界
+            BuiltInProviderMod(name = "DeepSeek", selectedModelIndex = 1),                   // 预设区内
+            BuiltInProviderMod(
+                name = "火山引擎",
+                customModels = listOf("my-finetune"),
+                selectedModelIndex = 3                                                        // 落进自定义区
+            )
+        )
+        ConfigurationStorage.saveBuiltInProviderMods(prefs, mods)
+        val customByProvider = mods.associate { it.name to it.customModels }
+
+        for (p in ConfigurationStorage.loadAllProviders(prefs)) {
+            val display = p.models + (customByProvider[p.name] ?: emptyList())
+            if (display.isEmpty()) {
+                // 不预置模型的厂商（DeepSeek）在用户添加之前就是这个状态：不崩、modelName 为空
+                assertEquals("${p.name} 无模型时 modelName 必须为空", "", p.modelName)
+                continue
+            }
+            assertTrue(
+                "${p.name} 的 selectedModelIndex=${p.selectedModelIndex} 越界（展示列表 ${display.size} 项）",
+                p.selectedModelIndex in display.indices
+            )
+            assertEquals(
+                "${p.name} 的面板显示模型与引擎调用模型不一致",
+                display[p.selectedModelIndex], p.modelName
+            )
+        }
+    }
+
+    /** DeepSeek 不预置模型：加进自定义模型后，下标与模型名要按展示列表对齐 */
+    @Test
+    fun deepSeekWithUserAddedModels_staysConsistent() {
+        ConfigurationStorage.saveBuiltInProviderMods(
+            prefs,
+            listOf(
+                BuiltInProviderMod(
+                    name = "DeepSeek",
+                    customModels = listOf("deepseek-flash", "deepseek-v4-pro"),
+                    selectedModelIndex = 1
+                )
+            )
+        )
+        val ds = ConfigurationStorage.loadAllProviders(prefs).first { it.name == "DeepSeek" }
+
+        assertEquals("预置列表为空", emptyList<String>(), ds.models)
+        assertEquals(1, ds.selectedModelIndex)
+        assertEquals("deepseek-v4-pro", ds.modelName)
+    }
+
     @Test
     fun roundtrip_builtInProviderMod_withThinkingMode() {
         val mods = listOf(

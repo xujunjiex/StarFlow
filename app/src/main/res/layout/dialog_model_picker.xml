@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  「获取模型列表」的模型多选弹窗：圆角卡片 + 搜索框 + 可滚动多选列表 + 底部两键。
+
+  ⚠️ ListView 的高度**由代码按行数算**（行高 48dp、最多 6 行）：
+  这里不能写 wrap_content（模型可能上百个会把弹窗撑爆），也不要用 android:maxHeight
+  （View 不支持该属性，写了不生效）。
+  ⚠️ 圆角来自 dialog_background；弹窗代码会把 window 背景设成透明，否则四角露出方角白底。
+  ⚠️ 宽度由代码显式设（屏幕 88%，上限 420dp）—— 不用 layout_margin，
+  因为 AlertDialog 的内容容器未必按 margin 布局，四边留白会不可控。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/dialog_background">
+
+    <EditText
+        android:id="@+id/picker_search"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginEnd="16dp"
+        android:layout_marginTop="16dp"
+        android:background="@drawable/bg_search_field"
+        android:hint="@string/model_search_hint"
+        android:importantForAutofill="no"
+        android:inputType="text"
+        android:maxLines="1"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="10dp"
+        android:textColor="@color/text_primary"
+        android:textColorHint="@color/text_hint"
+        android:textSize="14sp" />
+
+    <ListView
+        android:id="@+id/picker_list"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:divider="@null"
+        android:dividerHeight="0dp"
+        android:scrollbars="vertical" />
+
+    <TextView
+        android:id="@+id/picker_empty"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:paddingTop="24dp"
+        android:paddingBottom="24dp"
+        android:text="@string/model_search_no_result"
+        android:textColor="@color/text_hint"
+        android:textSize="13sp"
+        android:visibility="gone" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:layout_marginTop="4dp"
+        android:background="@color/divider" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/picker_cancel"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="@string/user_cancel"
+            android:textColor="@color/text_secondary"
+            android:textSize="15sp"
+            android:background="@drawable/ripple_item_bg"
+            android:clickable="true"
+            android:focusable="true" />
+
+        <View
+            android:layout_width="1dp"
+            android:layout_height="match_parent"
+            android:layout_marginTop="10dp"
+            android:layout_marginBottom="10dp"
+            android:background="@color/divider" />
+
+        <TextView
+            android:id="@+id/picker_confirm"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:text="@string/confirm"
+            android:textColor="@color/primary"
+            android:textSize="15sp"
+            android:background="@drawable/ripple_item_bg"
+            android:clickable="true"
+            android:focusable="true" />
+    </LinearLayout>
+</LinearLayout>

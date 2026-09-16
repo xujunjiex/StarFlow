@@ -831,6 +831,9 @@
     <!-- History view mode -->
     <string name="history_view_default">Default View</string>
     <string name="history_view_manage">Manage</string>
+    <string name="history_sort_info_title">Sort Order</string>
+    <string name="history_sort_info_default">Default View\nSorted by last modified time, newest first, grouped by modified date. Translating, cache hits and retranslation all refresh the modified time, so recently used records rise to the top.</string>
+    <string name="history_sort_info_manage">Manage\nSorted by created time, newest first, grouped by created date and by process group (one translation service run). A page stays in the process group that first created it, even after being hit again later. Each process group can be downloaded as a zip.</string>
     <string name="history_retranslate">Retranslate</string>
     <string name="history_delete_variant">Delete This Size</string>
     <string name="history_variant_size_label">Size:</string>
@@ -906,6 +909,19 @@
     <string name="add_custom_model">+ Add Custom</string>
     <string name="hint_custom_model_name">Enter model name</string>
     <string name="model_name_empty">Model name cannot be empty</string>
+
+    <!-- Fetch model list (providers that do not preset any model) -->
+    <string name="fetch_model_list">⤓ Fetch Models</string>
+    <string name="model_fetching">Fetching…</string>
+    <string name="model_none_selected">No model selected</string>
+    <string name="model_list_empty_hint">No models yet — add one or fetch from the server</string>
+    <string name="model_fetch_need_api_key">Enter your API key first</string>
+    <string name="model_fetch_empty">The server returned no models</string>
+    <string name="model_fetch_failed">Failed to fetch models: %1$s</string>
+    <string name="model_fetch_all_duplicated">The selected models are already in the list</string>
+    <string name="model_pick_at_least_one">Add or fetch at least one model first</string>
+    <string name="model_search_hint">Search models</string>
+    <string name="model_search_no_result">No matching model</string>
     <string name="model_name_duplicate">This model name already exists</string>
     <string name="model_name_too_long">Model name is too long (max 100 chars)</string>
     <string name="model_count_limit">At most %d custom models per provider</string>

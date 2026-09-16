@@ -79,6 +79,11 @@ data class OpenAIProviderConfig(
     /** 内置厂商本地化显示名资源；0 = 用户自建（名称是用户输入的，直接显示 name） */
     @androidx.annotation.StringRes val nameRes: Int = 0,
     val models: List<String> = emptyList(),
+    /**
+     * 模型名 → 选择弹窗里跟在名字后的标注（如「免费·文本」「免费·视觉」「免费·思考」）。
+     * 未登记的模型不显示标注。内置厂商在 `BuiltinProviders` 里登记。
+     */
+    val modelLabels: Map<String, String> = emptyMap(),
     val defaultSystemPrompt: String = "",
     val defaultUserPrompt: String = "",
     val selectedModelIndex: Int = 0,
@@ -91,7 +96,12 @@ data class OpenAIProviderConfig(
     val defaultMangaUserPrompt: String = "",
     val autoAppendPath: Boolean = true,
     /** 思考模式：0=跟随模型默认（不发送 thinking 参数）/ 1=强制关闭 / 2=强制开启 */
-    val thinkingMode: Int = 0
+    val thinkingMode: Int = 0,
+    /**
+     * true = 不预置模型列表，由用户在配置页手动添加或点「获取模型列表」从服务端拉取。
+     * 此时 [models] 为空、[modelName] 为空串，直到用户添加了模型。
+     */
+    val supportsModelFetch: Boolean = false
 ) {
     companion object {
         const val PROVIDER_TYPE_BUILTIN = "builtin"
@@ -605,15 +615,22 @@ object ConfigurationStorage {
         if (mod == null) return builtin
         // 展示列表 = 预设 + 自定义；自定义为空时与原行为等价（modelName = preset[index]）
         val displayModels = builtin.models + mod.customModels
+        // ⚠️ 内置模型列表改版后，老用户存的 selectedModelIndex 可能越界（下标含义变了）。
+        // modelName 与 selectedModelIndex **必须一起归一** —— 只归一 modelName 的话，
+        // 弹窗里 `isSelected = index == selectedModelIndex` 一个都不匹配，
+        // 用户看到「没有任何模型被选中」而引擎实际在跑 displayModels[0]。
+        val safeIndex = mod.selectedModelIndex.takeIf { it in displayModels.indices } ?: 0
         return builtin.copy(
             apiKey = mod.apiKey,
             systemPrompt = mod.systemPrompt ?: builtin.defaultSystemPrompt,
             userPrompt = mod.userPrompt ?: builtin.defaultUserPrompt,
             mangaSystemPrompt = mod.mangaSystemPrompt ?: builtin.defaultMangaSystemPrompt,
             mangaUserPrompt = mod.mangaUserPrompt ?: builtin.defaultMangaUserPrompt,
-            selectedModelIndex = mod.selectedModelIndex,
+            selectedModelIndex = safeIndex,
             thinkingMode = mod.thinkingMode ?: builtin.thinkingMode,
-            modelName = displayModels.getOrElse(mod.selectedModelIndex) { displayModels[0] }
+            // 列表可能为空（supportsModelFetch 的厂商由用户自己添加模型）→ 空串，
+            // 由 UI 提示「未选择模型」、引擎侧拦下，不要在这里崩
+            modelName = displayModels.getOrElse(safeIndex) { "" }
         )
     }
 

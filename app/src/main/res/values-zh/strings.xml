@@ -743,6 +743,9 @@
     <!-- 历史视图模式 -->
     <string name="history_view_default">默认视图</string>
     <string name="history_view_manage">管理视图</string>
+    <string name="history_sort_info_title">排序说明</string>
+    <string name="history_sort_info_default">默认视图\n按最后修改时间倒序，以修改日期分组。翻译、缓存命中、重新翻译都会刷新修改时间，所以最近用过的记录排在最前。</string>
+    <string name="history_sort_info_manage">管理视图\n按创建时间倒序，以创建日期 + 进程组（一次翻译服务的启动会话）分组。同一页反复命中，仍留在最初创建它的进程组里。每个进程组可单独打包下载。</string>
     <string name="history_retranslate">重新翻译</string>
     <string name="history_delete_variant">删除此尺寸</string>
     <string name="history_variant_size_label">尺寸:</string>
@@ -818,6 +821,19 @@
     <string name="add_custom_model">+ 添加自定义</string>
     <string name="hint_custom_model_name">输入模型名称</string>
     <string name="model_name_empty">模型名称不能为空</string>
+
+    <!-- 获取模型列表（不预置模型的厂商） -->
+    <string name="fetch_model_list">⤓ 获取模型列表</string>
+    <string name="model_fetching">获取中…</string>
+    <string name="model_none_selected">未选择模型</string>
+    <string name="model_list_empty_hint">还没有模型，请添加或从服务端获取</string>
+    <string name="model_fetch_need_api_key">请先填写 API Key</string>
+    <string name="model_fetch_empty">服务端没有返回任何模型</string>
+    <string name="model_fetch_failed">获取模型列表失败：%1$s</string>
+    <string name="model_fetch_all_duplicated">选中的模型都已经在列表里了</string>
+    <string name="model_pick_at_least_one">请先添加或获取至少一个模型</string>
+    <string name="model_search_hint">搜索模型</string>
+    <string name="model_search_no_result">没有匹配的模型</string>
     <string name="model_name_duplicate">该模型名称已存在</string>
     <string name="model_name_too_long">模型名称过长（最多 100 字符）</string>
     <string name="model_count_limit">每个 provider 最多添加 %d 个自定义模型</string>
