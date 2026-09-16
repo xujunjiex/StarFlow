@@ -66,6 +66,28 @@ class ReaderPageSource(
         }
     }
 
+    /**
+     * 原始条目字节流（双语包导出原文用）。调用方负责 close。
+     *
+     * ⚠️ 走原始字节而不是 [loadFull] + 重新编码：原图多是 JPEG，解成 Bitmap 再压回去就是**二次
+     * 有损压缩**（画质掉一档、体积还可能更大），而这里只是原样搬运。
+     */
+    fun openEntry(position: Int): java.io.InputStream? {
+        val key = pageKeys.getOrNull(position) ?: return null
+        return try {
+            if (isArchive) {
+                val zip = zip() ?: return null
+                val entry = zip.getEntry(key) ?: return null
+                zip.getInputStream(entry)
+            } else {
+                val file = File(localRoot, key)
+                if (file.isFile) file.inputStream() else null
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     /** 载入缩略图（应在 IO 线程调用），缓存命中直接返回。 */
     fun loadThumb(position: Int): Bitmap? {
         thumbCache.get(position)?.let { return it }

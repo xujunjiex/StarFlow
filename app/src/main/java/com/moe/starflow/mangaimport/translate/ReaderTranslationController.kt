@@ -840,6 +840,28 @@ class ReaderTranslationController(
     }
 
     /**
+     * 导出用：按**原图全分辨率**渲染某页译文（`useOriginalText=false`）。仅成功页可渲染。
+     *
+     * ⚠️ 不能复用 [visualBitmap]：它会把结果放进 100MB 的 `renderLru`，而导出动辄上百页 →
+     * 一路把 LRU 冲干净，把用户正在看的那页译图也挤掉，退回阅读器还得重渲。
+     *
+     * ⚠️ **必须在 IO 线程调用**（全尺寸解码 + 全页渲染）；调用方负责 `recycle()` 返回值。
+     */
+    fun renderForExport(pageIndex: Int): Bitmap? {
+        val row = rows.value[pageIndex] ?: return null
+        if (row.state != ImportedPageTranslation.STATE_SUCCESS) return null
+        val config = cacheManager.getOverlayConfig(appPrefs)
+        val bubbles = PageTranslationCodec.fromRow(row, config.fontSize, config.bgColor) ?: return null
+        val orig = loadFull(pageIndex) ?: return null
+        return try {
+            renderBubbles(orig, bubbles, TranslationCacheManager.OverlayMode.TRANSLATED, config)
+        } finally {
+            // renderOverlay 开头就 copy() 出独立副本 → 源图渲染完即可回收（导出逐页进行，别攒内存）
+            orig.recycle()
+        }
+    }
+
+    /**
      * 把气泡从「原图坐标空间」等比缩放到「采样图坐标空间」。
      * Webtoon 按屏宽采样解码后用得到（见 [prewarmWebtoon]）；角度不随缩放变化。
      */

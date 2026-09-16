@@ -21,7 +21,7 @@ app/src/main/java/
 ├── com/moe/starflow/           ← 应用主包（13 个一级子包）
 │   ├── manga/          (51) 漫画翻译引擎：主服务 / 分批管线 / 检测 OCR / 合并 / 渲染 / 状态 / 调试
 │   ├── translate/      (28) 游戏翻译引擎：悬浮球服务 / 截图系统 / 自动翻译 / 结果组件
-│   ├── mangaimport/    (23) 漫画导入书架 + Koto 式阅读器 + 阅读器内嵌翻译
+│   ├── mangaimport/    (24) 漫画导入书架 + Koto 式阅读器 + 阅读器内嵌翻译
 │   ├── me/             (21) 设置与配置：个人化 / API 配置 / 模型管理 / 关于 / 开发者
 │   ├── utils/          (18) 工具：Constants / CustomPreference / KeystoreManager / LogCollector / FontSync
 │   ├── data/           (11) Room 数据库 / 三层缓存 / 历史实体

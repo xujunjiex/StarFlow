@@ -23,6 +23,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.LinearSmoothScroller
+import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.ViewPager2
 import com.moe.starflow.R
 import com.moe.starflow.databinding.ActivityMangaReaderBinding
@@ -75,6 +76,9 @@ class MangaReaderActivity : AppCompatActivity() {
 
         /** 翻译按钮双击判定窗口（与悬浮球 LONG/DOUBLE 语义一致）。 */
         private const val DOUBLE_CLICK_MS = 300L
+
+        /** 上下 UI 显隐的淡入淡出时长（短促，跟随系统「动画时长」缩放）。 */
+        private const val CHROME_FADE_MS = 160L
     }
 
     private lateinit var binding: ActivityMangaReaderBinding
@@ -87,6 +91,9 @@ class MangaReaderActivity : AppCompatActivity() {
     private var autoTurnEnabled = false
     private var autoTurnIntervalSec = 5
     private var autoTurnJob: Job? = null
+
+    /** 在途的打包下载任务（原文/译文/双语共用一个槽位，防并发导出）。 */
+    private var exportJob: Job? = null
     private var lastInteractionMs: Long = 0L
     private var rotateMode = 0
 
@@ -101,6 +108,16 @@ class MangaReaderActivity : AppCompatActivity() {
 
     /** 翻译按钮双击判定用的上次单击时刻（elapsedRealtime）。 */
     private var lastTranslateClickMs = 0L
+
+    /**
+     * 上下 UI（顶部返回/菜单/页码 + 底部进度条/翻译浮层组）是否隐藏。
+     * 点屏幕正中间切换，**状态一直保持**（没有自动恢复计时）—— 隐藏后一直隐藏，再点中间才恢复。
+     * 只在本次阅读会话内有效，不持久化（重进阅读器恢复显示）。
+     */
+    private var chromeHidden = false
+
+    /** 尺寸变化（旋转/分屏）之前所在的页；-1 = 无待对齐。见 [realignPagerAfterResize]。 */
+    private var pendingRealignPage = -1
 
     /** 仿真/高级动画共享状态（折线触点 + 翻页方向）。 */
     private val animState = ReaderAnimationState()
@@ -300,8 +317,39 @@ class MangaReaderActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * 视口尺寸变化后重新对齐分页器（旋转 / 分屏 / 折叠），由 [setupOverlays] 里的
+     * viewPager 布局回调触发 —— 只有在新尺寸的布局跑完之后才拿得到正确的几何。
+     *
+     * ① 吸附回**尺寸变化前**那一页：⚠️ 必须直接对**内部 RecyclerView** 调 `scrollToPosition`。
+     *    `ViewPager2.setCurrentItem(当前页, false)` 在「已经是当前页且滚动空闲」时**直接 return**
+     *    （ViewPager2 源码里的早退分支），根本不会重新吸附 —— 旋转后正是这个状态。
+     * ② 重绑目标页：让页 item 按新尺寸重新测量/布局、页内 ZoomableImageView 重新 fitCenter。
+     *    ⚠️ 走 [applyPageVisual] 而不是裸 `notifyItemChanged`：它会先把译图渲染/预热进缓存再重绑，
+     *    否则译图恰好被 LRU 淘汰时重绑会退回显示原图。同槽位重绑不清图（见 ReaderAdapters.loadTo）→ 不闪白。
+     */
+    private fun realignPagerAfterResize() {
+        if (mode == 3) { pendingRealignPage = -1; return } // Webtoon 行高由 webtoonList 的宽度监听重算
+        // 目标页用**尺寸变化前**记下的那一页：新布局可能让 ViewPager2 把「吸附页」重算成别页
+        // 并派发 onPageSelected，那时 currentPage 已被改掉，照它对齐会停到错的一页上。
+        val target = if (pendingRealignPage >= 0) pendingRealignPage else currentPage
+        pendingRealignPage = -1
+        val rv = binding.viewPager.getChildAt(0) as? RecyclerView ?: return
+        rv.scrollToPosition(target)
+        // 上面那次重排若让 ViewPager2 派发了 onPageSelected，currentPage 会漂到别页 → 拉回来
+        if (currentPage != target) {
+            currentPage = target
+            ImportedMangaStore.update(applicationContext, manga.copy(lastReadPage = target))
+            translationController?.onCurrentPageChanged()
+            refreshOverlay()
+        }
+        applyPageVisual(target)
+    }
+
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        // 趁布局还没跑（currentPage 还没被 resize 期间的 onPageSelected 改掉）先记下当前页
+        pendingRealignPage = currentPage
         applyBackground()
         applyAnimation()
         // 横竖屏都是单页、翻译也不再按朝向禁用 → 旋转后无需重建 adapter，也不用停翻译队列
@@ -366,7 +414,7 @@ class MangaReaderActivity : AppCompatActivity() {
         val w = binding.viewPager.width.toFloat()
         val h = binding.viewPager.height.toFloat()
         if (w <= 0f || h <= 0f) return
-        if (y < h * 0.22f && x > w * 0.72f) { showMenu(); return }
+        if (consumeChromeOrMenuTap(x, y, w, h)) return
         if (mode == 2) {
             // 竖排：点击上半=上一页，下半=下一页
             turnPage(if (y >= h / 2f) 1 else -1)
@@ -375,6 +423,73 @@ class MangaReaderActivity : AppCompatActivity() {
         val isRtl = mode == 1
         val goNext = if (isRtl) x < w / 2f else x >= w / 2f
         turnPage(if (goNext) 1 else -1)
+    }
+
+    /**
+     * 单击的「非翻页」分区（分页 / Webtoon 共用），返回 true 表示这次点击已被消费、不要再翻页。
+     * - 右上角（y 顶部 22% 且 x 右侧 28%）：弹出菜单
+     * - 屏幕正中间的一格（Koto 九宫格的中格，横竖各三等分）：显隐上下 UI
+     *
+     * ⚠️ 只有**单击确认**（[GestureDetector.onSingleTapConfirmed]）才会走到这里：滑动翻页会把
+     * 事件交给 ViewPager2/RecyclerView 并触发 ACTION_CANCEL，双击缩放走 onDoubleTap —— 两者都
+     * 不会产生单击确认，所以不会误触；左右/上下翻页区也都在中格之外。
+     */
+    private fun consumeChromeOrMenuTap(x: Float, y: Float, w: Float, h: Float): Boolean {
+        if (y < h * 0.22f && x > w * 0.72f) {
+            showMenu()
+            return true
+        }
+        if (isCenterTapZone(x, y, w, h)) {
+            toggleChrome()
+            return true
+        }
+        return false
+    }
+
+    /** 屏幕正中间一格的判定（Koto 九宫格：横竖各三等分取中格）。 */
+    private fun isCenterTapZone(x: Float, y: Float, w: Float, h: Float): Boolean =
+        x >= w / 3f && x < w * 2f / 3f && y >= h / 3f && y < h * 2f / 3f
+
+    /** 点屏幕中间：切换上下 UI 显隐（一直保持，无自动恢复）。 */
+    private fun toggleChrome() {
+        chromeHidden = !chromeHidden
+        lastInteractionMs = SystemClock.elapsedRealtime()
+        applyChromeVisibility()
+    }
+
+    /**
+     * 应用上下 UI 显隐（淡入淡出）。翻译浮层组另有「Webtoon 无单页翻译 / 未译页」的约束，
+     * 显示前先让 [refreshTranslationChrome] 把它定到位，不该显示的就不参与淡入。
+     */
+    private fun applyChromeVisibility() {
+        if (!chromeHidden) refreshTranslationChrome()
+        val group = binding.translateGroup
+        // 本就不显示的（Webtoon / 未译页）不参与动画，否则会把它强行淡出来
+        val groupShown = group.visibility == View.VISIBLE
+        for (v in chromeViews() + (if (groupShown) listOf(group) else emptyList())) {
+            if (chromeHidden) fadeOutChrome(v) else fadeInChrome(v)
+        }
+    }
+
+    /** 固定四件套：顶部返回 / 菜单 / 页码 + 底部进度条（翻译浮层组按页状态单独判定）。 */
+    private fun chromeViews(): List<View> = listOf(
+        binding.btnBack, binding.btnMenu, binding.tvPageIndicator, binding.bottomProgress,
+    )
+
+    /** 淡出并在结束后置 GONE —— ⚠️ 只把 alpha 打到 0 的话控件**仍然可点**（会误触到看不见的按钮）。 */
+    private fun fadeOutChrome(v: View) {
+        v.animate().cancel()
+        v.animate().alpha(0f).setDuration(CHROME_FADE_MS)
+            // 动画被新动画打断时 end action 也会跑，用「已确实淡到 0」兜住，避免提前 GONE
+            .withEndAction { if (chromeHidden && v.alpha == 0f) v.visibility = View.GONE }
+            .start()
+    }
+
+    private fun fadeInChrome(v: View) {
+        v.animate().cancel()
+        v.alpha = 0f
+        v.visibility = View.VISIBLE
+        v.animate().alpha(1f).setDuration(CHROME_FADE_MS).start()
     }
 
     private fun onInteraction() {
@@ -413,6 +528,16 @@ class MangaReaderActivity : AppCompatActivity() {
 
         // 分页进度：只注册一次（applyPager 会重建 adapter，但回调挂在 viewPager 上，无需重复注册）
         binding.viewPager.registerOnPageChangeCallback(pageChangeCallback)
+        // ⚠️ 视口尺寸变化（旋转 / 分屏 / 折叠）后必须重新对齐分页器。
+        // ViewPager2 内部的 RecyclerView 把滚动位置按**像素**保留，旧视口下的偏移量在新视口里
+        // 不再落在页边界上 → 画面停在两页之间（各露半张），要等用户点一下/滑一下触发真实滚动
+        // 才吸附回来。原先靠「旋转时重建 adapter」隐式兜住（换 adapter → 整体重绑 + 重新吸附），
+        // 单页重构去掉那条链后就暴露了。这里在布局完成后显式补回来（旧尺寸为 0 = 首次布局，跳过）。
+        binding.viewPager.addOnLayoutChangeListener { _, l, t, r, b, ol, ot, or_, ob ->
+            if (r - l == or_ - ol && b - t == ob - ot) return@addOnLayoutChangeListener
+            if (or_ - ol == 0 || ob - ot == 0) return@addOnLayoutChangeListener
+            realignPagerAfterResize()
+        }
         // Webtoon：行高是按「绑定那一刻的 View 宽度」钉死的，宽度一变（旋转/分屏）旧值就失真
         // （图片按错误宽高比 fitCenter，两侧留白带），必须重绑让适配器按新宽度重算。
         // 只注册一次；重绑后宽度不变 → 不会再次触发，无循环风险。
@@ -510,12 +635,12 @@ class MangaReaderActivity : AppCompatActivity() {
         for (p in from..to) a.notifyItemChanged(p)
     }
 
-    /** Webtoon 点击：点下半屏=平滑滚动到下一页顶部，上半屏=上一页顶部；右上角菜单位仍弹菜单。 */
+    /** Webtoon 点击：点下半屏=平滑滚动到下一页顶部，上半屏=上一页顶部；中间一格=显隐 UI，右上角=菜单。 */
     private fun webtoonTapToPage(y: Float, x: Float) {
         val w = binding.webtoonList.width.toFloat()
         val h = binding.webtoonList.height.toFloat()
         if (w <= 0f || h <= 0f) return
-        if (y < h * 0.22f && x > w * 0.72f) { showMenu(); return }
+        if (consumeChromeOrMenuTap(x, y, w, h)) return
         val lm = binding.webtoonList.layoutManager as? androidx.recyclerview.widget.LinearLayoutManager ?: return
         val cur = lm.findFirstVisibleItemPosition()
         if (cur == androidx.recyclerview.widget.RecyclerView.NO_POSITION) return
@@ -659,12 +784,13 @@ class MangaReaderActivity : AppCompatActivity() {
             .show(getString(R.string.reader_translate_failed_page_hint, currentPage + 1, reason))
     }
 
-    /** 同步翻译浮层组：成功页显示三态按钮、失败页显示感叹号；Webtoon 整组隐藏。 */
+    /** 同步翻译浮层组：成功页显示三态按钮、失败页显示感叹号；隐藏态 / Webtoon 整组隐藏。 */
     private fun refreshTranslationChrome() {
         // Webtoon（连续滚动）不支持单页翻译，也没有单页三态 → 整个浮层组（翻译/重翻 +
         // 三态 + 失败感叹号）隐藏，只留底部模式分段器上「连续滑动」按钮的两态角标。
+        // 用户在中间点过一下的「隐藏上下 UI」同理：整组收起，直到再点一次中间。
         // ⚠️ 必须在 controller 判空之前：否则控制器未就绪时整组会留在屏幕上没人收。
-        if (mode == 3) {
+        if (chromeHidden || mode == 3) {
             binding.translateGroup.visibility = View.GONE
             return
         }
@@ -967,16 +1093,20 @@ class MangaReaderActivity : AppCompatActivity() {
             dialog.dismiss(); exportOriginal()
         }
         view.findViewById<View>(R.id.row_download_translated).setOnClickListener {
-            UiUtils.showToast(this, getString(R.string.reader_download_pending))
+            dialog.dismiss(); exportTranslated(both = false)
         }
         view.findViewById<View>(R.id.row_download_both).setOnClickListener {
-            UiUtils.showToast(this, getString(R.string.reader_download_pending))
+            dialog.dismiss(); exportTranslated(both = true)
         }
     }
 
     private fun exportOriginal() {
+        if (exportJob?.isActive == true) {
+            UiUtils.showToast(this, getString(R.string.reader_download_busy))
+            return
+        }
         UiUtils.showToast(this, getString(R.string.reader_download_started))
-        lifecycleScope.launch {
+        exportJob = lifecycleScope.launch {
             val name = withContext(Dispatchers.IO) { exportOriginalZip() }
             UiUtils.showToast(this@MangaReaderActivity,
                 if (name != null) getString(R.string.reader_download_done, name)
@@ -984,9 +1114,60 @@ class MangaReaderActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * 打包导出**已翻译页**：[both] = true 出双语包（每页原名原文 + `_译文.jpg`），false 只出译文。
+     *
+     * 文件名沿用原包的序号（见 [ExportNaming]）——只翻译了 1/2/5/6 页，包里就是 001/002/005/006，
+     * 不是 1/2/3/4；未翻译的页不导出（译文无从谈起）。渲染在 IO 逐页进行，进度走状态浮层。
+     */
+    private fun exportTranslated(both: Boolean) {
+        val controller = translationController ?: return
+        if (exportJob?.isActive == true) {
+            UiUtils.showToast(this, getString(R.string.reader_download_busy))
+            return
+        }
+        val total = controller.translatedPages().size
+        if (total == 0) {
+            UiUtils.showToast(this, getString(R.string.reader_download_nothing))
+            return
+        }
+        UiUtils.showToast(this, getString(R.string.reader_download_started))
+        exportJob = lifecycleScope.launch {
+            val tmp = File(cacheDir, "manga_export_${System.currentTimeMillis()}.zip")
+            val overlay = TranslationStatusOverlay.getInstance(this@MangaReaderActivity)
+            val showProgress = statusOverlayEnabled()
+            if (showProgress) {
+                overlay.showImmediate(getString(R.string.reader_download_progress, 0, total), autoDismiss = false)
+            }
+            val ok = ReaderExport.exportTranslated(source, controller, both, tmp) { done, sum ->
+                if (showProgress) {
+                    overlay.showImmediate(getString(R.string.reader_download_progress, done, sum), autoDismiss = false)
+                }
+            }
+            overlay.dismiss()
+            if (!ok) {
+                tmp.delete()
+                UiUtils.showToast(this@MangaReaderActivity, getString(R.string.reader_download_failed))
+                return@launch
+            }
+            val display = displayNameFor(both)
+            val saved = withContext(Dispatchers.IO) { writeToDownloads(display, tmp) }
+            tmp.delete()
+            UiUtils.showToast(this@MangaReaderActivity,
+                if (saved) getString(R.string.reader_download_done, display)
+                else getString(R.string.reader_download_failed))
+        }
+    }
+
+    /** 下载文件名（书名已过滤掉文件名非法字符）——与原文包同一命名风格。 */
+    private fun displayNameFor(both: Boolean): String =
+        safeTitle() + if (both) "-双语.zip" else "-译文.zip"
+
+    /** 书名取出用于文件名：过滤 `\ / : * ? " < > |`（Windows/Android 都不允许）。 */
+    private fun safeTitle(): String = manga.title.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+
     private fun exportOriginalZip(): String? = try {
-        val safe = manga.title.replace(Regex("[\\\\/:*?\"<>|]"), "_")
-        val display = "$safe-原文.zip"
+        val display = safeTitle() + "-原文.zip"
         val tmp = File(cacheDir, "manga_export_${System.currentTimeMillis()}.zip")
         if (manga.isArchive) {
             File(manga.localRoot).inputStream().use { i -> FileOutputStream(tmp).use { o -> i.copyTo(o) } }

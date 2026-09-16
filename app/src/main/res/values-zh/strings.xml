@@ -937,12 +937,16 @@
     <string name="reader_download_original">原文</string>
     <string name="reader_download_original_hint">导出原图打包为 zip 到系统下载目录</string>
     <string name="reader_download_translated">译文</string>
+    <string name="reader_download_translated_hint">只导出已翻译页，文件名沿用原序号（JPEG）</string>
     <string name="reader_download_both">双语</string>
-    <string name="reader_download_pending">翻译功能上线后开放</string>
+    <string name="reader_download_both_hint">原文 + 译文打成一个包（译文加 _译文 后缀）</string>
     <string name="reader_download_dialog">下载漫画</string>
     <string name="reader_download_started">正在导出…</string>
+    <string name="reader_download_progress">正在导出 %1$d/%2$d…</string>
     <string name="reader_download_done">已保存到下载目录：%1$s</string>
     <string name="reader_download_failed">导出失败</string>
+    <string name="reader_download_nothing">还没有已翻译的页面</string>
+    <string name="reader_download_busy">正在导出中，请稍候</string>
     <string name="reader_color_title">颜色矫正</string>
     <string name="reader_color_custom">自定义</string>
     <string name="reader_brightness">亮度</string>
