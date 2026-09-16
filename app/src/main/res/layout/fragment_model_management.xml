@@ -1,4 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  模型管理页布局 —— 按「引擎组合」分 4 组。
+
+  每个可下载模型行由三个模板之一 include 进来（item_model_row_*）：
+    · item_model_row_browser    单文件：状态 + 浏览器 + 下载/删除 + 取消
+    · item_model_row_files      双文件（onnx + 字典）：状态 + 2 浏览器 + 下载/删除 + 取消
+    · item_model_row_manga_ocr  manga-ocr 专用：标题行 + 3 浏览器 + 下载/删除 + 取消
+
+  ⚠️ 每个 include **必须**有唯一的 android:id（行根 View，ModelManagementFragment
+  以它为作用域查找内部控件）。新增模型见 ModelManagementFragment.modelRows。
+-->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -194,131 +205,27 @@
 
             <!-- medium 检测器 -->
             <TextView
-    android:layout_width="wrap_content"
-    android:layout_height="wrap_content"
-    android:text="@string/model_detector"
-    android:textSize="14sp"
-    android:textStyle="bold"/>
-
-            
-
-            <LinearLayout
-                android:layout_width="match_parent"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginTop="6dp"
-                android:gravity="center_vertical">
+                android:text="@string/model_detector"
+                android:textSize="14sp"
+                android:textStyle="bold"/>
 
-                <TextView  android:maxLines="1" android:ellipsize="end" 
-                    android:id="@+id/ppocrv6_medium_det_status"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:textSize="12sp"/>
-
-                <TextView
-                    android:id="@+id/ppocrv6_medium_det_browser_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingStart="10dp"
-                    android:paddingEnd="10dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:text="@string/model_browser_emoji_browser"
-                    android:textSize="11sp"
-                    android:textColor="#666"
-                    android:layout_marginEnd="6dp"/>
-
-                <TextView
-                    android:id="@+id/ppocrv6_medium_det_action"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingStart="18dp"
-                    android:paddingEnd="18dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:background="@drawable/btn_download"
-                    android:textColor="@android:color/white"
-                    android:textSize="12sp"
-                    android:text="@string/model_download"/>
-                <TextView
-                    android:id="@+id/ppocrv6_medium_det_cancel"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="6dp"
-                    android:paddingStart="14dp"
-                    android:paddingEnd="14dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:background="@drawable/btn_download"
-                    android:textColor="@android:color/white"
-                    android:textSize="12sp"
-                    android:visibility="gone"
-                    android:text="@string/model_btn_cancel"/>
-            </LinearLayout>
+            <include
+                layout="@layout/item_model_row_browser"
+                android:id="@+id/ppocrv6_medium_det_row"/>
 
             <!-- medium 识别器 -->
             <TextView
-    android:layout_width="wrap_content"
-    android:layout_height="wrap_content"
-    android:text="@string/model_recognizer"
-    android:textSize="14sp"
-    android:textStyle="bold"/>
-
-            <LinearLayout
-                android:layout_width="match_parent"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginTop="6dp"
-                android:gravity="center_vertical">
+                android:text="@string/model_recognizer"
+                android:textSize="14sp"
+                android:textStyle="bold"/>
 
-                <TextView  android:maxLines="1" android:ellipsize="end" 
-                    android:id="@+id/ppocrv6_medium_rec_status"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:textSize="12sp"/>
-
-                <TextView
-                    android:id="@+id/ppocrv6_medium_rec_browser_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingStart="10dp"
-                    android:paddingEnd="10dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:text="@string/model_browser_emoji_browser"
-                    android:textSize="11sp"
-                    android:textColor="#666"
-                    android:layout_marginEnd="6dp"/>
-
-                <TextView
-                    android:id="@+id/ppocrv6_medium_rec_action"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingStart="18dp"
-                    android:paddingEnd="18dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:background="@drawable/btn_download"
-                    android:textColor="@android:color/white"
-                    android:textSize="12sp"
-                    android:text="@string/model_download"/>
-                <TextView
-                    android:id="@+id/ppocrv6_medium_rec_cancel"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="6dp"
-                    android:paddingStart="14dp"
-                    android:paddingEnd="14dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:background="@drawable/btn_download"
-                    android:textColor="@android:color/white"
-                    android:textSize="12sp"
-                    android:visibility="gone"
-                    android:text="@string/model_btn_cancel"/>
-            </LinearLayout>
+            <include
+                layout="@layout/item_model_row_browser"
+                android:id="@+id/ppocrv6_medium_rec_row"/>
         </LinearLayout>
 
         <!-- ════════════════════════════════════════════════════════
@@ -362,68 +269,15 @@
 
             <!-- 检测器 -->
             <TextView
-    android:layout_width="wrap_content"
-    android:layout_height="wrap_content"
-    android:text="@string/model_detector"
-    android:textSize="14sp"
-    android:textStyle="bold"/>
-
-            
-
-            <LinearLayout
-                android:layout_width="match_parent"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginTop="6dp"
-                android:gravity="center_vertical">
+                android:text="@string/model_detector"
+                android:textSize="14sp"
+                android:textStyle="bold"/>
 
-                <TextView  android:maxLines="1" android:ellipsize="end" 
-                    android:id="@+id/v5_det_status"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:textSize="12sp"/>
-
-                <TextView
-                    android:id="@+id/v5_det_browser_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingStart="10dp"
-                    android:paddingEnd="10dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:text="@string/model_browser_emoji_browser"
-                    android:textSize="11sp"
-                    android:textColor="#666"
-                    android:layout_marginEnd="6dp"/>
-
-                <TextView
-                    android:id="@+id/v5_det_action_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingStart="18dp"
-                    android:paddingEnd="18dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:background="@drawable/btn_download"
-                    android:textColor="@android:color/white"
-                    android:textSize="12sp"
-                    android:text="@string/model_download"/>
-                <TextView
-                    android:id="@+id/v5_det_cancel_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="6dp"
-                    android:paddingStart="14dp"
-                    android:paddingEnd="14dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:background="@drawable/btn_download"
-                    android:textColor="@android:color/white"
-                    android:textSize="12sp"
-                    android:visibility="gone"
-                    android:text="@string/model_btn_cancel"/>
-            </LinearLayout>
+            <include
+                layout="@layout/item_model_row_browser"
+                android:id="@+id/v5_det_row"/>
 
             <!-- 分隔线 -->
             <View
@@ -437,89 +291,23 @@
 
             <!-- 识别器（多语言） -->
             <TextView
-    android:layout_width="wrap_content"
-    android:layout_height="wrap_content"
-    android:text="@string/model_recognizer_multi"
-    android:textSize="14sp"
-    android:textStyle="bold"/>
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/model_recognizer_multi"
+                android:textSize="14sp"
+                android:textStyle="bold"/>
 
             <!-- 中日英 rec -->
             <TextView
-    android:layout_width="wrap_content"
-    android:layout_height="wrap_content"
-    android:text="@string/model_lang_zhjaen"
-    android:textSize="14sp"
-    android:textStyle="bold"/>
-
-            
-
-            <LinearLayout
-                android:layout_width="match_parent"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginTop="6dp"
-                android:gravity="center_vertical">
+                android:text="@string/model_lang_zhjaen"
+                android:textSize="14sp"
+                android:textStyle="bold"/>
 
-                <TextView  android:maxLines="1" android:ellipsize="end" 
-                    android:id="@+id/v5_rec_zh_status"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:textSize="12sp"/>
-
-                <TextView
-                    android:id="@+id/v5_rec_zh_onnx_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingStart="8dp"
-                    android:paddingEnd="8dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:text="@string/model_browser_emoji_model"
-                    android:textSize="11sp"
-                    android:textColor="#666"
-                    android:layout_marginEnd="4dp"/>
-
-                <TextView
-                    android:id="@+id/v5_rec_zh_dict_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingStart="8dp"
-                    android:paddingEnd="8dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:text="@string/model_browser_emoji_dict"
-                    android:textSize="11sp"
-                    android:textColor="#666"
-                    android:layout_marginEnd="6dp"/>
-
-                <TextView
-                    android:id="@+id/v5_rec_zh_action_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingStart="18dp"
-                    android:paddingEnd="18dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:background="@drawable/btn_download"
-                    android:textColor="@android:color/white"
-                    android:textSize="12sp"
-                    android:text="@string/model_download"/>
-                <TextView
-                    android:id="@+id/v5_rec_zh_cancel_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="6dp"
-                    android:paddingStart="14dp"
-                    android:paddingEnd="14dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:background="@drawable/btn_download"
-                    android:textColor="@android:color/white"
-                    android:textSize="12sp"
-                    android:visibility="gone"
-                    android:text="@string/model_btn_cancel"/>
-            </LinearLayout>
+            <include
+                layout="@layout/item_model_row_files"
+                android:id="@+id/v5_rec_zh_row"/>
 
             <!-- 分隔线 -->
             <View
@@ -533,81 +321,15 @@
 
             <!-- 英文 rec -->
             <TextView
-    android:layout_width="wrap_content"
-    android:layout_height="wrap_content"
-    android:text="@string/model_lang_en"
-    android:textSize="14sp"
-    android:textStyle="bold"/>
-
-            
-
-            <LinearLayout
-                android:layout_width="match_parent"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginTop="6dp"
-                android:gravity="center_vertical">
+                android:text="@string/model_lang_en"
+                android:textSize="14sp"
+                android:textStyle="bold"/>
 
-                <TextView  android:maxLines="1" android:ellipsize="end" 
-                    android:id="@+id/v5_rec_en_status"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:textSize="12sp"/>
-
-                <TextView
-                    android:id="@+id/v5_rec_en_onnx_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingStart="8dp"
-                    android:paddingEnd="8dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:text="@string/model_browser_emoji_model"
-                    android:textSize="11sp"
-                    android:textColor="#666"
-                    android:layout_marginEnd="4dp"/>
-
-                <TextView
-                    android:id="@+id/v5_rec_en_dict_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingStart="8dp"
-                    android:paddingEnd="8dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:text="@string/model_browser_emoji_dict"
-                    android:textSize="11sp"
-                    android:textColor="#666"
-                    android:layout_marginEnd="6dp"/>
-
-                <TextView
-                    android:id="@+id/v5_rec_en_action_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingStart="18dp"
-                    android:paddingEnd="18dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:background="@drawable/btn_download"
-                    android:textColor="@android:color/white"
-                    android:textSize="12sp"
-                    android:text="@string/model_download"/>
-                <TextView
-                    android:id="@+id/v5_rec_en_cancel_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="6dp"
-                    android:paddingStart="14dp"
-                    android:paddingEnd="14dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:background="@drawable/btn_download"
-                    android:textColor="@android:color/white"
-                    android:textSize="12sp"
-                    android:visibility="gone"
-                    android:text="@string/model_btn_cancel"/>
-            </LinearLayout>
+            <include
+                layout="@layout/item_model_row_files"
+                android:id="@+id/v5_rec_en_row"/>
 
             <!-- 分隔线 -->
             <View
@@ -621,81 +343,15 @@
 
             <!-- 韩文 rec -->
             <TextView
-    android:layout_width="wrap_content"
-    android:layout_height="wrap_content"
-    android:text="@string/model_lang_ko"
-    android:textSize="14sp"
-    android:textStyle="bold"/>
-
-            
-
-            <LinearLayout
-                android:layout_width="match_parent"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginTop="6dp"
-                android:gravity="center_vertical">
+                android:text="@string/model_lang_ko"
+                android:textSize="14sp"
+                android:textStyle="bold"/>
 
-                <TextView  android:maxLines="1" android:ellipsize="end" 
-                    android:id="@+id/v5_rec_ko_status"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:textSize="12sp"/>
-
-                <TextView
-                    android:id="@+id/v5_rec_ko_onnx_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingStart="8dp"
-                    android:paddingEnd="8dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:text="@string/model_browser_emoji_model"
-                    android:textSize="11sp"
-                    android:textColor="#666"
-                    android:layout_marginEnd="4dp"/>
-
-                <TextView
-                    android:id="@+id/v5_rec_ko_dict_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingStart="8dp"
-                    android:paddingEnd="8dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:text="@string/model_browser_emoji_dict"
-                    android:textSize="11sp"
-                    android:textColor="#666"
-                    android:layout_marginEnd="6dp"/>
-
-                <TextView
-                    android:id="@+id/v5_rec_ko_action_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingStart="18dp"
-                    android:paddingEnd="18dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:background="@drawable/btn_download"
-                    android:textColor="@android:color/white"
-                    android:textSize="12sp"
-                    android:text="@string/model_download"/>
-                <TextView
-                    android:id="@+id/v5_rec_ko_cancel_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="6dp"
-                    android:paddingStart="14dp"
-                    android:paddingEnd="14dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:background="@drawable/btn_download"
-                    android:textColor="@android:color/white"
-                    android:textSize="12sp"
-                    android:visibility="gone"
-                    android:text="@string/model_btn_cancel"/>
-            </LinearLayout>
+            <include
+                layout="@layout/item_model_row_files"
+                android:id="@+id/v5_rec_ko_row"/>
 
             <!-- 分隔线 -->
             <View
@@ -709,81 +365,15 @@
 
             <!-- 俄文 rec -->
             <TextView
-    android:layout_width="wrap_content"
-    android:layout_height="wrap_content"
-    android:text="@string/model_lang_ru"
-    android:textSize="14sp"
-    android:textStyle="bold"/>
-
-            
-
-            <LinearLayout
-                android:layout_width="match_parent"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginTop="6dp"
-                android:gravity="center_vertical">
+                android:text="@string/model_lang_ru"
+                android:textSize="14sp"
+                android:textStyle="bold"/>
 
-                <TextView  android:maxLines="1" android:ellipsize="end" 
-                    android:id="@+id/v5_rec_ru_status"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:textSize="12sp"/>
-
-                <TextView
-                    android:id="@+id/v5_rec_ru_onnx_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingStart="8dp"
-                    android:paddingEnd="8dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:text="@string/model_browser_emoji_model"
-                    android:textSize="11sp"
-                    android:textColor="#666"
-                    android:layout_marginEnd="4dp"/>
-
-                <TextView
-                    android:id="@+id/v5_rec_ru_dict_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingStart="8dp"
-                    android:paddingEnd="8dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:text="@string/model_browser_emoji_dict"
-                    android:textSize="11sp"
-                    android:textColor="#666"
-                    android:layout_marginEnd="6dp"/>
-
-                <TextView
-                    android:id="@+id/v5_rec_ru_action_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingStart="18dp"
-                    android:paddingEnd="18dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:background="@drawable/btn_download"
-                    android:textColor="@android:color/white"
-                    android:textSize="12sp"
-                    android:text="@string/model_download"/>
-                <TextView
-                    android:id="@+id/v5_rec_ru_cancel_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="6dp"
-                    android:paddingStart="14dp"
-                    android:paddingEnd="14dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:background="@drawable/btn_download"
-                    android:textColor="@android:color/white"
-                    android:textSize="12sp"
-                    android:visibility="gone"
-                    android:text="@string/model_btn_cancel"/>
-            </LinearLayout>
+            <include
+                layout="@layout/item_model_row_files"
+                android:id="@+id/v5_rec_ru_row"/>
         </LinearLayout>
 
         <!-- ════════════════════════════════════════════════════════
@@ -827,68 +417,15 @@
 
             <!-- RT-DETR-V2 -->
             <TextView
-    android:layout_width="wrap_content"
-    android:layout_height="wrap_content"
-    android:text="RT-DETR-V2"
-    android:textSize="14sp"
-    android:textStyle="bold"/>
-
-            
-
-            <LinearLayout
-                android:layout_width="match_parent"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginTop="6dp"
-                android:gravity="center_vertical">
+                android:text="RT-DETR-V2"
+                android:textSize="14sp"
+                android:textStyle="bold"/>
 
-                <TextView  android:maxLines="1" android:ellipsize="end" 
-                    android:id="@+id/rtdetr_status"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:textSize="12sp"/>
-
-                <TextView
-                    android:id="@+id/rtdetr_browser_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingStart="10dp"
-                    android:paddingEnd="10dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:text="@string/model_browser_emoji_browser"
-                    android:textSize="11sp"
-                    android:textColor="#666"
-                    android:layout_marginEnd="6dp"/>
-
-                <TextView
-                    android:id="@+id/rtdetr_action_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingStart="18dp"
-                    android:paddingEnd="18dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:background="@drawable/btn_download"
-                    android:textColor="@android:color/white"
-                    android:textSize="12sp"
-                    android:text="@string/model_download"/>
-                <TextView
-                    android:id="@+id/rtdetr_cancel_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="6dp"
-                    android:paddingStart="14dp"
-                    android:paddingEnd="14dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:background="@drawable/btn_download"
-                    android:textColor="@android:color/white"
-                    android:textSize="12sp"
-                    android:visibility="gone"
-                    android:text="@string/model_btn_cancel"/>
-            </LinearLayout>
+            <include
+                layout="@layout/item_model_row_browser"
+                android:id="@+id/rtdetr_row"/>
 
             <!-- 分隔线 -->
             <View
@@ -901,107 +438,9 @@
                 android:layout_marginBottom="8dp"/>
 
             <!-- manga-ocr -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="manga-ocr"
-                    android:textSize="14sp"
-                    android:textStyle="bold"/>
-
-                <TextView  android:maxLines="1" android:ellipsize="end" 
-                    android:id="@+id/manga_ocr_status"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:layout_marginStart="8dp"
-                    android:textSize="12sp"/>
-            </LinearLayout>
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginTop="6dp"
-                android:gravity="center_vertical">
-
-                <TextView
-                    android:id="@+id/manga_ocr_encoder_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingStart="2dp"
-                    android:paddingEnd="2dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:text="@string/model_browser_emoji_encoder"
-                    android:textSize="11sp"
-                    android:textColor="#666"
-                    android:gravity="center"
-                    android:layout_marginEnd="2dp"/>
-
-                <TextView
-                    android:id="@+id/manga_ocr_decoder_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingStart="2dp"
-                    android:paddingEnd="2dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:text="@string/model_browser_emoji_decoder"
-                    android:textSize="11sp"
-                    android:textColor="#666"
-                    android:gravity="center"
-                    android:layout_marginEnd="2dp"/>
-
-                <TextView
-                    android:id="@+id/manga_ocr_vocab_button"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:paddingStart="2dp"
-                    android:paddingEnd="2dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:text="@string/model_browser_emoji_vocab"
-                    android:textSize="11sp"
-                    android:textColor="#666"
-                    android:gravity="center"
-                    android:layout_marginEnd="4dp"/>
-
-                <View
-                    android:layout_width="0dp"
-                    android:layout_height="1dp"
-                    android:layout_weight="1"/>
-
-                <TextView
-                    android:id="@+id/manga_ocr_action_button"
-                    android:layout_width="60dp"
-                    android:layout_height="wrap_content"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:background="@drawable/btn_download"
-                    android:textColor="@android:color/white"
-                    android:textSize="12sp"
-                    android:gravity="center"
-                    android:text="@string/model_download"/>
-                <TextView
-                    android:id="@+id/manga_ocr_cancel_button"
-                    android:layout_width="60dp"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="4dp"
-                    android:paddingTop="6dp"
-                    android:paddingBottom="6dp"
-                    android:background="@drawable/btn_download"
-                    android:textColor="@android:color/white"
-                    android:textSize="12sp"
-                    android:gravity="center"
-                    android:visibility="gone"
-                    android:text="@string/model_btn_cancel"/>
-            </LinearLayout>
+            <include
+                layout="@layout/item_model_row_manga_ocr"
+                android:id="@+id/manga_ocr_row"/>
         </LinearLayout>
 
         <!-- ════════════════════════════════════════════════════════

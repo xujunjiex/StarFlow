@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  模型行模板 B —— 双文件模型（onnx + 字典）：状态 + 2 个浏览器按钮 + 下载/删除 + 取消。
+
+  用法与重复 ID 说明见 item_model_row_browser.xml 顶部注释。
+  两个浏览器按钮**逐个对应** JSON files[0]/files[1] 的 download_url。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:layout_marginTop="6dp"
+    android:gravity="center_vertical">
+
+    <TextView
+        android:id="@+id/row_status"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:textSize="12sp"/>
+
+    <TextView
+        android:id="@+id/row_browser_model"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp"
+        android:text="@string/model_browser_emoji_model"
+        android:textSize="11sp"
+        android:textColor="#666"
+        android:layout_marginEnd="4dp"/>
+
+    <TextView
+        android:id="@+id/row_browser_dict"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp"
+        android:text="@string/model_browser_emoji_dict"
+        android:textSize="11sp"
+        android:textColor="#666"
+        android:layout_marginEnd="6dp"/>
+
+    <TextView
+        android:id="@+id/row_action"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:paddingStart="18dp"
+        android:paddingEnd="18dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp"
+        android:background="@drawable/btn_download"
+        android:textColor="@android:color/white"
+        android:textSize="12sp"
+        android:text="@string/model_download"/>
+
+    <TextView
+        android:id="@+id/row_cancel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="6dp"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp"
+        android:background="@drawable/btn_download"
+        android:textColor="@android:color/white"
+        android:textSize="12sp"
+        android:visibility="gone"
+        android:text="@string/model_btn_cancel"/>
+</LinearLayout>

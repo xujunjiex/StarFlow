@@ -36,10 +36,16 @@ import kotlinx.coroutines.launch
  * 模型管理页面 — **数据驱动**，可扩展。
  *
  * 新增一个模型只需：
- * 1. 在 `fragment_model_management.xml` 加一行（status/action/cancel + 可选浏览器按钮，ID 见下文约定）
- * 2. 在 [modelRows] 加一条 [ModelRow] 配置
+ * 1. 在 `fragment_model_management.xml` 对应分组里加一行
+ *    `<include layout="@layout/item_model_row_*" android:id="@+id/xxx_row"/>`
+ *    （**include 的 id 必须有且唯一**，它就是该行的根 View）
+ * 2. 在 [modelRows] 加一条 [ModelRow]，填 `rowRootId` + 模板内的浏览器按钮 ID
  *
  * 渲染、浏览器按钮接线、磁盘状态刷新全部由 [modelRows] 自动完成，不再需要逐模型写方法。
+ *
+ * ⚠️ 行模板内部的 ID（`row_status`/`row_action`/`row_cancel`…）在多次 include 之间**是重复的**，
+ * 所有子控件查找一律以行根 View 为作用域（[rowRoot]），**禁止全局 `rootView.findViewById`**，
+ * 否则会串到别的行上去。
  */
 class ModelManagementFragment : Fragment() {
 
@@ -53,53 +59,46 @@ class ModelManagementFragment : Fragment() {
         val modelKey: ModelKey,
         val displayName: String,
         val expectedSize: String,
-        val statusId: Int,
-        val actionBtnId: Int,
-        val cancelBtnId: Int,
-        /** 浏览器按钮 → 打开 browser_url（模型主页） */
-        val browserUrlBtnId: Int? = null,
-        /** 浏览器按钮列表，逐个对应 JSON files 里第 i 个文件的 download_url */
+        /** include 进来的行根 View（其 id 在 XML 里唯一）；子控件查找一律以它为作用域 */
+        val rowRootId: Int,
+        /** 浏览器按钮（模板内 ID）→ 打开 browser_url（模型主页） */
+        val browserBtnIds: List<Int> = emptyList(),
+        /** 浏览器按钮（模板内 ID）列表，逐个对应 JSON files 里第 i 个文件的 download_url */
         val fileBrowserBtnIds: List<Int> = emptyList()
     )
 
     private val modelRows: List<ModelRow> = listOf(
         // 1. RT-DETR-V2（单文件，浏览器按钮开模型主页）
         ModelRow(ModelKey.RT_DETR_V2, "RT-DETR-V2", "~11MB",
-            R.id.rtdetr_status, R.id.rtdetr_action_button, R.id.rtdetr_cancel_button,
-            browserUrlBtnId = R.id.rtdetr_browser_button),
+            R.id.rtdetr_row, browserBtnIds = listOf(R.id.row_browser)),
         // 2. manga-ocr（3 文件：encoder/decoder/vocab）
         ModelRow(ModelKey.MANGA_OCR_GROUP, "manga-ocr", "~135MB",
-            R.id.manga_ocr_status, R.id.manga_ocr_action_button, R.id.manga_ocr_cancel_button,
-            fileBrowserBtnIds = listOf(
-                R.id.manga_ocr_encoder_button,
-                R.id.manga_ocr_decoder_button,
-                R.id.manga_ocr_vocab_button
+            R.id.manga_ocr_row, fileBrowserBtnIds = listOf(
+                R.id.row_browser_encoder,
+                R.id.row_browser_decoder,
+                R.id.row_browser_vocab
             )),
         // 3. PP-OCRv5 检测器（单文件，浏览器按钮开模型主页）
         ModelRow(ModelKey.PP_OCR_V5_DET, "PP-OCRv5 DET", "~4.6MB",
-            R.id.v5_det_status, R.id.v5_det_action_button, R.id.v5_det_cancel_button,
-            browserUrlBtnId = R.id.v5_det_browser_button),
+            R.id.v5_det_row, browserBtnIds = listOf(R.id.row_browser)),
         // 4-7. PP-OCRv5 识别器（每个 2 文件：onnx + 字典）
         ModelRow(ModelKey.PP_OCR_V5_REC_ZH, "PP-OCRv5 REC ZH", "~16MB",
-            R.id.v5_rec_zh_status, R.id.v5_rec_zh_action_button, R.id.v5_rec_zh_cancel_button,
-            fileBrowserBtnIds = listOf(R.id.v5_rec_zh_onnx_button, R.id.v5_rec_zh_dict_button)),
+            R.id.v5_rec_zh_row, fileBrowserBtnIds = listOf(R.id.row_browser_model, R.id.row_browser_dict)),
         ModelRow(ModelKey.PP_OCR_V5_REC_EN, "PP-OCRv5 REC EN", "~7.5MB",
-            R.id.v5_rec_en_status, R.id.v5_rec_en_action_button, R.id.v5_rec_en_cancel_button,
-            fileBrowserBtnIds = listOf(R.id.v5_rec_en_onnx_button, R.id.v5_rec_en_dict_button)),
+            R.id.v5_rec_en_row, fileBrowserBtnIds = listOf(R.id.row_browser_model, R.id.row_browser_dict)),
         ModelRow(ModelKey.PP_OCR_V5_REC_KO, "PP-OCRv5 REC KO", "~12.9MB",
-            R.id.v5_rec_ko_status, R.id.v5_rec_ko_action_button, R.id.v5_rec_ko_cancel_button,
-            fileBrowserBtnIds = listOf(R.id.v5_rec_ko_onnx_button, R.id.v5_rec_ko_dict_button)),
+            R.id.v5_rec_ko_row, fileBrowserBtnIds = listOf(R.id.row_browser_model, R.id.row_browser_dict)),
         ModelRow(ModelKey.PP_OCR_V5_REC_RU, "PP-OCRv5 REC RU", "~7.7MB",
-            R.id.v5_rec_ru_status, R.id.v5_rec_ru_action_button, R.id.v5_rec_ru_cancel_button,
-            fileBrowserBtnIds = listOf(R.id.v5_rec_ru_onnx_button, R.id.v5_rec_ru_dict_button)),
+            R.id.v5_rec_ru_row, fileBrowserBtnIds = listOf(R.id.row_browser_model, R.id.row_browser_dict)),
         // 8-9. PP-OCRv6 medium（单文件，浏览器按钮开文件下载）
         ModelRow(ModelKey.PP_OCR_V6_MEDIUM_DET, "PP-OCRv6 DET (medium)", "~60MB",
-            R.id.ppocrv6_medium_det_status, R.id.ppocrv6_medium_det_action, R.id.ppocrv6_medium_det_cancel,
-            fileBrowserBtnIds = listOf(R.id.ppocrv6_medium_det_browser_button)),
+            R.id.ppocrv6_medium_det_row, fileBrowserBtnIds = listOf(R.id.row_browser)),
         ModelRow(ModelKey.PP_OCR_V6_MEDIUM_REC, "PP-OCRv6 REC (medium)", "~74MB",
-            R.id.ppocrv6_medium_rec_status, R.id.ppocrv6_medium_rec_action, R.id.ppocrv6_medium_rec_cancel,
-            fileBrowserBtnIds = listOf(R.id.ppocrv6_medium_rec_browser_button))
+            R.id.ppocrv6_medium_rec_row, fileBrowserBtnIds = listOf(R.id.row_browser))
     )
+
+    /** 行根 View —— 模板内部 ID 跨行重复，所有子控件查找必须以它为作用域 */
+    private fun rowRoot(row: ModelRow): View = rootView.findViewById(row.rowRootId)
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -189,16 +188,17 @@ class ModelManagementFragment : Fragment() {
         updateV6TierVisibility()
     }
 
-    /** 接线所有浏览器按钮（数据驱动） */
+    /** 接线所有浏览器按钮（数据驱动，作用域限定在各自的 [rowRoot]） */
     private fun setupBrowserDownloadButtons() {
         for (row in modelRows) {
-            row.browserUrlBtnId?.let { btnId ->
-                rootView.findViewById<TextView>(btnId)?.setOnClickListener {
+            val root = rowRoot(row)
+            row.browserBtnIds.forEach { btnId ->
+                root.findViewById<TextView>(btnId)?.setOnClickListener {
                     openBrowser(repo.getBrowserUrl(row.modelKey) ?: "")
                 }
             }
             row.fileBrowserBtnIds.forEachIndexed { i, btnId ->
-                rootView.findViewById<TextView>(btnId)?.setOnClickListener {
+                root.findViewById<TextView>(btnId)?.setOnClickListener {
                     val url = repo.getModelInfo(row.modelKey)?.files?.getOrNull(i)?.downloadUrl
                         ?: repo.getBrowserUrl(row.modelKey)
                         ?: ""
@@ -233,9 +233,10 @@ class ModelManagementFragment : Fragment() {
         row: ModelRow,
         state: DownloadState
     ) {
-        val statusText = rootView.findViewById<TextView>(row.statusId)
-        val actionBtn = rootView.findViewById<TextView>(row.actionBtnId)
-        val cancelBtn = rootView.findViewById<TextView>(row.cancelBtnId)
+        val root = rowRoot(row)
+        val statusText = root.findViewById<TextView>(R.id.row_status)
+        val actionBtn = root.findViewById<TextView>(R.id.row_action)
+        val cancelBtn = root.findViewById<TextView>(R.id.row_cancel)
 
         // 默认隐藏 cancel 按钮
         cancelBtn.visibility = View.GONE

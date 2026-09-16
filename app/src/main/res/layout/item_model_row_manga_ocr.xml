@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  模型行模板 C —— manga-ocr：标题+状态一行，三个浏览器按钮（encoder/decoder/vocab）+ 下载/删除 + 取消一行。
+
+  标题 "manga-ocr" 直接写在模板里（本模板只有这一个使用方）。
+  用法与重复 ID 说明见 item_model_row_browser.xml 顶部注释。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="manga-ocr"
+            android:textSize="14sp"
+            android:textStyle="bold"/>
+
+        <TextView
+            android:id="@+id/row_status"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:textSize="12sp"/>
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="6dp"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/row_browser_encoder"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingStart="2dp"
+            android:paddingEnd="2dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:text="@string/model_browser_emoji_encoder"
+            android:textSize="11sp"
+            android:textColor="#666"
+            android:gravity="center"
+            android:layout_marginEnd="2dp"/>
+
+        <TextView
+            android:id="@+id/row_browser_decoder"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingStart="2dp"
+            android:paddingEnd="2dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:text="@string/model_browser_emoji_decoder"
+            android:textSize="11sp"
+            android:textColor="#666"
+            android:gravity="center"
+            android:layout_marginEnd="2dp"/>
+
+        <TextView
+            android:id="@+id/row_browser_vocab"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingStart="2dp"
+            android:paddingEnd="2dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:text="@string/model_browser_emoji_vocab"
+            android:textSize="11sp"
+            android:textColor="#666"
+            android:gravity="center"
+            android:layout_marginEnd="4dp"/>
+
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1"/>
+
+        <TextView
+            android:id="@+id/row_action"
+            android:layout_width="60dp"
+            android:layout_height="wrap_content"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:background="@drawable/btn_download"
+            android:textColor="@android:color/white"
+            android:textSize="12sp"
+            android:gravity="center"
+            android:text="@string/model_download"/>
+
+        <TextView
+            android:id="@+id/row_cancel"
+            android:layout_width="60dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:background="@drawable/btn_download"
+            android:textColor="@android:color/white"
+            android:textSize="12sp"
+            android:gravity="center"
+            android:visibility="gone"
+            android:text="@string/model_btn_cancel"/>
+    </LinearLayout>
+</LinearLayout>

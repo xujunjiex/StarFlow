@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  模型行模板 A —— 单文件模型：状态 + 1 个浏览器按钮 + 下载/删除 + 取消。
+
+  用法（在 fragment_model_management.xml 里）：
+      <include layout="@layout/item_model_row_browser" android:id="@+id/xxx_row"/>
+
+  ⚠️ 内部 ID（row_status/row_browser/row_action/row_cancel）在多次 include 之间**是重复的**，
+  这是有意为之：ModelManagementFragment 一律以「行根 View」为作用域做 findViewById
+  （rootView.findViewById(rowRootId).findViewById(R.id.row_status)），
+  绝不做全局查找，所以重复 ID 不会串行。
+  给 include 加 android:id 是**必须的**（否则行根 View 之间无法区分）。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:layout_marginTop="6dp"
+    android:gravity="center_vertical">
+
+    <TextView
+        android:id="@+id/row_status"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:textSize="12sp"/>
+
+    <TextView
+        android:id="@+id/row_browser"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:paddingStart="10dp"
+        android:paddingEnd="10dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp"
+        android:text="@string/model_browser_emoji_browser"
+        android:textSize="11sp"
+        android:textColor="#666"
+        android:layout_marginEnd="6dp"/>
+
+    <TextView
+        android:id="@+id/row_action"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:paddingStart="18dp"
+        android:paddingEnd="18dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp"
+        android:background="@drawable/btn_download"
+        android:textColor="@android:color/white"
+        android:textSize="12sp"
+        android:text="@string/model_download"/>
+
+    <TextView
+        android:id="@+id/row_cancel"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="6dp"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp"
+        android:background="@drawable/btn_download"
+        android:textColor="@android:color/white"
+        android:textSize="12sp"
+        android:visibility="gone"
+        android:text="@string/model_btn_cancel"/>
+</LinearLayout>
