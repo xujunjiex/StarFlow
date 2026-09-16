@@ -247,25 +247,14 @@ adb logcat --pid=$(adb shell pidof com.moe.starflow)      # 实时日志
 & "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" install -r app\build\outputs\apk\debug\app-debug.apk
 ```
 
-> ⚠️ **安装失败先别急着卸载**：`INSTALL_FAILED_UPDATE_INCOMPATIBLE` 多为签名不一致，卸载会清掉应用数据（书架/历史记录），确认后再卸。
-
 ### 单元测试
 
-⚠️ **Windows + Git Bash 里直接跑 `./gradlew test` 会挂** —— Git Bash 会弄乱 `PATH`，test worker 抛
-`ClassNotFoundException: Files\Git\mingw64\bin;...`。改用 PowerShell + 干净 PATH（`JAVA_HOME` 指向你自己的 JDK 17）：
-
-```powershell
-$env:JAVA_HOME='C:\Program Files\Java\jdk-17'
-$env:PATH='C:\Windows\System32;C:\Windows;'+$env:JAVA_HOME+'\bin'
-.\gradlew.bat --no-daemon :app:testDebugUnitTest
-
-# 只跑一个类
-.\gradlew.bat --no-daemon :app:testDebugUnitTest --tests com.moe.starflow.mangaimport.reader.ExportNamingTest
+```bash
+./gradlew test                                    # 全部单元测试（JUnit + Robolectric）
+./gradlew :app:testDebugUnitTest --tests "com.moe.starflow.mangaimport.reader.ExportNamingTest"
 ```
 
-Linux / macOS 直接 `./gradlew test` 即可。
-
-Robolectric 的 SDK 统一配在 `app/src/test/resources/robolectric.properties`（`sdk=34`，因为 Robolectric 4.11 最高支持 targetSdk 34；项目是 35，不配会在初始化直接报错）。
+Robolectric 的 SDK 统一配在 `app/src/test/resources/robolectric.properties`（`sdk=34`）。
 
 ### 原生代码与模型
 
@@ -312,13 +301,12 @@ app/src/main/java/
 │   ├── utils/            工具（Constants / CustomPreference / LogCollector / FontSync 等）
 │   └── launch/           首次启动引导
 └── translationapi/       各厂商翻译 API 实现（含 Hy-MT2 / NLLB 本地引擎）
-                          ⚠️ 历史遗留顶层包，不在 com.moe.starflow 下；JNI 符号与 proguard
-                             keep 规则硬编码 translationapi.*，**移动即 UnsatisfiedLinkError**
 ```
 
+- `translationapi/` 是历史遗留的独立顶层包（不在 `com.moe.starflow` 下）：JNI 符号与 proguard keep 规则硬编码该包名，直接移动会导致 `UnsatisfiedLinkError`
 - 原生代码：`app/src/main/cpp/`（CMake 构建）
-- 测试：`app/src/test/java/`（JUnit + Robolectric，看某个包时对应同名子目录）
-- 详细架构与踩坑记录见 [`docs/docs/ARCHITECTURE.md`](docs/docs/ARCHITECTURE.md) 与 `CLAUDE.md`
+- 测试：`app/src/test/java/`（JUnit + Robolectric，与主源码同包名子目录）
+- 详细架构见 [`docs/docs/ARCHITECTURE.md`](docs/docs/ARCHITECTURE.md)（设计与踩坑记录见 `CLAUDE.md`）
 
 ---
 

@@ -164,6 +164,6 @@ manga/pipeline/
 
 - 构建：`./gradlew assembleDebug / assembleRelease`（首次要编译 C++，明显偏慢，之后增量；**仅 arm64-v8a**）；环境与命令细节见 `README.md` 的「构建」
 - lint 硬门槛：`fatal += ['MissingTranslation']`（本地化防线，errors=0）
-- 单元测试：44 文件 / 242 用例（Robolectric 需干净 PATH + PowerShell）
+- 单元测试：44 文件 / 242 用例
 - release 开 `minifyEnabled` + `shrinkResources`：native 回调接口靠 proguard `-keep`，改名要同步改规则
 - 无 CI（个人项目，本地 lint 门已够用）
