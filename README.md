@@ -6,8 +6,9 @@
 
 <p align="center">
   <b>开源 Android OCR + AI 翻译 App</b><br>
-  游戏翻译 · 视频翻译 · 漫画翻译 | 完全免费 · 无广告 · 开源<br>
-  支持 Android 11+（API 29+）| 仅 arm64-v8a
+  游戏翻译 · 视频翻译 · 漫画翻译 | 内置漫画书架与阅读器<br>
+  完全免费 · 无广告 · 开源<br>
+  支持 Android 10+（API 29+）| 仅 arm64-v8a
 </p>
 
 ---
@@ -24,6 +25,7 @@
 6. **精确缓存命中机制** — pHash 相似度匹配，翻过的页面秒开，大幅降低 API 消耗
 7. **部署最新端侧 AI 翻译模型** — 内置 1.8B 设备端大模型（llama.cpp 推理），翻译完全离线、不上传文本
 8. **OCR 引擎统一选择层** — 模型管理页一键切换 OCR 引擎组合（ML Kit/PP-OCRv6/PP-OCRv5/RT-DETR+manga），游戏/漫画/首页全同步，源语言随引擎自动适配
+9. **自带漫画书架与阅读器** — 导入 zip / 图片目录即读，4 种阅读模式 + 4 种翻页动画 + 调色矫正；翻译就在阅读器里做，译文包 / 双语包一键导出（文件名沿用原序号）
 
 ---
 
@@ -54,6 +56,34 @@
 </p>
 
 气泡检测 + OCR + 翻译 + 竖排渲染，4 种检测引擎 + 4 种 OCR 引擎可自由组合。超 6 个气泡增量渲染分批提速，pHash 检测页面变化自动翻页。实时渲染共享层：译文/原文/纯原图三态切换、气泡点击复制原文/译文、翻译缓存相似度匹配翻过的页秒开。竖排方向（右到左/左到右）对所有翻译结果实时生效。
+
+### 漫画书架 & 阅读器
+
+**书架**：导入 zip 或图片目录（SAF 选择，导入即复制进 app 专属目录），自动生成封面，支持简介 / 重命名 / 换封面 / 已读标记 / 多选批量删除、下拉刷新、列表与网格两种显示；文件被外部删掉会标「文件丢失」。
+
+**阅读器**（复刻 Kototoro）：
+
+| 能力 | 说明 |
+|------|------|
+| 4 阅读模式 | 左到右 / 右到左 / 竖排（竖向整页）/ 连续滑动（Webtoon） |
+| 4 翻页动画 | 无 / 默认滑动 / 高级（封面叠放）/ 仿真（页脚卷曲、镜像纸背） |
+| 背景 & 调色 | 6 种背景（含跟随系统夜间）+ 反色/灰度/书本 + 亮度对比度；调色面板内「原图 vs 处理后」实时对比 |
+| 进度胶囊 | 底部透明胶囊：拖拽寻页、长按弹 3 列缩略图网格跳页；三色双层——白=已读 / 灰=未读 / **绿=已翻译** |
+| 自动翻页 | 间隔可设，触摸与失焦自动暂停 |
+| **点中间显隐 UI** | 点屏幕正中一格（Koto 九宫格中格）整组淡入淡出上下 UI，状态一直保持；滑动翻页/双击缩放不会误触 |
+| 旋转自适应 | 旋转后自动重新对齐到当前页，并按新视口重算页面尺寸与图片 |
+
+**阅读器内嵌翻译**：手动 / 自动 / 增量三种模式共用一条串行队列（翻页不打断、只翻当前在看的页上屏），译文实时叠加在页面上，支持译文 / 原文 / 纯原图三态切换；失败页显示感叹号，点开看失败原因。
+
+**三种打包下载**（工具栏「更多」→ 下载），均落盘到系统「下载」目录：
+
+| 入口 | 内容 | 包内命名 |
+|------|------|---------|
+| 原文 | 全部页 | 沿用原压缩包/目录里的名字 |
+| 译文 | **只有已翻译的页** | `<原名主干>.jpg`（JPEG 95） |
+| 双语 | 已翻译页的原文 + 译文 | 原名原文 + `<主干>_译文.jpg` |
+
+命名**沿用原压缩包里的序号**：原包 1..10 页只翻了 1/2/5/6，导出的就是 `001/002/005/006`，不是 `1/2/3/4`。
 
 ### 文本翻译 & 聊天
 
@@ -175,52 +205,123 @@
 
 ## 构建
 
-```bash
-# 首次克隆后创建 local.properties（路径用正斜杠）
-echo sdk.dir=C:/Users/<username>/AppData/Local/Android/Sdk > local.properties
+### 环境要求
 
-./gradlew assembleDebug
+| 项 | 版本 | 说明 |
+|----|------|------|
+| JDK | **17** | Gradle 与 AGP 要求；`JAVA_HOME` 指过去即可（Temurin / Microsoft 都行） |
+| Android SDK | compileSdk 35 / targetSdk 35（minSdk 29） | 路径写在 `local.properties` |
+| **NDK** | **25.2.9519653** | 原生代码必需，**版本必须完全一致**（`app/build.gradle` 里写死） |
+| CMake | 3.22.1 | 在 SDK Manager 里勾选安装 |
+| 架构 | **仅 arm64-v8a** | 64 位 ARM 真机；x86 模拟器跑不起来 |
+
+### 首次配置
+
+1. **`local.properties`**（已 gitignore，路径用正斜杠）：
+   ```properties
+   sdk.dir=C:/Users/<username>/AppData/Local/Android/Sdk
+   ```
+2. **SDK Manager** 里装 `NDK 25.2.9519653` + `CMake 3.22.1`（版本不对会直接构建失败）
+3. **国内网络**：Gradle 拉依赖慢或失败时给 git 配代理（用 Cloudflare WARP 时**不要**设代理）
+   ```bash
+   git config --global http.proxy http://127.0.0.1:7897   # Clash
+   ```
+4. 验证：`./gradlew assembleDebug`
+
+### 常用命令
+
+```bash
+./gradlew assembleDebug                    # debug APK（首次要编译 C++，明显偏慢，之后增量）
+./gradlew assembleRelease                  # release APK（跑 lint，缺翻译直接失败）
+./gradlew clean assembleDebug              # 清理重建
+./gradlew :app:lintDebug                   # 单独跑 lint（本地化防线，当前 errors=0）
+
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb logcat --pid=$(adb shell pidof com.moe.starflow)      # 实时日志
 ```
 
-**环境：** JDK 17、Android SDK（compileSdk 35）、NDK 25.2.9519653、CMake 3.22.1
+Windows 下 `adb` 建议用完整路径：
+
+```powershell
+& "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" install -r app\build\outputs\apk\debug\app-debug.apk
+```
+
+> ⚠️ **安装失败先别急着卸载**：`INSTALL_FAILED_UPDATE_INCOMPATIBLE` 多为签名不一致，卸载会清掉应用数据（书架/历史记录），确认后再卸。
+
+### 单元测试
+
+⚠️ **Git Bash 里直接跑 `./gradlew test` 会挂** —— Git Bash 会弄乱 `PATH`，test worker 抛
+`ClassNotFoundException: Files\Git\mingw64\bin;...`。用 PowerShell + 干净 PATH：
+
+```powershell
+$env:JAVA_HOME='C:\Program Files\Microsoft\jdk-17.0.19.10-hotspot'   # 换成本机 JDK 17 路径
+$env:PATH='C:\Windows\System32;C:\Windows;'+$env:JAVA_HOME+'\bin'
+.\gradlew.bat --no-daemon :app:testDebugUnitTest
+
+# 只跑一个类
+.\gradlew.bat --no-daemon :app:testDebugUnitTest --tests com.moe.starflow.mangaimport.reader.ExportNamingTest
+```
+
+Robolectric 的 SDK 统一配在 `app/src/test/resources/robolectric.properties`（`sdk=34`，因为 Robolectric 4.11 最高支持 targetSdk 34；项目是 35，不配会在初始化直接报错）。
+
+### 原生代码与模型
+
+- `app/src/main/cpp/`（约 49MB 源码）通过 CMake 编译：**llama.cpp**（Hy-MT2 设备端推理）+ ONNX / sentencepiece 桥接。首次构建慢，之后增量。
+- **PP-OCRv6 small 内置**在 `assets/`，开箱即用；PP-OCRv5 全系、v6 medium、RT-DETR-V2、manga-ocr、Hy-MT2、NLLB 都是运行时按需下载（模型管理页）。
+- release 构建开了 `minifyEnabled` + `shrinkResources`，JNI 回调接口由 `proguard-rules.pro` 的 `-keep` 保护 —— **改动 native 回调接口名要同步改 keep 规则**，否则 debug 正常、release 闪退。
+
+### 发布
+
+`app/build.gradle` 的 release 目前复用 debug 签名（无需额外 keystore），`./gradlew assembleRelease` 即可产出可安装包；正式发布走 GitHub Releases（app 内「检查更新」依赖 Release 的 APK 资产 + 说明里的网盘链接）。
 
 ---
 
 ## 项目结构
 
 ```
-app/src/main/java/com/moe/starflow/
-├── manga/           漫画翻译引擎（按功能分 8 个子包）
-│   ├── types/       纯数据类（TextLine/OcrResult/TranslatedBubble 等 13 文件）
-│   ├── config/      配置 & 枚举（MangaModeConfig/OcrEngineGroup/PPOcrParams）
-│   ├── engine/      14 文件（PP-OCRv5/v6、ML Kit/manga-ocr 桥接、检测器、模型文件）
-│   ├── render/      译文渲染（OverlayRenderer/VerticalTextRenderer）
-│   ├── merge/       文本区域合并 & 聚类（TextRegionMerger/PPOcrPostProcessing）
-│   ├── state/       状态管理（自动翻译状态机/引擎管理器/区域缓存）
-│   ├── debug/       调试渲染 & 面板
-│   └── MangaFloatingService.kt  主服务
-├── translate/       游戏/视频翻译引擎
-│   ├── screenshot/  截图系统（MediaProjection/无障碍双模式、Shooter、ScreenshotManager）
-│   ├── autotranslate/  游戏自动翻译（像素状态机/GameOcrEngine/调试浮窗）
-│   ├── widget/      悬浮窗组件（TranslationResultView/BallStateManager/CropView/Dialogs）
-│   └── FloatingBallService.kt  主服务 + TranslationTextAPI/PicAPI 接口
-├── chat/            文本聊天翻译模式（ChatEngine/模板/历史）
-├── ui/              历史记录 & 漫画查看器
-│   ├── history/     历史记录列表（HistoryFragment + 适配器）
-│   └── viewer/      漫画全屏查看器（MangaViewerActivity/ZoomableImageView/CropFragment）
-├── me/              设置 & API 配置（about/apiconfig/model/settings 4 子包）
-├── launch/          首次启动引导
-├── utils/           工具类（pHash、像素比较、日志、检查更新等）
-├── data/            Room 数据库 & 缓存管理
-├── download/        模型下载流水线（断点续传/校验/前台服务）
-└── translationapi/  翻译 API 实现（10+ 厂商）
+app/src/main/java/
+├── com/moe/starflow/
+│   ├── manga/            漫画翻译引擎（截屏路线）
+│   │   ├── types/ config/   纯数据类 / 引擎组合与参数
+│   │   ├── engine/          检测与 OCR 引擎（PP-OCRv5/v6、ML Kit、manga-ocr、RT-DETR-V2）
+│   │   ├── pipeline/        分批翻译管线（与阅读器共用，含测试缝 BatchOcrOps）
+│   │   ├── render/          译文渲染（OverlayRenderer / VerticalTextRenderer）
+│   │   ├── merge/           文本区域合并与空间聚类
+│   │   ├── state/           自动翻译状态机 / 引擎管理 / 区域缓存
+│   │   ├── debug/           调试浮层渲染与参数面板
+│   │   └── MangaFloatingService.kt   主服务（TranslateUtils / OcrLock / OnnxUtils / GeometryUtils）
+│   ├── mangaimport/      漫画导入书架 + Koto 式阅读器
+│   │   ├── ImportMangaFragment.kt   书架（导入 / 多选管理 / 显示选项）
+│   │   ├── data/           导入存储、zip 读取、目录迁移
+│   │   ├── reader/         阅读器（4 阅读模式 / 翻页动画 / 进度胶囊 / 打包下载 ReaderExport）
+│   │   ├── translate/      阅读器内嵌翻译（三种模式控制器 + 每页记录编解码）
+│   │   └── ui/             导入对话框 / 显示选项面板 / 网格适配器
+│   ├── translate/        游戏与视频翻译引擎
+│   │   ├── screenshot/     双模式截图（MediaProjection / 无障碍）
+│   │   ├── autotranslate/  像素驱动自动翻译（状态机 / GameOcrEngine）
+│   │   ├── widget/         悬浮窗组件（结果容器 / 悬浮球状态 / 框选 / 弹窗）
+│   │   └── FloatingBallService.kt    主服务 + TranslationTextAPI/PicAPI 接口
+│   ├── chat/             文本聊天翻译（ChatEngine / 模板 / 历史）
+│   ├── ui/               历史记录列表 & 漫画查看器（history/ viewer/）
+│   ├── me/               设置与配置（about / apiconfig / model / settings 子包）
+│   ├── data/             Room 数据库（v17）与三层缓存
+│   ├── download/         模型下载流水线（断点续传 / 状态机 / MD5 校验）
+│   ├── utils/            工具（Constants / CustomPreference / LogCollector / FontSync 等）
+│   └── launch/           首次启动引导
+└── translationapi/       各厂商翻译 API 实现（含 Hy-MT2 / NLLB 本地引擎）
+                          ⚠️ 历史遗留顶层包，不在 com.moe.starflow 下；JNI 符号与 proguard
+                             keep 规则硬编码 translationapi.*，**移动即 UnsatisfiedLinkError**
 ```
+
+- 原生代码：`app/src/main/cpp/`（CMake 构建）
+- 测试：`app/src/test/java/`（JUnit + Robolectric，看某个包时对应同名子目录）
+- 详细架构与踩坑记录见 [`docs/docs/ARCHITECTURE.md`](docs/docs/ARCHITECTURE.md) 与 `CLAUDE.md`
 
 ---
 
 ## 后续计划
 
-- 后台批量漫画翻译和打包下载
+- **整本批量翻译** —— 后台一次性翻完整本（当前阅读器是「翻到哪翻哪」的按需翻译）
 - 更多本地离线翻译模型支持（NLLB 之外的语种扩展）
 
 ---

@@ -1,6 +1,6 @@
 # StarFlow（星译）项目架构
 
-> 本文档是项目的架构总览，面向开发者。生成于 2026-09，与实际源码对照（199 个 Kotlin 文件 / ~48.4k 行 main 代码）。详细设计与踩坑记录见 `CLAUDE.md`，本文件只讲结构。
+> 本文档是项目的架构总览，面向开发者。生成于 2026-09，与实际源码对照（205 个 Kotlin 文件 / ~50.5k 行 main 代码）。详细设计与踩坑记录见 `CLAUDE.md`，本文件只讲结构。
 
 ## 1. 技术栈
 
@@ -103,6 +103,28 @@ manga/pipeline/
 - Webtoon（连续滚动）：翻译按钮禁用（"当前页"语义不唯一），原图/译文整屏切换走阅读模式分段器上「连续滑动」按钮的两态角标
 - 横屏与竖屏同为单页（双页显示已移除）→ 翻译逻辑与竖屏完全一致，不再按朝向禁用
 
+### 3.4 阅读器打包下载（三种）
+
+`ReaderExport`（IO 线程逐页渲染）+ `ExportNaming`（纯函数命名规则，单测覆盖）：
+
+| 入口 | 内容 | 包内命名 |
+|---|---|---|
+| 原文 | 全部页 | archive 直接复制原 zip；目录导入用原 key（含子目录） |
+| 译文 | 只有 `STATE_SUCCESS` 的页 | `<原目录>/<原名主干>.jpg`（统一 JPEG 95） |
+| 双语 | 已翻译页的原文 + 译文两个条目，同层混放 | 原文原名原扩展名 + `<主干>_译文.jpg` |
+
+- **命名沿用原压缩包序号**（原包 1..10 只翻 1/2/5/6 → 导出 `001/002/005/006`，不是 `1/2/3/4`）；后缀随界面语言（中文 `_译文` / 英文 `_translated`，走 strings）
+- ⚠️ 条目名必须**去重**（`uniqueEntryName` 加 `_2`）：同目录 `005.png`/`005.jpg` 译文名会撞，双语包再导入当新书读时 `005_译文.jpg` 也会撞 → `ZipException: duplicate entry` **整包失败**
+- ⚠️ **先渲染译文再写条目**，否则双语包会留孤儿原图；跳过页计数回传（`ExportOutcome`），0 页成功按失败处理
+- 译文图渲染走 `renderForExport`（**不写 `renderLru`**，导出上百页会把 100MB 渲染缓存冲干净）
+- 临时 zip 在 `cacheDir`，`finally` 里删；落盘走 `MediaStore.Downloads`
+
+### 3.5 阅读器 UI 不变量
+
+- **点屏幕正中一格**（Koto 九宫格中格）显隐上下 UI：淡入淡出 160ms，状态持续；淡出期间必须立刻关掉可交互（否则 160ms 内点到的是看不见的按钮）
+- **旋转后重新对齐**：`ViewPager2` 内部按像素保留滚动位置 → 必须直接对内部 `RecyclerView` 调 `scrollToPosition`（`setCurrentItem(当前页,false)` 在"已是当前页且空闲"时直接 return）；目标页用尺寸变化**前**记下的页
+- Webtoon 行高按页图原始宽高比钉死，宽度变化（旋转/分屏）时重绑可见页
+
 ## 4. 三层缓存与 pHash
 
 ```
@@ -140,7 +162,8 @@ manga/pipeline/
 
 ## 7. 构建与质量门
 
-- 构建：`./gradlew assembleDebug / assembleRelease`
+- 构建：`./gradlew assembleDebug / assembleRelease`（首次要编译 C++，约 3-10 分钟；**仅 arm64-v8a**）；环境与命令细节见 `README.md` 的「构建」
 - lint 硬门槛：`fatal += ['MissingTranslation']`（本地化防线，errors=0）
-- 单元测试：41 文件 / 206 用例（Robolectric 需干净 PATH + PowerShell）
+- 单元测试：44 文件 / 242 用例（Robolectric 需干净 PATH + PowerShell）
+- release 开 `minifyEnabled` + `shrinkResources`：native 回调接口靠 proguard `-keep`，改名要同步改规则
 - 无 CI（个人项目，本地 lint 门已够用）
