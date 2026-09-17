@@ -57,23 +57,30 @@ object MangaImporter {
         title: String
     ): ImportedManga? {
         val destDir = File(StorageDirStore.root(context), id.toString()).apply { mkdirs() }
-        val archiveFile = File(destDir, name)
-        context.contentResolver.openInputStream(contentUri)?.use { input ->
-            FileOutputStream(archiveFile).use { output -> input.copyTo(output) }
-        } ?: return null
+        try {
+            val archiveFile = File(destDir, name)
+            context.contentResolver.openInputStream(contentUri)?.use { input ->
+                FileOutputStream(archiveFile).use { output -> input.copyTo(output) }
+            } ?: return null
 
-        val pageNames = listZipImageEntries(archiveFile)
-        val coverPath = extractCoverFromZipFile(context, archiveFile, pageNames, id)
-        return ImportedManga(
-            id = id,
-            title = title,
-            localRoot = archiveFile.absolutePath,
-            isArchive = true,
-            coverPath = coverPath,
-            pageCount = pageNames.size,
-            addedAt = System.currentTimeMillis(),
-            sizeBytes = archiveFile.length()
-        )
+            val pageNames = listZipImageEntries(archiveFile)
+            val coverPath = extractCoverFromZipFile(context, archiveFile, pageNames, id)
+            return ImportedManga(
+                id = id,
+                title = title,
+                localRoot = archiveFile.absolutePath,
+                isArchive = true,
+                coverPath = coverPath,
+                pageCount = pageNames.size,
+                addedAt = System.currentTimeMillis(),
+                sizeBytes = archiveFile.length()
+            )
+        } catch (e: Exception) {
+            // 半成品必须清掉：留着的话下次导入复用同一个 id，残件与新文件混在同一目录
+            destDir.deleteRecursively()
+            LogCollector.e(TAG, "导入压缩包失败，已清理 $destDir: ${e.message}", e)
+            throw e
+        }
     }
 
     // ===== 导入图片文件夹 =====
@@ -100,7 +107,16 @@ object MangaImporter {
     ): ImportedManga? {
         val destDir = File(StorageDirStore.root(context), id.toString()).apply { mkdirs() }
         val imageNames = mutableListOf<String>()
-        val totalBytes = copyDocTreeToFile(context, rootDoc, destDir, imageNames)
+        // ⚠️ 收集的是**相对路径**（ch1/001.jpg），不是文件名：分章节目录里 ch1/001.jpg 与
+        // ch2/001.jpg 同名，只记 basename 会让 File(destDir, it) 指不到文件 → 封面永远是灰底占位，
+        // 排序也会把两章的同名页混在一起
+        val totalBytes = try {
+            copyDocTreeToFile(context, rootDoc, destDir, imageNames, "")
+        } catch (e: Exception) {
+            destDir.deleteRecursively()
+            LogCollector.e(TAG, "导入目录失败，已清理 $destDir: ${e.message}", e)
+            throw e
+        }
         val pages = ArchivedMangaReader.sortNaturally(imageNames)
         val coverPath = pages.firstOrNull()
             ?.let { File(destDir, it) }
@@ -120,18 +136,23 @@ object MangaImporter {
 
     // ===== 复制工具 =====
 
-    /** 递归复制 DocumentFile 树到本地 File 目录，收集图片相对路径名并统计总字节数。 */
+    /**
+     * 递归复制 DocumentFile 树到本地 File 目录，收集图片**相对路径**并统计总字节数。
+     * @param prefix 相对根目录的前缀（根为 ""，子目录为 "ch1/"），与 dest 的层级保持一致
+     */
     private fun copyDocTreeToFile(
         context: Context,
         doc: DocumentFile,
         dest: File,
-        imageNames: MutableList<String>
+        imageNames: MutableList<String>,
+        prefix: String
     ): Long {
         var total = 0L
         doc.listFiles().forEach { child ->
             if (child.isDirectory) {
-                val sub = File(dest, child.name ?: "").apply { mkdirs() }
-                total += copyDocTreeToFile(context, child, sub, imageNames)
+                val dirName = child.name ?: return@forEach
+                val sub = File(dest, dirName).apply { mkdirs() }
+                total += copyDocTreeToFile(context, child, sub, imageNames, "$prefix$dirName/")
             } else if (child.isFile && ArchivedMangaReader.isImageFile(child.name ?: "")) {
                 val name = child.name ?: return@forEach
                 val target = File(dest, name)
@@ -139,7 +160,7 @@ object MangaImporter {
                     FileOutputStream(target).use { output -> input.copyTo(output) }
                 }
                 total += target.length()
-                imageNames.add(name)
+                imageNames.add("$prefix$name")
             }
         }
         return total

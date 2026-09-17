@@ -604,11 +604,11 @@ class ReaderMenuSheet(
                     val supportedNames = OcrEngineGroup.entries
                         .filter { it.sourceLangs.contains(loc.getOriCode()) }
                         .joinToString(" / ") { getString(it.labelRes) }
-                    val msg = if (supportedNames.isEmpty()) "该语言当前 OCR 模型不支持"
-                    else "该语言当前 OCR 模型不支持，请使用 $supportedNames"
+                    val msg = if (supportedNames.isEmpty()) getString(R.string.reader_lang_ocr_unsupported_none)
+                    else getString(R.string.reader_lang_ocr_unsupported, supportedNames)
                     showHintDialog(msg)
                 }
-                2 -> { _ -> showHintDialog("该语言当前翻译模型不支持，请使用 NLLB 或 API 翻译") }
+                2 -> { _ -> showHintDialog(getString(R.string.reader_lang_translate_unsupported)) }
                 else -> null
             },
             onLanguageSelected = { locale ->

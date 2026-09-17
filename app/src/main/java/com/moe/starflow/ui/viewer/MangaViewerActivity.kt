@@ -775,7 +775,7 @@ class MangaViewerActivity : AppCompatActivity() {
                         val ocrResults = DetectionBridge.runOCR(cropped, sourceLang, detEngine.value, ocrEngine.value, this@MangaViewerActivity)
                         if (ocrResults.isEmpty()) throw Exception("OCR 未识别到文字")
                         // 重翻遵循用户配置的竖排方向
-                        val textDirection = if (prefs.getString("Manga_Text_Direction", "0") == "1") TextDirection.VERTICAL_LR else TextDirection.VERTICAL_RL
+                        val textDirection = VerticalFlow.fromPref(prefs.getString("Manga_Text_Direction", "0")).toTextDirection()
                         val bubbles = DetectionBridge.ocrToBubbleRegions(ocrResults, textDirection)
                         if (bubbles.isEmpty()) throw Exception("无有效文字区域")
                         val translator = createTranslator(prefs) ?: throw Exception("翻译器创建失败")

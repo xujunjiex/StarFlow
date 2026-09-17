@@ -25,6 +25,8 @@ private class Shared(val source: ReaderPageSource) {
     var onTap: (Float, Float) -> Unit = { _, _ -> }
     @Volatile
     var visibleImage: com.moe.starflow.ui.viewer.ZoomableImageView? = null
+    /** 当前阅读页（由阅读器注入）。只有绑定到这一页时才更新 [visibleImage]，见 loadTo。 */
+    var currentPage: () -> Int = { 0 }
     /** 页图提供者：返回该页「应显示」的图（译文/原文渲染图）或 null（显示原图）。由阅读器注入。
      *  ⚠️ 必须在 IO 线程安全、可同步返回（内部是 LruCache.get）。重绑/复用页时优先用它，防止把译图覆盖回原图。 */
     @Volatile
@@ -67,7 +69,10 @@ private fun loadTo(
     isCurrent: () -> Boolean
 ) {
     img.colorFilter = shared.filter()?.toColorFilter()
-    shared.visibleImage = img
+    // ⚠️ 只有绑定「当前页」时才能记 visibleImage：offscreenPageLimit=1 会顺手绑定邻页，
+    // 无条件赋值会让调色面板的实时预览落到邻页的 ImageView 上 —— 拖亮度/对比度时
+    // 用户盯着的那页毫无反应，换个页面回来才生效。
+    if (page == shared.currentPage()) shared.visibleImage = img
     val slot = page
     if ((img.tag as? Int) != slot) {
         img.tag = slot
@@ -86,13 +91,16 @@ class ReaderPageAdapter(
     private val source: ReaderPageSource,
     filter: () -> ReaderColorFilter?,
     onInteraction: () -> Unit,
-    onTap: (Float, Float) -> Unit
+    onTap: (Float, Float) -> Unit,
+    /** 当前阅读页提供者：实时滤镜只作用在它对应的 ImageView 上（邻页会被预绑定） */
+    currentPage: () -> Int = { 0 }
 ) : RecyclerView.Adapter<ReaderPageAdapter.VH>() {
 
     private val shared = Shared(source).apply {
         this.filter = filter
         this.onInteraction = onInteraction
         this.onTap = onTap
+        this.currentPage = currentPage
     }
 
     val visibleImage: ZoomableImageView?

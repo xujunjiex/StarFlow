@@ -271,7 +271,7 @@ class MangaReaderActivity : AppCompatActivity() {
         (binding.viewPager.getChildAt(0) as? androidx.recyclerview.widget.RecyclerView)?.itemAnimator = null
 
         // 横竖屏都是单页（双页显示已移除）：旋转不需要重建 adapter
-        pageAdapter = ReaderPageAdapter(source, { colorFilter }, ::onInteraction, ::handleTap)
+        pageAdapter = ReaderPageAdapter(source, { colorFilter }, ::onInteraction, ::handleTap) { currentPage }
         binding.viewPager.adapter = pageAdapter
         applyDirection()
         applyAnimation()
@@ -786,11 +786,17 @@ class MangaReaderActivity : AppCompatActivity() {
                     overlay.dismiss()
                     overlay.show(getString(R.string.reader_translate_done))
                     refreshProgressTranslation()
+                    // 成功页要立刻出现三态按钮（此前要等下一次 onVisual 重绑才出现）
+                    refreshTranslationChrome()
                 }
                 ReaderTranslatePhase.FAILED -> {
                     overlay.dismiss()
                     overlay.showError(message ?: getString(R.string.reader_translate_failed))
                     refreshProgressTranslation()
+                    // ⚠️ 必须刷新：失败感叹号只在 refreshTranslationChrome 里被置 VISIBLE，
+                    // 而错误 chip 几秒后就自动消失 —— 不刷的话用户此后再也没有入口看失败原因
+                    //（控制器发 FAILED 时不走 onVisual）
+                    refreshTranslationChrome()
                 }
                 // 队列跑完：提示一下随即消失，翻页后队列会自动重启
                 ReaderTranslatePhase.QUEUE_DRAINED -> {
@@ -1162,11 +1168,16 @@ class MangaReaderActivity : AppCompatActivity() {
             val tmp = File(cacheDir, "manga_export_${System.currentTimeMillis()}.zip")
             val overlay = TranslationStatusOverlay.getInstance(this@MangaReaderActivity)
             val showProgress = statusOverlayEnabled()
+            // 「我到底显示过没有」：dismiss 只能按这个判据，不能只看开关。
+            // 浮层是进程级共享单例，dismiss() 会清掉**全部**堆叠消息 —— 后台导出（跨 onStop 继续跑）
+            // 在开关开着但从未显示过的情况下收尾，就会顺手清掉悬浮窗服务正在显示的翻译状态芯片。
+            var progressShown = false
             // 进度只在**前台**显示：状态浮层是进程级 TYPE_APPLICATION_OVERLAY 窗口，而导出是
             // lifecycleScope 上**跨 onStop 继续跑**的任务（翻译队列 onStop 会暂停，导出不会）——
             // 不在前台还继续 showImmediate，就会把「正在导出」芯片重新贴到别的应用上挂到导出结束。
             fun progressVisible() = showProgress && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
             if (progressVisible()) {
+                progressShown = true
                 overlay.showImmediate(getString(R.string.reader_download_progress, 0, total), autoDismiss = false)
             }
             try {
@@ -1179,12 +1190,13 @@ class MangaReaderActivity : AppCompatActivity() {
                     tempFile = tmp,
                 ) { done, sum ->
                     if (progressVisible()) {
+                        progressShown = true
                         overlay.showImmediate(getString(R.string.reader_download_progress, done, sum), autoDismiss = false)
                     }
                 }
-                // ⚠️ 只在自己显示过时才 dismiss：浮层是共享单例且 dismiss() 清空**全部**堆叠消息，
-                // 开关关闭时只会误伤同时在显示的翻译状态芯片
-                if (showProgress) overlay.dismiss()
+                // ⚠️ 只在自己显示过时才 dismiss（progressShown，不是开关）：浮层是共享单例且
+                // dismiss() 清空**全部**堆叠消息，开关开着但没显示过时静默收尾会误伤别的芯片
+                if (progressShown) overlay.dismiss()
                 UiUtils.showToast(this@MangaReaderActivity, exportMessage(outcome, both, tmp))
             } finally {
                 // ⚠️ 清理必须在 finally：导出中途退出阅读器会取消 lifecycleScope，上面所有

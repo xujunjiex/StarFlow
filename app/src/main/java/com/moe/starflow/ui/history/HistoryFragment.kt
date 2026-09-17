@@ -382,12 +382,12 @@ class HistoryFragment : Fragment() {
 
         val text = buildString {
             if (sourceText.isNotEmpty()) {
-                append("原文: ")
+                append(getString(R.string.history_export_source_label))
                 append(sourceText)
             }
             if (translatedText.isNotEmpty()) {
                 if (sourceText.isNotEmpty()) append("\n")
-                append("译文: ")
+                append(getString(R.string.history_export_translated_label))
                 append(translatedText)
             }
         }
@@ -400,7 +400,7 @@ class HistoryFragment : Fragment() {
     private fun showDarkDialog(
         message: String,
         title: String? = null,
-        positiveText: String = "确定",
+        positiveText: String? = null,
         negativeText: String? = null,
         onPositive: () -> Unit = {},
         onNegative: (() -> Unit)? = null
@@ -412,7 +412,7 @@ class HistoryFragment : Fragment() {
         val btnNegative = view.findViewById<TextView>(R.id.dialogBtnNegative)
 
         tvMessage.text = message
-        btnPositive.text = positiveText
+        btnPositive.text = positiveText ?: getString(R.string.confirm_ok)
 
         if (title != null) {
             tvTitle.visibility = View.VISIBLE
@@ -557,9 +557,9 @@ class HistoryFragment : Fragment() {
                 if (hasMultiVariant) {
                     withContext(Dispatchers.Main) {
                         showDarkDialog(
-                            message = "该进程组包含多个尺寸的翻译结果，将全部下载。",
-                            positiveText = "全部下载",
-                            negativeText = "取消",
+                            message = getString(R.string.history_download_multi_variant),
+                            positiveText = getString(R.string.history_download_all),
+                            negativeText = getString(R.string.user_cancel),
                             onPositive = {
                                 lifecycleScope.launch { doDownloadSession(session) }
                             }
@@ -570,7 +570,7 @@ class HistoryFragment : Fragment() {
                 }
             } catch (e: Exception) {
                 LogCollector.e(TAG, "Download session failed", e)
-                Toast.makeText(requireContext(), "下载失败", Toast.LENGTH_SHORT).show()
+                com.moe.starflow.utils.UiUtils.showToast(requireContext(), getString(R.string.toast_download_failed))
             }
         }
     }
@@ -587,7 +587,7 @@ class HistoryFragment : Fragment() {
         // 进度提示
         val progressDialog = withContext(Dispatchers.Main) {
             android.app.ProgressDialog(requireContext()).apply {
-                setMessage("正在准备下载...")
+                setMessage(getString(R.string.history_download_preparing))
                 setCancelable(false)
                 setProgressStyle(android.app.ProgressDialog.STYLE_HORIZONTAL)
                 setMax(allEntryIds.size)
@@ -649,12 +649,12 @@ class HistoryFragment : Fragment() {
 
             if (skippedCount > 0) {
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(requireContext(), "跳过 $skippedCount 张无法解析的页面", Toast.LENGTH_SHORT).show()
+                    com.moe.starflow.utils.UiUtils.showToast(requireContext(), getString(R.string.toast_skipped_unparsable, skippedCount))
                 }
             }
             if (tempFiles.isEmpty()) {
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(requireContext(), "没有可下载的图片", Toast.LENGTH_SHORT).show()
+                    com.moe.starflow.utils.UiUtils.showToast(requireContext(), getString(R.string.toast_nothing_to_download))
                 }
                 return
             }
@@ -724,7 +724,7 @@ class HistoryFragment : Fragment() {
             tempFiles.forEach { it.delete() }
             LogCollector.e(TAG, "Download session failed", e)
             withContext(Dispatchers.Main) {
-                Toast.makeText(requireContext(), "下载失败", Toast.LENGTH_SHORT).show()
+                com.moe.starflow.utils.UiUtils.showToast(requireContext(), getString(R.string.toast_download_failed))
             }
         }
     }
@@ -755,7 +755,7 @@ class HistoryFragment : Fragment() {
                 // 进度提示
                 progressDialog = withContext(Dispatchers.Main) {
                     android.app.ProgressDialog(requireContext()).apply {
-                        setMessage("正在准备下载...")
+                        setMessage(getString(R.string.history_download_preparing))
                         setCancelable(false)
                         show()
                     }
@@ -764,7 +764,7 @@ class HistoryFragment : Fragment() {
                 val dateFormat = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
                 val content = buildString {
                     if (entriesToDownload.isEmpty()) {
-                        append("(无翻译记录)\n")
+                        append(getString(R.string.history_export_no_records)).append("\n")
                     } else {
                         for (entry in entriesToDownload) {
                             val time = dateFormat.format(Date(entry.updatedAt))
@@ -772,10 +772,16 @@ class HistoryFragment : Fragment() {
                             val src = entry.sourceText
                             val trans = entry.translatedText
                             if (src.isNullOrEmpty() && trans.isNullOrEmpty()) {
-                                append("(空记录)\n")
+                                append(getString(R.string.history_export_empty_record)).append("\n")
                             } else {
-                                if (!src.isNullOrEmpty()) append("原文: $src\n")
-                                if (!trans.isNullOrEmpty()) append("译文: $trans\n")
+                                if (!src.isNullOrEmpty()) {
+                                    append(getString(R.string.history_export_source_label)).append(src)
+                                        .append("\n")
+                                }
+                                if (!trans.isNullOrEmpty()) {
+                                    append(getString(R.string.history_export_translated_label)).append(trans)
+                                        .append("\n")
+                                }
                             }
                             append("---\n")
                         }

@@ -148,7 +148,8 @@ class HistoryMangaAdapter(
                 tvTime?.text = if (isSmall) {
                     updatedStr
                 } else {
-                    "修改 $updatedStr"
+                    // 与 list 模式同源（history_updated_format），别再硬编码中文
+                    itemView.context.getString(R.string.history_updated_format, updatedStr)
                 }
 
                 // 根据显示模式调整文字大小

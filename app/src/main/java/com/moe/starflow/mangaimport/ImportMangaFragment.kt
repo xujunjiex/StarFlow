@@ -44,6 +44,10 @@ import java.io.File
  */
 class ImportMangaFragment : Fragment() {
 
+    private companion object {
+        private const val TAG = "ImportManga"
+    }
+
     private var _binding: FragmentImportMangaBinding? = null
     private val binding get() = _binding!!
     private lateinit var adapter: MangaGridAdapter
@@ -402,11 +406,23 @@ class ImportMangaFragment : Fragment() {
     // ===== 导入 =====
 
     private fun importArchives(uris: List<Uri>) {
+        val ctx = requireContext().applicationContext
         viewLifecycleOwner.lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
+            // ⚠️ runCatching 不能光吞掉异常：用户选到 rar/7z 这类被文件管理器报成 octet-stream 的文件时
+            // ZipFile 直接抛，原先表现为「书架毫无变化 + 日志里一个字都没有」——纯排查黑洞。
+            val failed = withContext(Dispatchers.IO) {
+                var count = 0
                 uris.forEach { uri ->
-                    runCatching { MangaImporter.importArchive(requireContext(), uri) }
+                    runCatching { MangaImporter.importArchive(ctx, uri) }
+                        .onFailure { e ->
+                            count++
+                            LogCollector.e(TAG, "导入压缩包失败: $uri", e)
+                        }
                 }
+                count
+            }
+            if (failed > 0) {
+                UiUtils.showToast(requireContext(), getString(R.string.import_failed, failed), isShort = false)
             }
             refresh()
         }
@@ -414,9 +430,15 @@ class ImportMangaFragment : Fragment() {
 
     private fun importDirectory(uri: Uri) {
         // 阶段一：单夹/多夹都按「整个夹=一部」处理（多夹遍历属后续后端）
+        val ctx = requireContext().applicationContext
         viewLifecycleOwner.lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
-                runCatching { MangaImporter.importDirectory(requireContext(), uri) }
+            val error = withContext(Dispatchers.IO) {
+                runCatching { MangaImporter.importDirectory(ctx, uri) }
+                    .onFailure { e -> LogCollector.e(TAG, "导入目录失败: $uri", e) }
+                    .exceptionOrNull()
+            }
+            if (error != null) {
+                UiUtils.showToast(requireContext(), getString(R.string.import_failed_dir), isShort = false)
             }
             refresh()
         }
