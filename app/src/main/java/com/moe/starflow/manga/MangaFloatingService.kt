@@ -1200,7 +1200,6 @@ class MangaFloatingService : LifecycleService() {
             y = 0
         }
         windowManager.addView(cropView, cropViewParams)
-        com.moe.starflow.utils.DisplaySize.probe(this, "setCropView")
         LogCollector.d(
             TAG,
             "setCropView: cropRect=${cropRect?.toString() ?: "null"} " +
@@ -1365,15 +1364,6 @@ class MangaFloatingService : LifecycleService() {
                     if (fullBitmap != null) {
                         LogCollector.d(TAG, "Full screenshot: ${fullBitmap.width}x${fullBitmap.height}")
                         val croppedBitmap = if (cropRect != null) {
-                            // 【诊断】记录定标三元组（frame/window/origin/是否恒等），
-                            // 供判定帧语义（整屏缩放+黑边 vs 1:1 取景）——未定标前 CropSpace 只走恒等分支
-                            val cropBox = CropSpace.fromRectF(cropRect.left, cropRect.top, cropRect.right, cropRect.bottom)
-                            val winGeom = WinGeom(cropView.width, cropView.height, offset.x, offset.y)
-                            val frameGeom = FrameGeom(fullBitmap.width, fullBitmap.height)
-                            LogCollector.d(TAG, "crop diag: " + CropSpace.describe(
-                                cropBox, winGeom, frameGeom, CropSpace.resolveCropRect(cropBox, winGeom, frameGeom)
-                            ))
-
                             val cropped = ScreenshotManager.cropBitmap(fullBitmap, cropRect, offset)
                             // 裁不出有效区域（cropBitmap 返回 null）→ 交给下游按全屏处理，
                             // 而不是让 croppedBitmap 退化成与 fullBitmap 同一个实例
@@ -2521,20 +2511,6 @@ class MangaFloatingService : LifecycleService() {
             }
             resultOverlayImage.scaleType = ImageView.ScaleType.FIT_XY
             windowManager.addView(resultOverlayView, params)
-            // 【诊断】与 CropView.logWindowGeometry 同项对比，判定两者 (0,0) 是否同源。
-            // 当前 flags 无 NO_LIMITS 而框选窗有 —— 若实测原点不同，即为横屏偏移来源。
-            resultOverlayView.post {
-                val loc = IntArray(2)
-                resultOverlayView.getLocationOnScreen(loc)
-                LogCollector.d(
-                    TAG,
-                    "[resultOverlay/crop] view=${resultOverlayView.width}x${resultOverlayView.height} " +
-                        "origin=(${loc[0]},${loc[1]}) lpFlags=${params.flags} " +
-                        "xy=(${params.x},${params.y}) size=${params.width}x${params.height} " +
-                        "cropRect=$crop 框选窗原点=(${cropView.absolutePointOffset.x},${cropView.absolutePointOffset.y}) " +
-                        "显示=${com.moe.starflow.utils.DisplaySize.isReliable}"
-                )
-            }
         } else {
             // 全屏模式：获取屏幕真实像素尺寸，overlay 精确覆盖全屏
             val screenSize = getScreenSize()

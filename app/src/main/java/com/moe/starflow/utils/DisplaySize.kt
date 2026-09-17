@@ -2,10 +2,7 @@ package com.moe.starflow.utils
 
 import android.content.Context
 import android.graphics.Point
-import android.hardware.display.DisplayManager
 import android.os.Build
-import android.util.DisplayMetrics
-import android.view.Display
 import android.view.WindowManager
 
 /**
@@ -84,55 +81,5 @@ object DisplaySize {
         @Suppress("DEPRECATION")
         wm.defaultDisplay.getRealSize(p)
         return p
-    }
-
-    /**
-     * 【诊断】把各来源一次打全，用于确认哪一个是可信的。
-     * 只在取值变化时输出，可安全挂在轮询/配置回调上。
-     */
-    @Volatile
-    private var lastProbeSig: String? = null
-
-    fun probe(ctx: Context, tag: String) {
-        try {
-            val cfg = ctx.resources.configuration
-            val dm = ctx.resources.displayMetrics
-            val display = ctx.getSystemService(DisplayManager::class.java)
-                ?.getDisplay(Display.DEFAULT_DISPLAY)
-            val realMetrics = DisplayMetrics().also { display?.getRealMetrics(it) }
-            @Suppress("DEPRECATION")
-            val legacy = Point()
-            @Suppress("DEPRECATION")
-            (ctx.getSystemService(Context.WINDOW_SERVICE) as? WindowManager)
-                ?.defaultDisplay?.getRealSize(legacy)
-
-            var cur = "-"
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                try {
-                    val b = (ctx.getSystemService(Context.WINDOW_SERVICE) as? WindowManager)
-                        ?.currentWindowMetrics?.bounds
-                    if (b != null) cur = "${b.width()}x${b.height()}"
-                } catch (_: Throwable) {
-                    cur = "throw"
-                }
-            }
-
-            val line =
-                "[$tag] cfg.orientation=${cfg.orientation}(1=竖2=横) " +
-                    "cfg.screen=${cfg.screenWidthDp}x${cfg.screenHeightDp}dp " +
-                    "dm=${dm.widthPixels}x${dm.heightPixels} " +
-                    "mode=${display?.mode?.physicalWidth}x${display?.mode?.physicalHeight} " +
-                    "rotation=${display?.rotation} " +
-                    "realMetrics=${realMetrics.widthPixels}x${realMetrics.heightPixels} " +
-                    "getRealSize=${legacy.x}x${legacy.y} " +
-                    "currentWindowMetrics=$cur " +
-                    "laidOut=${laidOut.x}x${laidOut.y}"
-            if (line != lastProbeSig) {
-                lastProbeSig = line
-                LogCollector.d(TAG, line)
-            }
-        } catch (e: Exception) {
-            LogCollector.e(TAG, "probe 失败: $tag", e)
-        }
     }
 }

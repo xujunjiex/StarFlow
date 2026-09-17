@@ -1358,7 +1358,6 @@ class FloatingBallService : LifecycleService() {
             y = 0
         }
         windowManager.addView(cropView, cropViewParams)
-        com.moe.starflow.utils.DisplaySize.probe(this, "setCropView")
         LogCollector.d(
             TAG,
             "setCropView: mRectF=${mRectF?.toString() ?: "null"} " +
