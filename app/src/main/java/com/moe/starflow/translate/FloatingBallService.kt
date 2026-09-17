@@ -358,10 +358,12 @@ class FloatingBallService : LifecycleService() {
      */
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
-        // 判据走几何（ensureCropStillValid），不用 newConfig.orientation ——
-        // 后者还有一个失效的兄弟判据（resources.configuration 会被冻结），
-        // 两个来源并存迟早再度漂移。几何来源全程一致。
-        ensureCropStillValid(null)
+        // ⚠️ 这里**直接**清框，不经过任何几何查询：本回调被触发本身就是「显示变了」的确证，
+        // 而几何查询（getScreenSize → CropView.onSizeChanged 上报）在框选确认、CropView
+        // 已移除之后是**冻结**的，问它必然答「没变」。用过期的判据去决定要不要失效，
+        // 正是此前反复出错的模式（见 ensureCropStillValid 的注释）。
+        // 横→竖、竖→横两个方向都会走到这里。
+        clearCropForScreenChange()
     }
 
     // 缓存管理
@@ -1395,6 +1397,22 @@ class FloatingBallService : LifecycleService() {
     }
 
     /**
+     * 屏幕变化 → 旧框选坐标失效：清掉框选、停自动翻译、提示重新框选。
+     *
+     * 幂等：没有框选时什么也不做。`onConfigurationChanged`（显示变化的直接证据）与
+     * [ensureCropStillValid]（截图帧尺寸比对，覆盖非配置变更的尺寸变化）共用本入口。
+     */
+    private fun clearCropForScreenChange(): Boolean {
+        if (mRectF == null) return false
+        LogCollector.d(TAG, "屏幕变化：清除旧框选，要求重新框选")
+        mRectF = null
+        mRectFrameSize = null
+        if (isAutoTranslating) stopAutoTranslate()
+        showToast(getString(R.string.orientation_changed), true)
+        return true
+    }
+
+    /**
      * 截图帧的几何与「框选时」不一致 → 旧框选坐标已失效：清掉框选、停自动翻译、要求重新框选。
      *
      * @param frame 本次截图帧的实测尺寸。传 null 表示「此刻拿不到新鲜帧」（如触发前守卫 /
@@ -1414,13 +1432,9 @@ class FloatingBallService : LifecycleService() {
 
         LogCollector.d(
             TAG,
-            "几何变化（框选时 ${saved.width}x${saved.height} → 现在 ${actual.width}x${actual.height}），清除旧框选"
+            "截图帧几何变化（框选时 ${saved.width}x${saved.height} → 现在 ${actual.width}x${actual.height}）"
         )
-        mRectF = null
-        mRectFrameSize = null
-        if (isAutoTranslating) stopAutoTranslate()
-        showToast(getString(R.string.orientation_changed), true)
-        return true
+        return clearCropForScreenChange()
     }
 
     private fun showResultView() {

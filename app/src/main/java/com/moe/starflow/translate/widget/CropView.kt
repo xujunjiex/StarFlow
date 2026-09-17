@@ -72,8 +72,17 @@ class CropView @JvmOverloads constructor(
     /** 比例框：最近一次 setRectCentered 用的比例，窗口尺寸变化时按它重算 */
     private var lastWidthRatio = 0.9f
     private var lastHeightRatio = 0.35f
-    /** 是否由调用方显式设过框（setRect）；只有「显式设过且放得下」才保留用户选择 */
+    /** 是否已有**用户确认过的**框（setRect 传入）；只有它才在几何变化时保留 */
     private var hasExplicitRect = false
+    /**
+     * 当前 mRect 是否有效可用。
+     *
+     * 与 [hasExplicitRect] 的区别：`setRectCentered` 算出来的框**也是有效的**
+     * （用户上次就是这么看到它、只是没动过），几何没变时应当**原样保留** ——
+     * 否则每次打开框选界面都重新居中，用户看不到自己上次的框。
+     * 只有 `setRect` 传进来的已确认框才标记 [hasExplicitRect]。
+     */
+    private var hasValidRect = false
 
     /**
      * 禁用裁剪框**内部**拖动（position == 8）。
@@ -87,6 +96,7 @@ class CropView @JvmOverloads constructor(
         mRect = RectF(rectF)
         mInitRect = RectF(rectF)
         hasExplicitRect = true
+        hasValidRect = true
 
         // 等待视图布局完成后再获取位置
         viewTreeObserver.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
@@ -140,7 +150,15 @@ class CropView @JvmOverloads constructor(
     fun setRectCentered(widthRatio: Float, heightRatio: Float) {
         lastWidthRatio = widthRatio
         lastHeightRatio = heightRatio
+        // ⚠️ 不在这里清 hasExplicitRect：框选界面每次打开都会调本方法（服务侧在
+        // 「无已确认框」时走的正是这条路），清了就等于每次重新居中 ——
+        // 用户看不到自己上次的框。真正的失效由【几何比对】负责（见 onSizeChanged）。
+        if (hasValidRect && hasExplicitRect && fitsIn(width, height)) {
+            LogCollector.d(TAG_CROP, "setRectCentered: 几何未变，保留已确认的框 $mRect")
+            return
+        }
         hasExplicitRect = false
+        hasValidRect = false
         if (width > 0 && height > 0) {
             centerRect(width, height, widthRatio, heightRatio)
         } else {
@@ -163,7 +181,9 @@ class CropView @JvmOverloads constructor(
         com.moe.starflow.utils.DisplaySize.reportLaidOutSize(w, h)
         val rectDesc = if (::mRect.isInitialized) mRect.toString() else "未初始化"
         LogCollector.d(TAG_CROP, "onSizeChanged ${oldw}x$oldh -> ${w}x$h rect=$rectDesc 显式=$hasExplicitRect")
-        if (!::mRect.isInitialized || !hasExplicitRect || !fitsIn(w, h)) {
+        if (!hasValidRect || !::mRect.isInitialized || !fitsIn(w, h)) {
+            // 几何变化（或框放不下）→ 旧框作废，按比例重新居中（centerRect 会置 hasValidRect）
+            hasExplicitRect = false
             centerRect(w, h, lastWidthRatio, lastHeightRatio)
         }
     }
@@ -179,6 +199,7 @@ class CropView @JvmOverloads constructor(
         val top = (h - rectHeight) / 2f
         mRect = RectF(left, top, left + rectWidth, top + rectHeight)
         mInitRect = RectF(mRect)
+        hasValidRect = true
         refreshAbsoluteOffset()
         invalidate()
         LogCollector.d(

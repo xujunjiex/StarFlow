@@ -198,6 +198,16 @@ class MangaFloatingService : LifecycleService() {
     // 状态机（autoTranslateEngine.isAutoTranslating/autoTranslateEngine.detectState/hash 等）移入 MangaAutoTranslateEngine
     private var wasAutoTranslatingBeforeCrop = false  // 框选前的自动翻译状态
     private var consecutiveEmptyCount = 0  // 连续未检测到文字的计数（用于检测受保护区域）
+
+    /**
+     * 「未检测到文字」等待发提示（string res）。
+     *
+     * ⚠️ 不能在判定当场发：`processMangaScreenshot` 的 `finally` 会调 `dismissProgressOverlay()`
+     * → `statusOverlay.dismiss()` **清空全部 chip**，当场发的提示会被几毫秒后的清屏吃掉，
+     * 用户只看到「检测中」然后什么都没了。因此统一记在这里、由 finally 在清屏**之后**发。
+     * 分批管线（`IncrementalBatchPipeline` 的 `HandledEmpty`）与普通 OCR 空两条路径共用。
+     */
+    private var pendingEmptyNoticeRes: Int? = null
     private var pendingAutoStart = false   // 等待权限授权后自动启动
     private lateinit var autoTranslateEngine: MangaAutoTranslateEngine
     private lateinit var engineManager: MangaEngineManager
@@ -1236,22 +1246,43 @@ class MangaFloatingService : LifecycleService() {
     }
 
     /**
-     * 屏幕几何变化 → 旧框选坐标已失效。
+     * 屏幕变化 → 旧框选坐标失效。
      *
      * 与游戏模式口径一致：**清空框选回退全屏**（而不是弹框选界面）—— 因为
      * [triggerTranslation] 是自动翻译循环每帧都会过的路径，在那儿弹界面会让自动翻译彻底停摆。
-     * 用户想重新框选再点一次即可。
+     * 用户想重新框选再点一次即可。**横→竖、竖→横两个方向都会走到这里。**
      *
-     * @return true 表示已判定失效并处理（调用方应中止当前动作）
+     * 幂等：没有框选时什么也不做。`onConfigurationChanged`（显示变化的直接证据）与
+     * 截图帧尺寸比对共用本入口。
      */
-    private fun ensureCropStillValid(): Boolean {
-        if (cropRect == null || !cropGeometryChanged()) return false
-        LogCollector.d(TAG, "屏幕几何变化，清除旧框选，回退全屏翻译")
+    private fun clearCropForScreenChange(): Boolean {
+        if (cropRect == null) return false
+        LogCollector.d(TAG, "屏幕变化：清除旧框选，回退全屏翻译")
         cropRect = null
         cropRectFrameSize = null
         if (autoTranslateEngine.isAutoTranslating) stopAutoTranslate()
         showToast(getString(R.string.manga_crop_cleared_orientation), true)
         return true
+    }
+
+    /**
+     * 截图帧几何与「框选时」不一致 → 清框选回退全屏。
+     *
+     * @return true 表示已判定失效并处理
+     */
+    private fun ensureCropStillValid(): Boolean {
+        if (cropRect == null || !cropGeometryChanged()) return false
+        return clearCropForScreenChange()
+    }
+
+    /**
+     * ⚠️ 漫画此前**完全没有**这个回调 —— 而它是「显示变了」的**直接证据**。
+     * 这里直接清框，不经过几何查询：几何查询（`getScreenSize` → `CropView.onSizeChanged`
+     * 上报）在框选确认、CropView 已移除之后是**冻结**的，问它必然答「没变」。
+     */
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        clearCropForScreenChange()
     }
 
     private fun confirmCrop() {
@@ -1801,7 +1832,12 @@ class MangaFloatingService : LifecycleService() {
             // 未检测到文字/气泡：已弹过提示。跳过原流程，但【绝不调 finalizeIncremental】——
             // 旧实现在这两个出口是直接 return true。finalizeIncremental 即使收到空列表也会执行
             // `lastTranslatedHash = currentPHash`，会让自动翻译状态机把空页误判为"已翻译"而永久跳过。
-            is BatchOutcome.HandledEmpty -> true
+            is BatchOutcome.HandledEmpty -> {
+                // 管线已在各出口 toToast 过「未检测到文字」，但那一条同样会被
+                // processMangaScreenshot 的 finally 清屏吃掉 —— 这里重新登记，由 finally 补发
+                pendingEmptyNoticeRes = R.string.no_text_found
+                true
+            }
 
             is BatchOutcome.Handled -> {
                 // 收尾必须留在 try 内：旧实现里 finalizeIncremental 位于三条路线各自的 try 中，
@@ -2233,17 +2269,19 @@ class MangaFloatingService : LifecycleService() {
             // No text handling — outside OcrLock (early return if empty)
             if (ocrTextBlocks.isEmpty()) {
                 LogCollector.d(TAG, "processMangaScreenshot: No text found, returning early")
+                // ⚠️ 只**记录**待提示，不在这里发 —— finally 会调 dismissProgressOverlay() →
+                // statusOverlay.dismiss() **清空全部 chip**，在这里发会被几毫秒后的清屏吃掉，
+                // 用户只能看到「检测中」然后什么都没了（本项目的已知坑）。见 finally。
                 if (autoTranslateEngine.isAutoTranslating) {
                     consecutiveEmptyCount++
                     if (consecutiveEmptyCount >= 3) {
-                        LogCollector.d(TAG, "processMangaScreenshot: ${consecutiveEmptyCount} consecutive empty OCR — possible protected area")
-                        withContext(Dispatchers.Main) {
-                            showToast(getString(R.string.no_text_found_protected), false)
-                        }
+                        LogCollector.d(TAG, "processMangaScreenshot: $consecutiveEmptyCount consecutive empty OCR — possible protected area")
+                        pendingEmptyNoticeRes = R.string.no_text_found_protected
                         consecutiveEmptyCount = 0  // 重置，避免反复弹
                     }
                 } else {
-                    showToast(getString(R.string.no_text_found), true)
+                    // 手动翻译：每次都要有反馈（用户主动触发，哪怕是空也必须有回音）
+                    pendingEmptyNoticeRes = R.string.no_text_found
                 }
                 return
             }
@@ -2329,6 +2367,9 @@ class MangaFloatingService : LifecycleService() {
             LogCollector.d(TAG, "processMangaScreenshot: FINALLY - dismissing progress, isProcessing=false")
             isProcessing = false
             dismissProgressOverlay()
+            // ⚠️ 必须在清屏**之后**：dismiss() 清空全部 chip，先发会被吃掉
+            pendingEmptyNoticeRes?.let { statusOverlay.show(getString(it)) }
+            pendingEmptyNoticeRes = null
         }
     }
 
