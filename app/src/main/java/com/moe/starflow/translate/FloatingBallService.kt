@@ -385,9 +385,6 @@ class FloatingBallService : LifecycleService() {
      * 屏幕旋转时：旧框选坐标（属于旋转前的坐标系）几何上已失效，
      * 强制置空 mRectF 要求重新框选；若正在自动翻译则停止，避免用错误坐标继续翻译。
      */
-    /** 上一次配置回调的朝向：用于区分「真的翻转」与「改字号/语言」等无关变更 */
-    private var lastConfigLandscape: Boolean? = null
-
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
         // ⚠️ 上报当前朝向：转屏后这是进程里**唯一新鲜**的方向信号。
@@ -396,6 +393,10 @@ class FloatingBallService : LifecycleService() {
         // → 识别 0 结果（实测 00:06:47 shot OK: 1220x2712，而当时设备是横屏）。
         val nowLandscape =
             newConfig.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        // ⚠️ **先读旧朝向，再上报新朝向**。反过来的话下面那个比较会拿刚写进去的值跟自己比，
+        // 条件恒为假 → `clearCropForScreenChange()` 一次都不执行 → 整个「回退全屏 + 提示」
+        // 链路被静默关掉（实测踩过：两模式的回退与提示完全失效）。
+        val knownBefore = com.moe.starflow.utils.DisplaySize.currentOrientation()
         com.moe.starflow.utils.DisplaySize.reportOrientation(nowLandscape)
         // ⚠️ 这里**直接**清框，不经过任何几何查询：本回调被触发本身就是「显示变了」的确证，
         // 而几何查询（getScreenSize → CropView.onSizeChanged 上报）在框选确认、CropView
@@ -405,10 +406,11 @@ class FloatingBallService : LifecycleService() {
         // ⚠️ 只在本回调**朝向真的翻转**时清框。`onConfigurationChanged` 对**任何**配置变更
         // 都会触发（改字号 / 语言 / 密度 / uiMode…），那些不涉及坐标，无条件清框会把用户
         // 刚框好、正在自动翻译的会话平白毁掉。
-        // 首次回调（prev==null）无法判断是否翻转 → 不清，交给几何比对（ensureCropStillValid）兜底。
-        val prev = lastConfigLandscape
-        lastConfigLandscape = nowLandscape
-        if (prev != null && prev != nowLandscape) clearCropForScreenChange()
+        //
+        // 比较基准是「上报**之前**的已知朝向」（= 我们正在用的几何）：
+        // `knownBefore == null` 说明还没有任何几何信息，此时**照清不误** ——
+        // 宁可多清一次（用户重框一次），也不要漏掉转屏导致按旧坐标出结果。
+        if (knownBefore == null || knownBefore != nowLandscape) clearCropForScreenChange()
     }
 
     // 缓存管理

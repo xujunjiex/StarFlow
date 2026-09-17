@@ -69,9 +69,19 @@ object DisplaySize {
         LogCollector.d(TAG, "朝向上报: ${if (isLandscape) "横屏" else "竖屏"}")
     }
 
-    /** null = 未知（尚未收到配置变更） */
+    /** null = 未知（尚未收到配置变更，也没有窗口几何） */
     @Volatile
     private var landscape: Boolean? = null
+
+    /**
+     * 当前**已知**的朝向（来自窗口几何上报或上次配置回调）；null = 未知。
+     *
+     * 用于判断「这次配置回调是否真的翻转了朝向」：`onConfigurationChanged` 对
+     * 改字号/语言/密度同样会触发，只有朝向变了才该清框停翻译。
+     * ⚠️ 比较基准必须是**这个**（它反映我们正在用的几何），不能是调用方自己
+     * 从 null 开始的局部变量 —— 那样服务启动后的**第一次**转屏会被当成「无法判断」而放过。
+     */
+    fun currentOrientation(): Boolean? = landscape
 
     fun reportLaidOutSize(w: Int, h: Int) {
         if (w <= 0 || h <= 0) return

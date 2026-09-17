@@ -1313,9 +1313,6 @@ class MangaFloatingService : LifecycleService() {
      * 这里直接清框，不经过几何查询：几何查询（`getScreenSize` → `CropView.onSizeChanged`
      * 上报）在框选确认、CropView 已移除之后是**冻结**的，问它必然答「没变」。
      */
-    /** 上一次配置回调的朝向：用于区分「真的翻转」与「改字号/语言」等无关变更 */
-    private var lastConfigLandscape: Boolean? = null
-
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
         // ⚠️ 上报当前朝向：转屏后这是进程里**唯一新鲜**的方向信号。
@@ -1323,14 +1320,19 @@ class MangaFloatingService : LifecycleService() {
         // 都指向旧方向的来源去建帧 → 设备已横屏而帧仍是竖屏 → OCR 跑在转了 90° 的图上。
         val nowLandscape =
             newConfig.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        // ⚠️ **先读旧朝向，再上报新朝向**。反过来的话下面那个比较会拿刚写进去的值跟自己比，
+        // 条件恒为假 → `clearCropForScreenChange()` 一次都不执行 → 整个「回退全屏 + 提示」
+        // 链路被静默关掉（实测踩过：两模式的回退与提示完全失效）。
+        val knownBefore = com.moe.starflow.utils.DisplaySize.currentOrientation()
         com.moe.starflow.utils.DisplaySize.reportOrientation(nowLandscape)
         // ⚠️ 只在本回调**朝向真的翻转**时清框。`onConfigurationChanged` 对**任何**配置变更
         // 都会触发（改字号 / 语言 / 密度 / uiMode…），那些不涉及坐标，无条件清框会把用户
         // 刚框好、正在自动翻译的会话平白毁掉。
-        // 首次回调（prev==null）无法判断是否翻转 → 不清，交给几何比对（ensureCropStillValid）兜底。
-        val prev = lastConfigLandscape
-        lastConfigLandscape = nowLandscape
-        if (prev != null && prev != nowLandscape) clearCropForScreenChange()
+        //
+        // 比较基准是「上报**之前**的已知朝向」（= 我们正在用的几何）：
+        // `knownBefore == null` 说明还没有任何几何信息，此时**照清不误** ——
+        // 宁可多清一次（用户重框一次），也不要漏掉转屏导致按旧坐标出结果。
+        if (knownBefore == null || knownBefore != nowLandscape) clearCropForScreenChange()
     }
 
     private fun confirmCrop() {
