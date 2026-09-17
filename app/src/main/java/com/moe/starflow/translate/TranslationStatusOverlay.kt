@@ -294,6 +294,9 @@ class TranslationStatusOverlay private constructor(private val context: Context)
     private fun removeChip(chip: TextView) {
         val layout = container ?: return
         layout.removeView(chip)
+        // ⚠️ 同步清理身份集合：不清的话它永久增长，且 showSticky 选「牺牲者」时
+        // 用 `it !in stickyChips` 判断会认错对象（已消失的 chip 仍被认为在场）
+        stickyChips.remove(chip)
         dismissRunnables.remove(chip)?.let { mainHandler.removeCallbacks(it) }
         if (layout.childCount == 0) {
             removeFromWindow()
@@ -333,6 +336,9 @@ class TranslationStatusOverlay private constructor(private val context: Context)
                     ).apply { topMargin = if (idx == 0) 0 else it.topMargin }
                 }
                 if (params != null) layout.addView(chip, params) else layout.addView(chip)
+                // ⚠️ **必须重启消失计时**：上面 clear() 已经把它的回调摘掉了，
+                // 不补回来这个 chip 就再也不会消失（实测「提示一直不消失」）。
+                rescheduleDismiss(chip as TextView, enabled = true)
             }
             if (layout.childCount == 0) removeFromWindow()
         } else {

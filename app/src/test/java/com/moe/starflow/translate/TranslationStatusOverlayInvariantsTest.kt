@@ -62,6 +62,37 @@ class TranslationStatusOverlayInvariantsTest {
     }
 
     /**
+     * ⚠️ 保留 sticky 的 chip 后**必须重启消失计时**。
+     *
+     * `removeAllChips` 开头 `dismissRunnables.values.forEach { removeCallbacks }` +
+     * `clear()` 把**所有**消失回调摘掉了；加回 chip 时不补 `rescheduleDismiss`
+     * 它就再也不会消失（实测「提示一直不消失」）。
+     */
+    @Test
+    fun keptStickyChipsGetDismissTimerRestarted() {
+        val body = source.substringAfter("private fun removeAllChips(").substringBefore("private fun isEnabled(")
+        assertTrue(
+            "保留分支加回 chip 后必须 rescheduleDismiss —— 否则计时已被 clear() 摘掉，chip 永不消失",
+            body.contains("rescheduleDismiss(")
+        )
+    }
+
+    /**
+     * ⚠️ `removeChip` 必须同步清理 `stickyChips`。
+     *
+     * 不清的话集合永久增长，且 `showSticky` 选「牺牲者」用 `it !in stickyChips` 判断时
+     * 会把已消失的 chip 仍当成在场 → 挤错对象。
+     */
+    @Test
+    fun removeChipPrunesStickySet() {
+        val body = source.substringAfter("private fun removeChip(").substringBefore("private fun removeAllChips(")
+        assertTrue(
+            "removeChip 必须 stickyChips.remove(chip)（否则集合泄漏 + 选牺牲者时认错对象）",
+            body.contains("stickyChips.remove(")
+        )
+    }
+
+    /**
      * ⚠️ 保留 sticky 时**不得**写「逐个 removeView 再 addView」。
      *
      * 那要求每个 chip 的 parent 恰是本 layout；不满足时 `removeView` 被跳过，

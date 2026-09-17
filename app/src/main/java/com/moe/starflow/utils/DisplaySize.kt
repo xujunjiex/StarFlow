@@ -75,6 +75,11 @@ object DisplaySize {
 
     fun reportLaidOutSize(w: Int, h: Int) {
         if (w <= 0 || h <= 0) return
+        // ⚠️ 窗口的宽高关系**就是**当前朝向，用它覆盖闩锁。
+        // 不覆盖的话：进程内横屏过一次后闩锁永久为 true，之后竖屏下会把窗口读数
+        // 1080x2400 **对调**成 2400x1080 → 每次几何比对都判「变了」→ 框选后必被清掉
+        // （实测：时有时无，取决于本进程启动后有没有转过屏）。
+        landscape = w > h
         val old = laidOut
         if (old.x == w && old.y == h) return
         laidOut = Point(w, h)
@@ -84,46 +89,48 @@ object DisplaySize {
     /**
      * 当前**显示**几何（物理像素，含系统栏区域）。
      *
-     * ⚠️ 两个来源都可能坏，且**不能逐轴取最大值**：
-     * - 已布局窗口：能反映当前方向（进程冻不掉），但可能被系统缩小（避开手势条/导航栏）
-     * - Display API：可能是冻结的旧方向，但不会凭空变小
-     *
-     * 逐轴取 max 在两者**方向不一致**时会拼出一个既不竖也不横的尺寸，
-     * 而且拿不到新方向（转屏后 cropRect 已清空、CropView 已移除 → 窗口读数陈旧，
-     * Display API 又冻结在旧方向，两者一起指向旧方向 → max 仍是旧方向）。
-     * 实测后果：设备已横屏而帧仍是竖屏 1220x2712 → OCR 跑在转了 90° 的图上 → 识别 0 结果。
-     *
-     * 因此按**平面尺寸**（长边×短边）二选一：取面积较大的那个来源整组采用，
-     * 保证宽高配对比值来自同一来源、方向自洽。
+     * 决策规则抽在 [resolve]（纯函数，可纯 JVM 测），这里只负责拿两个来源。
      */
     fun size(ctx: Context): Point {
-        val laid = laidOut
         val legacy = legacySize(ctx)
-
-        // 选像素来源：优先「已布局窗口」（当前方向、但可能被系统缩小），
-        // 其次 Display 读数。两者都可能方向陈旧 —— 方向由 orientationOf() 统一校正。
-        val base = if (laid.x > 0 && laid.y > 0) laid else legacy
-        if (base.x <= 0 || base.y <= 0) {
-            isReliable = false
-            return base
-        }
-        val oriented = orientationOf(base)
-        isReliable = (oriented === base)
-        return Point(oriented.x, oriented.y)
+        val r = resolve(laidOut.x, laidOut.y, legacy.x, legacy.y, landscape)
+        // 结果与 Display 读数一致时才可信（不一致说明窗口被系统缩小、由 max 补齐过）
+        isReliable = (r[0] == legacy.x && r[1] == legacy.y)
+        return Point(r[0], r[1])
     }
 
     /**
-     * 按已知朝向校正宽高配对。
+     * **纯函数**：由「已布局窗口 / Display 读数 / 已知朝向」推出显示尺寸。
      *
-     * 像素值可能来自方向陈旧的来源（转屏后 Display 冻结、窗口读数停在旧方向），
-     * 但**长边与短边的长度**是对的 —— 只需按朝向重新配对，即可得到当前方向的几何。
-     * 朝向未知时原样返回。
+     * 单独抽出来的唯一目的是**可测**：`size()` 需要 Context/WindowManager，本机
+     * Robolectric 取屏幕尺寸不可靠，而这条规则历史上出过两次方向相关的回归
+     * （逐轴取 max 拼出畸形尺寸、闩锁把竖屏窗口对调），都只能靠直接测规则才发现。
+     *
+     * 规则：
+     * 1. 无窗口读数 ⇒ 用 Display 读数，按已知朝向配对
+     * 2. 有窗口读数 ⇒ **朝向以窗口为准**（WMS 真布局，比"最后一次回调说了什么"可信）
+     * 3. 屏幕 ≥ 任何窗口 ⇒ 逐轴取大，但 Display 读数先按窗口方向配对（否则 max 会拼出畸形尺寸）
+     *
+     * @param laid    已布局窗口尺寸（0,0 = 尚无）
+     * @param legacy  Display 读数
+     * @param orientationIsLandscape 已知朝向（null = 未知）
      */
-    private fun orientationOf(p: Point): Point {
-        val want = landscape ?: return p
-        val isLandscape = p.x > p.y
-        if (isLandscape == want) return p
-        return Point(maxOf(p.x, p.y), minOf(p.x, p.y))
+    fun resolve(
+        laidW: Int, laidH: Int, legacyW: Int, legacyH: Int, orientationIsLandscape: Boolean?
+    ): IntArray {
+        if (laidW <= 0 || laidH <= 0) {
+            return alignTo(legacyW, legacyH, orientationIsLandscape)
+        }
+        val laidLandscape = laidW > laidH
+        val legacy = alignTo(legacyW, legacyH, laidLandscape)
+        return intArrayOf(maxOf(laidW, legacy[0]), maxOf(laidH, legacy[1]))
+    }
+
+    /** 把尺寸配成指定朝向（长边与短边重新配对）；朝向未知时原样返回。 */
+    private fun alignTo(w: Int, h: Int, asLandscape: Boolean?): IntArray {
+        if (asLandscape == null || w <= 0 || h <= 0) return intArrayOf(w, h)
+        if ((w > h) == asLandscape) return intArrayOf(w, h)
+        return intArrayOf(maxOf(w, h), minOf(w, h))
     }
 
     /**

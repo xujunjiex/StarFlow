@@ -1419,6 +1419,10 @@ class FloatingBallService : LifecycleService() {
         // 记下这次框选是在哪套几何下选的。用 cropView 自身尺寸 ——
         // 框选窗口与截图帧同几何（帧尺寸正是从窗口学的），见 ensureCropStillValid
         mRectFrameSize = android.util.Size(cropView.width, cropView.height)
+        // ⚠️ 复位「曾被屏幕变化清除」标志：用户已经重新框选，此后未框选的提示
+        // 不该再归因于屏幕变化。不复位的话一次转屏之后**永远**显示
+        // 「屏幕方向已变化…请重新框选」（实测误导用户）。
+        cropClearedByScreenChange = false
         try {
             windowManager.removeView(cropView)
         } catch (e: Exception) {
