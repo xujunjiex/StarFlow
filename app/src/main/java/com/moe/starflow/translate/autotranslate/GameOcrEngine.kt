@@ -58,12 +58,20 @@ class GameOcrEngine(
             1 -> recognizeWithPPOcrV5(bitmap, language, verticalDirection)
             2 -> recognizeWithMangaOcr(bitmap, language)
             3 -> recognizeWithPPOcrV6(bitmap, language, verticalDirection)
-            else -> recognizeWithMLKit(bitmap, language)
+            else -> recognizeWithMLKit(bitmap, language, verticalDirection)
         }
     }
 
-    private suspend fun recognizeWithMLKit(bitmap: Bitmap, language: String): String {
-        return OCRTextRecognizer.getPicText(language, bitmap)
+    /**
+     * ML Kit 路径：**按几何自行重排**（ML Kit 的块序插不进去，必须在拼接时自己排）。
+     * 见 `OCRTextRecognizer.getPicText(language, bitmap, verticalDirection)`。
+     */
+    private suspend fun recognizeWithMLKit(
+        bitmap: Bitmap,
+        language: String,
+        verticalDirection: TextDirection
+    ): String {
+        return OCRTextRecognizer.getPicText(language, bitmap, verticalDirection)
     }
 
     private suspend fun recognizeWithPPOcrV5(
@@ -83,7 +91,7 @@ class GameOcrEngine(
             result.toReadOrderText(verticalDirection)
         } else {
             LogCollector.w(TAG, "PP-OCRv5 不支持语言: $language, 回退 ML Kit")
-            recognizeWithMLKit(bitmap, language)
+            recognizeWithMLKit(bitmap, language, verticalDirection)
         }
     }
 
@@ -94,7 +102,7 @@ class GameOcrEngine(
             textBlocks.joinToString("\n") { it.text }
         } else {
             LogCollector.w(TAG, "manga-ocr 未初始化, 回退 ML Kit")
-            recognizeWithMLKit(bitmap, language)
+            recognizeWithMLKit(bitmap, language, TextDirection.VERTICAL_RL)
         }
     }
 

@@ -31,39 +31,68 @@ object MangaSpatialGrouping {
     )
 
     /**
-     * `CroppedBubble` 的阅读顺序排序：从上到下、从右到左。
+     * `CroppedBubble`（RT-DETR-V2 路径）的阅读顺序：从上到下，同高从右到左。
      *
-     * ⚠️ **固定右→左，不随 `Manga_Text_Direction` 变** —— 唯一调用方是 RT-DETR-V2
-     * 增量路径（`IncrementalBatchPipeline.rtDetrMangaOcr`），而 RT-DETR 只识别日文，
-     * 右→左就是它唯一正确的列序。**不要**给它接 `config.textDirection`。
+     * ⚠️ **不要**把它并到 [sortByReadingOrder] 里 —— 两者的输入语义不同：
+     * - 本函数的输入是**气泡**：气泡的宽高比*说明不了*阅读方向
+     *   （一个 `w>h` 的气泡完全可能装的是竖排多列），日漫并排气泡就是要右→左
+     * - [sortByReadingOrder] 的输入是**文字行/列**：`w>h` 即横排文字，恒左→右
      *
-     * 需要按设置取列序的是 **PP-OCRv5/v6** 路径，走 [sortByReadingOrder]。
+     * 曾把两者合并、给气泡套上「横排恒左→右」，直接把日漫的并排气泡读反。
+     *
+     * ⚠️ 已知脆弱点（未修，见问题报告）：`top` 是主键、`left` 仅在 top **完全相等**时
+     * 才参与比较 —— 并排气泡顶部差 1px，列序就由噪声决定。真正的修法是按行分组后
+     * 组内再取列序（`MangaFloatingService` 的 P1/P2 已有类似做法），风险较大，未动。
      */
     fun sortByMangaReadingOrder(bubbles: List<CroppedBubble>): List<CroppedBubble> =
-        sortByReadingOrder(bubbles, { it.rect }, TextDirection.VERTICAL_RL)
+        bubbles.sortedWith(
+            compareBy<CroppedBubble> { it.rect.top }
+                .thenByDescending { it.rect.left }
+        )
 
     /**
-     * 按阅读顺序排序：从上到下 + 列序随 [verticalDirection]。
+     * 按阅读顺序排序：**竖排按列序取 x 主键**、横排按行取 y 主键。
      *
-     * ⚠️ **只给 PP-OCRv5/v6 路径用**（当前是 `DetectionBridge.detectAndCropPPOcrV5/V6Lines`）。
-     * `Manga_Text_Direction` 这个设置**只适配 PP 系列模型** —— ML Kit 不适合复杂漫画场景、
-     * RT-DETR 只认日文，两者都固定右→左，不接这个参数。
+     * ⚠️ **竖排的主键必须是 x，不能是 y。**
+     * 曾写成 `compareBy { top }.thenByDescending { left }` —— 那对横排是对的，
+     * 但对竖排是错的：真实竖排各列的 `top` 不会像素级齐平，只要有一点差异，
+     * `left` 这个次级键**永远不参与比较** → 列序完全由 y 噪声决定、设置静默失效。
+     * 规则与 [com.moe.starflow.manga.engine.PPOcrDetGeometry.sortDetCandidates] 保持一致：
+     * - 竖排（高 > 宽）：主键 x（RL 降序 / LR 升序），次键 y（同列上→下）
+     * - 横排（宽 > 高）：主键 y（上→下），次键 x（行内左→右）—— **不受设置影响**
      *
-     * 泛型是因为有多个载体（`CroppedBubble` / `CroppedTextLine`）要按同一规则排；
-     * 曾在别处各写一份（`DetectionBridge` 两个 detectAndCrop 写死右→左），
-     * 新增载体请走这里，不要再抄一份比较器。
+     * 竖排在前、横排在后（同页混排时保证竖排内容先被读到）。
      */
     fun <T> sortByReadingOrder(
         items: List<T>,
         getRect: (T) -> Rect,
         verticalDirection: TextDirection
     ): List<T> {
+        if (items.size <= 1) return items
         val isRl = verticalDirection != TextDirection.VERTICAL_LR
-        return items.sortedWith(
-            compareBy<T> { getRect(it).top }
-                .thenByDescending { if (isRl) getRect(it).left else -getRect(it).left }
-        )
+        fun isVertical(r: Rect) = r.height() > r.width() + ORIENT_ASPECT_TOL
+        return items.sortedWith { a, b ->
+            val ra = getRect(a)
+            val rb = getRect(b)
+            val va = isVertical(ra)
+            val vb = isVertical(rb)
+            when {
+                va && vb -> {
+                    val xa = if (isRl) -ra.right else ra.left
+                    val xb = if (isRl) -rb.right else rb.left
+                    if (xa != xb) xa.compareTo(xb) else ra.top.compareTo(rb.top)
+                }
+                !va && !vb -> {
+                    if (ra.top != rb.top) ra.top.compareTo(rb.top)
+                    else ra.left.compareTo(rb.left)
+                }
+                else -> if (va) -1 else 1
+            }
+        }
     }
+
+    /** 竖/横排判定的宽高容差（px）：差值小于它视为歧义框，按横排（左→右）处理。 */
+    private const val ORIENT_ASPECT_TOL = 2
 
     class UnionFind(n: Int) {
         private val parent = IntArray(n) { it }

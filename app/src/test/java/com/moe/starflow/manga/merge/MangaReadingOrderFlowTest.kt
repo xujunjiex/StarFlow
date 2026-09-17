@@ -82,6 +82,77 @@ class MangaReadingOrderFlowTest {
         assertEquals("左→右：左列在前", listOf("左", "中", "右"), lr[0].texts)
     }
 
+    // ---------- sortByReadingOrder：竖排主键必须是 x ----------
+
+    /**
+     * ⚠️ **竖排的排序主键必须是 x，不能是 y。**
+     *
+     * 旧实现是 `compareBy { top }.thenByDescending { left }` —— 对横排正确，对竖排错误：
+     * 真实竖排各列的 `top` 不会像素级齐平，只要差一点，`left` 这个**次级键永不参与比较**，
+     * 列序完全由 y 噪声决定、设置静默失效。
+     *
+     * 本用例把两列的 top **故意错开**（10 vs 40）且与列序**相反**：
+     * 按 x 排 → RL=[右,左]、LR=[左,右]；按 y 排 → 两种设置都为 [右,左]，LR 就错了。
+     */
+    @Test
+    fun sortByReadingOrder_verticalPrimaryKeyIsXNotY() {
+        // 右列 top=10（更靠上）、左列 top=40 —— y 序与 x 序相反
+        val rightCol = Rect(70, 10, 110, 200)
+        val leftCol = Rect(0, 40, 40, 230)
+        val input = listOf(leftCol, rightCol)
+
+        val rl = MangaSpatialGrouping.sortByReadingOrder(input, { it }, TextDirection.VERTICAL_RL)
+        assertEquals("右→左：右列在前（不得被 top 带偏）", listOf(70, 0), rl.map { it.left })
+
+        val lr = MangaSpatialGrouping.sortByReadingOrder(input, { it }, TextDirection.VERTICAL_LR)
+        assertEquals("左→右：左列在前（旧实现这里是错的）", listOf(0, 70), lr.map { it.left })
+    }
+
+    /** 同列内的多段竖排：两种设置都必须自上而下。 */
+    @Test
+    fun sortByReadingOrder_sameColumnIsTopDown() {
+        val upper = Rect(0, 0, 40, 100)
+        val lower = Rect(0, 120, 40, 220)
+        for (dir in listOf(TextDirection.VERTICAL_RL, TextDirection.VERTICAL_LR)) {
+            val out = MangaSpatialGrouping.sortByReadingOrder(
+                listOf(lower, upper), { it }, dir
+            )
+            assertEquals("dir=$dir 同列必须上→下", listOf(0, 120), out.map { it.top })
+        }
+    }
+
+    /**
+     * ⚠️ **横排恒上→下、行内左→右，不受设置影响**（横排句子被反转 = 数据被改坏）。
+     */
+    @Test
+    fun sortByReadingOrder_horizontalIgnoresSetting() {
+        val row0Left = Rect(0, 0, 100, 30)
+        val row0Right = Rect(200, 0, 300, 30)
+        val row1 = Rect(0, 60, 100, 90)
+        val input = listOf(row0Right, row1, row0Left)
+
+        for (dir in listOf(TextDirection.VERTICAL_RL, TextDirection.VERTICAL_LR)) {
+            val out = MangaSpatialGrouping.sortByReadingOrder(input, { it }, dir)
+            assertEquals(
+                "dir=$dir 横排必须上→下、行内左→右",
+                listOf(0 to 0, 200 to 0, 0 to 60),
+                out.map { it.left to it.top }
+            )
+        }
+    }
+
+    /** 同页混排：竖排优先于横排（竖排正文先读，横排标题后读）。 */
+    @Test
+    fun sortByReadingOrder_verticalBeforeHorizontal() {
+        val vertical = Rect(0, 0, 40, 200)
+        val horizontal = Rect(0, 210, 200, 240)
+        val out = MangaSpatialGrouping.sortByReadingOrder(
+            listOf(horizontal, vertical), { it }, TextDirection.VERTICAL_RL
+        )
+        assertEquals("竖排应在前", 200, out[0].bottom)
+        assertEquals("横排应在后", 240, out[1].bottom)
+    }
+
     // ---------- 横排：不随设置变 ----------
 
     /**

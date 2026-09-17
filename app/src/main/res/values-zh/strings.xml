@@ -499,9 +499,9 @@
     <string name="manga_text_color_summary">当前漫画翻译结果的文字颜色</string>
     <string name="manga_bg_color_summary">当前漫画翻译结果的背景颜色</string>
     <string name="game_text_direction_title">竖排读取方向</string>
-    <string name="game_text_direction_summary">竖排字幕先读右列还是左列；仅 PP-OCRv5/v6 适用</string>
+    <string name="game_text_direction_summary">竖排字幕先读右列还是左列；PP-OCRv5/v6 与 ML Kit 适用</string>
     <string name="manga_text_direction_title">竖排方向</string>
-    <string name="manga_text_direction_summary">竖排先读右列还是左列；仅 PP-OCRv5/v6 适用</string>
+    <string name="manga_text_direction_summary">竖排先读右列还是左列；PP-OCRv5/v6 与 ML Kit 适用</string>
     <string name="manga_text_direction_rl">从右往左识别，日漫常用</string>
     <string name="manga_text_direction_lr">从左往右识别</string>
 

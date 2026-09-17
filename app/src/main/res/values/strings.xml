@@ -585,9 +585,9 @@
     <string name="manga_text_color_summary">Text color for manga translation results</string>
     <string name="manga_bg_color_summary">Background color for manga translation results</string>
     <string name="game_text_direction_title">Vertical read direction</string>
-    <string name="game_text_direction_summary">Which column vertical subtitles are read first; PP-OCRv5/v6 only</string>
+    <string name="game_text_direction_summary">Which column vertical subtitles are read first; PP-OCRv5/v6 and ML Kit</string>
     <string name="manga_text_direction_title">Vertical Text Direction</string>
-    <string name="manga_text_direction_summary">Which column vertical text is read first; PP-OCRv5/v6 only</string>
+    <string name="manga_text_direction_summary">Which column vertical text is read first; PP-OCRv5/v6 and ML Kit</string>
     <string name="manga_text_direction_rl">Recognize right to left, common in Japanese manga</string>
     <string name="manga_text_direction_lr">Recognize left to right</string>
 

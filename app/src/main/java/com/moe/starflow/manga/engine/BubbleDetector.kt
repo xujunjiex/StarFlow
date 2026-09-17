@@ -455,15 +455,18 @@ object BubbleDetector {
             val directionCounts = lines.groupBy { it.direction }.mapValues { it.value.size }
             val majorityDir = directionCounts.maxByOrNull { it.value }?.key ?: 'h'
 
-            // L175-178: 排序（横排 Y 升序，竖排 X 降序）
-            // ⚠️ **本处刻意固定右→左，不随 `Manga_Text_Direction` 变**：
-            // `doDetect` 只服务 ML Kit 路径（`needsPostMerge = detEngine == MLKIT`），
-            // 而 ML Kit 本就不适合复杂漫画场景，不为它做左右适配。
-            // `verticalDirection` 参数保留仅为既有签名（分批切分等处仍在用）。
+            // L175-178: 排序（横排 Y 升序恒左→右；竖排按 `Manga_Text_Direction` 取列序）
+            // ⚠️ ML Kit 与 PP 的区别：PP 是行列级识别器（每 box = 一行/一列，几何直接可判）；
+            // ML Kit 的 block 是它版式分析的产物，**顺序插不进去** —— 所以这里只能对
+            // 「本函数合并出来的组」内部的成员行重排。若 ML Kit 把一个竖排整列当成**单个 block**，
+            // 该列的读序就封在 block 内部、这里无从干预（见 `OCRTextRecognizer` 的方向重排版）。
+            val isRl = verticalDirection != TextDirection.VERTICAL_LR
             val sortedNodes = if (majorityDir == 'h') {
                 nodes.sortedBy { textLines[it].centroidY }
-            } else {
+            } else if (isRl) {
                 nodes.sortedByDescending { textLines[it].centroidX }
+            } else {
+                nodes.sortedBy { textLines[it].centroidX }
             }
 
             // 合并文字
