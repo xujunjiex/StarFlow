@@ -429,6 +429,7 @@
     <string name="donate_proj_content">人生是旷野，而非轨道。\n答案都在路上，自由都在风里。\n恭敬之心，不在虚文。</string>
     <string name="jump">跳转</string>
     <string name="auto_translate_start">自动翻译已开启，请注意API额度消耗</string>
+    <string name="auto_translate_stop_no_text">未检测到文字，自动翻译已关闭</string>
     <string name="auto_translate_stop">自动翻译已关闭</string>
     <string name="auto_translate_disabled_hint">请先停止自动翻译</string>
     <string name="auto_translate_changed">检测到屏幕方向改变，自动翻译已关闭</string>

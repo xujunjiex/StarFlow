@@ -104,6 +104,25 @@ class TranslationStatusOverlay private constructor(private val context: Context)
     }
 
     /**
+     * 显示一条**不自动消失**的普通提示。
+     *
+     * 用于「屏幕方向变化」这类需要用户读到、且稍后大概率会有进度消息刷屏的通知 ——
+     * [showImmediate] 会替换顶部 chip，后者几秒内的「检测中…」会把提示顶掉（实测）。
+     * 本条进入堆叠队列，用户读到后自行等待/下一条消息，或点悬浮窗关闭。
+     */
+    fun showSticky(message: String) {
+        if (!isEnabled()) return
+        LogCollector.d(TAG, message)
+        runOnMainThread {
+            if (activeCount() >= MAX_SLOTS) {
+                messageQueue.add(QueuedMessage(message, isError = false))
+            } else {
+                addChip(message, isError = false, autoDismiss = false)
+            }
+        }
+    }
+
+    /**
      * 显示错误提示（红色背景，可点击复制）。替换最顶部一条。
      */
     fun showError(message: String) {

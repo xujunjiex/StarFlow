@@ -177,8 +177,14 @@ class CropView @JvmOverloads constructor(
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         if (w <= 0 || h <= 0) return
-        // 这是本进程里唯一**不可能被冻结**的屏幕几何来源：窗口是 WMS 在当前配置下真布局出来的
-        com.moe.starflow.utils.DisplaySize.reportLaidOutSize(w, h)
+        // 这是本进程里唯一**不可能被冻结**的屏幕几何来源：窗口是 WMS 在当前配置下真布局出来的。
+        // ⚠️ 但窗口**不等于**屏幕：系统可能因手势条/状态栏把它缩小（实测竖屏 display 1220x2712
+        // 而框选窗口 1220x2660）。是否铺满由「窗口原点是否为显示原点」实测判定，
+        // 并如实上报给 DisplaySize（它据此决定能否直接当屏幕尺寸用）。
+        val loc = IntArray(2)
+        getLocationOnScreen(loc)
+        val isFullDisplay = loc[0] == 0 && loc[1] == 0
+        com.moe.starflow.utils.DisplaySize.reportLaidOutSize(w, h, isFullDisplay)
         val rectDesc = if (::mRect.isInitialized) mRect.toString() else "未初始化"
         LogCollector.d(TAG_CROP, "onSizeChanged ${oldw}x$oldh -> ${w}x$h rect=$rectDesc 显式=$hasExplicitRect")
         if (!hasValidRect || !::mRect.isInitialized || !fitsIn(w, h)) {

@@ -178,6 +178,9 @@ class FloatingBallService : LifecycleService() {
     // 翻译结果视图状态
     private var isResultViewShowing = false
 
+    /** 自动翻译下「OCR 连续为空」的计数：用于节流提示与自动关闭（见 Decision.Empty 分支） */
+    private var autoEmptyStreak = 0
+
     // 长按处理器
     private val handler = Handler(Looper.getMainLooper())
     private val longPressRunnable = Runnable { handleLongPress() }
@@ -228,6 +231,10 @@ class FloatingBallService : LifecycleService() {
     private var screenshotProvider: ScreenshotProvider? = null
 
     companion object {
+        /** 自动翻译下连续多少次 OCR 空才提示一次（节流，避免每轮都弹） */
+        private const val AUTO_EMPTY_NOTICE_AT = 3
+        /** 自动翻译下连续多少次 OCR 空就关闭自动翻译（判定为无内容/受保护区域，避免空转） */
+        private const val AUTO_EMPTY_ABORT_COUNT = 20
         private const val DEFAULT_PIXEL_CHECK_INTERVAL_MS = 300L
         private const val OCR_TIMEOUT_MS = 3000L
         private const val DOUBLE_CLICK_DELAY = 300L
@@ -1241,6 +1248,22 @@ class FloatingBallService : LifecycleService() {
 
     // 5.1.0新增：启动自动翻译
     private fun startAutoTranslate() {
+        // ⚠️ 框选守卫必须排在最前：自动翻译是围绕框选区域的定时像素/OCR 循环，
+        // 没有框选它无从工作。此前权限检查排在前面，未授权时会先弹授权并置
+        // `pendingAutoStart`，**授权回来的那条路会绕过本守卫** —— 没框选也能开起来。
+        when (currentBallStatus) {
+            is BallStatus.Crop -> {
+                showToast(getString(R.string.crop_first), true)
+                return
+            }
+            is BallStatus.Normal -> {
+                if (mRectF == null) {
+                    showToast(getString(R.string.crop_first), true)
+                    return
+                }
+            }
+        }
+
         // 只在 AccessibilityService 模式下检查无障碍服务
         val isMediaProjection = screenshotProvider is MediaProjectionProvider
         if (!isMediaProjection && AccessibilityServiceManager.getService() == null) {
@@ -1256,19 +1279,6 @@ class FloatingBallService : LifecycleService() {
             return
         }
         pendingAutoStart = false
-
-        when (currentBallStatus) {
-            is BallStatus.Crop -> {
-                showToast(getString(R.string.crop_first), true)
-                return
-            }
-            is BallStatus.Normal -> {
-                if (mRectF == null) {
-                    showToast(getString(R.string.crop_first), true)
-                    return
-                }
-            }
-        }
 
         // 此处尚无截图帧：做一次「上次已知几何」的廉价判定（真正的判定在 collector 拿到帧后做）
         if (ensureCropStillValid(null)) return
@@ -1431,13 +1441,11 @@ class FloatingBallService : LifecycleService() {
         val wasAuto = isAutoTranslating
         if (wasAuto) stopAutoTranslate()
         if (!hadCrop && !wasAuto) return false
-        showToast(
+        statusOverlay.showSticky(
             getString(
                 if (wasAuto) R.string.game_crop_cleared_orientation_auto
                 else R.string.game_crop_cleared_orientation
-            ),
-            true
-        )
+            ))
         // ⚠️ 返回「框是否被清掉」而非「是否做了任何事」：调用方（collector）据此决定
         // 是否作废本帧。只停了自动翻译时，本帧仍是有效的全屏图，不该丢。
         return hadCrop
@@ -1692,6 +1700,26 @@ class FloatingBallService : LifecycleService() {
                             // 已翻译，像素不变，跳过 OCR
                             isTranslating.set(false)
                         }
+                        is AutoTranslateEngine.Decision.Empty -> {
+                            // 跑了 OCR 但没识别到内容。自动翻译是每 DETECT_INTERVAL_MS 一轮的
+                            // 轮询，同一张空页面会持续命中 —— 每轮都弹会刷屏，故节流提示；
+                            // 连续 AUTO_EMPTY_ABORT_COUNT 次则判定为「无有效内容/受保护区域」，
+                            // 关掉自动翻译（否则会一直空转）。
+                            autoEmptyStreak++
+                            updateDebugStatus("【无内容】连续 $autoEmptyStreak 次")
+                            isTranslating.set(false)
+                            if (autoEmptyStreak == AUTO_EMPTY_NOTICE_AT) {
+                                withContext(Dispatchers.Main) {
+                                    showToast(getString(R.string.no_text_found), false)
+                                }
+                            } else if (autoEmptyStreak >= AUTO_EMPTY_ABORT_COUNT) {
+                                autoEmptyStreak = 0
+                                withContext(Dispatchers.Main) {
+                                    stopAutoTranslate()
+                                    showToast(getString(R.string.auto_translate_stop_no_text), true)
+                                }
+                            }
+                        }
                         is AutoTranslateEngine.Decision.PixelChanging -> {
                             updateDebugStatus("【像素变化】", diffRatio = pixelDecision.diffRatio)
                             isTranslating.set(false)
@@ -1704,6 +1732,7 @@ class FloatingBallService : LifecycleService() {
                                 ballStateManager?.setState(BallStateManager.State.Processing)
                                 when (val ocrDecision = engine.ocrAndTranslate(bitmap)) {
                                     is AutoTranslateEngine.Decision.CacheHit -> {
+                                        autoEmptyStreak = 0
                                         val elapsed = System.currentTimeMillis() - translateStartTime
                                         updateDebugStatus("【LRU缓存命中】", elapsedMs = elapsed, diffRatio = pixelDecision.diffRatio)
                                         statusOverlay.showImmediate(getString(R.string.cache_hit))
@@ -1717,6 +1746,7 @@ class FloatingBallService : LifecycleService() {
                                         isTranslating.set(false)
                                     }
                                     is AutoTranslateEngine.Decision.Translate -> {
+                                        autoEmptyStreak = 0
                                         // LRU 未命中，查数据库缓存
                                         val dbCache = cacheManager.findGameCache(
                                             ocrDecision.ocrText,

@@ -76,6 +76,14 @@ class AutoTranslateEngine(
         data class PixelStabilizing(val stableCount: Int, val diffRatio: Float) : Decision()
         /** 已翻译，像素不变，跳过 OCR */
         data class Idle(val diffRatio: Float) : Decision()
+        /**
+         * 触发了 OCR 但**识别结果为空**。
+         *
+         * ⚠️ 与 [Idle] 分开：`Idle` 是「像素没变所以根本没跑 OCR」，静默是对的；
+         * 这里是「跑了 OCR 但没内容」，用户需要反馈。此前两者共用一个分支 →
+         * 自动翻译下空页面**完全静默**，用户无从判断是真没内容还是卡住了。
+         */
+        data class Empty(val diffRatio: Float) : Decision()
         /** 命中 LRU 缓存，直接显示 */
         data class CacheHit(val ocrText: String, val cachedText: String) : Decision()
         /** 需要翻译 */
@@ -170,7 +178,7 @@ class AutoTranslateEngine(
         if (normalizedText.isBlank()) {
             LogCollector.d(TAG, "【跳过】OCR 结果为空，进入IDLE等待页面变化")
             markIdle()
-            return Decision.Idle(0f)
+            return Decision.Empty(0f)
         }
 
         if (isManualForceTranslate) {

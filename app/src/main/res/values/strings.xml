@@ -515,6 +515,7 @@
     <string name="donate_proj_content">Life is a wilderness, not a track.\nThe answers are on the road, and freedom is in the wind.\nA respectful heart is not found in empty words.</string>
     <string name="jump">Jump</string>
     <string name="auto_translate_start">Automatic translation is enabled, please pay attention to API quota consumption</string>
+    <string name="auto_translate_stop_no_text">Auto-translate stopped: no text detected</string>
     <string name="auto_translate_stop">Automatic translation is turned off</string>
     <string name="auto_translate_disabled_hint">Please stop auto-translate first</string>
     <string name="auto_translate_changed">Screen orientation change detected and automatic translation is turned off</string>

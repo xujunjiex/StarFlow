@@ -113,6 +113,14 @@ class MangaFloatingService : LifecycleService() {
 
     companion object {
         private const val TAG = "MangaFloatingService"
+        /** 自动翻译下连续多少次 OCR 空才提示（节流） */
+        private const val AUTO_EMPTY_NOTICE_AT = 3
+        /** 自动翻译下连续多少次 OCR 空就关闭自动翻译（避免一直空转） */
+        private const val AUTO_EMPTY_ABORT_COUNT = 20
+        /** 结果浮层按钮边长（dp）—— 与游戏模式 TranslationResultView 的 btnSize 一致 */
+        private const val OVERLAY_BUTTON_DP = 14
+        /** 结果浮层按钮距边缘（dp）—— 同游戏模式的 btnMargin */
+        private const val OVERLAY_BUTTON_MARGIN_DP = 3
         private const val NOTIFICATION_CHANNEL_ID = "manga_floating_service"
         private const val NOTIFICATION_ID = 7
 
@@ -294,6 +302,10 @@ class MangaFloatingService : LifecycleService() {
     private var copyClickLayer: android.widget.FrameLayout? = null
     private var copyBubbleViews: MutableList<View> = mutableListOf()
     private var copyButtonsContainer: android.widget.LinearLayout? = null
+
+    /** 结果浮层右上角的关闭按钮（与游戏模式同款）。null = 尚未创建。 */
+    private var overlayCloseButton: android.widget.ImageButton? = null
+
     private var currentShowBubbles: List<TranslatedBubble> = emptyList()  // 当前显示的翻译气泡（非缓存）
     private var renderToggleJob: kotlinx.coroutines.Job? = null  // toggle 渲染协程，避免重复渲染
     @Volatile private var currentOriginalBitmap: Bitmap? = null  // 原始截图（用于原文模式重新渲染）
@@ -699,6 +711,29 @@ class MangaFloatingService : LifecycleService() {
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
             ))
+        }
+
+        // 关闭按钮（右上角）—— 与游戏模式 TranslationResultView 的关闭按钮同款同尺寸同位置。
+        // 此前漫画结果浮层**只能靠点图关闭**，用户找不到入口。点击 = 关掉译文浮层露出原图。
+        overlayCloseButton = android.widget.ImageButton(this).apply {
+            setBackgroundColor(Color.TRANSPARENT)
+            setImageResource(R.drawable.close_service)
+            setColorFilter(Color.argb(160, 80, 80, 80))
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            setPadding(0, 0, 0, 0)
+            contentDescription = getString(R.string.close)
+            setOnClickListener { dismissResultOverlay() }
+        }.also { btn ->
+            val size = dpToPx(OVERLAY_BUTTON_DP)
+            val margin = dpToPx(OVERLAY_BUTTON_MARGIN_DP)
+            resultOverlayView.addView(
+                btn,
+                FrameLayout.LayoutParams(size, size).apply {
+                    gravity = Gravity.END or Gravity.TOP
+                    marginEnd = margin
+                    topMargin = margin
+                }
+            )
         }
 
         resultOverlayParams = WindowManager.LayoutParams().apply {
@@ -1267,13 +1302,11 @@ class MangaFloatingService : LifecycleService() {
         val wasAuto = autoTranslateEngine.isAutoTranslating
         if (wasAuto) stopAutoTranslate()
         if (!hadCrop && !wasAuto) return false
-        showToast(
+        statusOverlay.showSticky(
             getString(
                 if (wasAuto) R.string.manga_crop_cleared_orientation_auto
                 else R.string.manga_crop_cleared_orientation
-            ),
-            true
-        )
+            ))
         // 返回「框是否被清掉」：调用方据此决定是否作废本帧
         return hadCrop
     }
@@ -2289,10 +2322,18 @@ class MangaFloatingService : LifecycleService() {
                 // 用户只能看到「检测中」然后什么都没了（本项目的已知坑）。见 finally。
                 if (autoTranslateEngine.isAutoTranslating) {
                     consecutiveEmptyCount++
-                    if (consecutiveEmptyCount >= 3) {
-                        LogCollector.d(TAG, "processMangaScreenshot: $consecutiveEmptyCount consecutive empty OCR — possible protected area")
-                        pendingEmptyNoticeRes = R.string.no_text_found_protected
-                        consecutiveEmptyCount = 0  // 重置，避免反复弹
+                    when {
+                        // 连续过多次空 → 判定无有效内容/受保护区域，关掉自动翻译（否则一直空转）
+                        consecutiveEmptyCount >= AUTO_EMPTY_ABORT_COUNT -> {
+                            LogCollector.d(TAG, "processMangaScreenshot: 连续 $consecutiveEmptyCount 次空，关闭自动翻译")
+                            consecutiveEmptyCount = 0
+                            autoTranslateEngine.stop()
+                            pendingEmptyNoticeRes = R.string.auto_translate_stop_no_text
+                        }
+                        consecutiveEmptyCount >= AUTO_EMPTY_NOTICE_AT -> {
+                            LogCollector.d(TAG, "processMangaScreenshot: $consecutiveEmptyCount consecutive empty OCR — possible protected area")
+                            pendingEmptyNoticeRes = R.string.no_text_found_protected
+                        }
                     }
                 } else {
                     // 手动翻译：每次都要有反馈（用户主动触发，哪怕是空也必须有回音）
@@ -2568,6 +2609,23 @@ class MangaFloatingService : LifecycleService() {
     // ---------- Result overlay ----------
 
     @SuppressLint("ClickableViewAccessibility")
+    /** 结果浮层当前用的窗口几何（框选模式 = crop 矩形；全屏 = 屏幕尺寸）。null = 窗口未在。 */
+    private var overlayGeometry: android.graphics.Rect? = null
+
+    /** 本次调用需要的窗口几何。框选模式 = crop 矩形；全屏模式 = 屏幕矩形。 */
+    private fun desiredOverlayGeometry(): android.graphics.Rect {
+        val crop = cropRect
+        return if (crop != null) {
+            android.graphics.Rect(
+                crop.left.toInt(), crop.top.toInt(),
+                crop.right.toInt(), crop.bottom.toInt()
+            )
+        } else {
+            val s = getScreenSize()
+            android.graphics.Rect(0, 0, s.width, s.height)
+        }
+    }
+
     private fun showResultOverlay(bitmap: Bitmap, fromCache: Boolean = false, showCopyButton: Boolean = true) {
         if (fromCache) {
             if (isResultShowing) dismissResultOverlay()
@@ -2575,8 +2633,13 @@ class MangaFloatingService : LifecycleService() {
             return
         }
 
-        if (isResultShowing && resultOverlayView.isAttachedToWindow) {
-            // 原地更新：窗口已在，直接换图，避免 dismiss+重新 add 造成的闪烁
+        // ⚠️ 原地更新只有在**窗口几何没变**时才能用。
+        // 此前无条件走它 → 旋转（或框选↔全屏切换）后窗口还 attach 着，于是只换图、
+        // **从不重新定位窗口**：窗口仍是旧 crop 的尺寸/位置，新图却是全屏尺寸，
+        // 被 FIT_XY 压进那个小窗口 → 译文位置完全错（用户报的「回退全屏后位置错误」）。
+        val desired = desiredOverlayGeometry()
+        if (isResultShowing && resultOverlayView.isAttachedToWindow && desired == overlayGeometry) {
+            // 几何一致：原地换图，避免 dismiss+重新 add 造成的闪烁
             val old = (resultOverlayImage.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
             resultOverlayImage.setImageBitmap(bitmap)
             currentOverlayBitmapW = bitmap.width
@@ -2627,6 +2690,7 @@ class MangaFloatingService : LifecycleService() {
             }
             resultOverlayImage.scaleType = ImageView.ScaleType.FIT_XY
             windowManager.addView(resultOverlayView, params)
+            overlayGeometry = desired
         } else {
             // 全屏模式：获取屏幕真实像素尺寸，overlay 精确覆盖全屏
             val screenSize = getScreenSize()
@@ -2647,6 +2711,7 @@ class MangaFloatingService : LifecycleService() {
             }
             resultOverlayImage.scaleType = ImageView.ScaleType.FIT_XY
             windowManager.addView(resultOverlayView, params)
+            overlayGeometry = desired
         }
         isResultShowing = true
 
@@ -2657,6 +2722,7 @@ class MangaFloatingService : LifecycleService() {
     }
 
     private fun dismissResultOverlay() {
+        overlayGeometry = null
         if (cacheOverlayContainer != null) {
             dismissCacheOverlay()
             return
