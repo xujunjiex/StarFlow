@@ -197,11 +197,12 @@ class FloatingBallService : LifecycleService() {
     // 保存裁剪框状态
     private var mRectF: RectF? = null
     /**
-     * `mRectF` 是在哪套几何下选出来的 —— **记的是那次截图帧的实测尺寸**，
-     * 不是 `getScreenSize()`。原因：后者依赖 `CropView.onSizeChanged` 上报，而框选确认后
-     * CropView 已被移除、该值不再更新 → 「几何变化」在框选界面关着时**检测不到**。
-     * 帧尺寸是每次截图都新鲜的，且「帧 == 框选窗口几何」有结构性保证（帧尺寸正是从窗口学的）。
-     * 详见 ensureCropStillValid。
+     * `mRectF` 是在哪套**显示几何**下选出来的。
+     *
+     * ⚠️ 必须与 `ensureCropStillValid` 的比较来源**同源**（都用 `getScreenSize()`）。
+     * 曾记 `cropView.width/height`（窗口尺寸）而与 `getScreenSize()`（补回屏幕后的尺寸）比较 ——
+     * 两者不是同一个量（窗口避开手势条 1080x2356 vs 屏幕 1080x2400），
+     * 于是**每次框选都被判「几何变化」**（实测稳态复现，不是偶发）。
      */
     private var mRectFrameSize: android.util.Size? = null
 
@@ -1391,8 +1392,10 @@ class FloatingBallService : LifecycleService() {
         }
 
         val screenSize = getScreenSize()
-        // 有保存的框且屏幕几何没变 → 直接套用；几何变了（旋转）由 ensureCropStillValid 已清空
-        if (mRectF != null) {
+        // ⚠️ 与漫画同一套判据：**有框 且 几何没变** 才套用旧框。
+        // 只判 `mRectF != null` 是弱的 —— 它依赖「几何变了上游一定已清空 mRectF」这个前提；
+        // 若上游没走到（服务重启后 mRectF 是内存值、此时几何已变），就会把旧框套到新几何上。
+        if (mRectF != null && !cropGeometryChanged()) {
             cropView.setRect(mRectF!!)
         } else {
             // 等布局完成后用 view 自身尺寸计算居中框选区域
@@ -1528,16 +1531,23 @@ class FloatingBallService : LifecycleService() {
      * @return true 表示已判定失效并处理（调用方应中止当前动作）
      */
     private fun ensureCropStillValid(): Boolean {
-        if (mRectF == null) return false
-        val saved = mRectFrameSize ?: return false
-        val s = getScreenSize()
-        if (s.width == saved.width && s.height == saved.height) return false
+        if (mRectF == null || !cropGeometryChanged()) return false
+        return clearCropForScreenChange()
+    }
 
+    /**
+     * 当前显示几何是否与「框选时」不同 —— 与漫画模式**同名同义**，便于两处对照。
+     * 基准与比较都用 `getScreenSize()`（同源），见 [mRectFrameSize] 的说明。
+     */
+    private fun cropGeometryChanged(): Boolean {
+        val saved = mRectFrameSize ?: return false
+        val now = getScreenSize()
+        if (now.width == saved.width && now.height == saved.height) return false
         LogCollector.d(
             TAG,
-            "显示几何变化（框选时 ${saved.width}x${saved.height} → 现在 ${s.width}x${s.height}）"
+            "显示几何变化（框选时 ${saved.width}x${saved.height} → 现在 ${now.width}x${now.height}）"
         )
-        return clearCropForScreenChange()
+        return true
     }
 
     private fun showResultView() {
