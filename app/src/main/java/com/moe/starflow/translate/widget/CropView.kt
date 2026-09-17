@@ -103,6 +103,27 @@ class CropView @JvmOverloads constructor(
     }
 
     /**
+     * 刷新 [absolutePointOffset]（= 本窗口左上角在**显示**上的位置）。
+     *
+     * ⚠️ 不能在 `onSizeChanged` 里直接取：那时窗口刚 resize，WMS 还没定位完，
+     * `getLocationOnScreen` 会返回 (0,0)（实测：窗口真原点 (138,0)，此处读到 (0,0)）。
+     * 而消费方（截图裁剪 / 结果浮层定位）在框选确认后读这个值，届时视图已被移除，
+     * 再想取就取不到了 —— 必须趁窗口还在、且**已经定位完成**时抓下来。
+     * `post` 排在本次布局之后执行，是能拿到真实位置的最近时机。
+     */
+    private fun refreshAbsoluteOffset() {
+        post {
+            val loc = IntArray(2)
+            getLocationOnScreen(loc)
+            if (loc[0] != absolutePointOffset.x || loc[1] != absolutePointOffset.y) {
+                absolutePointOffset.x = loc[0]
+                absolutePointOffset.y = loc[1]
+                LogCollector.d(TAG_CROP, "absolutePointOffset 更新为 (${loc[0]},${loc[1]})")
+            }
+        }
+    }
+
+    /**
      * 用 view **自身尺寸**设置居中初始框选区域。
      *
      * ⚠️ 必须在拿到新几何之后算。overlay 窗口是「removeView → 改 LayoutParams → 再 addView」
@@ -184,8 +205,7 @@ class CropView @JvmOverloads constructor(
         val top = (h - rectHeight) / 2f
         mRect = RectF(left, top, left + rectWidth, top + rectHeight)
         mInitRect = RectF(mRect)
-        absolutePointOffset.x = getViewOffset().x
-        absolutePointOffset.y = getViewOffset().y
+        refreshAbsoluteOffset()
         invalidate()
         LogCollector.d(
             TAG_CROP,

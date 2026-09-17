@@ -647,6 +647,13 @@ class FloatingBallService : LifecycleService() {
             // 进程初始化方向，照它定尺寸会让框选窗口与真实显示不一致 —— CropView 用
             // 自己的 width/height 算居中框，于是横屏下叠出竖屏形状的框（用户实测报障）。
             // MATCH_PARENT 由 WMS 按**当前**显示几何解析。
+            //
+            // ⚠️ 必须 ALWAYS：默认挖孔模式下窗口会**避开刘海**（横屏实测：display 2712x1220，
+            // 窗口只有 2574x1220、原点 (138,0)），于是「窗口坐标」与「显示坐标」相差 138px ——
+            // 而结果浮层的 x/y 是按显示原点解释的，crop.left 却是窗口局部坐标，
+            // 翻译结果因此整体偏移（竖屏刘海在顶部、窗口铺满，所以只有横屏暴露）。
+            // 让窗口覆盖整个 display，两套坐标即重合，无需任何补偿。
+            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
             width = WindowManager.LayoutParams.MATCH_PARENT
             height = WindowManager.LayoutParams.MATCH_PARENT
             gravity = Gravity.START or Gravity.TOP
@@ -1342,8 +1349,9 @@ class FloatingBallService : LifecycleService() {
         }
 
         cropView.onConfirmCrop = { confirmCrop() }
-        // 每次显示时重置 overlay 几何（同样是 MATCH_PARENT：交给 WMS 按当前显示解析）
+        // 每次显示时重置 overlay 几何（MATCH_PARENT + ALWAYS：覆盖整个 display，见 init 处说明）
         cropViewParams?.apply {
+            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
             width = WindowManager.LayoutParams.MATCH_PARENT
             height = WindowManager.LayoutParams.MATCH_PARENT
             x = 0
