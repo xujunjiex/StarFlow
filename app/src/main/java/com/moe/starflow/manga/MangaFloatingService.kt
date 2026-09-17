@@ -711,7 +711,7 @@ class MangaFloatingService : LifecycleService() {
             // 只有 2574x1220、原点 (138,0)），于是「窗口坐标」与「显示坐标」相差一个刘海宽度，
             // 结果浮层按显示原点定位、crop 却是窗口局部坐标 → 译文整体偏移。
             // 覆盖整个 display 让两套坐标重合。
-            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            com.moe.starflow.translate.screenshot.OverlayWindow.applyFullDisplayCutout(this)
             width = WindowManager.LayoutParams.MATCH_PARENT
             height = WindowManager.LayoutParams.MATCH_PARENT
             gravity = Gravity.START or Gravity.TOP
@@ -1193,7 +1193,7 @@ class MangaFloatingService : LifecycleService() {
         // 照它定尺寸会让框选窗口与真实显示不一致 —— CropView 用自己的 width/height 算居中框，
         // 横屏下就叠出竖屏形状的框。MATCH_PARENT 由 WMS 按**当前**显示几何解析。
         cropViewParams?.apply {
-            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            com.moe.starflow.translate.screenshot.OverlayWindow.applyFullDisplayCutout(this)
             width = WindowManager.LayoutParams.MATCH_PARENT
             height = WindowManager.LayoutParams.MATCH_PARENT
             x = 0

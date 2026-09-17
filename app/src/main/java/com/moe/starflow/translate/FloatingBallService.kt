@@ -653,7 +653,7 @@ class FloatingBallService : LifecycleService() {
             // 而结果浮层的 x/y 是按显示原点解释的，crop.left 却是窗口局部坐标，
             // 翻译结果因此整体偏移（竖屏刘海在顶部、窗口铺满，所以只有横屏暴露）。
             // 让窗口覆盖整个 display，两套坐标即重合，无需任何补偿。
-            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            com.moe.starflow.translate.screenshot.OverlayWindow.applyFullDisplayCutout(this)
             width = WindowManager.LayoutParams.MATCH_PARENT
             height = WindowManager.LayoutParams.MATCH_PARENT
             gravity = Gravity.START or Gravity.TOP
@@ -1351,7 +1351,7 @@ class FloatingBallService : LifecycleService() {
         cropView.onConfirmCrop = { confirmCrop() }
         // 每次显示时重置 overlay 几何（MATCH_PARENT + ALWAYS：覆盖整个 display，见 init 处说明）
         cropViewParams?.apply {
-            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            com.moe.starflow.translate.screenshot.OverlayWindow.applyFullDisplayCutout(this)
             width = WindowManager.LayoutParams.MATCH_PARENT
             height = WindowManager.LayoutParams.MATCH_PARENT
             x = 0
