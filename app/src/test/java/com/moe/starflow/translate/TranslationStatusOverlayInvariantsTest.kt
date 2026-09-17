@@ -62,6 +62,29 @@ class TranslationStatusOverlayInvariantsTest {
     }
 
     /**
+     * ⚠️ 保留 sticky 时**不得**写「逐个 removeView 再 addView」。
+     *
+     * 那要求每个 chip 的 parent 恰是本 layout；不满足时 `removeView` 被跳过，
+     * 随后的 `addView` 便抛
+     * `IllegalStateException: The specified child already has a parent` ——
+     * 实测崩溃（`removeAllChips` → `dismiss()` → 点悬浮球翻译即崩，PID 8380）。
+     *
+     * 正确写法：先记录要留的 chip → `removeAllViews()` → 按原顺序加回。
+     */
+    @Test
+    fun keepStickyDoesNotAddViewWithoutRemovingParent() {
+        val body = source.substringAfter("private fun removeAllChips(").substringBefore("private fun isEnabled(")
+        assertTrue(
+            "removeAllChips 保留 sticky 时必须先 removeAllViews 再加回，不能只 removeView 目标 chip",
+            body.contains("removeAllViews()")
+        )
+        assertTrue(
+            "sticky 保留分支不得出现裸 addView(旧对象) —— 那是「已有 parent」崩溃的写法",
+            !body.contains("layout.addView(it)")
+        )
+    }
+
+    /**
      * ⚠️ `addChip` 必须**直接**调 `addToWindowIfNeeded()`，不能只靠 `layout.post {}`。
      *
      * `View.post()` 在 View 未 attach 时不会执行（排队等 attach），而新建容器必然未 attach

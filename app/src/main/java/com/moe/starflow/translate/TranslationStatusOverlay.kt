@@ -212,6 +212,10 @@ class TranslationStatusOverlay private constructor(private val context: Context)
 
     private fun activeCount(): Int = container?.childCount ?: 0
 
+    /** 容器当前的所有子 View（保持顺序）。 */
+    private fun android.view.ViewGroup.children(): List<android.view.View> =
+        (0 until childCount).map { getChildAt(it) }
+
     private fun topChip(): TextView? = container?.getChildAt(0) as? TextView
 
     private fun ensureContainer(): LinearLayout {
@@ -312,14 +316,30 @@ class TranslationStatusOverlay private constructor(private val context: Context)
         dismissRunnables.values.forEach { mainHandler.removeCallbacks(it) }
         dismissRunnables.clear()
         if (keepSticky && stickyChips.isNotEmpty()) {
-            stickyChips.toList().forEach { if (it.parent === layout) layout.removeView(it) }
-            // 先摘掉再按原顺序加回，保持视觉顺序不变
-            stickyChips.toList().forEach { layout.addView(it) }
+            // ⚠️ 保留 sticky：**先记下要留的，再整体清空，最后按原顺序加回**。
+            // 不要写「逐个 removeView 再 addView」——那要求每个 chip 的 parent 恰是本 layout，
+            // 不满足时 removeView 被跳过、addView 便抛
+            // `IllegalStateException: specified child already has a parent`（实测崩溃）。
+            // 也不能复用旧 LayoutParams：removeView 后需重新给，否则间距/顺序丢失。
+            val keep = layout.children()
+                .filter { it in stickyChips }
+                .map { it to (it.layoutParams as? android.widget.LinearLayout.LayoutParams) }
+            layout.removeAllViews()
+            keep.forEachIndexed { idx, (chip, lp) ->
+                val params = lp?.let {
+                    android.widget.LinearLayout.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                        android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                    ).apply { topMargin = if (idx == 0) 0 else it.topMargin }
+                }
+                if (params != null) layout.addView(chip, params) else layout.addView(chip)
+            }
+            if (layout.childCount == 0) removeFromWindow()
         } else {
             stickyChips.clear()
             layout.removeAllViews()
+            removeFromWindow()
         }
-        if (layout.childCount == 0) removeFromWindow()
     }
 
     private fun isEnabled(): Boolean = prefs.getBoolean("status_overlay_enabled", true)
