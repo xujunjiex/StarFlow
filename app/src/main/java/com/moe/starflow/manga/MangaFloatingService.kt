@@ -720,10 +720,8 @@ class MangaFloatingService : LifecycleService() {
      */
     @Suppress("DEPRECATION")
     private fun getScreenSize(): android.util.Size {
-        val defaultDisplay = windowManager.defaultDisplay
-        val realSize = android.graphics.Point()
-        defaultDisplay.getRealSize(realSize)
-        return android.util.Size(realSize.x, realSize.y)
+        val p = com.moe.starflow.utils.DisplaySize.size(this)
+        return android.util.Size(p.x, p.y)
     }
 
     private fun dpToPx(dp: Int): Int {
@@ -1176,7 +1174,6 @@ class MangaFloatingService : LifecycleService() {
         }
 
         val screenSize = getScreenSize()
-
         if (cropRect != null && resources.configuration.orientation == 1) {
             cropView.setRect(cropRect!!)
         } else {
@@ -1185,14 +1182,25 @@ class MangaFloatingService : LifecycleService() {
         }
 
         cropView.onConfirmCrop = { confirmCrop() }
-        // 每次显示时更新 overlay 尺寸，防止旋转后过期
+        // 每次显示时重置 overlay 几何。
+        // ⚠️ MATCH_PARENT 而不是像素值：Service 的 Display 取值会被冻结在进程初始化方向，
+        // 照它定尺寸会让框选窗口与真实显示不一致 —— CropView 用自己的 width/height 算居中框，
+        // 横屏下就叠出竖屏形状的框。MATCH_PARENT 由 WMS 按**当前**显示几何解析。
         cropViewParams?.apply {
-            width = screenSize.width
-            height = screenSize.height
+            width = WindowManager.LayoutParams.MATCH_PARENT
+            height = WindowManager.LayoutParams.MATCH_PARENT
             x = 0
             y = 0
         }
         windowManager.addView(cropView, cropViewParams)
+        com.moe.starflow.utils.DisplaySize.probe(this, "setCropView")
+        LogCollector.d(
+            TAG,
+            "setCropView: cropRect=${cropRect?.toString() ?: "null"} " +
+                "cfgOrientation=${resources.configuration.orientation} " +
+                "getScreenSize=${screenSize.width}x${screenSize.height} " +
+                "可靠=${com.moe.starflow.utils.DisplaySize.isReliable}"
+        )
         isCropActive = true
 
         bringFloatingBallToFront()

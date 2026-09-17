@@ -38,9 +38,13 @@ import android.util.Log
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewTreeObserver
+import com.moe.starflow.utils.LogCollector
 
 const val RECT_MIN_WIDTH = 50f//框选的最小宽度px
 const val RECT_MIN_HEIGHT = 50f//框选的最小高度px
+
+/** 本组件日志 tag：几何相关排查（横竖屏框选）都看它 */
+private const val TAG_CROP = "CropView"
 
 class CropView @JvmOverloads constructor(
     ctx: Context,
@@ -65,6 +69,12 @@ class CropView @JvmOverloads constructor(
     private val confirmButtonRect = RectF()
     var onConfirmCrop: (() -> Unit)? = null
 
+    /** 比例框：最近一次 setRectCentered 用的比例，窗口尺寸变化时按它重算 */
+    private var lastWidthRatio = 0.9f
+    private var lastHeightRatio = 0.35f
+    /** 是否由调用方显式设过框（setRect）；只有「显式设过且放得下」才保留用户选择 */
+    private var hasExplicitRect = false
+
     /**
      * 禁用裁剪框**内部**拖动（position == 8）。
      * 默认 false：维持原行为，框内触摸 = 移动整个裁剪框。
@@ -76,6 +86,7 @@ class CropView @JvmOverloads constructor(
     fun setRect(rectF: RectF) {  //设置初始矩形宽高
         mRect = RectF(rectF)
         mInitRect = RectF(rectF)
+        hasExplicitRect = true
 
         // 等待视图布局完成后再获取位置
         viewTreeObserver.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
@@ -92,27 +103,68 @@ class CropView @JvmOverloads constructor(
     }
 
     /**
-     * 等待布局完成后，用 view 自身尺寸设置居中初始框选区域
+     * 用 view **自身尺寸**设置居中初始框选区域。
+     *
+     * ⚠️ 必须在拿到新几何之后算。overlay 窗口是「removeView → 改 LayoutParams → 再 addView」
+     * 来换尺寸的，参数更新后 `width/height` 要等下一次 traversal 才变。旧实现把算框
+     * 全押在 `OnGlobalLayout` 上，而这个监听器**对重新挂载不保证触发** —— 不触发就拿着
+     * 上一次（很可能是竖屏）的尺寸算框，横屏下叠出竖屏比例的框。
+     *
+     * 现在的分工：尺寸已就绪 → 立即算；未就绪 → 由 [onSizeChanged] 接手（它一定会在
+     * 新几何布局完成时被调用）。
+     *
      * @param widthRatio 框选宽度占 view 宽度的比例
      * @param heightRatio 框选高度占 view 高度的比例
      */
     fun setRectCentered(widthRatio: Float, heightRatio: Float) {
-        viewTreeObserver.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
-            override fun onGlobalLayout() {
-                absolutePointOffset.x = getViewOffset().x
-                absolutePointOffset.y = getViewOffset().y
+        lastWidthRatio = widthRatio
+        lastHeightRatio = heightRatio
+        hasExplicitRect = false
+        if (width > 0 && height > 0) {
+            centerRect(width, height, widthRatio, heightRatio)
+        } else {
+            Log.d(TAG_CROP, "setRectCentered: 尚无尺寸，等 onSizeChanged 接手")
+        }
+    }
 
-                val rectWidth = (width * widthRatio).toInt()
-                val rectHeight = (height * heightRatio).toInt()
-                val left = (width - rectWidth) / 2f
-                val top = (height - rectHeight) / 2f
-                mRect = RectF(left, top, left + rectWidth, top + rectHeight)
-                mInitRect = RectF(mRect)
-                invalidate()
+    /**
+     * 窗口尺寸变化时重算框。
+     *
+     * ⚠️ overlay 窗口用 MATCH_PARENT，真实横竖由窗口几何体现。窗口尺寸一变（旋转，
+     * 或服务给的尺寸与显示不一致），旧框在新几何里可能整个落在外面 —— 那时用户看到的
+     * 是全屏遮罩、拖动一松手又被 ACTION_UP 的边界钳制拉走。所以：显式设过框且放得下 →
+     * 保留用户选择；否则按比例重新居中。
+     */
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (w <= 0 || h <= 0) return
+        // 这是本进程里唯一**不可能被冻结**的屏幕几何来源：窗口是 WMS 在当前配置下真布局出来的
+        com.moe.starflow.utils.DisplaySize.reportLaidOutSize(w, h)
+        val rectDesc = if (::mRect.isInitialized) mRect.toString() else "未初始化"
+        LogCollector.d(TAG_CROP, "onSizeChanged ${oldw}x$oldh -> ${w}x$h rect=$rectDesc 显式=$hasExplicitRect")
+        if (!::mRect.isInitialized || !hasExplicitRect || !fitsIn(w, h)) {
+            centerRect(w, h, lastWidthRatio, lastHeightRatio)
+        }
+    }
 
-                viewTreeObserver.removeOnGlobalLayoutListener(this)
-            }
-        })
+    /** 框是否完整落在 w×h 内（与 ACTION_UP 的边界钳制口径一致） */
+    private fun fitsIn(w: Int, h: Int): Boolean =
+        mRect.left >= 0f && mRect.top >= 0f && mRect.right <= w.toFloat() && mRect.bottom <= h.toFloat()
+
+    private fun centerRect(w: Int, h: Int, widthRatio: Float, heightRatio: Float) {
+        val rectWidth = w * widthRatio
+        val rectHeight = h * heightRatio
+        val left = (w - rectWidth) / 2f
+        val top = (h - rectHeight) / 2f
+        mRect = RectF(left, top, left + rectWidth, top + rectHeight)
+        mInitRect = RectF(mRect)
+        absolutePointOffset.x = getViewOffset().x
+        absolutePointOffset.y = getViewOffset().y
+        invalidate()
+        LogCollector.d(
+            TAG_CROP,
+            "centerRect view=${w}x$h ratio=$widthRatio/$heightRatio → rect=$mRect"
+        )
     }
 
     @SuppressLint("DrawAllocation")

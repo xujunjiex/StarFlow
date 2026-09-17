@@ -143,11 +143,8 @@ class Shooter(private val context: Context) {
                 }
             }, Handler(Looper.getMainLooper()))
 
-            // 获取实际屏幕尺寸（使用 getRealSize 匹配项目规范）
-            val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-            val screenPoint = Point()
-            @Suppress("DEPRECATION")
-            wm.defaultDisplay.getRealSize(screenPoint)
+            // 获取实际屏幕尺寸，一律走 DisplaySize（见其注释：Display API 在本机会被冻结）
+            val screenPoint = com.moe.starflow.utils.DisplaySize.size(context)
             val screenWidth = screenPoint.x
             val screenHeight = screenPoint.y
             val dpi = context.resources.displayMetrics.densityDpi
@@ -174,10 +171,16 @@ class Shooter(private val context: Context) {
             )
 
             ready = true
-            @Suppress("DEPRECATION")
-            initRotation = wm.defaultDisplay.rotation
+            // 方向按几何判（Display.rotation 在本机横屏下同样可能被冻结为 0）
+            initRotation = if (screenWidth > screenHeight) 1 else 0
             lastFrameSeqChangeTime = System.currentTimeMillis()
-            LogCollector.d(TAG, "Initialized: ${screenWidth}x${screenHeight}, rotation=$initRotation")
+            LogCollector.d(
+                TAG,
+                "Initialized: ${screenWidth}x${screenHeight}, rotation=$initRotation, " +
+                    "可靠=${com.moe.starflow.utils.DisplaySize.isReliable}"
+            )
+            // 建的时候可能还没拿到窗口几何（冻结值）：立刻对齐一次，不一致就 resize
+            ensureBufferOrientation()
             return true
         } catch (e: SecurityException) {
             // Token 过期或重复使用：清除已失效的 intent，下次请求新授权
@@ -265,17 +268,17 @@ class Shooter(private val context: Context) {
         val vd = virtualDisplay ?: return
         val handler = listenerHandler ?: return
         try {
-            val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-            val point = Point()
-            @Suppress("DEPRECATION")
-            wm.defaultDisplay.getRealSize(point)
+            // ⚠️ 必须走 DisplaySize：`wm.defaultDisplay.getRealSize()` 在本机会被冻结在
+            // 进程初始化方向（用户实测：设备已横屏、config 已是横屏，它仍返回竖屏 1220x2712），
+            // 于是 newW==reader.width 直接早退，VirtualDisplay 永远停在竖屏帧 ——
+            // 框选按横屏算、截图按竖屏裁，两套坐标系，识别位置必然错。
+            val point = com.moe.starflow.utils.DisplaySize.size(context)
             val newW = point.x
             val newH = point.y
             if (newW <= 0 || newH <= 0) return
             if (newW == reader.width && newH == reader.height) return
 
-            @Suppress("DEPRECATION")
-            val currentRotation = wm.defaultDisplay.rotation
+            val currentRotation = if (newW > newH) 1 else 0
             val dpi = context.resources.displayMetrics.densityDpi
             LogCollector.d(TAG, "!!! ROTATION buffer resize: ${reader.width}x${reader.height} -> ${newW}x${newH}, initRotation=$initRotation, currentRotation=$currentRotation")
 

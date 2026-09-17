@@ -342,10 +342,8 @@ class FloatingBallService : LifecycleService() {
      */
     @Suppress("DEPRECATION")
     private fun getScreenSize(): android.util.Size {
-        val defaultDisplay = windowManager.defaultDisplay
-        val realSize = android.graphics.Point()
-        defaultDisplay.getRealSize(realSize)
-        return android.util.Size(realSize.x, realSize.y)
+        val p = com.moe.starflow.utils.DisplaySize.size(this)
+        return android.util.Size(p.x, p.y)
     }
 
     /**
@@ -645,8 +643,12 @@ class FloatingBallService : LifecycleService() {
             flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-            width = cropScreenSize.width
-            height = cropScreenSize.height
+            // ⚠️ 用 MATCH_PARENT 而不是像素值钉死：Service 的 Display 取值会被冻结在
+            // 进程初始化方向，照它定尺寸会让框选窗口与真实显示不一致 —— CropView 用
+            // 自己的 width/height 算居中框，于是横屏下叠出竖屏形状的框（用户实测报障）。
+            // MATCH_PARENT 由 WMS 按**当前**显示几何解析。
+            width = WindowManager.LayoutParams.MATCH_PARENT
+            height = WindowManager.LayoutParams.MATCH_PARENT
             gravity = Gravity.START or Gravity.TOP
             x = 0
             y = 0
@@ -1331,7 +1333,6 @@ class FloatingBallService : LifecycleService() {
         }
 
         val screenSize = getScreenSize()
-
         // 若有保存的裁剪框，则直接应用
         if ((orientation == this.resources.configuration.orientation) && (mRectF != null)){
             cropView.setRect(mRectF!!)
@@ -1341,14 +1342,22 @@ class FloatingBallService : LifecycleService() {
         }
 
         cropView.onConfirmCrop = { confirmCrop() }
-        // 每次显示时更新 overlay 尺寸，防止旋转后过期
+        // 每次显示时重置 overlay 几何（同样是 MATCH_PARENT：交给 WMS 按当前显示解析）
         cropViewParams?.apply {
-            width = screenSize.width
-            height = screenSize.height
+            width = WindowManager.LayoutParams.MATCH_PARENT
+            height = WindowManager.LayoutParams.MATCH_PARENT
             x = 0
             y = 0
         }
         windowManager.addView(cropView, cropViewParams)
+        com.moe.starflow.utils.DisplaySize.probe(this, "setCropView")
+        LogCollector.d(
+            TAG,
+            "setCropView: mRectF=${mRectF?.toString() ?: "null"} " +
+                "cfgOrientation=${resources.configuration.orientation} " +
+                "getScreenSize=${screenSize.width}x${screenSize.height} " +
+                "可靠=${com.moe.starflow.utils.DisplaySize.isReliable}"
+        )
 
         // 存储屏幕方向
         orientation = this.resources.configuration.orientation
