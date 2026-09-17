@@ -34,11 +34,7 @@ object DisplaySize {
     @Volatile
     private var laidOut: Point = Point(0, 0)
 
-    /** 上报的窗口是否铺满整个 display（由上报方声明）。只有它才能直接当屏幕尺寸用。 */
-    @Volatile
-    private var laidOutIsFullDisplay = false
-
-    /** 上一次取值是否来自「铺满 display 的窗口」（true = WMS 真值）。 */
+    /** 上一次取值是否来自「已布局窗口 + Display 读数一致」（两者相符才可信）。 */
     @Volatile
     var isReliable: Boolean = false
         private set
@@ -46,45 +42,47 @@ object DisplaySize {
     /**
      * 由持有窗口的一方上报（当前是 `CropView.onSizeChanged`）。
      *
-     * ⚠️ [fullDisplay] 必须由上报方如实声明「这个窗口是否铺满了整个 display」。
-     * 窗口**不等于**屏幕：系统可能因刘海/手势条/状态栏把窗口缩小（实测本机竖屏
-     * display 1220x2712 而框选窗口只有 1220x2660）。把这种窗口的尺寸当屏幕尺寸用，
-     * 会让 VirtualDisplay 与全屏浮层都按 2660 建 —— 帧变成「整屏缩放进 2660」，
-     * 再摆到 2712 高的屏幕上 → 纵向 2% 压缩 + 整体偏上，正是「回退全屏后位置错误」的来源。
+     * ⚠️ **窗口尺寸不等于屏幕尺寸**，即使窗口原点为 (0,0)。实测（竖屏）：
+     * 真实屏幕 1220x2712，而 `MATCH_PARENT` 的 overlay 窗口只有 **1220x2660** ——
+     * 系统会让窗口避开底部手势条/导航栏，但原点仍是 0。
+     *
+     * 把这种窗口尺寸当屏幕尺寸用，会让 VirtualDisplay 与全屏浮层都按 2660 建：
+     * 帧成了「2712 高的屏幕缩放进 2660」，再摆到 2712 高的屏幕上 →
+     * **整幅译文纵向压缩并偏上**，正是「回退全屏后位置错误」的来源。
+     *
+     * 因此这里**不再由上报方声明"是否铺满"**（窗口原点为 0 判不出铺满，曾据此误判），
+     * 改为在 [size] 里与 Display 读数取较大者 —— 真实显示必然 ≥ 任何窗口。
      */
-    fun reportLaidOutSize(w: Int, h: Int, fullDisplay: Boolean) {
+    fun reportLaidOutSize(w: Int, h: Int) {
         if (w <= 0 || h <= 0) return
         val old = laidOut
-        val changed = old.x != w || old.y != h || laidOutIsFullDisplay != fullDisplay
-        if (!changed) return
+        if (old.x == w && old.y == h) return
         laidOut = Point(w, h)
-        laidOutIsFullDisplay = fullDisplay
-        LogCollector.d(TAG, "已布局窗口几何更新: ${old.x}x${old.y} → ${w}x$h（铺满display=$fullDisplay）")
+        LogCollector.d(TAG, "已布局窗口几何更新: ${old.x}x${old.y} → ${w}x$h")
     }
 
     /**
-     * 当前屏幕几何（物理像素，含系统栏区域）。
+     * 当前**显示**几何（物理像素，含系统栏区域）。
      *
-     * 优先用**铺满 display 的窗口**几何（WMS 在当前配置下真布局出来的，进程冻不掉）。
-     * 窗口没铺满时不能直接采信 —— 真实屏幕尺寸**必然 ≥ 任何窗口**，
-     * 故取「窗口几何」与「Display API 读数」中较大者（按面积）。
+     * 两个来源各有各的坏法，故**取较大者**：
+     * - 已布局窗口：能反映当前方向（进程冻不掉），但可能被系统缩小（避开手势条/刘海）
+     * - Display API：可能是冻结的旧方向，但不会凭空变小
+     *
+     * 真实显示尺寸**必然 ≥ 任何窗口**，所以逐轴取 max 是安全的：
+     * 窗口被缩小时由 Display 读数补上；Display 冻结成竖屏而窗口是横屏时由窗口补上。
+     * 两者一致才算 [isReliable]。
      */
     fun size(ctx: Context): Point {
         val laid = laidOut
         val legacy = legacySize(ctx)
-        if (laid.x > 0 && laid.y > 0) {
-            if (laidOutIsFullDisplay) {
-                isReliable = true
-                return laid
-            }
-            // 窗口没铺满：取较大的那个（真实屏幕不可能比窗口小）
-            val w = maxOf(laid.x, legacy.x)
-            val h = maxOf(laid.y, legacy.y)
-            isReliable = (w == laid.x && h == laid.y)
-            return Point(w, h)
+        if (laid.x <= 0 || laid.y <= 0) {
+            isReliable = false
+            return legacy
         }
-        isReliable = false
-        return legacy
+        val w = maxOf(laid.x, legacy.x)
+        val h = maxOf(laid.y, legacy.y)
+        isReliable = (w == laid.x && h == laid.y)
+        return Point(w, h)
     }
 
     /** 强制读 Display API（诊断用，绕过已布局读数）。 */

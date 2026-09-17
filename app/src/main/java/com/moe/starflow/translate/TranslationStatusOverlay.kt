@@ -56,6 +56,9 @@ class TranslationStatusOverlay private constructor(private val context: Context)
 
     // 每条消息的自动消失任务
     private val dismissRunnables = HashMap<TextView, Runnable>()
+    // 标记为「不随 dismiss 清屏」的 chip（showSticky 用）—— 屏幕方向变化这类提示
+    // 必须在随后的「检测中…」清屏中存活，否则用户根本读不到（实测被吃掉）。
+    private val stickyChips = HashSet<TextView>()
     // 待显示队列（超过 MAX_SLOTS 时排队）
     private val messageQueue = LinkedList<QueuedMessage>()
 
@@ -117,7 +120,7 @@ class TranslationStatusOverlay private constructor(private val context: Context)
             if (activeCount() >= MAX_SLOTS) {
                 messageQueue.add(QueuedMessage(message, isError = false))
             } else {
-                addChip(message, isError = false, autoDismiss = false)
+                stickyChips.add(addChip(message, isError = false, autoDismiss = false))
             }
         }
     }
@@ -169,7 +172,9 @@ class TranslationStatusOverlay private constructor(private val context: Context)
      */
     fun dismiss() {
         runOnMainThread {
-            removeAllChips()
+            // ⚠️ 保留 sticky 提示：进度类消息的收尾清屏（每轮翻译结束都会调）会把
+            // 几秒前发的「屏幕方向已变化…」一起抹掉 —— 那条恰恰是用户唯一需要读到的。
+            removeAllChips(keepSticky = true)
             messageQueue.clear()
         }
     }
@@ -273,12 +278,23 @@ class TranslationStatusOverlay private constructor(private val context: Context)
         }
     }
 
-    private fun removeAllChips() {
+    /**
+     * @param keepSticky true = 保留 [stickyChips]（进度类收尾清屏用）；
+     *                   false = 全清（release / 用户主动关闭用）
+     */
+    private fun removeAllChips(keepSticky: Boolean = false) {
         val layout = container ?: return
         dismissRunnables.values.forEach { mainHandler.removeCallbacks(it) }
         dismissRunnables.clear()
-        layout.removeAllViews()
-        removeFromWindow()
+        if (keepSticky && stickyChips.isNotEmpty()) {
+            stickyChips.toList().forEach { if (it.parent === layout) layout.removeView(it) }
+            // 先摘掉再按原顺序加回，保持视觉顺序不变
+            stickyChips.toList().forEach { layout.addView(it) }
+        } else {
+            stickyChips.clear()
+            layout.removeAllViews()
+        }
+        if (layout.childCount == 0) removeFromWindow()
     }
 
     private fun isEnabled(): Boolean = prefs.getBoolean("status_overlay_enabled", true)
