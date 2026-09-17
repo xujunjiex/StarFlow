@@ -37,6 +37,17 @@ object LogCollector {
     /** 旧版全量日志残留检测阈值（300 条日志不可能超过此大小，超了判定为旧版 appendText 遗留） */
     private const val MAX_ERROR_REPORT_BYTES = 256 * 1024L
 
+    /**
+     * 文件滚动检查的松弛量：**不要每写一行就扫一遍文件**。
+     * [trimFileToTail] 要 readLines + writeText 整个文件，而翻译一页会打几十行日志 ——
+     * 每行都裁剪 = 每次都全量读写一遍 40~60KB 文件（还在调用线程上），纯粹白烧 I/O。
+     * 攒到 MAX_ENTRIES + 这个数再裁，文件行数上限依旧只在 MAX_ENTRIES + SLACK 量级。
+     */
+    private const val TRIM_SLACK_LINES = 50
+
+    /** 崩溃块头部保留行数（banner / sig= / mem: / diag: / 前若干帧） */
+    private const val CRASH_HEAD_LINES = 120
+
     /** 日志文件目录（init 后可用） */
     @Volatile
     private var logDir: File? = null
@@ -46,6 +57,10 @@ object LogCollector {
     private var logFile: File? = null
 
     private val buffer = CopyOnWriteArrayList<LogEntry>()
+
+    /** 文件当前行数（只在 synchronized(file) 内读写；-1 = 未知，裁剪时重新数） */
+    @Volatile
+    private var fileLineCount = -1
 
     /**
      * 初始化文件落盘。幂等：重复调用只刷新路径。
@@ -78,7 +93,9 @@ object LogCollector {
         try {
             var lastLevel = "I"
             var lastTag = "History"
-            val lines = file.readText().split('\n').takeLast(MAX_ENTRIES)
+            val allLines = file.readText().split('\n')
+            fileLineCount = allLines.size
+            val lines = allLines.takeLast(MAX_ENTRIES)
             for (line in lines) {
                 if (line.isBlank()) continue
                 val parsed = parseFileLine(line, lastLevel, lastTag)
@@ -208,7 +225,10 @@ object LogCollector {
             if (file != null) {
                 synchronized(file) {
                     file.appendText(entry.format() + "\n")
-                    trimFileToTail(file)
+                    // 攒够再裁，别每行都扫一遍整个文件（见 TRIM_SLACK_LINES）
+                    if (fileLineCount < 0) fileLineCount = countLines(file)
+                    fileLineCount++
+                    if (fileLineCount > MAX_ENTRIES + TRIM_SLACK_LINES) trimFileToTail(file)
                 }
             }
         } catch (_: Exception) {
@@ -216,25 +236,53 @@ object LogCollector {
     }
 
     /**
-     * 文件滚动：行数超 [MAX_ENTRIES] 时保留最新内容（丢最旧）。
-     * **崩溃块保护**：文件含 NATIVE CRASH 块时，从块起始保留（崩溃块 + 其后日志），
-     * 确保闪退后即使重开 app 又产生大量日志，崩溃块也不会被滚动挤出、一定查询得到。
+     * 文件滚动：行数超 [MAX_ENTRIES] 时丢最旧、保留最新。
+     *
+     * **崩溃块保护**：文件含 NATIVE CRASH 块时，保留「**崩溃块头部**（banner / sig / mem / diag /
+     * 前若干帧，共 [CRASH_HEAD_LINES] 行）+ 最新日志」，中间用一行省略标记连起来。
+     * 只保留尾部（takeLast）会从崩溃块头部一行行啃掉 —— 先丢 banner，最后整块消失，
+     * 闪退后导出日志再也查不到崩溃原因（本方法存在的意义）。
+     *
+     * ⚠️ 每次调用都要 readLines + writeText 整个文件，**不要每写一行日志就调**：
+     * 由 [addEntry] 按 [TRIM_SLACK_LINES] 攒批触发。
      */
     private fun trimFileToTail(file: File) {
-        if (file.length() == 0L) return
+        if (file.length() == 0L) {
+            fileLineCount = 0
+            return
+        }
         try {
             val lines = file.readLines()
-            if (lines.size <= MAX_ENTRIES) return
+            if (lines.size <= MAX_ENTRIES) {
+                fileLineCount = lines.size
+                return
+            }
             val crashStart = lines.indexOfFirst { it.contains("NATIVE CRASH") }
-            val final = if (crashStart >= 0) {
-                val fromCrash = lines.subList(crashStart, lines.size)
-                if (fromCrash.size <= MAX_ENTRIES) fromCrash else fromCrash.takeLast(MAX_ENTRIES)
+            val kept: List<String> = if (crashStart >= 0) {
+                // ⚠️ 崩溃块**头部**必须留住：banner / sig= / mem: / diag: / 前若干帧是唯一诊断入口。
+                // 单纯 takeLast(MAX_ENTRIES) 会从头部一行行啃（先啃掉 banner，最后整块消失）——
+                // 这正是"崩溃块不会被滚动挤出"那句承诺被打破的方式。
+                val headEnd = minOf(lines.size, crashStart + CRASH_HEAD_LINES)
+                val head = lines.subList(crashStart, headEnd)
+                val tailKeep = (MAX_ENTRIES - head.size).coerceAtLeast(0)
+                val tailStart = maxOf(headEnd, lines.size - tailKeep)
+                if (tailStart >= lines.size) head
+                else head + "… ${tailStart - headEnd} lines omitted (log rolled) …" +
+                    lines.subList(tailStart, lines.size)
             } else {
                 lines.takeLast(MAX_ENTRIES)
             }
-            file.writeText(final.joinToString("\n") + "\n")
+            file.writeText(kept.joinToString("\n") + "\n")
+            fileLineCount = kept.size
         } catch (_: Exception) {
         }
+    }
+
+    /** 数文件行数（init 已记过；只在计数器未知时兜底调用）。 */
+    private fun countLines(file: File): Int = try {
+        file.readLines().size
+    } catch (_: Exception) {
+        -1
     }
 
     /**

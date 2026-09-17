@@ -291,6 +291,14 @@ class ModelDownloadService : LifecycleService() {
         val destFile = targetFileFor(modelKey, fileInfo.fileName)
         if (verifyFile(destFile, fileInfo) == VerifyResult.COMPLETE) {
             LogCollector.d(TAG, "${fileInfo.fileName} 已下载且校验通过，跳过")
+            // ⚠️ 调用方 startDownload 已经写了 Running，这里直接 return 会让状态**永久卡在「下载中 0%」**
+            // （refreshFromDisk 有意保留 Running/Paused，不会自愈）。文件既然校验通过，就是 Done。
+            // 多文件由 downloadMultiFile 在全部文件完成后统一 markDone，这里只处理单文件。
+            if (fileCount == 1) {
+                repo.markDone(modelKey)
+                updateNotification(modelKey, repo.getState(modelKey))
+                UiUtils.showToast(this, getString(R.string.model_downloaded), isShort = true)
+            }
             return
         }
 

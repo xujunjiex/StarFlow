@@ -207,7 +207,14 @@ static void crash_handler(int sig, siginfo_t* info, void* /*ucontext*/) {
                 ? (uintptr_t)ctx.pcs[i] - (uintptr_t)info.dli_saddr : 0;
             int bn = snprintf(bt_line, sizeof(bt_line), "  #%02d pc=%016lx  %s+0x%zx  [%s]\n",
                 i, ctx.pcs[i], sym, off, fname);
-            write(fd, bt_line, bn);
+            // ⚠️ snprintf 返回**本该写入**的长度，截断时它 > sizeof(bt_line)（C++ 符号名 + split-APK
+            // 的 /data/app/~~X==/.../*.so 路径轻松超 256）。直接拿它当 write 长度会越界读栈，
+            // 轻则把无关栈内容写进日志，重则处理器自身再触发一次段错误 → 崩溃块和 re-raise 全丢。
+            if (bn > 0) {
+                size_t n = (size_t)bn;
+                if (n > sizeof(bt_line) - 1) n = sizeof(bt_line) - 1;
+                write(fd, bt_line, n);
+            }
         }
         const char* end = "════════ END CRASH ════════\n";
         write(fd, end, strlen(end));

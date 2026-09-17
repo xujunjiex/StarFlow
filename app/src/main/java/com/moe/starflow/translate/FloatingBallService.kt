@@ -44,6 +44,7 @@ import com.moe.starflow.data.TranslationCacheManager
 import com.moe.starflow.utils.LogCollector
 import com.moe.starflow.utils.OcrEngineManager
 import com.moe.starflow.utils.TextSimilarity
+import com.moe.starflow.utils.ThemeManager
 import android.view.*
 import android.widget.AdapterView
 import android.widget.ImageView
@@ -135,6 +136,10 @@ class FloatingBallService : LifecycleService() {
     private lateinit var windowManager: WindowManager
     private lateinit var floatingBallView: View
     private lateinit var translationResultView: TranslationResultView
+    /** 在屏的悬浮菜单：AlertDialog 的 window 背景/主题上下文都是建时定死的，主题切换要重建它。 */
+    private var menuDialog: android.app.AlertDialog? = null
+    /** 悬浮球视图是否已添加到窗口（主题重建的守卫，lateinit 用 `?.` 不防未初始化）。 */
+    private var ballViewAdded = false
     private lateinit var cropView: CropView
 
     private var floatingBallParams: WindowManager.LayoutParams? = null
@@ -393,12 +398,12 @@ class FloatingBallService : LifecycleService() {
     // 切换顺序：v5 → v6 → MLKit → manga（PP 模型放一起）
     private val engineCycle = intArrayOf(ENGINE_V5, ENGINE_V6, ENGINE_MLKIT, ENGINE_MANGA)
 
-    /** 引擎值 → 显示名称（单一声源） */
-    private fun engineLabel(value: Int): String = when (value) {
-        ENGINE_V5 -> getString(R.string.game_ocr_engine_ppocr)
-        ENGINE_V6 -> getString(R.string.game_ocr_engine_ppocrv6)
-        ENGINE_MANGA -> getString(R.string.game_ocr_engine_manga_ocr)
-        else -> getString(R.string.game_ocr_engine_mlkit)
+    /** 引擎值 → 显示名称（单一声源）；ctx 决定本地化（Service 传 dialogContext） */
+    private fun engineLabel(value: Int, ctx: android.content.Context = this): String = when (value) {
+        ENGINE_V5 -> ctx.getString(R.string.game_ocr_engine_ppocr)
+        ENGINE_V6 -> ctx.getString(R.string.game_ocr_engine_ppocrv6)
+        ENGINE_MANGA -> ctx.getString(R.string.game_ocr_engine_manga_ocr)
+        else -> ctx.getString(R.string.game_ocr_engine_mlkit)
     }
 
     private fun isGameDebugEnabled(): Boolean =
@@ -513,6 +518,8 @@ class FloatingBallService : LifecycleService() {
                     }
                 }
                 key in watchedKeys -> checkLanguageHints()
+                // 主题切换：Service 不随 AppCompat 重建，在屏的悬浮球/弹窗要手动重建才跟上
+                key == ThemeManager.KEY -> rebuildThemedWindows()
                 key in styleKeys -> {
                     // 设置页改了字号/字体/颜色 → 立即应用到翻译结果 view
                     translationResultView.applyStyle()
@@ -649,6 +656,7 @@ class FloatingBallService : LifecycleService() {
         floatingBallView = LayoutInflater.from(this).inflate(R.layout.floatball_layout, null)
         // UI 同步字体（开关开启时）：Service 无 Factory2，树遍历应用
         com.moe.starflow.utils.FontSync.applyToTree(floatingBallView!!)
+        applyBallIcon()
 
         // 创建翻译结果视图
         resultViewParams = WindowManager.LayoutParams().apply {
@@ -683,29 +691,13 @@ class FloatingBallService : LifecycleService() {
             if (legacy.isNotEmpty()) prefs.setString("Icon_Game", legacy)
         }
 
-        val iconName = prefs.getString("Icon_Game", "game-1.进入游戏-启动游戏界面.png")
-        val iconView = floatingBallView.findViewById<ImageView>(R.id.floating_ball_icon)
-        if (iconName.isEmpty()) {
-            iconView.setImageResource(R.mipmap.icon_game_default)
-        } else {
-            val iconFile = File(getExternalFilesDir(null), "icon/$iconName")
-            try {
-                if (iconFile.exists()) {
-                    val bitmap = BitmapFactory.decodeFile(iconFile.absolutePath)
-                    iconView.setImageBitmap(bitmap)
-                } else {
-                    iconView.setImageResource(R.mipmap.icon_game_default)
-                }
-            } catch (e: Exception) {
-                iconView.setImageResource(R.mipmap.icon_game_default)
-            }
-        }
-
+        applyBallIcon()
         // 设置长按判定时间
         floatingBallConfig.LONG_PRESS_DELAY = prefs.getLong("Custom_Long_Press_Delay", 300L)
 
         // 添加到窗口
         windowManager.addView(floatingBallView, floatingBallParams)
+        ballViewAdded = true
         ballStateManager = BallStateManager(this, floatingBallView, BallStateManager.Mode.Game)
         ballStateManager?.setState(BallStateManager.State.Idle)
 
@@ -716,6 +708,58 @@ class FloatingBallService : LifecycleService() {
 
         // 设置点击接收器
         setupTouchListener()
+
+        // 悬浮球/结果框/翻译浮层的配色跟着应用主题（Service 自己不随 AppCompat 重建）
+        rebuildThemedWindows()
+    }
+
+    /** 按 Icon_Game 加载悬浮球图标（自定义图标缺失时回退默认图）。建球与重建共用。 */
+    private fun applyBallIcon() {
+        val iconView = floatingBallView.findViewById<ImageView>(R.id.floating_ball_icon) ?: return
+        val iconName = prefs.getString("Icon_Game", "game-1.进入游戏-启动游戏界面.png")
+        if (iconName.isEmpty()) {
+            iconView.setImageResource(R.mipmap.icon_game_default)
+            return
+        }
+        try {
+            val iconFile = File(getExternalFilesDir(null), "icon/$iconName")
+            if (iconFile.exists()) {
+                val bitmap = BitmapFactory.decodeFile(iconFile.absolutePath)
+                if (bitmap != null) iconView.setImageBitmap(bitmap)
+                else iconView.setImageResource(R.mipmap.icon_game_default)
+            } else {
+                iconView.setImageResource(R.mipmap.icon_game_default)
+            }
+        } catch (e: Exception) {
+            iconView.setImageResource(R.mipmap.icon_game_default)
+        }
+    }
+
+    /**
+     * 应用主题切换后重建在屏窗口。
+     *
+     * 悬浮窗是长命 Service，`AppCompatDelegate` 重建 Activity 时不会重建它，Service 自己的
+     * Resources 又恒定跟随系统 → 不主动重建的话：开着的弹窗要等用户关掉重开才变色，悬浮球
+     * 和结果框则一直停在旧配色。这里把三处都按当前主题重做（配色都在代码里，无状态可保留）。
+     */
+    private fun rebuildThemedWindows() {
+        // lateinit 字段在服务刚起、球还没加进窗口时不可读（`?.` 不防未初始化），先挡住
+        if (!ballViewAdded) return
+
+        // 1) 悬浮球图标：自定义图标是用户自己的 PNG/webp，不能变色 → 用与主题同源的底色盘托住它
+        floatingBallView.setBackground(ThemeManager.ballPlateDrawable(this))
+
+        // 2) 翻译结果框：背景/文字色由 CustomPreference + 语义色在构造时定死，重建才生效
+        translationResultView.applyStyle()
+
+        // 3) 在屏的悬浮菜单：AlertDialog 的 window 背景也是建时一次性设的，只能重建
+        val menu = menuDialog
+        if (menu != null && menu.isShowing) {
+            isMenuShowing = false
+            menu.setOnDismissListener(null)   // 别让 dismiss 把重建出来的菜单标记抹掉
+            menu.dismiss()
+            showLongPressMenu()
+        }
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -827,7 +871,11 @@ class FloatingBallService : LifecycleService() {
     private fun showLongPressMenu() {
         val ocrLabel = getOcrEngineLabel()
         val langName = getCurrentSourceLangName()
-        val (dialog, listView) = Dialogs.menuDialog(this, isAutoTranslating, ocrLabel, langName)
+        // ⚠️ 必须传 ThemeManager.dialogContext：Service 自己拿的是系统默认浅色主题，
+        // 标题/正文恒为深色字，压在随主题翻深的背景上会看不清
+        val (dialog, listView, dlgCtx, dlgBg) = Dialogs.menuDialog(
+            ThemeManager.dialogContext(this), isAutoTranslating, ocrLabel, langName
+        )
 
         // 动态计算菜单索引
         var idx = 2  // 前 2 项固定：框选、字体
@@ -863,7 +911,7 @@ class FloatingBallService : LifecycleService() {
                             // 循环切换，不关闭菜单
                             cycleOcrEngine()
                             val adapter = listView.adapter as MenuDialogAdapter
-                            adapter.updateLabel(ocrIdx, getString(R.string.game_ocr_engine_label) + "\n" + getOcrEngineLabel())
+                            adapter.updateLabel(ocrIdx, dlgCtx.getString(R.string.game_ocr_engine_label) + "\n" + getOcrEngineLabel(dlgCtx))
                         }
                     }
                     langIdx -> {
@@ -873,7 +921,7 @@ class FloatingBallService : LifecycleService() {
                             // 循环切换源语言，不关闭菜单
                             cycleSourceLang()
                             val adapter = listView.adapter as MenuDialogAdapter
-                            adapter.updateLabel(langIdx, getString(R.string.game_switch_language) + "\n" + getCurrentSourceLangName())
+                            adapter.updateLabel(langIdx, dlgCtx.getString(R.string.game_switch_language) + "\n" + getCurrentSourceLangName(dlgCtx))
                         }
                     }
                     historyIdx -> {
@@ -901,24 +949,32 @@ class FloatingBallService : LifecycleService() {
         }
         dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
         dialog.show()
-        dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
-        // 竖屏宽度限制，横屏保持原有比例
-        val screenSize = getScreenSize()
-        if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
-            val maxW = (screenSize.width * 0.4).toInt()
-            val maxH = (screenSize.height * 0.7).toInt()
-            dialog.window?.setLayout(maxW, maxH)
-        } else {
-            val maxW = (screenSize.width * 0.80f).toInt()
-            dialog.window?.setLayout(maxW, ViewGroup.LayoutParams.WRAP_CONTENT)
-        }
+        dialog.window?.setBackgroundDrawableResource(dlgBg)
+        applyMenuWindowSize(dialog)
+        menuDialog = dialog
         isMenuShowing = true
-        dialog.setOnDismissListener { isMenuShowing = false }
+        dialog.setOnDismissListener {
+            isMenuShowing = false
+            menuDialog = null
+        }
     }
 
-    private fun getOcrEngineLabel(): String {
+    /** 菜单窗口尺寸：竖屏限宽 80%、横屏限 40%×70%（重建菜单时同样要应用）。 */
+    private fun applyMenuWindowSize(dialog: android.app.AlertDialog) {
+        val screenSize = getScreenSize()
+        if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
+            dialog.window?.setLayout((screenSize.width * 0.4).toInt(), (screenSize.height * 0.7).toInt())
+        } else {
+            dialog.window?.setLayout((screenSize.width * 0.80f).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+    }
+
+    private fun getOcrEngineLabel(): String = getOcrEngineLabel(this)
+
+    /** 引擎标签的本地化跟随**弹窗上下文**：Service 自己的 Resources 不随 App_Language 变。 */
+    private fun getOcrEngineLabel(ctx: android.content.Context): String {
         val engineVal = currentGameOcrEngineValue()
-        val label = engineLabel(engineVal)
+        val label = engineLabel(engineVal, ctx)
         LogCollector.d(TAG, "getOcrEngineLabel: raw=$engineVal → label=$label")
         return label
     }
@@ -938,9 +994,12 @@ class FloatingBallService : LifecycleService() {
     /**
      * 获取当前源语言的显示名称
      */
-    private fun getCurrentSourceLangName(): String {
+    private fun getCurrentSourceLangName(): String = getCurrentSourceLangName(this)
+
+    /** 语言显示名的本地化跟随**弹窗上下文**：Service 自己的 Resources 不随 App_Language 变。 */
+    private fun getCurrentSourceLangName(ctx: android.content.Context): String {
         val lang = prefs.getString("Source_Language", "ja")
-        return com.moe.starflow.translate.CustomLocale.getInstance(lang).getDisplayName()
+        return com.moe.starflow.translate.CustomLocale.getInstance(lang).getDisplayName(ctx)
     }
 
 
@@ -1079,6 +1138,8 @@ class FloatingBallService : LifecycleService() {
     }
 
     private fun showTranslationHistoryDialog() {
+        // Service 自己拿的是系统默认浅色主题且不随 App_Language 变，弹窗一律用 dialogContext
+        val dlgCtx = ThemeManager.dialogContext(this)
         lifecycleScope.launch {
             try {
                 val historyList = cacheManager.getHistory(
@@ -1099,7 +1160,7 @@ class FloatingBallService : LifecycleService() {
                 }
                 withContext(Dispatchers.Main) {
                     var histDialog: android.app.AlertDialog? = null
-                    histDialog = Dialogs.historyDialog(this@FloatingBallService, items,
+                    histDialog = Dialogs.historyDialog(dlgCtx, items,
                         onItemClick = { position ->
                             // 点击：复制译文，菜单保持打开（遮挡由列表限高解决）
                             val selected = historyList[position]
@@ -1113,7 +1174,7 @@ class FloatingBallService : LifecycleService() {
                             // 长按：关闭菜单 + 重新翻译（提示"重新翻译中"，结果显示在悬浮窗不被遮挡；
                             // 数据库同源记录由 refreshGameCache 替换，不新增重复条目）
                             histDialog?.dismiss()
-                            statusOverlay.showImmediate("重新翻译中…", autoDismiss = false)
+                            statusOverlay.showImmediate(getString(R.string.retranslating), autoDismiss = false)
                             val selected = historyList[position]
                             if (!selected.sourceText.isNullOrEmpty()) {
                                 translateByText(selected.sourceText)
@@ -1122,7 +1183,7 @@ class FloatingBallService : LifecycleService() {
                     )
                     histDialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
                     histDialog.show()
-                    histDialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
+                    histDialog.window?.setBackgroundDrawableResource(ThemeManager.dialogBackgroundRes(this@FloatingBallService))
                     // 限制菜单尺寸（最大 80% 屏宽 × 60% 屏高）：历史多时 ListView 滚动而非占满整页，
                     // 底部系统 Toast / 悬浮窗下层内容可见
                     val screenSize = getScreenSize()
@@ -1340,16 +1401,19 @@ class FloatingBallService : LifecycleService() {
      * 停止 → 终止翻译且不保存结果；继续 → 保持现状。
      */
     private fun showStopTranslationDialog() {
-        val dialog = android.app.AlertDialog.Builder(this)
-            .setTitle(getString(R.string.dlg_translation_unfinished_title))
-            .setMessage(getString(R.string.dlg_translation_unfinished_msg))
-            .setPositiveButton(getString(R.string.stop)) { _, _ -> stopTranslationNow() }
-            .setNegativeButton(getString(R.string.continue_action), null)
+        // ⚠️ 必须用 ThemeManager.dialogContext：Service 自己拿的是系统默认浅色主题，
+        // 标题/正文恒为深色字，压在 dialog_background 翻出来的深色背景上会看不清
+        val dlgCtx = ThemeManager.dialogContext(this)
+        val dialog = android.app.AlertDialog.Builder(dlgCtx)
+            .setTitle(dlgCtx.getString(R.string.dlg_translation_unfinished_title))
+            .setMessage(dlgCtx.getString(R.string.dlg_translation_unfinished_msg))
+            .setPositiveButton(dlgCtx.getString(R.string.stop)) { _, _ -> stopTranslationNow() }
+            .setNegativeButton(dlgCtx.getString(R.string.continue_action), null)
             .create()
         // ⚠️ Service 无 Activity token：必须先把对话框窗口类型设为 OVERLAY，否则 show() 抛 BadTokenException
         dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
         dialog.show()
-        dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
+        dialog.window?.setBackgroundDrawableResource(ThemeManager.dialogBackgroundRes(this))
     }
 
     /** 直接终止当前翻译：取消在途 API 调用、清状态、提示「已停止翻译」，不弹确认 */
@@ -1366,7 +1430,7 @@ class FloatingBallService : LifecycleService() {
         translatorPic?.cancelTranslation()
         isTranslating.set(false)
         ballStateManager?.setState(BallStateManager.State.Idle)
-        if (showMessage) statusOverlay.showImmediate("已停止翻译", autoDismiss = true)
+        if (showMessage) statusOverlay.showImmediate(getString(R.string.translation_stopped), autoDismiss = true)
     }
 
     private fun executeAction(action: Constants.BallAction) {
@@ -1464,7 +1528,7 @@ class FloatingBallService : LifecycleService() {
                 } catch (e: Exception) {
                     isTranslating.set(false)
                     updateDebugStatus("【错误】截图处理失败: ${e.message?.take(30)}")
-                    statusOverlay.showError("OCR失败：$e")
+                    statusOverlay.showError(getString(R.string.ocr_failed, e.toString()))
                     ballStateManager?.setState(BallStateManager.State.Error)
                 } finally {
                     if (isAutoTranslating) {
@@ -1476,10 +1540,10 @@ class FloatingBallService : LifecycleService() {
     }
 
     private fun showFontSizeDialog(){
-        val dialog = Dialogs.fontSizeDialog(this, translationResultView.getTextView(), null)
+        val dialog = Dialogs.fontSizeDialog(ThemeManager.dialogContext(this), translationResultView.getTextView(), null)
         dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
         dialog.show()
-        dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
+        dialog.window?.setBackgroundDrawableResource(ThemeManager.dialogBackgroundRes(this))
     }
 
     /**
@@ -1527,13 +1591,13 @@ class FloatingBallService : LifecycleService() {
                             if (pixelDecision.stableCount >= 2) {
                                 // 达到稳定阈值，触发 OCR
                                 updateDebugStatus("【触发OCR】", diffRatio = pixelDecision.diffRatio)
-                                statusOverlay.showImmediate("文字识别中...")
+                                statusOverlay.showImmediate(getString(R.string.text_recognizing))
                                 ballStateManager?.setState(BallStateManager.State.Processing)
                                 when (val ocrDecision = engine.ocrAndTranslate(bitmap)) {
                                     is AutoTranslateEngine.Decision.CacheHit -> {
                                         val elapsed = System.currentTimeMillis() - translateStartTime
                                         updateDebugStatus("【LRU缓存命中】", elapsedMs = elapsed, diffRatio = pixelDecision.diffRatio)
-                                        statusOverlay.showImmediate("缓存命中")
+                                        statusOverlay.showImmediate(getString(R.string.cache_hit))
                                         ballStateManager?.setState(BallStateManager.State.Completed)
                                         composeResultText(ocrDecision.ocrText, ocrDecision.cachedText)
                                             ?.let { translationResultView.setText(it, fromCache = true) }
@@ -1553,7 +1617,7 @@ class FloatingBallService : LifecycleService() {
                                         if (dbCache?.translatedText != null) {
                                             val elapsed = System.currentTimeMillis() - translateStartTime
                                             updateDebugStatus("【缓存】database", elapsedMs = elapsed, diffRatio = pixelDecision.diffRatio)
-                                            statusOverlay.showImmediate("缓存命中")
+                                            statusOverlay.showImmediate(getString(R.string.cache_hit))
                                             ballStateManager?.setState(BallStateManager.State.Completed)
                                             composeResultText(ocrDecision.ocrText, dbCache.translatedText)
                                                 ?.let { translationResultView.setText(it) }
@@ -1592,7 +1656,7 @@ class FloatingBallService : LifecycleService() {
                     val txt = ocrEngine.recognize(bitmap)
                     if (txt.isBlank()) {
                         updateDebugStatus("【跳过】OCR 结果为空")
-                        statusOverlay.showImmediate("未检测到文字")
+                        statusOverlay.showImmediate(getString(R.string.toast_no_text_detected))
                         ballStateManager?.setState(BallStateManager.State.Completed)
                         isTranslating.set(false)
                         return
@@ -1607,7 +1671,7 @@ class FloatingBallService : LifecycleService() {
                     if (dbCache?.translatedText != null) {
                         val elapsed = System.currentTimeMillis() - translateStartTime
                         updateDebugStatus("【缓存】database", elapsedMs = elapsed)
-                        statusOverlay.show("缓存命中")
+                        statusOverlay.show(getString(R.string.cache_hit))
                         ballStateManager?.setState(BallStateManager.State.Completed)
                         composeResultText(normalizedTxt, dbCache.translatedText)
                             ?.let { translationResultView.setText(it) }
@@ -1632,7 +1696,9 @@ class FloatingBallService : LifecycleService() {
             isTranslating.set(false)
             updateDebugStatus("【错误】${e.message?.take(30) ?: "未知"}")
             e.printStackTrace()
-            statusOverlay.showError("翻译失败：${e.message ?: "未知错误"}")
+            statusOverlay.showError(
+                getString(R.string.translation_failed, e.message ?: getString(R.string.unknown_error))
+            )
             ballStateManager?.setState(BallStateManager.State.Error)
         } finally {
             bitmap.recycle()
@@ -1659,7 +1725,7 @@ class FloatingBallService : LifecycleService() {
                 // 阶段提示：读取原文中 → 生成译文中
                 lifecycleScope.launch(Dispatchers.Main) {
                     when (phase) {
-                        "prefill" -> statusOverlay.showImmediate("读取原文中…", autoDismiss = false)
+                        "prefill" -> statusOverlay.showImmediate(getString(R.string.manga_reading), autoDismiss = false)
                         "generate" -> statusOverlay.showImmediate(getString(R.string.text_translate_translating), autoDismiss = false)
                     }
                 }
@@ -1699,7 +1765,7 @@ class FloatingBallService : LifecycleService() {
                         autoTranslateEngine?.onTranslationSuccess(str, result.translatedText)
                         autoTranslateEngine?.markIdle()
                         ballStateManager?.setState(BallStateManager.State.Idle)
-                        statusOverlay.showImmediate("翻译完成")
+                        statusOverlay.showImmediate(getString(R.string.translating_done))
                         ballStateManager?.setState(BallStateManager.State.Completed)
                         updateDebugStatus("【IDLE】等待像素变化")
 
@@ -1727,7 +1793,12 @@ class FloatingBallService : LifecycleService() {
                         }
                         LogCollector.e(TAG, "文本翻译失败", result.error)
                         updateDebugStatus("【错误】翻译失败")
-                        statusOverlay.showError("翻译失败：${result.error.message ?: "未知错误"}")
+                        statusOverlay.showError(
+                                getString(
+                                    R.string.translation_failed,
+                                    result.error.message ?: getString(R.string.unknown_error)
+                                )
+                            )
                         ballStateManager?.setState(BallStateManager.State.Error)
                         translationResultView.setText(getString(R.string.translation_failed, result.error.message))
                         // 报错时停止自动翻译，让用户可以复制错误信息
@@ -1758,7 +1829,7 @@ class FloatingBallService : LifecycleService() {
                         val elapsed = System.currentTimeMillis() - translateStartTime
                         LogCollector.d(TAG, "图片翻译成功: ${result.translatedText.take(50)}..., 耗时: ${elapsed}ms")
                         updateDebugStatus("【完成】图片翻译", elapsedMs = elapsed)
-                        statusOverlay.showImmediate("翻译完成")
+                        statusOverlay.showImmediate(getString(R.string.translating_done))
                         ballStateManager?.setState(BallStateManager.State.Completed)
                         translationResultView.setText(result.translatedText)
                         // 自动翻译中自动恢复显示
@@ -1773,7 +1844,12 @@ class FloatingBallService : LifecycleService() {
                         }
                         LogCollector.e(TAG, "图片翻译失败", result.error)
                         updateDebugStatus("【错误】图片翻译失败")
-                        statusOverlay.showError("翻译失败：${result.error.message ?: "未知错误"}")
+                        statusOverlay.showError(
+                                getString(
+                                    R.string.translation_failed,
+                                    result.error.message ?: getString(R.string.unknown_error)
+                                )
+                            )
                         ballStateManager?.setState(BallStateManager.State.Error)
                         translationResultView.setText(getString(R.string.translation_failed, result.error.message))
                         // 报错时停止自动翻译，让用户可以复制错误信息
@@ -1832,7 +1908,7 @@ class FloatingBallService : LifecycleService() {
         partialResultShown = false    // 重新翻译：重置部分结果标志
         translateStartTime = System.currentTimeMillis()
         LogCollector.d(TAG, "重新翻译: ${sourceText.take(50)}...")
-        statusOverlay.show("重新翻译中...")
+        statusOverlay.show(getString(R.string.retranslating))
         ballStateManager?.setState(BallStateManager.State.Translating)
         translateByText(sourceText)
     }
