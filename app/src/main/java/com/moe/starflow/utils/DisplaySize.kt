@@ -53,6 +53,26 @@ object DisplaySize {
      * 因此这里**不再由上报方声明"是否铺满"**（窗口原点为 0 判不出铺满，曾据此误判），
      * 改为在 [size] 里与 Display 读数取较大者 —— 真实显示必然 ≥ 任何窗口。
      */
+    /**
+     * 由 `onConfigurationChanged` 上报**当前朝向**。
+     *
+     * ⚠️ 这是转屏后进程里**唯一新鲜**的方向信号：`newConfig.orientation` 随配置变更更新
+     * （`resources.configuration` 那个是冻结值），而 `Display` 系列与「已布局窗口」
+     * （框选窗移除后不再上报）都停在旧方向。
+     *
+     * 不传像素只传朝向：像素值本就能从任一来源拿到（只是可能方向旧），
+     * 而**方向**才是它们都答不出的那一个问题。取值时用朝向校正宽高配对即可。
+     */
+    fun reportOrientation(isLandscape: Boolean) {
+        if (landscape == isLandscape) return
+        landscape = isLandscape
+        LogCollector.d(TAG, "朝向上报: ${if (isLandscape) "横屏" else "竖屏"}")
+    }
+
+    /** null = 未知（尚未收到配置变更） */
+    @Volatile
+    private var landscape: Boolean? = null
+
     fun reportLaidOutSize(w: Int, h: Int) {
         if (w <= 0 || h <= 0) return
         val old = laidOut
@@ -64,25 +84,59 @@ object DisplaySize {
     /**
      * 当前**显示**几何（物理像素，含系统栏区域）。
      *
-     * 两个来源各有各的坏法，故**取较大者**：
-     * - 已布局窗口：能反映当前方向（进程冻不掉），但可能被系统缩小（避开手势条/刘海）
+     * ⚠️ 两个来源都可能坏，且**不能逐轴取最大值**：
+     * - 已布局窗口：能反映当前方向（进程冻不掉），但可能被系统缩小（避开手势条/导航栏）
      * - Display API：可能是冻结的旧方向，但不会凭空变小
      *
-     * 真实显示尺寸**必然 ≥ 任何窗口**，所以逐轴取 max 是安全的：
-     * 窗口被缩小时由 Display 读数补上；Display 冻结成竖屏而窗口是横屏时由窗口补上。
-     * 两者一致才算 [isReliable]。
+     * 逐轴取 max 在两者**方向不一致**时会拼出一个既不竖也不横的尺寸，
+     * 而且拿不到新方向（转屏后 cropRect 已清空、CropView 已移除 → 窗口读数陈旧，
+     * Display API 又冻结在旧方向，两者一起指向旧方向 → max 仍是旧方向）。
+     * 实测后果：设备已横屏而帧仍是竖屏 1220x2712 → OCR 跑在转了 90° 的图上 → 识别 0 结果。
+     *
+     * 因此按**平面尺寸**（长边×短边）二选一：取面积较大的那个来源整组采用，
+     * 保证宽高配对比值来自同一来源、方向自洽。
      */
     fun size(ctx: Context): Point {
         val laid = laidOut
         val legacy = legacySize(ctx)
-        if (laid.x <= 0 || laid.y <= 0) {
+
+        // 选像素来源：优先「已布局窗口」（当前方向、但可能被系统缩小），
+        // 其次 Display 读数。两者都可能方向陈旧 —— 方向由 orientationOf() 统一校正。
+        val base = if (laid.x > 0 && laid.y > 0) laid else legacy
+        if (base.x <= 0 || base.y <= 0) {
             isReliable = false
-            return legacy
+            return base
         }
-        val w = maxOf(laid.x, legacy.x)
-        val h = maxOf(laid.y, legacy.y)
-        isReliable = (w == laid.x && h == laid.y)
-        return Point(w, h)
+        val oriented = orientationOf(base)
+        isReliable = (oriented === base)
+        return Point(oriented.x, oriented.y)
+    }
+
+    /**
+     * 按已知朝向校正宽高配对。
+     *
+     * 像素值可能来自方向陈旧的来源（转屏后 Display 冻结、窗口读数停在旧方向），
+     * 但**长边与短边的长度**是对的 —— 只需按朝向重新配对，即可得到当前方向的几何。
+     * 朝向未知时原样返回。
+     */
+    private fun orientationOf(p: Point): Point {
+        val want = landscape ?: return p
+        val isLandscape = p.x > p.y
+        if (isLandscape == want) return p
+        return Point(maxOf(p.x, p.y), minOf(p.x, p.y))
+    }
+
+    /**
+     * 日志用：把一组像素尺寸描述成「横屏/竖屏 WxH」。
+     * 各处几何日志统一用它，排查时一眼能看出朝向（比裸的 `1220x2712` 强）。
+     */
+    fun describe(w: Int, h: Int): String =
+        "${if (w > h) "横屏" else "竖屏"} ${w}x$h"
+
+    /** 当前屏幕几何的可读描述（含是否可信）。 */
+    fun describeCurrent(ctx: Context): String {
+        val p = size(ctx)
+        return describe(p.x, p.y) + "可靠=$isReliable"
     }
 
     /** 强制读 Display API（诊断用，绕过已布局读数）。 */

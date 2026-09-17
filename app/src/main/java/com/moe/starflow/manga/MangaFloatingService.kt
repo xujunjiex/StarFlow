@@ -117,10 +117,6 @@ class MangaFloatingService : LifecycleService() {
         private const val AUTO_EMPTY_NOTICE_AT = 3
         /** 自动翻译下连续多少次 OCR 空就关闭自动翻译（避免一直空转） */
         private const val AUTO_EMPTY_ABORT_COUNT = 20
-        /** 结果浮层按钮边长（dp）—— 与游戏模式 TranslationResultView 的 btnSize 一致 */
-        private const val OVERLAY_BUTTON_DP = 14
-        /** 结果浮层按钮距边缘（dp）—— 同游戏模式的 btnMargin */
-        private const val OVERLAY_BUTTON_MARGIN_DP = 3
         private const val NOTIFICATION_CHANNEL_ID = "manga_floating_service"
         private const val NOTIFICATION_ID = 7
 
@@ -302,9 +298,6 @@ class MangaFloatingService : LifecycleService() {
     private var copyClickLayer: android.widget.FrameLayout? = null
     private var copyBubbleViews: MutableList<View> = mutableListOf()
     private var copyButtonsContainer: android.widget.LinearLayout? = null
-
-    /** 结果浮层右上角的关闭按钮（与游戏模式同款）。null = 尚未创建。 */
-    private var overlayCloseButton: android.widget.ImageButton? = null
 
     private var currentShowBubbles: List<TranslatedBubble> = emptyList()  // 当前显示的翻译气泡（非缓存）
     private var renderToggleJob: kotlinx.coroutines.Job? = null  // toggle 渲染协程，避免重复渲染
@@ -711,29 +704,6 @@ class MangaFloatingService : LifecycleService() {
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
             ))
-        }
-
-        // 关闭按钮（右上角）—— 与游戏模式 TranslationResultView 的关闭按钮同款同尺寸同位置。
-        // 此前漫画结果浮层**只能靠点图关闭**，用户找不到入口。点击 = 关掉译文浮层露出原图。
-        overlayCloseButton = android.widget.ImageButton(this).apply {
-            setBackgroundColor(Color.TRANSPARENT)
-            setImageResource(R.drawable.close_service)
-            setColorFilter(Color.argb(160, 80, 80, 80))
-            scaleType = ImageView.ScaleType.CENTER_INSIDE
-            setPadding(0, 0, 0, 0)
-            contentDescription = getString(R.string.close)
-            setOnClickListener { dismissResultOverlay() }
-        }.also { btn ->
-            val size = dpToPx(OVERLAY_BUTTON_DP)
-            val margin = dpToPx(OVERLAY_BUTTON_MARGIN_DP)
-            resultOverlayView.addView(
-                btn,
-                FrameLayout.LayoutParams(size, size).apply {
-                    gravity = Gravity.END or Gravity.TOP
-                    marginEnd = margin
-                    topMargin = margin
-                }
-            )
         }
 
         resultOverlayParams = WindowManager.LayoutParams().apply {
@@ -1291,6 +1261,19 @@ class MangaFloatingService : LifecycleService() {
      * 截图帧尺寸比对共用本入口。
      */
     private fun clearCropForScreenChange(): Boolean {
+        // ⚠️ 框选界面**开着**时转屏：必须退出框选并重置。
+        // 否则界面还开着、用户点确认 → confirmCrop() 拿**旧几何**的 mRect 存为新框 →
+        // 之后按旧坐标裁，位置必错。此处直接撤掉界面、恢复悬浮球。
+        if (isCropActive) {
+            LogCollector.d(TAG, "框选界面开着时屏幕变化 → 退出框选并重置")
+            try {
+                if (cropView.isAttachedToWindow || isViewAdded(cropView)) windowManager.removeView(cropView)
+            } catch (e: Exception) {
+                LogCollector.e(TAG, "移除框选界面失败", e)
+            }
+            isCropActive = false
+            bringFloatingBallToFront()
+        }
         val hadCrop = cropRect != null
         if (hadCrop) {
             LogCollector.d(TAG, "屏幕变化：清除旧框选，回退全屏翻译")
@@ -1328,6 +1311,12 @@ class MangaFloatingService : LifecycleService() {
      */
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
+        // ⚠️ 上报当前朝向：转屏后这是进程里**唯一新鲜**的方向信号。
+        // 不报的话 DisplaySize 会拿「框选窗已移除→窗口读数陈旧」+「Display 冻结」两个
+        // 都指向旧方向的来源去建帧 → 设备已横屏而帧仍是竖屏 → OCR 跑在转了 90° 的图上。
+        com.moe.starflow.utils.DisplaySize.reportOrientation(
+            newConfig.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        )
         clearCropForScreenChange()
     }
 
@@ -1346,6 +1335,15 @@ class MangaFloatingService : LifecycleService() {
 
         bringFloatingBallToFront()
 
+        // 日志写清「什么朝向、框多大、屏幕多大」—— 排查横竖屏问题全看这一行
+        val r = cropRect!!
+        LogCollector.d(
+            TAG,
+            "翻译区域已设置: ${com.moe.starflow.utils.DisplaySize.describeCurrent(this)} " +
+                "框=[${r.left.toInt()},${r.top.toInt()}][${r.right.toInt()},${r.bottom.toInt()}] " +
+                "框尺寸=${com.moe.starflow.utils.DisplaySize.describe(r.width().toInt(), r.height().toInt())} " +
+                "框选窗=${cropView.width}x${cropView.height}"
+        )
         showToast(getString(R.string.manga_crop_confirm), true)
 
         // 恢复自动翻译
@@ -1611,7 +1609,14 @@ class MangaFloatingService : LifecycleService() {
             ScreenshotManager.screenshotFlow.collect { data ->
                 // ocrBitmap: 用于 OCR 和翻译流程的 bitmap（裁剪后或全屏）
                 val ocrBitmap = data.croppedBitmap ?: data.fullBitmap
-                LogCollector.d(TAG, "Screenshot collector: RECEIVED! full=${data.fullBitmap.width}x${data.fullBitmap.height}, ocr=${ocrBitmap.width}x${ocrBitmap.height}")
+                LogCollector.d(
+                    TAG,
+                    "Screenshot collector: RECEIVED! " +
+                        "帧=${com.moe.starflow.utils.DisplaySize.describe(data.fullBitmap.width, data.fullBitmap.height)} " +
+                        "裁剪后=${com.moe.starflow.utils.DisplaySize.describe(ocrBitmap.width, ocrBitmap.height)} " +
+                        "当前屏幕=${com.moe.starflow.utils.DisplaySize.describeCurrent(this@MangaFloatingService)} " +
+                        "框选=${cropRect?.let { "[${it.left.toInt()},${it.top.toInt()}][${it.right.toInt()},${it.bottom.toInt()}]" } ?: "无(全屏)"}"
+                )
 
                 // ⚠️ 判定要在拿到**新鲜帧**时做：帧尺寸与框选窗口同几何，是唯一不受
                 // 「CropView 已移除 → 几何查询冻结」影响的变化证据（见 ensureCropStillValid）。
@@ -2696,7 +2701,12 @@ class MangaFloatingService : LifecycleService() {
             val screenSize = getScreenSize()
             val screenW = screenSize.width
             val screenH = screenSize.height
-            LogCollector.d(TAG, "showResultOverlay: bitmap=${bitmap.width}x${bitmap.height}, screen=${screenW}x${screenH}")
+            LogCollector.d(
+                TAG,
+                "showResultOverlay: 图=${com.moe.starflow.utils.DisplaySize.describe(bitmap.width, bitmap.height)} " +
+                    "屏幕=${com.moe.starflow.utils.DisplaySize.describe(screenW, screenH)} " +
+                    "模式=${if (cropRect != null) "框选" else "全屏"}"
+            )
             val params = WindowManager.LayoutParams().apply {
                 type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
                 format = PixelFormat.RGBA_8888

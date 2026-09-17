@@ -327,7 +327,13 @@ class FloatingBallService : LifecycleService() {
                     }
                 } else null
                 if (full != null) {
-                    LogCollector.d(TAG, "Screenshot captured: full=${full.width}x${full.height}")
+                    LogCollector.d(
+                        TAG,
+                        "Screenshot captured: 帧=${com.moe.starflow.utils.DisplaySize.describe(full.width, full.height)} " +
+                            "裁剪后=${bitmap?.let { com.moe.starflow.utils.DisplaySize.describe(it.width, it.height) } ?: "无(全屏)"} " +
+                            "当前屏幕=${com.moe.starflow.utils.DisplaySize.describeCurrent(this@FloatingBallService)} " +
+                            "框选=${cropRect?.let { "[${it.left.toInt()},${it.top.toInt()}][${it.right.toInt()},${it.bottom.toInt()}]" } ?: "无(全屏)"}"
+                    )
                     // fullBitmap 恒为真全屏、croppedBitmap 为裁剪结果（裁不出则 null）
                     ScreenshotManager.emitScreenshot(ScreenshotData(full, bitmap))
                 } else if (!provider.ensureInitialized()) {
@@ -381,6 +387,13 @@ class FloatingBallService : LifecycleService() {
      */
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
+        // ⚠️ 上报当前朝向：转屏后这是进程里**唯一新鲜**的方向信号。
+        // 不报的话，DisplaySize 会拿「框选窗已移除→窗口读数陈旧」+「Display 冻结」两个
+        // 都指向旧方向的来源去建帧 → 设备已横屏而帧仍是竖屏 → OCR 跑在转了 90° 的图上
+        // → 识别 0 结果（实测 00:06:47 shot OK: 1220x2712，而当时设备是横屏）。
+        com.moe.starflow.utils.DisplaySize.reportOrientation(
+            newConfig.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        )
         // ⚠️ 这里**直接**清框，不经过任何几何查询：本回调被触发本身就是「显示变了」的确证，
         // 而几何查询（getScreenSize → CropView.onSizeChanged 上报）在框选确认、CropView
         // 已移除之后是**冻结**的，问它必然答「没变」。用过期的判据去决定要不要失效，
@@ -1411,6 +1424,17 @@ class FloatingBallService : LifecycleService() {
         } catch (e: Exception) {
             LogCollector.e(TAG, "Error removing crop view", e)
         }
+        // 日志写清「什么朝向、框多大、屏幕多大」—— 排查横竖屏问题全看这一行
+        val r = mRectF
+        if (r != null) {
+            LogCollector.d(
+                TAG,
+                "翻译区域已设置: ${com.moe.starflow.utils.DisplaySize.describeCurrent(this)} " +
+                    "框=[${r.left.toInt()},${r.top.toInt()}][${r.right.toInt()},${r.bottom.toInt()}] " +
+                    "框尺寸=${com.moe.starflow.utils.DisplaySize.describe(r.width().toInt(), r.height().toInt())} " +
+                    "框选窗=${cropView.width}x${cropView.height}"
+            )
+        }
         showToast(getString(R.string.game_crop_done), true)
         currentBallStatus = BallStatus.Normal
 
@@ -1429,6 +1453,22 @@ class FloatingBallService : LifecycleService() {
      * [ensureCropStillValid]（截图帧尺寸比对，覆盖非配置变更的尺寸变化）共用本入口。
      */
     private fun clearCropForScreenChange(): Boolean {
+        // ⚠️ 框选界面**开着**时转屏：必须退出框选并重置。
+        // 否则界面还开着、用户点确认 → confirmCrop() 拿**旧几何**的 mRect 存为新框 →
+        // 之后按旧坐标裁，位置必错。此处直接撤掉界面、恢复悬浮球。
+        if (currentBallStatus is BallStatus.Crop) {
+            LogCollector.d(TAG, "框选界面开着时屏幕变化 → 退出框选并重置")
+            try {
+                if (cropView.isAttachedToWindow || isViewAdded(cropView)) windowManager.removeView(cropView)
+            } catch (e: Exception) {
+                LogCollector.e(TAG, "移除框选界面失败", e)
+            }
+            currentBallStatus = BallStatus.Normal
+            if (::floatingBallView.isInitialized && !isViewAdded(floatingBallView)) {
+                try { windowManager.addView(floatingBallView, floatingBallParams) } catch (_: Exception) {}
+            }
+            ballStateManager?.setState(BallStateManager.State.Idle)
+        }
         val hadCrop = mRectF != null
         if (hadCrop) {
             LogCollector.d(TAG, "屏幕变化：清除旧框选，要求重新框选")
