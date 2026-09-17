@@ -183,6 +183,9 @@
     <string name="finish_crop">选取完成</string>
     <string name="not_added_remove">没有添加翻译结果视图，无需移除</string>
     <string name="manga_crop_cleared_orientation">检测到屏幕方向更改，框选区域已清除，改为全屏翻译</string>
+    <string name="game_crop_cleared_orientation">屏幕方向已变化，框选区域已清除，请重新框选</string>
+    <string name="game_crop_cleared_orientation_auto">屏幕方向已变化：框选区域已清除、自动翻译已停止，请重新框选</string>
+    <string name="manga_crop_cleared_orientation_auto">屏幕方向已变化：框选区域已清除、自动翻译已停止，改为全屏翻译</string>
     <string name="orientation_changed">检测到屏幕方向更改，请重新选取截屏区域</string>
     <string name="download_tips">在本页面中，您可以下载NLLB模型文件。为了保持下载过程不被打断，请您在<b><u>进行下载时不要离开本页面</u></b>。由于文件托管在Cloudflare R2中，视网络状况可能会出现无法下载等情况；请您灵活切换WLAN与数据流量，以及开启或关闭VPN。</string>
     <string name="download_manually">若无论如何文件都无法下载成功，请<font color="#2474b5">点击这里</font>查看手动下载的方法。</string>

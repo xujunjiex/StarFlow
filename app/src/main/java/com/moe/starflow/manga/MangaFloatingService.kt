@@ -1256,13 +1256,26 @@ class MangaFloatingService : LifecycleService() {
      * 截图帧尺寸比对共用本入口。
      */
     private fun clearCropForScreenChange(): Boolean {
-        if (cropRect == null) return false
-        LogCollector.d(TAG, "屏幕变化：清除旧框选，回退全屏翻译")
-        cropRect = null
-        cropRectFrameSize = null
-        if (autoTranslateEngine.isAutoTranslating) stopAutoTranslate()
-        showToast(getString(R.string.manga_crop_cleared_orientation), true)
-        return true
+        val hadCrop = cropRect != null
+        if (hadCrop) {
+            LogCollector.d(TAG, "屏幕变化：清除旧框选，回退全屏翻译")
+            cropRect = null
+            cropRectFrameSize = null
+        }
+        // ⚠️ 无论有没有框选，屏幕方向变化都要**停止自动翻译** ——
+        // 自动翻译是围绕框选区域做定时的像素/OCR 循环，几何一变它的坐标系就不可信了。
+        val wasAuto = autoTranslateEngine.isAutoTranslating
+        if (wasAuto) stopAutoTranslate()
+        if (!hadCrop && !wasAuto) return false
+        showToast(
+            getString(
+                if (wasAuto) R.string.manga_crop_cleared_orientation_auto
+                else R.string.manga_crop_cleared_orientation
+            ),
+            true
+        )
+        // 返回「框是否被清掉」：调用方据此决定是否作废本帧
+        return hadCrop
     }
 
     /**
@@ -1573,10 +1586,12 @@ class MangaFloatingService : LifecycleService() {
                         android.util.Size(data.fullBitmap.width, data.fullBitmap.height)
                     )
                 ) {
-                    LogCollector.d(TAG, "Screenshot collector: 截图帧几何变化，清框选回退全屏")
-                    cropRect = null
-                    cropRectFrameSize = null
-                    showToast(getString(R.string.manga_crop_cleared_orientation), true)
+                    // ⚠️ 本帧是**用旧框裁出来的**（截图请求发出时框还没失效），继续翻会按旧坐标出结果
+                    LogCollector.d(TAG, "Screenshot collector: 截图帧几何变化，清框选并作废本帧")
+                    clearCropForScreenChange()
+                    data.fullBitmap.recycle()
+                    isProcessing = false
+                    return@collect
                 }
 
                 try {

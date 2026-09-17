@@ -303,10 +303,26 @@ class FloatingBallService : LifecycleService() {
             }
             lifecycleScope.launch {
                 LogCollector.d(TAG, "Taking MediaProjection screenshot (game mode)")
-                val bitmap = provider.takeScreenshot(cropRect, offset)
-                if (bitmap != null) {
-                    LogCollector.d(TAG, "Screenshot captured: ${bitmap.width}x${bitmap.height}")
-                    ScreenshotManager.emitScreenshot(ScreenshotData(bitmap, null))
+                // ⚠️ provider 传 null（只要全屏图），裁剪在本服务做 —— 与漫画模式同一语义。
+                // 此前传 cropRect 让 provider 裁、再以 ScreenshotData(已裁剪图, null) 发出，
+                // 于是 **fullBitmap 名不副实**：下游拿它当全屏原图（几何判据、缓存）全都错。
+                // 实测后果：几何判据拿裁剪后的 856x260 与框选时的 1220x2712 比对 → 误判为
+                // 「屏幕变了」→ **清掉用户刚框好的区域**（一旋转就中招）。
+                val full = provider.takeScreenshot(null, offset)
+                val bitmap = if (full != null && cropRect != null) {
+                    val cropped = ScreenshotManager.cropBitmap(full, cropRect, offset)
+                    if (cropped != null) {
+                        LogCollector.d(TAG, "Cropped screenshot: ${cropped.width}x${cropped.height}")
+                        cropped
+                    } else {
+                        LogCollector.w(TAG, "裁剪区域无效，按全屏处理")
+                        null
+                    }
+                } else null
+                if (full != null) {
+                    LogCollector.d(TAG, "Screenshot captured: full=${full.width}x${full.height}")
+                    // fullBitmap 恒为真全屏、croppedBitmap 为裁剪结果（裁不出则 null）
+                    ScreenshotManager.emitScreenshot(ScreenshotData(full, bitmap))
                 } else if (!provider.ensureInitialized()) {
                     // Shooter 已断开（系统回收录屏），停止自动翻译并提示重新授权
                     LogCollector.w(TAG, "Shooter not ready, stopping auto-translate")
@@ -1403,14 +1419,37 @@ class FloatingBallService : LifecycleService() {
      * [ensureCropStillValid]（截图帧尺寸比对，覆盖非配置变更的尺寸变化）共用本入口。
      */
     private fun clearCropForScreenChange(): Boolean {
-        if (mRectF == null) return false
-        LogCollector.d(TAG, "屏幕变化：清除旧框选，要求重新框选")
-        mRectF = null
-        mRectFrameSize = null
-        if (isAutoTranslating) stopAutoTranslate()
-        showToast(getString(R.string.orientation_changed), true)
-        return true
+        val hadCrop = mRectF != null
+        if (hadCrop) {
+            LogCollector.d(TAG, "屏幕变化：清除旧框选，要求重新框选")
+            mRectF = null
+            mRectFrameSize = null
+            cropClearedByScreenChange = true
+        }
+        // ⚠️ 无论有没有框选，屏幕方向变化都要**停止自动翻译** ——
+        // 自动翻译是围绕框选区域做定时的像素/OCR 循环，几何一变它的坐标系就不可信了。
+        val wasAuto = isAutoTranslating
+        if (wasAuto) stopAutoTranslate()
+        if (!hadCrop && !wasAuto) return false
+        showToast(
+            getString(
+                if (wasAuto) R.string.game_crop_cleared_orientation_auto
+                else R.string.game_crop_cleared_orientation
+            ),
+            true
+        )
+        // ⚠️ 返回「框是否被清掉」而非「是否做了任何事」：调用方（collector）据此决定
+        // 是否作废本帧。只停了自动翻译时，本帧仍是有效的全屏图，不该丢。
+        return hadCrop
     }
+
+    /**
+     * 框选已被屏幕变化清除，用户此刻再点翻译 → 明确告知「请重新框选」。
+     *
+     * 这条路径此前落到通用的 `crop_first`（「请先框选翻译区域」），用户刚框过、
+     * 却被清除，只看到一句像是自己没框的提示 —— 归因完全错。
+     */
+    private var cropClearedByScreenChange = false
 
     /**
      * 截图帧的几何与「框选时」不一致 → 旧框选坐标已失效：清掉框选、停自动翻译、要求重新框选。
@@ -1524,7 +1563,12 @@ class FloatingBallService : LifecycleService() {
 
                 // 未框选时弹出提示
                 if (mRectF == null) {
-                    showToast(getString(R.string.game_please_crop_first), true)
+                    // 若刚被屏幕变化清掉，说清原因（否则用户会以为自己没框过）
+                    if (cropClearedByScreenChange) {
+                        showToast(getString(R.string.game_crop_cleared_orientation), true)
+                    } else {
+                        showToast(getString(R.string.game_please_crop_first), true)
+                    }
                     return
                 }
 
@@ -1576,8 +1620,12 @@ class FloatingBallService : LifecycleService() {
                 // ⚠️ 判定要在拿到**新鲜帧**时做：帧尺寸与框选窗口同几何，是唯一不受
                 // 「CropView 已移除 → 几何查询冻结」影响的变化证据。见 ensureCropStillValid。
                 if (ensureCropStillValid(android.util.Size(data.fullBitmap.width, data.fullBitmap.height))) {
-                    // 旧框已失效：本帧按全屏继续处理（mRectF 已在上面清空）
-                    LogCollector.d(TAG, "Screenshot collector: 几何变化已清框选，本帧按全屏处理")
+                    // ⚠️ 本帧是**用旧框裁出来的**（截图请求发出的那一刻框还没失效），
+                    // 拿它继续翻译等于按旧坐标出结果。作废本帧，等用户重新框选后再翻。
+                    LogCollector.d(TAG, "Screenshot collector: 几何变化已清框选，作废本帧")
+                    isTranslating.set(false)
+                    data.fullBitmap.recycle()
+                    return@collect
                 }
                 val bitmap = data.croppedBitmap ?: data.fullBitmap
                 if (data.croppedBitmap != null) data.fullBitmap.recycle()
