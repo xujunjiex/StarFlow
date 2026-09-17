@@ -40,8 +40,10 @@ import android.widget.ImageView
 import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.annotation.DrawableRes
 import com.moe.starflow.R
 import com.moe.starflow.utils.CustomPreference
+import com.moe.starflow.utils.ThemeManager
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.launch
 import java.lang.Exception
@@ -49,7 +51,17 @@ import java.util.regex.Pattern
 
 data class DialogResult(
     val dialog: AlertDialog,
-    val listView: ListView
+    val listView: ListView,
+    /**
+     * 弹窗上下文（Service 场景是 `ThemeManager.dialogContext(service)`）。
+     *
+     * ⚠️ 调用方**必须**用它取字符串/查资源，不要用 service 自己的 —— 菜单里部分条目是建完之后
+     * 用 `ctx` 拼出来再 `updateLabel()` 塞进去的（语言名、OCR 标签），service 自己那份取的是
+     * 系统语言（App_Language=en 时会突然冒出中文）。
+     */
+    val context: Context,
+    /** 弹窗窗口背景：按应用主题取的深浅圆角 drawable（`ThemeManager.dialogBackgroundRes`）。 */
+    @DrawableRes val backgroundRes: Int
 )
 
 object Dialogs {
@@ -137,7 +149,7 @@ object Dialogs {
             }
             welcome.textSize = 18f * menuScale
         }
-        return DialogResult(dialog, lv)
+        return DialogResult(dialog, lv, ctx, ThemeManager.dialogBackgroundRes(ctx))
     }
 
     data class HistoryItem(val time: String, val source: String, val translated: String)
@@ -147,6 +159,8 @@ object Dialogs {
      * Service 悬浮菜单/对话框用（Activity 已由 FontSync 的 LayoutInflater Factory2 覆盖）。
      * 开关关闭或无字体时为空操作。实现收敛到 utils/FontSync。
      */
+    /** view 树套自定义字体；ctx 保留只为调用方语义完整（FontSync 用 view 自己的 context）。 */
+    @Suppress("UNUSED_PARAMETER")
     fun applyCustomFontToTree(ctx: Context, view: View) {
         com.moe.starflow.utils.FontSync.applyToTree(view)
     }
@@ -264,7 +278,7 @@ object Dialogs {
             .setCancelable(false)
             .setNegativeButton(R.string.user_cancel, null)
             .create()
-        return DialogResult(dialog, lv)
+        return DialogResult(dialog, lv, ctx, ThemeManager.dialogBackgroundRes(ctx))
     }
 
     /**
@@ -340,11 +354,12 @@ object Dialogs {
             }
             welcome.textSize = 18f * menuScale
         }
-        return DialogResult(dialog, lv)
+        return DialogResult(dialog, lv, ctx, ThemeManager.dialogBackgroundRes(ctx))
     }
 
-    fun fontSizeDialog(context: Context, view: TextView?, onSizeSet: ((Float) -> Unit)?): AlertDialog {
-        val prefs = CustomPreference.getInstance(context)
+    fun fontSizeDialog(ctx: Context, view: TextView?, onSizeSet: ((Float) -> Unit)?): AlertDialog {
+        // Service 弹窗传进来的 ctx 已是 ThemeManager.dialogContext（调用方无须再套一层）
+        val prefs = CustomPreference.getInstance(ctx)
 
         // 代码方式
 //        val editText = EditText(context).apply {
@@ -385,19 +400,19 @@ object Dialogs {
 //            addView(editText)
 //        }
         // 布局文件方式
-        val layout = LayoutInflater.from(context).inflate(R.layout.dialog_message_edittext, null)
-        applyCustomFontToTree(context, layout)
+        val layout = LayoutInflater.from(ctx).inflate(R.layout.dialog_message_edittext, null)
+        applyCustomFontToTree(ctx, layout)
         layout.findViewById<TextView>(R.id.dialog_top_message).apply {
-            text = context.getString(R.string.font_size_float) + "\n" +
-                context.getString(R.string.font_size_range, FONT_SIZE_MIN.toInt().toString(), FONT_SIZE_MAX.toInt().toString())
+            text = ctx.getString(R.string.font_size_float) + "\n" +
+                ctx.getString(R.string.font_size_range, FONT_SIZE_MIN.toInt().toString(), FONT_SIZE_MAX.toInt().toString())
         }
         val editText = layout.findViewById<EditText>(R.id.dialog_bottom_edittext).apply {
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
             filters = arrayOf(DecimalDigitsInputFilter())
-            hint = context.getString(R.string.font_size_hint, prefs.getFloat("Custom_Result_Font_Size", 16f).toString())
+            hint = ctx.getString(R.string.font_size_hint, prefs.getFloat("Custom_Result_Font_Size", 16f).toString())
         }
 
-        val res = AlertDialog.Builder(context)
+        val res = AlertDialog.Builder(ctx)
             .setTitle(R.string.font_size_setting)
             .setView(layout)
             .setPositiveButton(R.string.save) { _, _ ->
@@ -416,10 +431,10 @@ object Dialogs {
                         // 回调通知设置完成
                         onSizeSet?.invoke(size)
                     } else {
-                        Toast.makeText(context, context.getString(R.string.font_size_invalid, FONT_SIZE_MIN.toInt().toString(), FONT_SIZE_MAX.toInt().toString()), Toast.LENGTH_SHORT).show()
+                        Toast.makeText(ctx, ctx.getString(R.string.font_size_invalid, FONT_SIZE_MIN.toInt().toString(), FONT_SIZE_MAX.toInt().toString()), Toast.LENGTH_SHORT).show()
                     }
                 } catch (e: Exception) {
-                    Toast.makeText(context, context.getString(R.string.font_size_invalid, FONT_SIZE_MIN.toInt().toString(), FONT_SIZE_MAX.toInt().toString()), Toast.LENGTH_SHORT).show()
+                    Toast.makeText(ctx, ctx.getString(R.string.font_size_invalid, FONT_SIZE_MIN.toInt().toString(), FONT_SIZE_MAX.toInt().toString()), Toast.LENGTH_SHORT).show()
                 }
             }
             .setNegativeButton(R.string.user_cancel, null)

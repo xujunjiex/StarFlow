@@ -28,6 +28,7 @@ import com.moe.starflow.translate.widget.*
 import com.moe.starflow.translate.autotranslate.*
 import com.moe.starflow.translate.screenshot.*
 
+import android.content.Context
 import android.text.TextUtils
 import java.util.Locale
 
@@ -70,9 +71,20 @@ class CustomLocale {
         }
     }
 
-    fun getDisplayName(): String {
-        val name = locale.displayName
-        return name.substring(0, 1).uppercase(locale) + name.substring(1)
+    fun getDisplayName(): String = getDisplayName(null)
+
+    /**
+     * 语言显示名，按**传入上下文**的界面语言渲染（null = 进程默认语言）。
+     *
+     * ⚠️ `Locale.displayName` 用的是 **JVM 默认 locale**（`LanguageManager.updateResources` 里
+     * `Locale.setDefault` 定的那份），不是调用方 Context 的语言。Service 场景下这个默认值不可靠
+     * ——悬浮窗弹窗必须传 `ThemeManager.dialogContext(service)`，否则 App_Language=en 时菜单里会
+     * 冒出中文（"日语" 而不是 "Japanese"）。
+     */
+    fun getDisplayName(context: Context?): String {
+        val res = context?.resources
+        val name = if (res == null) locale.displayName else locale.getDisplayName(res.configuration.locales[0])
+        return name.replaceFirstChar { it.uppercase(locale) }
     }
 
     fun getCode(): String {

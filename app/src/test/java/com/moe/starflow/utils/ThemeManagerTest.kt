@@ -126,4 +126,48 @@ class ThemeManagerTest {
         assertEquals(false, nightOf(dialogCtx))
         assertEquals(0xFFFFFFFF.toInt(), ContextCompat.getColor(dialogCtx, R.color.surface))
     }
+
+    // ---------- isNight / dialogBackgroundRes：悬浮球等自绘组件与上下文同源 ----------
+
+    @Test
+    fun isNight_threeStates() {
+        setAppTheme(ThemeManager.MODE_DARK)
+        assertTrue(ThemeManager.isNight(ctx))
+        setAppTheme(ThemeManager.MODE_LIGHT)
+        assertEquals(false, ThemeManager.isNight(ctx))
+    }
+
+    /**
+     * ⚠️ 这条是本次 bug 的根因锁：应用设浅色 + 系统暗色时，`isNight` 必须听应用设置。
+     * 读 Service 自己的 `resources.configuration` 会答"暗色"，于是悬浮球按系统配色、
+     * 旁边弹窗按应用主题配色，同一屏两种深浅。
+     */
+    @Test
+    @Config(qualifiers = "night")
+    fun isNight_appSettingBeatsSystem() {
+        setAppTheme(ThemeManager.MODE_LIGHT)
+        assertTrue("前置条件：Service 自己的 configuration 是夜间", nightOf(ctx))
+        assertEquals("必须听应用主题设置，不能读 configuration", false, ThemeManager.isNight(ctx))
+    }
+
+    @Test
+    @Config(qualifiers = "night")
+    fun isNight_systemMode_followsSystem() {
+        setAppTheme(ThemeManager.MODE_SYSTEM)
+        assertTrue(ThemeManager.isNight(ctx))
+    }
+
+    /**
+     * ⚠️ 弹窗背景**不能**用 `@drawable/dialog_background`：它内部的 `@color/surface` 按持有该
+     * drawable 的 Context 解析，而 dialog.window 的 Context 是没主题的 Service → 无论应用主题
+     * 如何都取到白色 surface，暗色下弹窗还是白底。这里同时锁住「深色时给深色 drawable」和
+     * 「该 drawable 是固定深色（不引 @color/surface）」。
+     */
+    @Test
+    fun dialogBackgroundRes_matchesTheme_andIsFixedColor() {
+        setAppTheme(ThemeManager.MODE_DARK)
+        assertEquals(R.drawable.dialog_background_dark, ThemeManager.dialogBackgroundRes(ctx))
+        setAppTheme(ThemeManager.MODE_LIGHT)
+        assertEquals(R.drawable.dialog_background_light, ThemeManager.dialogBackgroundRes(ctx))
+    }
 }

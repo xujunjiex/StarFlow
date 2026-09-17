@@ -1,8 +1,12 @@
 <resources xmlns:tools="http://schemas.android.com/tools" xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- 夜间主题：与白天同构（DayNight），深色由 values-night/colors.xml 语义色翻转。 -->
+    <!-- 夜间主题：与白天同构（DayNight），深色由 values-night/colors.xml 语义色翻转。
+         ⚠️ 样式不跨 qualifier 合并：values/themes.xml 里有的 item 这里必须**逐条重写**，
+         否则夜间模式下 preferenceTheme 回落到父主题 → 设置页条目丢掉 preference_item_fit
+         （长标题又钻到右侧箭头/开关下面）。 -->
     <style name="Base.Theme.MT" parent="Theme.Material3.DayNight.NoActionBar">
         <item name="colorPrimary">@color/primary</item>
+        <item name="preferenceTheme">@style/AppPreferenceTheme</item>
         <item name="android:windowBackground">@color/surface</item>
         <item name="android:navigationBarColor">
             @android:color/transparent
@@ -12,6 +16,7 @@
     </style>
 
     <style name="settheme" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="preferenceTheme">@style/AppPreferenceTheme</item>
         <item name="colorPrimary">@color/primary</item>
         <item name="colorPrimaryDark">@color/surface_variant</item>
         <item name="android:navigationBarColor">@color/surface_variant</item>
