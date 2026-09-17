@@ -31,8 +31,19 @@ object PPOcrDetGeometry {
 
     data class BoxScoreResult(
         val boxes: List<FloatArray>,
-        val scores: List<Float>
-    )
+        val scores: List<Float>,
+        /**
+         * `boxes[i]` / `scores[i]` 在**输入**里的下标。
+         *
+         * 有了它就能同步重排任意与之平行的数组（如 `OcrResult.texts`），
+         * 不必用 `===` 反查 —— 那种写法在重复框上会静默取错文字。
+         */
+        val sourceIndices: List<Int> = boxes.indices.toList()
+    ) {
+        fun <T> reorder(parallel: List<T>): List<T> =
+            if (parallel.size != sourceIndices.size) parallel
+            else sourceIndices.map { parallel[it] }
+    }
 
     data class MiniBoxResult(
         val points: List<PointF>?,
@@ -96,6 +107,17 @@ object PPOcrDetGeometry {
     }
 
     /**
+     * 扫描顺序（`Manga_Text_Direction`）：false = 右→左（传统日漫，默认），true = 左→右。
+     *
+     * ⚠️ **唯一消费方是 [sortDetCandidates]** —— 它按几何重排，所以这里只需一个标志，
+     * 不要去改 [findContours] 的扫描方向：那会变成**第二套排序机制**（而 `runDet` 末尾的
+     * `sortDetCandidates` 会把扫描序完全覆盖，改了也没有用户可见效果）。
+     * 本仓库吃过「两份平行实现」的亏，排序权威保持一处。
+     */
+    @Volatile
+    var verticalScanFlowIsLr: Boolean = false
+
+    /**
      * findContours: BFS 连通域 (对应 cv2.findContours)
      */
     fun findContours(mask: Bitmap, w: Int, h: Int, detMinSize: Int): List<List<Point>> {
@@ -143,6 +165,90 @@ object PPOcrDetGeometry {
 
         return contours
     }
+
+    /**
+     * 把 det 结果排成**阅读顺序**（框数组为 `[x0,y0,x1,y1,x2,y2,x3,y3]`）。
+     *
+     * - 判定为**横排**的框（宽 > 高）→ 按 `top` 升序、同 top 按 `left` 升序（左→右、上→下）
+     * - 判定为**竖排**的框（高 > 宽）→ 按 [verticalScanFlowIsLr] 取列序：
+     *   - 右→左（默认）：`left` 降序、同列按 `top` 升序
+     *   - 左→右：`left` 升序、同列按 `top` 升序
+     *
+     * ⚠️ **横排恒定左→右**：扫描序同时决定识别顺序与源文拼接顺序，
+     * 而 `Manga_Text_Direction` 的语义是「**竖排**文字的列排列方向」，
+     * 横排不该被它反转（否则送进翻译的横排句子会被倒过来）。
+     *
+     * 竖排但宽高接近（差值 < [ORIENT_ASPECT_TOL] px）时按横排处理 —— 那是歧义框，
+     * 取左→右比按用户偏好猜稳。
+     *
+     * ⚠️ `boxes` 与 `scores` 是**平行数组**，重排必须同步，否则识别分数会串到别的框上。
+     * 两者长度不一致时（[filterDetRes] 的越界守卫会造出这种状态）只重排 boxes、
+     * scores 原样返回，并记一条 W 级日志 —— 该状态本身就该被看见。
+     */
+    fun sortDetCandidates(
+        boxes: List<FloatArray>,
+        scores: List<Float>,
+        verticalScanFlowIsLr: Boolean
+    ): BoxScoreResult {
+        if (boxes.size <= 1) return BoxScoreResult(boxes.toList(), scores.toList())
+
+        fun top(b: FloatArray) = boxTop(b)
+        fun left(b: FloatArray) = boxLeft(b)
+        fun right(b: FloatArray) = boxRight(b)
+        fun bottom(b: FloatArray) = boxBottom(b)
+        fun isVertical(b: FloatArray) =
+            (bottom(b) - top(b)) > (right(b) - left(b)) + ORIENT_ASPECT_TOL
+
+        val perm = boxes.indices.sortedWith { ia, ib ->
+            val a = boxes[ia]
+            val b = boxes[ib]
+            val va = isVertical(a)
+            val vb = isVertical(b)
+            when {
+                va && vb -> {
+                    val la = left(a)
+                    val lb = left(b)
+                    if (la != lb) {
+                        if (verticalScanFlowIsLr) la.compareTo(lb) else lb.compareTo(la)
+                    } else {
+                        top(a).compareTo(top(b))
+                    }
+                }
+                !va && !vb -> {
+                    val ta = top(a)
+                    val tb = top(b)
+                    if (ta != tb) ta.compareTo(tb) else left(a).compareTo(left(b))
+                }
+                // 混排（同一页既有竖排列又有横排标题）：竖排整体在前
+                else -> if (va) -1 else 1
+            }
+        }
+
+        val sortedBoxes = perm.map { boxes[it] }
+        if (scores.size != boxes.size) {
+            LogCollector.w(
+                "PPOcrDetGeometry",
+                "sortDetCandidates: boxes=${boxes.size} 与 scores=${scores.size} 长度不一致，scores 不重排"
+            )
+            return BoxScoreResult(sortedBoxes, scores, perm)
+        }
+        return BoxScoreResult(sortedBoxes, perm.map { scores[it] }, perm)
+    }
+
+    /** 框的 AABB 上边界（`boxes` 元素为 `[x0,y0,…,x3,y3]`）。 */
+    fun boxTop(b: FloatArray): Float = minOf(b[1], b[3], b[5], b[7])
+
+    /** 框的 AABB 左边界。 */
+    fun boxLeft(b: FloatArray): Float = minOf(b[0], b[2], b[4], b[6])
+
+    /** 框的 AABB 右边界。 */
+    fun boxRight(b: FloatArray): Float = maxOf(b[0], b[2], b[4], b[6])
+
+    /** 框的 AABB 下边界。 */
+    fun boxBottom(b: FloatArray): Float = maxOf(b[1], b[3], b[5], b[7])
+
+    /** 竖/横排判定的宽高容差（px）：差值小于它视为歧义框，按横排（左→右）处理。 */
+    private const val ORIENT_ASPECT_TOL = 2f
 
     /**
      * getMiniBoxes: 凸包 + 最小外接矩形

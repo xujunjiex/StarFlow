@@ -296,6 +296,7 @@ object TextRegionMerger {
     private fun splitTextRegion(
         regions: List<TextRegion>,
         connectedIndices: Set<Int>,
+        verticalDirection: TextDirection = TextDirection.VERTICAL_RL,
         gamma: Float = 0.5f,
         sigma: Float = 2f
     ): List<Set<Int>> {
@@ -317,12 +318,14 @@ object TextRegionMerger {
         val vCount = voters.count { regions[it].quad.isVertical }
         val isVertical = vCount > voters.size - vCount
 
-        // 按阅读顺序排序：横排 top→bottom（同 top 用 x 二级），竖排 right→left（同 right 用 y 二级）
+        // 按阅读顺序排序：横排 top→bottom（同 top 用 x 二级），竖排按列序
+        // （VERTICAL_RL 右→左 / VERTICAL_LR 左→右；同列用 y 二级）
+        val isRl = verticalDirection != TextDirection.VERTICAL_LR
         val sorted = if (isVertical) {
             indices.sortedWith(Comparator { a, b ->
-                val xa = regions[a].quad.aabb.right
-                val xb = regions[b].quad.aabb.right
-                if (xa != xb) xb.compareTo(xa)
+                val xa = if (isRl) -regions[a].quad.aabb.right else regions[a].quad.aabb.left
+                val xb = if (isRl) -regions[b].quad.aabb.right else regions[b].quad.aabb.left
+                if (xa != xb) xa.compareTo(xb)
                 else regions[a].quad.aabb.top.compareTo(regions[b].quad.aabb.top)
             })
         } else {
@@ -516,7 +519,7 @@ object TextRegionMerger {
             // Step 2: splitTextRegion MST 拆分
             val regionIndices = mutableListOf<Set<Int>>()
             for (component in connectedComponents) {
-                regionIndices.addAll(splitTextRegion(regions, component))
+                regionIndices.addAll(splitTextRegion(regions, component, verticalDirection))
             }
             if (debugEnabled) LogCollector.d(TAG, "merge: 拆分后 ${regionIndices.size} 个区域")
 
@@ -541,10 +544,13 @@ object TextRegionMerger {
                         if (ya != yb) ya.compareTo(yb) else regions[a].quad.centroidX.compareTo(regions[b].quad.centroidX)
                     })
                 } else {
+                    // RL = centroidX 降序（右列先）；LR = 升序。统一写成「升序 + RL 取反」，
+                    // 避免两条分支各写一个方向、再把极性写反（本行出过这个错）。
+                    val isRl = verticalDirection != TextDirection.VERTICAL_LR
                     nodes.sortedWith(Comparator { a, b ->
-                        val xa = regions[a].quad.centroidX
-                        val xb = regions[b].quad.centroidX
-                        if (xa != xb) xb.compareTo(xa) else regions[a].quad.centroidY.compareTo(regions[b].quad.centroidY)
+                        val xa = if (isRl) -regions[a].quad.centroidX else regions[a].quad.centroidX
+                        val xb = if (isRl) -regions[b].quad.centroidX else regions[b].quad.centroidX
+                        if (xa != xb) xa.compareTo(xb) else regions[a].quad.centroidY.compareTo(regions[b].quad.centroidY)
                     })
                 }
 

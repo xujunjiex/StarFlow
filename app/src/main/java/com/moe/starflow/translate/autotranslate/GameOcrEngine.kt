@@ -37,17 +37,27 @@ class GameOcrEngine(
 
     /**
      * 执行 OCR 识别。
+     *
      * @param bitmap 待识别的图片
+     * @param verticalDirection 竖排读取方向（`Game_Text_Direction`）。
+     *   **只对 PP-OCRv5/v6 生效** —— 它们原本只输出栅格扫描序（无任何排序），
+     *   横屏时同一段竖排文字在帧里转了 90°、顺序会整段翻过来。这里统一补一次
+     *   阅读顺序排序（横排恒左→右，不受设置影响），让「识别顺序」不再随屏幕方向变。
+     *
+     *   ML Kit / manga-ocr **不接**：ML Kit 自带阅读序，改了反而破坏其语言模型输出。
      * @return 识别出的文字
      */
-    suspend fun recognize(bitmap: Bitmap): String {
+    suspend fun recognize(
+        bitmap: Bitmap,
+        verticalDirection: TextDirection = TextDirection.VERTICAL_RL
+    ): String {
         val engine = com.moe.starflow.utils.OcrEngineManager.getOcrEngineGroup(prefs.getSharedPreferences()).gameEngine
         val language = prefs.getString("Source_Language", "ja")
 
         return when (engine) {
-            1 -> recognizeWithPPOcrV5(bitmap, language)
+            1 -> recognizeWithPPOcrV5(bitmap, language, verticalDirection)
             2 -> recognizeWithMangaOcr(bitmap, language)
-            3 -> recognizeWithPPOcrV6(bitmap, language)
+            3 -> recognizeWithPPOcrV6(bitmap, language, verticalDirection)
             else -> recognizeWithMLKit(bitmap, language)
         }
     }
@@ -56,7 +66,11 @@ class GameOcrEngine(
         return OCRTextRecognizer.getPicText(language, bitmap)
     }
 
-    private suspend fun recognizeWithPPOcrV5(bitmap: Bitmap, language: String): String {
+    private suspend fun recognizeWithPPOcrV5(
+        bitmap: Bitmap,
+        language: String,
+        verticalDirection: TextDirection
+    ): String {
         initPPOcrV5IfNeeded()
         val (recLang, hint) = PPOcrV5Engine.resolveRecLang(context, language)
         if (hint != null) {
@@ -66,7 +80,7 @@ class GameOcrEngine(
             val result = withContext(Dispatchers.IO) {
                 PPOcrV5Engine.runOCR(context, bitmap, recLang, useDet = true)
             }
-            result.texts.joinToString("")
+            result.toReadOrderText(verticalDirection)
         } else {
             LogCollector.w(TAG, "PP-OCRv5 不支持语言: $language, 回退 ML Kit")
             recognizeWithMLKit(bitmap, language)
@@ -98,12 +112,37 @@ class GameOcrEngine(
         }
     }
 
-    private suspend fun recognizeWithPPOcrV6(bitmap: Bitmap, language: String): String {
+    private suspend fun recognizeWithPPOcrV6(
+        bitmap: Bitmap,
+        language: String,
+        verticalDirection: TextDirection
+    ): String {
         initPPOcrV6IfNeeded()
         val result = withContext(Dispatchers.IO) {
             PPOcrV6Engine.runOCR(context, bitmap, useDet = true)
         }
-        return result.texts.joinToString("")
+        return result.toReadOrderText(verticalDirection)
+    }
+
+    /**
+     * `OcrResult` → 按**阅读顺序**拼接的文本。
+     *
+     * ⚠️ 不能再用 `texts.joinToString("")`：PP 引擎的 `texts` 是 det 候选序
+     * （历史实现里是栅格扫描序），**完全没有排序** —— 横屏时帧整体转了 90°，
+     * 同一段竖排文字从「左右并排的列」变成「上下堆叠的行」，
+     * 按坐标取出的顺序就整段翻过来（用户实测：同一段文本横竖屏识别顺序不同）。
+     *
+     * 这里按框的几何重排一次：竖排按 [verticalDirection] 取列序、同列上→下；
+     * 横排恒上→下、行内左→右（不受设置影响，避免把横排句子倒过来）。
+     * 无框结果（`useDet=false` 的全图识别）原样返回。
+     */
+    private fun OcrResult.toReadOrderText(verticalDirection: TextDirection): String {
+        val boxes = this.boxes
+        if (boxes.isEmpty()) return texts.joinToString("")
+        val ordered = PPOcrDetGeometry.sortDetCandidates(
+            boxes, scores, verticalDirection == TextDirection.VERTICAL_LR
+        )
+        return ordered.reorder(texts).joinToString("")
     }
 
     private fun initPPOcrV6IfNeeded() {

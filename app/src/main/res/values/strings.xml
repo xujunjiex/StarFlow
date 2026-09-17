@@ -584,10 +584,12 @@
     <string name="manga_bg_color">Manga Background Color</string>
     <string name="manga_text_color_summary">Text color for manga translation results</string>
     <string name="manga_bg_color_summary">Background color for manga translation results</string>
+    <string name="game_text_direction_title">Vertical read direction</string>
+    <string name="game_text_direction_summary">Which column vertical subtitles are read first; PP-OCRv5/v6 only</string>
     <string name="manga_text_direction_title">Vertical Text Direction</string>
-    <string name="manga_text_direction_summary">Column order of vertical manga text</string>
-    <string name="manga_text_direction_rl">Vertical (columns right to left)</string>
-    <string name="manga_text_direction_lr">Vertical (columns left to right)</string>
+    <string name="manga_text_direction_summary">Which column vertical text is read first; PP-OCRv5/v6 only</string>
+    <string name="manga_text_direction_rl">Recognize right to left, common in Japanese manga</string>
+    <string name="manga_text_direction_lr">Recognize left to right</string>
 
     <string name="manga_horizontal_align_title">Horizontal Text Alignment</string>
     <string name="manga_horizontal_align_summary">Line alignment for horizontal text; vertical text is unaffected</string>
@@ -877,9 +879,9 @@
 
     <!-- 模型管理重构 - 引擎组 (English) -->
     <string name="model_group_mlkit">ML Kit</string>
-    <string name="model_group_mlkit_desc">Google on-device ML, detection + recognition. Fast, ideal for subtitles and quick scans</string>
+    <string name="model_group_mlkit_desc">Google on-device ML, detection + recognition. Fast, ideal for subtitles and quick scans. Not recommended for complex manga (weak on vertical text and dense bubbles)</string>
     <string name="model_group_rt_manga">RT-DETR-V2 + manga-ocr</string>
-    <string name="model_group_rt_manga_desc">Comic bubble detection and Japanese vertical OCR (slower recognition speed)</string>
+    <string name="model_group_rt_manga_desc">Comic bubble detection + Japanese vertical OCR. For manga only — manga-ocr reads Japanese only and is not suitable for games or video subtitles</string>
     <string name="model_group_ppocrv5">PP-OCRv5</string>
     <string name="model_group_ppocrv5_desc">From PaddleOCR, offline ONNX recognition</string>
     <string name="model_group_ppocrv6">PP-OCRv6</string>

@@ -270,7 +270,7 @@ class IncrementalBatchPipeline(
         if (ppRecLang == null) return BatchOutcome.NotApplicable
 
         LogCollector.d(TAG, "ppOcrV5: 开始检测")
-        val textLines = ops.detectLinesV5(host.context, bitmap)
+        val textLines = ops.detectLinesV5(host.context, bitmap, config.textDirection)
         if (textLines.isEmpty()) {
             LogCollector.d(TAG, "ppOcrV5: 未检测到文字")
             if (!config.isAutoTranslating) {
@@ -344,7 +344,7 @@ class IncrementalBatchPipeline(
         host.ensureEnginesReady(config.detEngine, config.ocrEngine)
 
         LogCollector.d(TAG, "ppOcrV6: 开始检测")
-        val textLines = ops.detectLinesV6(host.context, bitmap)
+        val textLines = ops.detectLinesV6(host.context, bitmap, config.textDirection)
         if (textLines.isEmpty()) {
             LogCollector.d(TAG, "ppOcrV6: 未检测到文字")
             if (!config.isAutoTranslating) {

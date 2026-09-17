@@ -754,11 +754,15 @@ object DetectionBridge {
      * PP-OCRv5 增量渲染：det 检测全部文字行 → 逐行裁剪。
      * 不做 cls/rec/分组，后续分批识别 + TextLineMerger 合并。
      *
+     * @param verticalDirection 竖排列序（`Manga_Text_Direction`）。**必须传** ——
+     *   这是本函数的返回值唯一一次排序，`groupByProximity` / `splitAtGroupBoundaries`
+     *   都直接吃它的顺序（分批边界、送进翻译的拼接顺序全建立在此）。
      * @return 按漫画阅读顺序排列的裁剪文字行列表
      */
     suspend fun detectAndCropPPOcrV5Lines(
         context: android.content.Context,
-        bitmap: Bitmap
+        bitmap: Bitmap,
+        verticalDirection: TextDirection
     ): List<CroppedTextLine> = withContext(Dispatchers.IO) {
         LogCollector.d(TAG, "detectAndCropPPOcrV5Lines: 开始检测")
 
@@ -801,11 +805,9 @@ object DetectionBridge {
             CroppedTextLine(crop, rect, angle, rect.exactCenterX(), rect.exactCenterY())
         }
 
-        // 按漫画阅读顺序排序（从上到下，从右到左）
-        val sorted = result.sortedWith(
-            compareBy<CroppedTextLine> { it.rect.top }
-                .thenByDescending { it.rect.left }
-        )
+        // 按漫画阅读顺序排序（横排上→下恒左→右；竖排列序随设置）
+        // ⚠️ 收敛到 MangaSpatialGrouping.sortByReadingOrder —— 本处曾自写一份比较器并写死右→左
+        val sorted = MangaSpatialGrouping.sortByReadingOrder(result, { it.rect }, verticalDirection)
 
         LogCollector.d(TAG, "detectAndCropPPOcrV5Lines: ${boxes.size} 行裁剪完成")
         sorted
@@ -817,9 +819,17 @@ object DetectionBridge {
      *
      * @return 按漫画阅读顺序排列的裁剪文字行列表
      */
+    /**
+     * PP-OCRv6 增量渲染：det 检测全部文字行 → 逐行裁剪。
+     * 不做 cls/rec/分组，后续分批识别 + TextLineMerger 合并。
+     *
+     * @param verticalDirection 竖排列序（`Manga_Text_Direction`），同 v5 重载。
+     * @return 按漫画阅读顺序排列的裁剪文字行列表
+     */
     suspend fun detectAndCropPPOcrV6Lines(
         context: android.content.Context,
-        bitmap: Bitmap
+        bitmap: Bitmap,
+        verticalDirection: TextDirection
     ): List<CroppedTextLine> = withContext(Dispatchers.IO) {
         LogCollector.d(TAG, "detectAndCropPPOcrV6Lines: 开始检测")
 
@@ -862,11 +872,9 @@ object DetectionBridge {
             CroppedTextLine(crop, rect, angle, rect.exactCenterX(), rect.exactCenterY())
         }
 
-        // 按漫画阅读顺序排序（从上到下，从右到左）
-        val sorted = result.sortedWith(
-            compareBy<CroppedTextLine> { it.rect.top }
-                .thenByDescending { it.rect.left }
-        )
+        // 按漫画阅读顺序排序（横排上→下恒左→右；竖排列序随设置）
+        // ⚠️ 收敛到 MangaSpatialGrouping.sortByReadingOrder —— 本处曾自写一份比较器并写死右→左
+        val sorted = MangaSpatialGrouping.sortByReadingOrder(result, { it.rect }, verticalDirection)
 
         LogCollector.d(TAG, "detectAndCropPPOcrV6Lines: ${boxes.size} 行裁剪完成")
         sorted

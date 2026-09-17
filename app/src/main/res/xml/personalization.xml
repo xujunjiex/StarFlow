@@ -109,6 +109,15 @@
             android:defaultValue="true"
             app:iconSpaceReserved="false" />
 
+        <ListPreference
+            android:key="Game_Text_Direction"
+            app:iconSpaceReserved="false"
+            android:defaultValue="0"
+            android:title="@string/game_text_direction_title"
+            android:summary="@string/game_text_direction_summary"
+            android:entries="@array/manga_text_direction_entries"
+            android:entryValues="@array/manga_text_direction_values"/>
+
     </PreferenceCategory>
 
     <PreferenceCategory

@@ -62,6 +62,7 @@ import com.moe.starflow.manga.engine.MangaOcrModelFiles
 import com.moe.starflow.manga.engine.MangaOcrRecognizer
 import com.moe.starflow.manga.config.OcrEngineGroup
 import com.moe.starflow.manga.engine.PPOcrModelFiles
+import com.moe.starflow.manga.types.TextDirection
 import com.moe.starflow.manga.engine.PPOcrV5Engine
 import com.moe.starflow.manga.engine.PPOcrV6Engine
 import com.moe.starflow.utils.Constants
@@ -465,6 +466,17 @@ class FloatingBallService : LifecycleService() {
 
     private fun getOcrEngineName(): String = engineLabel(currentGameOcrEngineValue())
 
+    /**
+     * 游戏模式竖排读取方向（`Game_Text_Direction`）。
+     *
+     * 每次识别**现读**（非缓存字段），设置改动即时生效。
+     * 仅 PP-OCRv5/v6 会用它排序；ML Kit / manga-ocr 走各自引擎的阅读序，忽略此值。
+     */
+    private fun readVerticalDirection(): TextDirection =
+        com.moe.starflow.manga.types.VerticalFlow
+            .fromPref(prefs.getString("Game_Text_Direction", "0"))
+            .toTextDirection()
+
     private fun showDebugOverlay() {
         if (!isGameDebugEnabled()) return
         if (gameDebugOverlay == null) {
@@ -547,7 +559,10 @@ class FloatingBallService : LifecycleService() {
             "Game_OCR_Engine",
             OcrEngineManager.PREF_KEY,
             "game_context_enabled",
-            "game_context_count"
+            "game_context_count",
+            // 竖排读取方向：每次识别时现读（见 readVerticalDirection），此处置入只为
+            // 「设置页改动后立刻重建 translator / 刷新提示」，不影响取值的实时性
+            "Game_Text_Direction"
         )
         val styleKeys = setOf(
             "Custom_Result_Font_Size",
@@ -1323,6 +1338,7 @@ class FloatingBallService : LifecycleService() {
             scope = lifecycleScope,
             getSourceLanguage = { prefs.getString("Source_Language", "ja") },
             getTargetLanguage = { prefs.getString("Target_Language", "zh") },
+            getVerticalDirection = { readVerticalDirection() },
             onMessage = { msg -> showToast(msg, true) }
         )
         autoTranslateEngine?.start()
@@ -1857,7 +1873,7 @@ class FloatingBallService : LifecycleService() {
                     ballStateManager?.setState(BallStateManager.State.Processing)
                     updateDebugStatus("【检测中】手动翻译")
                     translateStartTime = System.currentTimeMillis()
-                    val txt = ocrEngine.recognize(bitmap)
+                    val txt = ocrEngine.recognize(bitmap, readVerticalDirection())
                     if (txt.isBlank()) {
                         updateDebugStatus("【跳过】OCR 结果为空")
                         statusOverlay.showImmediate(getString(R.string.toast_no_text_detected))

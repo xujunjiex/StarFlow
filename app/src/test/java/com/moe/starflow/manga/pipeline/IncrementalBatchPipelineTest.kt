@@ -71,13 +71,22 @@ class IncrementalBatchPipelineTest {
             return resolveRecLang to null
         }
 
-        override suspend fun detectLinesV5(context: Context, bmp: Bitmap): List<CroppedTextLine> {
+        /** 最近一次 detect 收到的竖排列序（验证管线真的把 `config.textDirection` 传下去了）。 */
+        var lastDetectDirection: TextDirection? = null
+
+        override suspend fun detectLinesV5(
+            ctx: Context, bmp: Bitmap, verticalDirection: TextDirection
+        ): List<CroppedTextLine> {
             calls += Call("detectLinesV5")
+            lastDetectDirection = verticalDirection
             return fakeLines(lineCount)
         }
 
-        override suspend fun detectLinesV6(context: Context, bmp: Bitmap): List<CroppedTextLine> {
+        override suspend fun detectLinesV6(
+            ctx: Context, bmp: Bitmap, verticalDirection: TextDirection
+        ): List<CroppedTextLine> {
             calls += Call("detectLinesV6")
+            lastDetectDirection = verticalDirection
             return fakeLines(lineCount)
         }
 
@@ -204,12 +213,13 @@ class IncrementalBatchPipelineTest {
         ocr: OcrEngine = OcrEngine.PPOcrV5,
         incremental: Boolean = true,
         autoTranslating: Boolean = false,
+        textDirection: TextDirection = TextDirection.VERTICAL_RL,
     ) = BatchPipelineConfig(
         detEngine = det,
         ocrEngine = ocr,
         sourceLang = "ja",
         targetLang = "zh",
-        textDirection = TextDirection.VERTICAL_RL,
+        textDirection = textDirection,
         keepTextFree = false,
         prefs = CustomPreference.getInstance(ctx),
         incrementalEnabled = incremental,
@@ -237,6 +247,29 @@ class IncrementalBatchPipelineTest {
         val cfg = config(det = DetEngine.MLKIT, ocr = OcrEngine.MLKit)
         assertEquals(BatchOutcome.NotApplicable, pipeline(host, cfg, this).run(bitmap()))
         assertTrue(ops.calls.isEmpty())
+    }
+
+    /**
+     * ⚠️ 检测阶段必须收到 `config.textDirection`。
+     *
+     * 检测返回的顺序**直接**进 `groupByProximity` / `splitAtGroupBoundaries`
+     * （见 `ppOcrV5` / `ppOcrV6`），分批边界与送进翻译的拼接顺序都建立在此。
+     * 这里丢了参数的话检测会用默认右→左 —— 用户切「左→右」整条链路静默不生效。
+     */
+    @Test
+    fun `检测阶段收到配置的竖排方向V5`() = runTest {
+        val host = FakeHost(ctx, FakeTranslator())
+        pipeline(host, config(textDirection = TextDirection.VERTICAL_LR), this).run(bitmap())
+        assertEquals(TextDirection.VERTICAL_LR, ops.lastDetectDirection)
+    }
+
+    @Test
+    fun `检测阶段收到配置的竖排方向V6`() = runTest {
+        val host = FakeHost(ctx, FakeTranslator())
+        val cfg = config(det = DetEngine.PP_OCR_V6, ocr = OcrEngine.PPOcrV6,
+                         textDirection = TextDirection.VERTICAL_LR)
+        pipeline(host, cfg, this).run(bitmap())
+        assertEquals(TextDirection.VERTICAL_LR, ops.lastDetectDirection)
     }
 
     @Test

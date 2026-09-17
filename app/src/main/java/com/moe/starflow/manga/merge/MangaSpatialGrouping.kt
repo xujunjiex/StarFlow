@@ -30,11 +30,38 @@ object MangaSpatialGrouping {
         CharCategory.OTHER_SYMBOL
     )
 
-    /** 按漫画阅读顺序排序裁剪结果：从上到下，从右到左。 */
-    fun sortByMangaReadingOrder(bubbles: List<CroppedBubble>): List<CroppedBubble> {
-        return bubbles.sortedWith(
-            compareBy<CroppedBubble> { it.rect.top }
-                .thenByDescending { it.rect.left }
+    /**
+     * `CroppedBubble` 的阅读顺序排序：从上到下、从右到左。
+     *
+     * ⚠️ **固定右→左，不随 `Manga_Text_Direction` 变** —— 唯一调用方是 RT-DETR-V2
+     * 增量路径（`IncrementalBatchPipeline.rtDetrMangaOcr`），而 RT-DETR 只识别日文，
+     * 右→左就是它唯一正确的列序。**不要**给它接 `config.textDirection`。
+     *
+     * 需要按设置取列序的是 **PP-OCRv5/v6** 路径，走 [sortByReadingOrder]。
+     */
+    fun sortByMangaReadingOrder(bubbles: List<CroppedBubble>): List<CroppedBubble> =
+        sortByReadingOrder(bubbles, { it.rect }, TextDirection.VERTICAL_RL)
+
+    /**
+     * 按阅读顺序排序：从上到下 + 列序随 [verticalDirection]。
+     *
+     * ⚠️ **只给 PP-OCRv5/v6 路径用**（当前是 `DetectionBridge.detectAndCropPPOcrV5/V6Lines`）。
+     * `Manga_Text_Direction` 这个设置**只适配 PP 系列模型** —— ML Kit 不适合复杂漫画场景、
+     * RT-DETR 只认日文，两者都固定右→左，不接这个参数。
+     *
+     * 泛型是因为有多个载体（`CroppedBubble` / `CroppedTextLine`）要按同一规则排；
+     * 曾在别处各写一份（`DetectionBridge` 两个 detectAndCrop 写死右→左），
+     * 新增载体请走这里，不要再抄一份比较器。
+     */
+    fun <T> sortByReadingOrder(
+        items: List<T>,
+        getRect: (T) -> Rect,
+        verticalDirection: TextDirection
+    ): List<T> {
+        val isRl = verticalDirection != TextDirection.VERTICAL_LR
+        return items.sortedWith(
+            compareBy<T> { getRect(it).top }
+                .thenByDescending { if (isRl) getRect(it).left else -getRect(it).left }
         )
     }
 

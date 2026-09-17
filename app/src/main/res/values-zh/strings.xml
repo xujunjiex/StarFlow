@@ -498,10 +498,12 @@
     <string name="manga_bg_color">漫画翻译背景颜色</string>
     <string name="manga_text_color_summary">当前漫画翻译结果的文字颜色</string>
     <string name="manga_bg_color_summary">当前漫画翻译结果的背景颜色</string>
+    <string name="game_text_direction_title">竖排读取方向</string>
+    <string name="game_text_direction_summary">竖排字幕先读右列还是左列；仅 PP-OCRv5/v6 适用</string>
     <string name="manga_text_direction_title">竖排方向</string>
-    <string name="manga_text_direction_summary">竖排文字的列排列方向</string>
-    <string name="manga_text_direction_rl">竖排（列从右到左）</string>
-    <string name="manga_text_direction_lr">竖排（列从左到右）</string>
+    <string name="manga_text_direction_summary">竖排先读右列还是左列；仅 PP-OCRv5/v6 适用</string>
+    <string name="manga_text_direction_rl">从右往左识别，日漫常用</string>
+    <string name="manga_text_direction_lr">从左往右识别</string>
 
     <string name="manga_horizontal_align_title">横排对齐</string>
     <string name="manga_horizontal_align_summary">横排译文的行对齐方式；竖排不受影响</string>
@@ -789,9 +791,9 @@
 
     <!-- 模型管理重构 - 引擎组 -->
     <string name="model_group_mlkit">ML Kit</string>
-    <string name="model_group_mlkit_desc">Google 设备端机器学习，检测识别一体。速度快，适合字幕翻译和快速扫图</string>
+    <string name="model_group_mlkit_desc">Google 设备端机器学习，检测识别一体。速度快，适合字幕翻译和快速扫图。不建议用于复杂漫画场景（竖排、密集气泡识别效果较差）</string>
     <string name="model_group_rt_manga">RT-DETR-V2 + manga-ocr</string>
-    <string name="model_group_rt_manga_desc">漫画气泡检测与日文竖排识别组合（识别速度较慢）</string>
+    <string name="model_group_rt_manga_desc">漫画气泡检测与日文竖排识别组合，仅适用于漫画。manga-ocr 只识别日文、不适用于游戏/视频字幕</string>
     <string name="model_group_ppocrv5">PP-OCRv5</string>
     <string name="model_group_ppocrv5_desc">源自 PaddleOCR，ONNX 格式离线识别</string>
     <string name="model_group_ppocrv6">PP-OCRv6</string>

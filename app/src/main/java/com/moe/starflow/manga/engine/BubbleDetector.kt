@@ -456,6 +456,10 @@ object BubbleDetector {
             val majorityDir = directionCounts.maxByOrNull { it.value }?.key ?: 'h'
 
             // L175-178: 排序（横排 Y 升序，竖排 X 降序）
+            // ⚠️ **本处刻意固定右→左，不随 `Manga_Text_Direction` 变**：
+            // `doDetect` 只服务 ML Kit 路径（`needsPostMerge = detEngine == MLKIT`），
+            // 而 ML Kit 本就不适合复杂漫画场景，不为它做左右适配。
+            // `verticalDirection` 参数保留仅为既有签名（分批切分等处仍在用）。
             val sortedNodes = if (majorityDir == 'h') {
                 nodes.sortedBy { textLines[it].centroidY }
             } else {

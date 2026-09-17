@@ -31,6 +31,9 @@ class AutoTranslateEngine(
     private val scope: kotlinx.coroutines.CoroutineScope,
     private val getSourceLanguage: () -> String,
     private val getTargetLanguage: () -> String,
+    /** 竖排读取方向（`Game_Text_Direction`）。每次 OCR 现读，设置改动实时生效。 */
+    private val getVerticalDirection: () -> com.moe.starflow.manga.types.TextDirection =
+        { com.moe.starflow.manga.types.TextDirection.VERTICAL_RL },
     private val onMessage: ((String) -> Unit)? = null
 ) {
     companion object {
@@ -172,7 +175,7 @@ class AutoTranslateEngine(
         if (!isRunning) return Decision.PixelChanging(0f)
 
         LogCollector.d(TAG, "【触发OCR】正在识别...")
-        val ocrText = ocrEngine.recognize(bitmap)
+        val ocrText = ocrEngine.recognize(bitmap, getVerticalDirection())
         val normalizedText = TextSimilarity.normalize(ocrText)
 
         if (normalizedText.isBlank()) {

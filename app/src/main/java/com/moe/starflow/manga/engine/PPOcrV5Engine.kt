@@ -112,6 +112,9 @@ object PPOcrV5Engine {
         largeBoxRatio = PPOcrPrefs.largeBoxRatio(prefs)
         limitSideLen = PPOcrPrefs.limitSideLen(prefs)
         limitType = PPOcrPrefs.limitType(prefs)
+        // 竖排扫描/识别流向（Manga_Text_Direction）：影响 det 候选顺序 → 识别顺序 → 源文拼接顺序
+        PPOcrDetGeometry.verticalScanFlowIsLr =
+            VerticalFlow.fromPref(prefs.getString("Manga_Text_Direction", "0")) == VerticalFlow.LR
     }
 
     // -----------------------------------------------------------------------
@@ -534,8 +537,13 @@ object PPOcrV5Engine {
             }
         }
 
-        // 5. 过滤
-        return PPOcrDetGeometry.filterDetRes(boxes, scores, srcH, srcW, DET_MIN_SIZE, largeBoxEnabled, largeBoxRatio)
+        // 5. 过滤 + 按阅读顺序重排（竖排列序随 Manga_Text_Direction；横排恒左→右）
+        val filtered = PPOcrDetGeometry.filterDetRes(
+            boxes, scores, srcH, srcW, DET_MIN_SIZE, largeBoxEnabled, largeBoxRatio
+        )
+        return PPOcrDetGeometry.sortDetCandidates(
+            filtered.boxes, filtered.scores, PPOcrDetGeometry.verticalScanFlowIsLr
+        )
     }
 
 
