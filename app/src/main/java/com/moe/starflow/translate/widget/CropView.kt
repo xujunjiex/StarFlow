@@ -145,11 +145,37 @@ class CropView @JvmOverloads constructor(
         if (!::mRect.isInitialized || !hasExplicitRect || !fitsIn(w, h)) {
             centerRect(w, h, lastWidthRatio, lastHeightRatio)
         }
+        // 【诊断】尺寸定下来后把口径打全（旋转/尺寸变化都会到这里）
+        logWindowGeometry("onSizeChanged")
     }
 
     /** 框是否完整落在 w×h 内（与 ACTION_UP 的边界钳制口径一致） */
     private fun fitsIn(w: Int, h: Int): Boolean =
         mRect.left >= 0f && mRect.top >= 0f && mRect.right <= w.toFloat() && mRect.bottom <= h.toFloat()
+
+    /**
+     * 【诊断】把本窗口的坐标口径打全，用于判定框选窗与结果浮层的 (0,0) 是否同源。
+     *
+     * `FLAG_LAYOUT_NO_LIMITS` 决定窗口 (0,0) 是**显示原点**还是**父窗口 frame** ——
+     * 两者相差一个系统栏/刘海 inset，正是横屏偏移的来源。这里把 flags 与实测原点一起记下，
+     * 与结果浮层的同项日志对比即可定论，不必再靠推理。
+     *
+     * 定位完成后连同结果浮层里的对应日志一起删除。
+     */
+    fun logWindowGeometry(tag: String) {
+        if (!::mRect.isInitialized) return
+        val loc = IntArray(2)
+        getLocationOnScreen(loc)
+        // View.layoutParams 是 ViewGroup.LayoutParams，x/y/flags/gravity 只在 WindowManager.LayoutParams 上
+        val lp = layoutParams as? android.view.WindowManager.LayoutParams
+        LogCollector.d(
+            TAG_CROP,
+            "[$tag] view=${width}x$height origin=(${loc[0]},${loc[1]}) " +
+                "lp=${lp?.width}x${lp?.height} xy=(${lp?.x},${lp?.y}) " +
+                "flags=${lp?.flags} gravity=${lp?.gravity} " +
+                "rect=$mRect 显示=${com.moe.starflow.utils.DisplaySize.isReliable}"
+        )
+    }
 
     private fun centerRect(w: Int, h: Int, widthRatio: Float, heightRatio: Float) {
         val rectWidth = w * widthRatio

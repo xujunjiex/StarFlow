@@ -763,6 +763,8 @@ class MangaViewerActivity : AppCompatActivity() {
                         cropRightPx.toFloat(), cropBottomPx.toFloat()
                     )
                     val cropped = ScreenshotManager.cropBitmap(originalBmp!!, cropRect, android.graphics.Point(0, 0))
+                        ?: throw Exception("裁剪原图失败：crop=$cropLeftPx,$cropTopPx-$cropRightPx,$cropBottomPx " +
+                            "原图=${originalBmp!!.width}x${originalBmp!!.height}")
                     try {
                         val prefs = CustomPreference.getInstance(this@MangaViewerActivity)
                         val engineName = prefs.getString("history_retranslate_engine", "PP_OCR_V5")

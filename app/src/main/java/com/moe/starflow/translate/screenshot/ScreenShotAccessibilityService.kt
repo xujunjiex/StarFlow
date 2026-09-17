@@ -67,6 +67,7 @@ class ScreenShotAccessibilityService: AccessibilityService() {
                             )?.copy(Bitmap.Config.ARGB_8888, true)
 
                             Log.d("ASSOFFSET", "x:"+offset.x+"  y:"+offset.y)
+                            // cropBitmap 裁不出有效区域时返回 null（不再退化成返回 fullBitmap 本身）
                             val croppedBitmap = if (mRectF != null && fullBitmap != null) {
                                 ScreenshotManager.cropBitmap(fullBitmap, mRectF, offset)
                             } else {

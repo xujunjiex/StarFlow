@@ -61,10 +61,18 @@ class MediaProjectionProvider(private val context: Context) : ScreenshotProvider
         }
         LogCollector.d(TAG, "Full screenshot: ${fullBitmap.width}x${fullBitmap.height}")
 
+        // ⚠️ 裁不出有效区域时 cropBitmap 返回 null（不再退化成返回 fullBitmap 本身）。
+        // 全屏图仍要发出去 —— 宁可按全屏翻译，也不要发出一个「看似裁剪过、实为原图」的对象
+        // 让下游的 full/cropped 前提失效。
         return if (cropRect != null) {
             val cropped = ScreenshotManager.cropBitmap(fullBitmap, cropRect, offset)
-            LogCollector.d(TAG, "Cropped screenshot: ${cropped.width}x${cropped.height}")
-            cropped
+            if (cropped != null) {
+                LogCollector.d(TAG, "Cropped screenshot: ${cropped.width}x${cropped.height}")
+                cropped
+            } else {
+                LogCollector.w(TAG, "裁剪区域无效，改为返回全屏图")
+                fullBitmap
+            }
         } else {
             fullBitmap
         }

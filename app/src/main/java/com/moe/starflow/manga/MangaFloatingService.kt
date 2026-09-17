@@ -698,16 +698,17 @@ class MangaFloatingService : LifecycleService() {
         // Progress overlay (initially not added)
         // Crop view (initially not added)
         cropView = CropView(this)
-        // 必须用屏幕真实尺寸，MATCH_PARENT 会被系统栏截断
-        val cropScreenSize = getScreenSize()
+        // ⚠️ MATCH_PARENT，与游戏模式口径一致（原先这里用 getScreenSize() 的像素值，
+        // 而该方法在横屏下会被冻结成竖屏 → 窗口与真实显示不一致）。此值虽会被
+        // startCropSelection() 覆盖，但留着错误的初值是误导 —— 任何"只 addView 一次"的路径都会中招。
         cropViewParams = WindowManager.LayoutParams().apply {
             type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             format = PixelFormat.TRANSLUCENT
             flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                     WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-            width = cropScreenSize.width
-            height = cropScreenSize.height
+            width = WindowManager.LayoutParams.MATCH_PARENT
+            height = WindowManager.LayoutParams.MATCH_PARENT
             gravity = Gravity.START or Gravity.TOP
             x = 0
             y = 0
@@ -1358,8 +1359,23 @@ class MangaFloatingService : LifecycleService() {
                     if (fullBitmap != null) {
                         LogCollector.d(TAG, "Full screenshot: ${fullBitmap.width}x${fullBitmap.height}")
                         val croppedBitmap = if (cropRect != null) {
+                            // 【诊断】记录定标三元组（frame/window/origin/是否恒等），
+                            // 供判定帧语义（整屏缩放+黑边 vs 1:1 取景）——未定标前 CropSpace 只走恒等分支
+                            val cropBox = CropSpace.fromRectF(cropRect.left, cropRect.top, cropRect.right, cropRect.bottom)
+                            val winGeom = WinGeom(cropView.width, cropView.height, offset.x, offset.y)
+                            val frameGeom = FrameGeom(fullBitmap.width, fullBitmap.height)
+                            LogCollector.d(TAG, "crop diag: " + CropSpace.describe(
+                                cropBox, winGeom, frameGeom, CropSpace.resolveCropRect(cropBox, winGeom, frameGeom)
+                            ))
+
                             val cropped = ScreenshotManager.cropBitmap(fullBitmap, cropRect, offset)
-                            LogCollector.d(TAG, "Cropped screenshot: ${cropped.width}x${cropped.height}")
+                            // 裁不出有效区域（cropBitmap 返回 null）→ 交给下游按全屏处理，
+                            // 而不是让 croppedBitmap 退化成与 fullBitmap 同一个实例
+                            if (cropped != null) {
+                                LogCollector.d(TAG, "Cropped screenshot: ${cropped.width}x${cropped.height}")
+                            } else {
+                                LogCollector.w(TAG, "裁剪区域无效，按全屏翻译")
+                            }
                             cropped
                         } else null
                         ScreenshotManager.emitScreenshot(ScreenshotData(fullBitmap, croppedBitmap))
@@ -1558,8 +1574,9 @@ class MangaFloatingService : LifecycleService() {
                                 if (data.croppedBitmap != null) data.fullBitmap.recycle()
                                 pendingFullBitmap = cleanFull
                                 val rect = cropRect
+                                // 裁剪失败 → 回退用干净全屏图（不要把 null 传进 processMangaScreenshot）
                                 val cleanOcr = if (rect != null) {
-                                    ScreenshotManager.cropBitmap(cleanFull, rect, offset)
+                                    ScreenshotManager.cropBitmap(cleanFull, rect, offset) ?: cleanFull
                                 } else cleanFull
                                 val cleanExtHashes = PerceptualHash.computeExtended(cleanFull, centerCrop = true)
                                 processMangaScreenshot(cleanOcr, pHash, cleanExtHashes)
@@ -2498,6 +2515,20 @@ class MangaFloatingService : LifecycleService() {
             }
             resultOverlayImage.scaleType = ImageView.ScaleType.FIT_XY
             windowManager.addView(resultOverlayView, params)
+            // 【诊断】与 CropView.logWindowGeometry 同项对比，判定两者 (0,0) 是否同源。
+            // 当前 flags 无 NO_LIMITS 而框选窗有 —— 若实测原点不同，即为横屏偏移来源。
+            resultOverlayView.post {
+                val loc = IntArray(2)
+                resultOverlayView.getLocationOnScreen(loc)
+                LogCollector.d(
+                    TAG,
+                    "[resultOverlay/crop] view=${resultOverlayView.width}x${resultOverlayView.height} " +
+                        "origin=(${loc[0]},${loc[1]}) lpFlags=${params.flags} " +
+                        "xy=(${params.x},${params.y}) size=${params.width}x${params.height} " +
+                        "cropRect=$crop 框选窗原点=(${cropView.absolutePointOffset.x},${cropView.absolutePointOffset.y}) " +
+                        "显示=${com.moe.starflow.utils.DisplaySize.isReliable}"
+                )
+            }
         } else {
             // 全屏模式：获取屏幕真实像素尺寸，overlay 精确覆盖全屏
             val screenSize = getScreenSize()
