@@ -36,6 +36,8 @@
     <string name="import_close_selection">Close selection</string>
     <string name="select_all">Select all</string>
     <string name="import_pages_count">%1$d pages</string>
+    <string name="import_failed">Import failed: %1$d file(s) could not be imported (not a zip/cbz, or damaged)</string>
+    <string name="import_failed_dir">Import failed — make sure the selected folder contains images</string>
     <string name="import_read_progress">Read %1$d / %2$d</string>
     <string name="list_mode">List mode</string>
     <string name="mode_list">List</string>
@@ -581,6 +583,18 @@
     <string name="manga_text_direction_summary">Column order of vertical manga text</string>
     <string name="manga_text_direction_rl">Vertical (columns right to left)</string>
     <string name="manga_text_direction_lr">Vertical (columns left to right)</string>
+
+    <string name="manga_horizontal_align_title">Horizontal Text Alignment</string>
+    <string name="manga_horizontal_align_summary">Line alignment for horizontal text; vertical text is unaffected</string>
+    <string name="manga_horizontal_align_left">Left</string>
+    <string name="manga_horizontal_align_center">Center</string>
+    <string name="manga_horizontal_align_right">Right</string>
+
+    <string name="manga_spacing_title">Spacing</string>
+    <string name="manga_tracking_title">Letter spacing</string>
+    <string name="manga_leading_title">Line spacing</string>
+    <string name="manga_spacing_summary_value">%1$d%% of font size</string>
+    <string name="manga_spacing_summary_both">Letter %1$d%% · Line %2$d%%</string>
     <string name="incremental_render_title">Incremental Render</string>
     <string name="incremental_render_summary">When more than 6 bubbles are detected, translate in two batches to show first results earlier; total translation time may slightly increase. Works with PP-OCRv5/PP-OCRv6 standalone, RT-DETR-V2+MangaOcr (two batches), and the Hy-MT2 model (token-by-token streaming).</string>
     <string name="manga_keep_text_free_title">Recognize Free Text</string>
@@ -920,11 +934,25 @@
     <string name="model_fetch_failed">Failed to fetch models: %1$s</string>
     <string name="model_fetch_all_duplicated">The selected models are already in the list</string>
     <string name="model_pick_at_least_one">Add or fetch at least one model first</string>
+    <string name="model_label_with_tag">%1$s (%2$s)</string>
+    <string name="model_label_free_text">free · text</string>
+    <string name="model_label_free_vision">free · vision</string>
+    <string name="model_label_free_thinking">free · thinking</string>
     <string name="model_search_hint">Search models</string>
     <string name="model_search_no_result">No matching model</string>
     <string name="model_name_duplicate">This model name already exists</string>
     <string name="model_name_too_long">Model name is too long (max 100 chars)</string>
     <string name="model_count_limit">At most %d custom models per provider</string>
+
+    <!-- API 错误文案（OpenAI 兼容接口，服务端说明拼在后面） -->
+    <string name="api_model_not_selected">No model selected: add or fetch a model for this provider in API Config</string>
+    <string name="api_http_unauthorized">HTTP %1$d unauthorized (invalid API key): %2$s</string>
+    <string name="api_http_error">HTTP %1$d: %2$s</string>
+
+    <!-- 阅读器：语言被当前模型过滤时的提示 -->
+    <string name="reader_lang_ocr_unsupported_none">This language is not supported by the current OCR model</string>
+    <string name="reader_lang_ocr_unsupported">This language is not supported by the current OCR model. Use %1$s</string>
+    <string name="reader_lang_translate_unsupported">This language is not supported by the current translation model. Use NLLB or an online API</string>
     <string name="add">Add</string>
     <string name="reader_back">Back</string>
     <string name="reader_prev">Previous page</string>
@@ -1131,6 +1159,8 @@
     <string name="toast_saved_to_download">Saved to Download/%1$s</string>
     <string name="toast_download_failed">Download failed</string>
     <string name="toast_download_complete">Download complete</string>
+    <string name="toast_skipped_unparsable">Skipped %1$d page(s) that could not be parsed</string>
+    <string name="toast_nothing_to_download">No images to download</string>
     <string name="history_created_format">Created %1$s</string>
     <string name="history_updated_format">Modified %1$s</string>
     <string name="toast_original_unavailable">Original image unavailable</string>
@@ -1218,6 +1248,16 @@
     <string name="error_hy_released">Translation engine released</string>
     <string name="translating_done">Translation complete</string>
     <string name="no_text_detected">No text detected</string>
+    <string name="retranslating">Retranslating…</string>
+    <string name="ocr_failed">OCR failed: %1$s</string>
+    <string name="unknown_error">unknown error</string>
+    <string name="history_export_source_label">Source: </string>
+    <string name="history_export_translated_label">Translation: </string>
+    <string name="history_export_no_records">(no translation records)</string>
+    <string name="history_export_empty_record">(empty record)</string>
+    <string name="history_download_multi_variant">This process group has translations in several sizes; all of them will be downloaded.</string>
+    <string name="history_download_all">Download all</string>
+    <string name="history_download_preparing">Preparing download…</string>
     <string name="cache_hit">Cache hit</string>
     <string name="text_recognizing">Recognizing text…</string>
     <string name="translation_stopped">Translation stopped</string>

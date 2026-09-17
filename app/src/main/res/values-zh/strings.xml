@@ -36,6 +36,8 @@
     <string name="import_close_selection">关闭多选</string>
     <string name="select_all">全选</string>
     <string name="import_pages_count">%1$d 页</string>
+    <string name="import_failed">导入失败：%1$d 个文件无法导入（可能不是 zip/cbz 或文件已损坏）</string>
+    <string name="import_failed_dir">导入失败，请确认所选文件夹内有图片</string>
     <string name="import_read_progress">已阅读 %1$d / %2$d</string>
     <string name="list_mode">列表模式</string>
     <string name="mode_list">列表</string>
@@ -495,6 +497,18 @@
     <string name="manga_text_direction_summary">竖排文字的列排列方向</string>
     <string name="manga_text_direction_rl">竖排（列从右到左）</string>
     <string name="manga_text_direction_lr">竖排（列从左到右）</string>
+
+    <string name="manga_horizontal_align_title">横排对齐</string>
+    <string name="manga_horizontal_align_summary">横排译文的行对齐方式；竖排不受影响</string>
+    <string name="manga_horizontal_align_left">左对齐</string>
+    <string name="manga_horizontal_align_center">居中</string>
+    <string name="manga_horizontal_align_right">右对齐</string>
+
+    <string name="manga_spacing_title">间距调整</string>
+    <string name="manga_tracking_title">字间距</string>
+    <string name="manga_leading_title">行间距</string>
+    <string name="manga_spacing_summary_value">字号的 %1$d%%</string>
+    <string name="manga_spacing_summary_both">字间距 %1$d%% · 行间距 %2$d%%</string>
     <string name="incremental_render_title">分批渲染</string>
     <string name="incremental_render_summary">气泡超过6个时分两批翻译，提前显示首批结果，但可能造成总翻译时长略微增加。支持 PP-OCRv5/PP-OCRv6 独立模式、RT-DETR-V2+MangaOcr 组合（分两批），以及 Hy-MT2 翻译模型（逐句流式）。</string>
     <string name="manga_keep_text_free_title">识别自由文字</string>
@@ -832,11 +846,25 @@
     <string name="model_fetch_failed">获取模型列表失败：%1$s</string>
     <string name="model_fetch_all_duplicated">选中的模型都已经在列表里了</string>
     <string name="model_pick_at_least_one">请先添加或获取至少一个模型</string>
+    <string name="model_label_with_tag">%1$s（%2$s）</string>
+    <string name="model_label_free_text">免费·文本</string>
+    <string name="model_label_free_vision">免费·视觉</string>
+    <string name="model_label_free_thinking">免费·思考</string>
     <string name="model_search_hint">搜索模型</string>
     <string name="model_search_no_result">没有匹配的模型</string>
     <string name="model_name_duplicate">该模型名称已存在</string>
     <string name="model_name_too_long">模型名称过长（最多 100 字符）</string>
     <string name="model_count_limit">每个 provider 最多添加 %d 个自定义模型</string>
+
+    <!-- API 错误文案（OpenAI 兼容接口，服务端说明拼在后面） -->
+    <string name="api_model_not_selected">未选择模型：请到「API 配置」中为该厂商添加模型或点「获取模型列表」</string>
+    <string name="api_http_unauthorized">HTTP %1$d 未授权（API Key 无效）：%2$s</string>
+    <string name="api_http_error">HTTP %1$d：%2$s</string>
+
+    <!-- 阅读器：语言被当前模型过滤时的提示 -->
+    <string name="reader_lang_ocr_unsupported_none">该语言当前 OCR 模型不支持</string>
+    <string name="reader_lang_ocr_unsupported">该语言当前 OCR 模型不支持，请使用 %1$s</string>
+    <string name="reader_lang_translate_unsupported">该语言当前翻译模型不支持，请使用 NLLB 或 API 翻译</string>
     <string name="add">添加</string>
     <string name="reader_back">返回</string>
     <string name="reader_prev">上一页</string>
@@ -1132,6 +1160,8 @@
     <string name="toast_saved_to_download">已保存到 Download/%1$s</string>
     <string name="toast_download_failed">下载失败</string>
     <string name="toast_download_complete">下载完成</string>
+    <string name="toast_skipped_unparsable">跳过 %1$d 张无法解析的页面</string>
+    <string name="toast_nothing_to_download">没有可下载的图片</string>
     <string name="history_created_format">创建 %1$s</string>
     <string name="history_updated_format">修改 %1$s</string>
     <string name="toast_original_unavailable">原图不可用</string>
@@ -1219,6 +1249,16 @@
     <string name="error_hy_released">翻译引擎已释放</string>
     <string name="translating_done">翻译完成</string>
     <string name="no_text_detected">未检测到文字</string>
+    <string name="retranslating">重新翻译中…</string>
+    <string name="ocr_failed">OCR失败：%1$s</string>
+    <string name="unknown_error">未知错误</string>
+    <string name="history_export_source_label">原文: </string>
+    <string name="history_export_translated_label">译文: </string>
+    <string name="history_export_no_records">(无翻译记录)</string>
+    <string name="history_export_empty_record">(空记录)</string>
+    <string name="history_download_multi_variant">该进程组包含多个尺寸的翻译结果，将全部下载。</string>
+    <string name="history_download_all">全部下载</string>
+    <string name="history_download_preparing">正在准备下载…</string>
     <string name="cache_hit">缓存命中</string>
     <string name="text_recognizing">文字识别中…</string>
     <string name="translation_stopped">已停止翻译</string>
