@@ -53,7 +53,46 @@ class TranslationStatusOverlayInvariantsTest {
     fun stickyApiExistsAndDoesNotAutoDismiss() {
         val body = source.substringAfter("fun showSticky(")
         assertTrue("showSticky 应登记到 stickyChips", body.contains("stickyChips.add("))
-        assertTrue("showSticky 应 autoDismiss = false", body.contains("autoDismiss = false"))
+        // ⚠️ autoDismiss 必须为 true：false 时不排消失任务，配合「dismiss 保留 sticky」
+        // 会让提示永久驻留（实测踩过）
+        assertTrue(
+            "showSticky 必须 autoDismiss = true（false 会永久驻留）",
+            body.contains("autoDismiss = true")
+        )
+    }
+
+    /**
+     * ⚠️ `addChip` 必须**直接**调 `addToWindowIfNeeded()`，不能只靠 `layout.post {}`。
+     *
+     * `View.post()` 在 View 未 attach 时不会执行（排队等 attach），而新建容器必然未 attach
+     * → 那个 runnable 永远不跑 → 窗口加不上 → 提示不可见，直到别的消息把它 attach 上去
+     * （实测：框选后转屏的提示要等下次翻译才"延迟出现"）。
+     */
+    @Test
+    fun addChipAttachesWindowDirectly() {
+        val body = source.substringAfter("private fun addChip(").substringBefore("private fun rescheduleDismiss(")
+        assertTrue(
+            "addChip 必须直接调用 addToWindowIfNeeded()（仅靠 post 在未 attach 时不执行）",
+            body.contains("addToWindowIfNeeded()")
+        )
+    }
+
+    /**
+     * ⚠️ sticky 提示**绝不能进队列**。
+     *
+     * 排队的消息要等前面的消失才显示，而中途任何一次 `dismiss()`（每轮翻译收尾都会调）
+     * 会把队列一并清掉 —— 提示就此消失。实测：`检测到屏幕方向更改…` 于 00:31:43.406 发出，
+     * 之后 10 秒内**没有任何** `Overlay added to window`，用户完全看不到。
+     * 正确做法是槽位满时挤掉一个旧 chip、立即显示。
+     */
+    @Test
+    fun stickyNeverEntersQueue() {
+        val body = source.substringAfter("fun showSticky(").substringBefore("fun showError(")
+        assertTrue(
+            "showSticky 不得把消息加进 messageQueue（排队路径会被 dismiss 清掉）",
+            !body.contains("messageQueue.add")
+        )
+        assertTrue("showSticky 应直接 addChip", body.contains("addChip("))
     }
 
     /**

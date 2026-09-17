@@ -107,21 +107,39 @@ class TranslationStatusOverlay private constructor(private val context: Context)
     }
 
     /**
-     * 显示一条**不自动消失**的普通提示。
+     * 显示一条**能扛住清屏**的普通提示（到点仍会自动消失）。
      *
-     * 用于「屏幕方向变化」这类需要用户读到、且稍后大概率会有进度消息刷屏的通知 ——
-     * [showImmediate] 会替换顶部 chip，后者几秒内的「检测中…」会把提示顶掉（实测）。
-     * 本条进入堆叠队列，用户读到后自行等待/下一条消息，或点悬浮窗关闭。
+     * 用于「屏幕方向变化」这类需要用户读到的通知。两条失效路径都要避开：
+     * - [showImmediate] 会**替换**顶部 chip → 几秒后的「检测中…」把提示顶掉
+     * - `dismiss()` 会**清空全部** chip → 每轮翻译收尾的 `dismissProgressOverlay()` 把提示吃掉
+     *
+     * 因此：走普通堆叠（有自己的消失计时，不会永久驻留）+ 登记进 stickyChips
+     * （在存活期内不被 `dismiss()` 清掉）。**不要**改成 `autoDismiss = false`——
+     * 那样没有消失计时，会永久挂在屏幕上。
      */
     fun showSticky(message: String) {
         if (!isEnabled()) return
         LogCollector.d(TAG, message)
         runOnMainThread {
-            if (activeCount() >= MAX_SLOTS) {
-                messageQueue.add(QueuedMessage(message, isError = false))
-            } else {
-                stickyChips.add(addChip(message, isError = false, autoDismiss = false))
+            // ⚠️ **绝不排队**：排队的消息要等前面消失才显示，而中途任何一次
+            // `dismiss()`（每轮翻译收尾都会调）会把队列一并清掉 —— 提示就此消失，
+            // 用户永远看不到（实测：发出后 10 秒仍无 "Overlay added to window"）。
+            // 槽位满时挤掉一个**非 sticky** 的旧 chip 腾地方；全是 sticky 就挤最旧的。
+            val layout = container
+            while (layout != null && layout.childCount >= MAX_SLOTS) {
+                val victim = (0 until layout.childCount)
+                    .map { layout.getChildAt(it) }
+                    .firstOrNull { it !in stickyChips }
+                    ?: layout.getChildAt(0)
+                dismissRunnables.remove(victim)?.let { mainHandler.removeCallbacks(it) }
+                stickyChips.remove(victim)
+                layout.removeView(victim)
             }
+            // ⚠️ autoDismiss 必须为 **true**：为 false 时 rescheduleDismiss 直接 return，
+            // 压根不排消失任务；而 dismiss() 又保留 sticky —— 两者叠加会让提示**永久驻留**，
+            // 且后续同类提示复到同一位置、用户看着"没变化"（实测：转屏两次，第二条被当成旧的）。
+            // 正确语义 = 普通提示的自动消失 + 存活期内不被翻译收尾的清屏吃掉。
+            stickyChips.add(addChip(message, isError = false, autoDismiss = true))
         }
     }
 
@@ -246,7 +264,14 @@ class TranslationStatusOverlay private constructor(private val context: Context)
             lp.topMargin = (6 * context.resources.displayMetrics.density).toInt()
         }
         layout.addView(chip, lp)
-        layout.post { addToWindowIfNeeded() }  // 内容变化后强制刷新/重新添加窗口
+        // ⚠️ **必须直接调**，不能只靠 `layout.post {}`：
+        // `View.post()` 在 View 未 attach 到窗口时**不会执行**，而是排队等 attach。
+        // 而 `ensureContainer()` 新建的容器必然未 attach → 那个 runnable 永远不跑 →
+        // 窗口永远加不上 → 提示不可见。直到**别的**状态消息（showImmediate 在已有 chip 时
+        // 是直接调 addToWindowIfNeeded 的）把容器 attach 上去，排队的 post 才一起补跑，
+        // 提示这时才"延迟出现"（实测：框选后转屏的提示要等下次翻译才显示）。
+        addToWindowIfNeeded()
+        layout.post { addToWindowIfNeeded() }  // 内容变化后再刷一次布局
         if (autoDismiss) rescheduleDismiss(chip, true)
         return chip
     }
