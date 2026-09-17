@@ -620,7 +620,9 @@ class APIConfig : PreferenceFragmentCompat() {
                     )
                     customIndex++
                 }
-                summary = provider.modelName
+                // 不预置模型的厂商（DeepSeek / 通义千问）未选模型时 modelName 为空串：
+                // 这里必须显式提示，否则设置页那一行是空白，用户看不出是这家缺模型
+                summary = provider.modelName.ifBlank { getString(R.string.model_none_selected) }
                 isIconSpaceReserved = true
                 isChecked = isOpenAISelected && selectedProvider == index
                 setOnPreferenceChangeListener { _, newValue ->

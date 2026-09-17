@@ -17,6 +17,8 @@
 
 package translationapi.openaitranslation
 
+import android.content.Context
+import com.moe.starflow.R
 import com.moe.starflow.me.apiconfig.OpenAIProviderConfig
 import com.moe.starflow.utils.LogCollector
 import com.moe.starflow.translate.CustomLocale
@@ -53,7 +55,9 @@ class OpenAITranslation(
     private val prefillContent: String = "",
     private val autoAppendPath: Boolean = true,
     /** 思考模式：0=跟随模型默认（不发送 thinking 参数）/ 1=强制关闭 / 2=强制开启（见 OpenAIProviderConfig.THINKING_*） */
-    private val thinkingMode: Int = OpenAIProviderConfig.THINKING_DEFAULT
+    private val thinkingMode: Int = OpenAIProviderConfig.THINKING_DEFAULT,
+    /** 仅用于把用户可见的错误文案本地化（模型未选择 / HTTP 错误）。必须是可用的 Context，勿传 null。 */
+    private val appContext: Context
 ) : TranslationTextAPI {
 
     override val modelName: String get() = model
@@ -130,6 +134,13 @@ class OpenAITranslation(
     private suspend fun translate(text: String, from: String, to: String): String = withContext(Dispatchers.IO) {
         ensureActive()
 
+        // ⚠️ 模型名为空必须在这里拦下：不预置模型的厂商（DeepSeek / 通义千问）老用户升级后
+        // selectedModelIndex 失去预设列表，applyMod 会归一成 modelName=""。
+        // `"model": ""` 发出去只会拿到服务端一句看不懂的 400，用户不知道要去选模型。
+        if (model.isBlank()) {
+            throw IllegalStateException(appContext.getString(R.string.api_model_not_selected))
+        }
+
         // 构建翻译提示词
         val toLang = CustomLocale.getInstance(to).getDisplayName()
         val systemPrompt = buildSystemPrompt(toLang)
@@ -178,7 +189,8 @@ class OpenAITranslation(
         if (!response.isSuccessful) {
             val errorBody = response.body?.string() ?: ""
             response.close()
-            throw IOException("Request failed ${response.code}: $errorBody")
+            // 和「获取模型列表」走同一条文案（服务端说明优先），中文/英文随应用语言
+            throw IOException(extractServerError(errorBody, response.code))
         }
 
         // 解析响应
@@ -387,9 +399,9 @@ class OpenAITranslation(
         }
         return when {
             message.isNotBlank() && (code == 401 || code == 403) ->
-                "HTTP $code 未授权（API Key 无效）：$message"
-            message.isNotBlank() -> "HTTP $code：$message"
-            else -> "HTTP $code：${body.take(200)}"
+                appContext.getString(R.string.api_http_unauthorized, code, message)
+            message.isNotBlank() -> appContext.getString(R.string.api_http_error, code, message)
+            else -> appContext.getString(R.string.api_http_error, code, body.take(200))
         }
     }
 }

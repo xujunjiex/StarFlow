@@ -63,7 +63,7 @@ object TranslatorFactory {
                 }
                 Constants.TextApi.BING.id -> BingTranslation()
                 Constants.TextApi.NIUTRANS.id -> NiuTranslation(KeystoreManager.retrieveKey(context, "Niutrans")!!)
-                Constants.TextApi.OPENAI.id -> createOpenAI(prefs, mode)
+                Constants.TextApi.OPENAI.id -> createOpenAI(context, prefs, mode)
                 Constants.TextApi.VOLC.id -> VolcTranslation(
                     KeystoreManager.retrieveKey(context, "Volc_ACCOUNT")!!,
                     KeystoreManager.retrieveKey(context, "Volc_SECRETKEY")!!
@@ -93,7 +93,7 @@ object TranslatorFactory {
         }
     }
 
-    private fun createOpenAI(prefs: CustomPreference, mode: Mode): OpenAITranslation? {
+    private fun createOpenAI(context: Context, prefs: CustomPreference, mode: Mode): OpenAITranslation? {
         val providerList = ConfigurationStorage.loadAllProviders(prefs)
         val selectedIndex = prefs.getInt("OpenAI_Selected_Provider", 0)
         if (providerList.isEmpty() || selectedIndex >= providerList.size) {
@@ -121,7 +121,8 @@ object TranslatorFactory {
                 prefillContent = if (effectiveContinuationType != OpenAIProviderConfig.CONTINUATION_NONE &&
                     effectiveContinuationType != OpenAIProviderConfig.CONTINUATION_JSON) "[1] " else "",
                 autoAppendPath = provider.autoAppendPath,
-                thinkingMode = provider.thinkingMode
+                thinkingMode = provider.thinkingMode,
+                appContext = context
             )
         } else {
             // 游戏/文本：纯文本 prompt，无续写（与 FloatingBallService 原逻辑逐行一致）
@@ -138,7 +139,8 @@ object TranslatorFactory {
                 systemPrompt = effectiveSystemPrompt,
                 userPrompt = effectiveUserPrompt,
                 autoAppendPath = provider.autoAppendPath,
-                thinkingMode = provider.thinkingMode
+                thinkingMode = provider.thinkingMode,
+                appContext = context
             )
         }
     }

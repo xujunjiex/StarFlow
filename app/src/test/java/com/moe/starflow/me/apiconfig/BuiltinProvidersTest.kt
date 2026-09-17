@@ -1,5 +1,6 @@
 package com.moe.starflow.me.apiconfig
 
+import com.moe.starflow.R
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -189,9 +190,10 @@ class BuiltinProvidersTest {
             listOf("glm-4-flash-250414", "glm-4.6v-flash", "glm-4.7-flash"),
             zhipu.models
         )
-        assertEquals("免费·文本", zhipu.modelLabels["glm-4-flash-250414"])
-        assertEquals("免费·视觉", zhipu.modelLabels["glm-4.6v-flash"])
-        assertEquals("免费·思考", zhipu.modelLabels["glm-4.7-flash"])
+        // 标注存的是字符串资源 id（值文案见 values/values-zh，随应用语言渲染）
+        assertEquals(R.string.model_label_free_text, zhipu.modelLabels["glm-4-flash-250414"])
+        assertEquals(R.string.model_label_free_vision, zhipu.modelLabels["glm-4.6v-flash"])
+        assertEquals(R.string.model_label_free_thinking, zhipu.modelLabels["glm-4.7-flash"])
         assertEquals("三个免费模型都要有标注", zhipu.models.size, zhipu.modelLabels.size)
         assertEquals("默认用第一个（文本）", "glm-4-flash-250414", zhipu.modelName)
     }

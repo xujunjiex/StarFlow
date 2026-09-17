@@ -9,6 +9,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 
 /**
  * `OpenAITranslation` 请求构建的特征化测试。
@@ -39,7 +40,9 @@ class OpenAITranslationRequestBodyTest {
         userPrompt = "USR usesourcetext",
         continuationType = continuationType,
         prefillContent = prefillContent,
-        thinkingMode = thinkingMode
+        thinkingMode = thinkingMode,
+        // appContext 只用于把错误文案本地化；Robolectric 下拿应用 Context 即可
+        appContext = RuntimeEnvironment.getApplication()
     )
 
     /**
@@ -269,6 +272,7 @@ class OpenAITranslationRequestBodyTest {
     fun systemPromptReplacesTargetLanguagePlaceholder() {
         val api = OpenAITranslation(
             apiKey = "k", model = "m",
+            appContext = RuntimeEnvironment.getApplication(),
             systemPrompt = "翻译为usetolang", userPrompt = "u"
         )
         assertEquals("翻译为中文", buildSystemPrompt(api, "中文"))
@@ -278,6 +282,7 @@ class OpenAITranslationRequestBodyTest {
     fun systemPromptGetsContextPrefixOnlyWhenContextIsOnAndNonEmpty() {
         val api = OpenAITranslation(
             apiKey = "k", model = "m",
+            appContext = RuntimeEnvironment.getApplication(),
             systemPrompt = "P", userPrompt = "u"
         )
         // 上下文关
@@ -308,6 +313,7 @@ class OpenAITranslationRequestBodyTest {
     fun userPromptReplacesSourceTextPlaceholder() {
         val api = OpenAITranslation(
             apiKey = "k", model = "m",
+            appContext = RuntimeEnvironment.getApplication(),
             systemPrompt = "s", userPrompt = "将以下文本翻译：\n\nusesourcetext"
         )
         val out = buildUserPrompt(api, "こんにちは\n世界", "ja", "zh")
@@ -319,6 +325,7 @@ class OpenAITranslationRequestBodyTest {
     fun userPromptLeavesNoUnreplacedPlaceholders() {
         val api = OpenAITranslation(
             apiKey = "k", model = "m",
+            appContext = RuntimeEnvironment.getApplication(),
             systemPrompt = "s",
             userPrompt = "从usefromlang翻到usetolang：usesourcetext"
         )

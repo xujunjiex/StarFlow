@@ -509,8 +509,30 @@ class OpenAIText :Fragment() {
         // 当前处于「× 删除模式」的自定义条目下标（null 表示全部收起）
         var deleteModeIndex: Int? = null
 
+        /** 顶部模型名随「当前选择」刷新。无模型时显式提示，不要留白 ——
+         *  留白 + 保存时被拦下，用户看不出到底是哪一步没配好。 */
+        fun refreshModelSelectorText() {
+            binding.modelSelector.text = displayModelsState.getOrNull(selectedModelIndex)
+                ?: getString(R.string.model_none_selected)
+        }
+
         fun refreshItems() {
             container.removeAllViews()
+            // ⚠️ 列表高度必须在代码里限：布局上的 android:maxHeight 对 ScrollView **无效**
+            //（平台不认这个属性，项目里踩过）。模型一多弹窗就长过屏幕，底部「添加自定义 /
+            // 获取模型列表」被顶出屏幕，用户再也点不到那两个入口
+            val scrollHost = container.parent as? View
+            if (scrollHost != null) {
+                val rowHeightPx = (48 * density).toInt()
+                val maxRows = ((resources.displayMetrics.heightPixels * 0.5f) / rowHeightPx)
+                    .toInt().coerceAtLeast(3)
+                val hostHeight = if (displayModelsState.size > maxRows) {
+                    maxRows * rowHeightPx
+                } else {
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT
+                }
+                scrollHost.layoutParams = scrollHost.layoutParams.apply { height = hostHeight }
+            }
             // 不预置模型的厂商（DeepSeek）初始列表是空的 —— 给一行提示，两个入口照常可点
             if (displayModelsState.isEmpty()) {
                 container.addView(TextView(context).apply {
@@ -524,7 +546,10 @@ class OpenAIText :Fragment() {
             displayModelsState.forEachIndexed { index, model ->
                 val isSelected = index == selectedModelIndex
                 val isCustom = index >= presetSize
-                val displayName = modelLabels[model]?.let { "$model（$it）" } ?: model
+                // 标注是字符串资源（随应用语言），括号形态也走资源免得英文里冒出全角括号
+                val displayName = modelLabels[model]
+                    ?.let { getString(R.string.model_label_with_tag, model, getString(it)) }
+                    ?: model
 
                 if (!isCustom) {
                     // ===== 预设条目：纯文本 =====
@@ -543,7 +568,7 @@ class OpenAIText :Fragment() {
                         setBackgroundResource(R.drawable.ripple_item_bg)
                         setOnClickListener {
                             selectedModelIndex = index
-                            binding.modelSelector.text = model
+                            refreshModelSelectorText()
                             popupWindow?.dismiss()
                         }
                     }
@@ -573,7 +598,7 @@ class OpenAIText :Fragment() {
                         setOnClickListener {
                             // 选中并关闭弹窗（即使在删除模式，点名称也视为选中）
                             selectedModelIndex = index
-                            binding.modelSelector.text = model
+                            refreshModelSelectorText()
                             popupWindow?.dismiss()
                         }
                         setOnLongClickListener {
@@ -630,6 +655,9 @@ class OpenAIText :Fragment() {
                                     displayModelsState.removeAt(index)
                                     deleteModeIndex = null
                                     refreshItems()
+                                    // 删的正是当前选中的那个 → 顶部必须跟着变，否则面板显示着
+                                    // 一个已经不存在、引擎也不会调的模型名
+                                    refreshModelSelectorText()
                                 } catch (e: Exception) {
                                     LogCollector.e("OpenAIText", "delete custom model failed", e)
                                     try {
@@ -709,7 +737,7 @@ class OpenAIText :Fragment() {
                     // 更新当前 popup 内部状态：选中新加的
                     displayModelsState.add(newName)
                     selectedModelIndex = displayModelsState.size - 1
-                    binding.modelSelector.text = newName
+                    refreshModelSelectorText()
                     deleteModeIndex = null
                 },
                 onDismiss = {
@@ -746,7 +774,8 @@ class OpenAIText :Fragment() {
                 baseUrl = provider.baseUrl,
                 model = "",
                 systemPrompt = "",
-                userPrompt = ""
+                userPrompt = "",
+                appContext = requireContext()
             ).getSupportedModels { fetched, error ->
                 // 先无条件复原按钮，再做后续判断，避免任何提前 return 让按钮卡在「获取中…」
                 btnFetchModels.isEnabled = true
@@ -1069,13 +1098,32 @@ class OpenAIText :Fragment() {
                 .find { it.name == provider.name }?.customModels ?: emptyList()
             // 预置列表里的模型不进 customModels，否则展示列表里会出现两条同名项
             val preset = provider.models.toSet()
-            val merged = (existing + selected.filterNot { it in preset }).distinct()
-            if (merged.size == existing.size) {
-                UiUtils.showToast(
+            val added = selected.filterNot { it in preset || it in existing }
+            // ⚠️ 批量拉取同样要守上限：手填那条路径有 MAX_CUSTOM_MODELS_PER_PROVIDER 检查，
+            // 这里原先没有 —— 服务端返回几十个模型时能一口气灌进列表，远超约定容量
+            val room = (ConfigurationStorage.MAX_CUSTOM_MODELS_PER_PROVIDER - existing.size)
+                .coerceAtLeast(0)
+            val toAdd = added.take(room)
+            val merged = (existing + toAdd).distinct()
+            when {
+                // ⚠️ 判据必须是「用户选的都已在列表里」（added 为空），**不能**用 merged == existing：
+                // 容量已满（room=0）时 toAdd 也是空的，那样报的是「都已经在列表里了」，
+                // 用户按提示反复重试永远加不进去，也看不到「先删掉一些」的线索
+                added.isEmpty() -> UiUtils.showToast(
                     requireContext(), getString(R.string.model_fetch_all_duplicated), isShort = true
                 )
-            } else {
-                persistCustomModels(provider, merged)
+                toAdd.size < added.size -> {
+                    persistCustomModels(provider, merged)
+                    UiUtils.showToast(
+                        requireContext(),
+                        getString(
+                            R.string.model_count_limit,
+                            ConfigurationStorage.MAX_CUSTOM_MODELS_PER_PROVIDER
+                        ),
+                        isShort = false
+                    )
+                }
+                else -> persistCustomModels(provider, merged)
             }
             dialog.dismiss()
             onDone()

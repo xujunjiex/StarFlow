@@ -80,10 +80,11 @@ data class OpenAIProviderConfig(
     @androidx.annotation.StringRes val nameRes: Int = 0,
     val models: List<String> = emptyList(),
     /**
-     * 模型名 → 选择弹窗里跟在名字后的标注（如「免费·文本」「免费·视觉」「免费·思考」）。
+     * 模型名 → 选择弹窗里跟在名字后的标注的**字符串资源 id**（如 R.string.model_label_free_text，值里是 @StringRes）。
+     * ⚠️ 存资源 id 而不是字面量：标注会渲染进弹窗，硬编码中文在英文界面里就是中文串。
      * 未登记的模型不显示标注。内置厂商在 `BuiltinProviders` 里登记。
      */
-    val modelLabels: Map<String, String> = emptyMap(),
+    val modelLabels: Map<String, Int> = emptyMap(),
     val defaultSystemPrompt: String = "",
     val defaultUserPrompt: String = "",
     val selectedModelIndex: Int = 0,

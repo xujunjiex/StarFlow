@@ -36,8 +36,8 @@ object BuiltinProviders {
         defaultModelIndex: Int = 0,
         consoleUrl: String,
         continuationType: String,
-        /** 模型名 → 弹窗标注（如「免费·文本」）；未登记的模型不显示标注 */
-        modelLabels: Map<String, String> = emptyMap(),
+        /** 模型名 → 弹窗标注的字符串资源 id；未登记的模型不显示标注 */
+        modelLabels: Map<String, Int> = emptyMap(),
         defaultMangaSystemPrompt: String = DEFAULT_MANGA_SYSTEM_PROMPT,
         thinkingMode: Int = OpenAIProviderConfig.THINKING_DEFAULT,
         /** true = 不预置模型，用户在配置页手动添加或点「获取模型列表」拉取 */
@@ -134,9 +134,9 @@ object BuiltinProviders {
                 "glm-4.7-flash"         // 免费·思考
             ),
             modelLabels = mapOf(
-                "glm-4-flash-250414" to "免费·文本",
-                "glm-4.6v-flash" to "免费·视觉",
-                "glm-4.7-flash" to "免费·思考"
+                "glm-4-flash-250414" to R.string.model_label_free_text,
+                "glm-4.6v-flash" to R.string.model_label_free_vision,
+                "glm-4.7-flash" to R.string.model_label_free_thinking
             ),
             supportsModelFetch = true,
             consoleUrl = "https://open.bigmodel.cn/",
