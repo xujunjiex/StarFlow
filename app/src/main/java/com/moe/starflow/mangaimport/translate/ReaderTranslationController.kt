@@ -416,6 +416,9 @@ class ReaderTranslationController(
             rows.value.filterValues { it.state == ImportedPageTranslation.STATE_TRANSLATING }
                 .keys.forEach { page ->
                     try {
+                        // 一律退回 IDLE：这是队列唯一会挑的状态（见 isTranslatable），
+                        // 留着 SUCCESS 会让「点了重翻又取消」的页再也排不进队列。
+                        // 旧译文不丢显示 —— 载荷还在行里，由 cachedDisplayBitmap 的 IDLE 分支渲染
                         upsertState(page, ImportedPageTranslation.STATE_IDLE)
                     } catch (e: Exception) {
                         LogCollector.e(TAG, "取消后重置状态失败 page=$page", e)
@@ -780,17 +783,36 @@ class ReaderTranslationController(
 
     // ========== 渲染 ==========
 
+    /** 上一版整页译图（取消重翻 / 重翻在途时的显示回退）。无则 null。 */
+    private fun lastFullRender(pageIndex: Int): Bitmap? {
+        val mode = currentVisual(pageIndex)
+        if (mode == TranslationCacheManager.OverlayMode.PLAIN) return null
+        return renderLru.get(renderKey(pageIndex, mode))
+    }
+
+    /** 该页行里是否还留着可渲染的译文载荷（取消/失败后 upsertState 会保留）。 */
+    private fun rowHasPayload(pageIndex: Int): Boolean {
+        val row = rows.value[pageIndex] ?: return false
+        return !row.bubbleRects.isNullOrBlank() || !row.translatedText.isNullOrBlank()
+    }
+
     /** 供适配器同步取图（IO 线程安全）：该页当前应显示的渲染图，无则 null（显示原图）。 */
     fun cachedDisplayBitmap(pageIndex: Int): Bitmap? = when (stateOf(pageIndex)) {
-        ImportedPageTranslation.STATE_SUCCESS -> {
-            val mode = currentVisual(pageIndex)
-            if (mode == TranslationCacheManager.OverlayMode.PLAIN) null
-            else renderLru.get(renderKey(pageIndex, mode))
-        }
+        ImportedPageTranslation.STATE_SUCCESS -> lastFullRender(pageIndex)
+
         // 翻译中：返回「首批半成品」如果有 —— 否则用户翻走再翻回时看不到已经翻好的那半页。
         // ⚠️ 必须用独立 key（PARTIAL）：不能用 renderKey(TRANSLATED)，
         // 否则会和最终整页结果混在一起，且失败/取消后残留一张永远刷不掉的半成品。
-        ImportedPageTranslation.STATE_TRANSLATING -> renderLru.get(partialKey(pageIndex))
+        // 半成品还没出来时回退到上一版整页译图：重翻期间页面不该突然退回原图（翻页也会闪一下）
+        ImportedPageTranslation.STATE_TRANSLATING ->
+            renderLru.get(partialKey(pageIndex)) ?: lastFullRender(pageIndex)
+
+        // 未翻译但行里还带着上一次成功的载荷（典型：重翻被取消 / 切后台中断）：
+        // 继续显示旧译文。⚠️ 状态必须是 IDLE，队列才会重新挑中这一页去翻 —— 退回 SUCCESS 会让
+        // 「点了重翻」的页永远排不进队列（用户看到的是"重翻了却没变"）
+        ImportedPageTranslation.STATE_IDLE ->
+            if (rowHasPayload(pageIndex)) lastFullRender(pageIndex) else null
+
         else -> null
     }
 
@@ -893,6 +915,10 @@ class ReaderTranslationController(
         verticalDirection = cfg.textDirection,
         // 阅读器译图渲染也要用自定义结果字体（Custom_Result_Font），否则恒为系统字体
         fontTypeface = OverlayRenderer.loadResultTypeface(context, customPrefs),
+        align = cfg.horizontalAlign,
+        trackingRatio = cfg.trackingRatio,
+        leadingRatio = cfg.leadingRatio,
+        density = context.resources.displayMetrics.density
     )
 
     /** 渲染并预热译文图缓存，同时切到该态。最终结果写入后**丢弃半成品**，避免残留旧图。 */
@@ -1053,6 +1079,10 @@ class ReaderTranslationController(
             bubbleRects = old?.bubbleRects, failCode = old?.failCode,
             failMessage = old?.failMessage, updatedAtMs = System.currentTimeMillis(),
             mangaKey = mangaKey,
+            // ⚠️ 这三列也必须带上：行主键是 (mangaId, pageIndex) 且 REPLACE 写入，
+            // 漏掉就等于「任何一次状态流转（翻译中 / 退回未翻译）都清空翻译器与语言元数据」，
+            // 详情面板那行会变空且不可恢复（fail() 的注释同样依赖这一点）
+            translatorName = old?.translatorName, sourceLang = old?.sourceLang, targetLang = old?.targetLang,
         )
         // ⚠️ 用 update{} 而非 `rows.value = rows.value + x`：
         // 后者是「读-改-写」，与取消清理协程并发时会丢更新。

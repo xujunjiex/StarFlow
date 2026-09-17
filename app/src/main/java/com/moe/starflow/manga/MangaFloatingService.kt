@@ -148,6 +148,10 @@ class MangaFloatingService : LifecycleService() {
 
     private lateinit var windowManager: WindowManager
     private lateinit var floatingBallView: View
+    /** 在屏的悬浮菜单：AlertDialog 的 window 背景/主题上下文都是建时定死的，主题切换要重建它。 */
+    private var menuDialog: android.app.AlertDialog? = null
+    /** 悬浮球视图是否已添加到窗口（主题重建的守卫，lateinit 用 `?.` 不防未初始化）。 */
+    private var ballViewAdded = false
     private lateinit var resultOverlayView: FrameLayout
     private lateinit var resultOverlayImage: ImageView  // overlay 内的图片子 View
 
@@ -379,12 +383,17 @@ class MangaFloatingService : LifecycleService() {
             "Manga_Keep_Text_Free",
             "Manga_Text_Color",
             "Manga_BG_Color",
-            "Manga_Text_Direction"
+            "Manga_Text_Direction",
+            TranslationCacheManager.KEY_MANGA_HORIZONTAL_ALIGN,
+            TranslationCacheManager.KEY_MANGA_TRACKING,
+            TranslationCacheManager.KEY_MANGA_LEADING
         )
         prefChangeListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             when {
                 // 翻译模型切换：重建 translator（共享 Hy-MT2 实例由 Holder 换出/重建，无需重启服务）
                 key == "Text_API" || key == "Text_AI" -> initTranslator()
+                // 主题切换：Service 不随 AppCompat 重建，在屏的悬浮球/弹窗要手动重建才跟上
+                key == ThemeManager.KEY -> rebuildThemedWindows()
                 key in watchedKeys -> {
                     config = loadConfig()
                     checkLanguageHints()
@@ -392,6 +401,7 @@ class MangaFloatingService : LifecycleService() {
             }
         }
         prefs.getSharedPreferences().registerOnSharedPreferenceChangeListener(prefChangeListener)
+        rebuildThemedWindows()
 
         // 互斥：停止普通翻译服务
         try {
@@ -575,7 +585,7 @@ class MangaFloatingService : LifecycleService() {
         }
         return MangaModeConfig(
             enabled = true,
-            textDirection = if (prefs.getString("Manga_Text_Direction", "0") == "1") TextDirection.VERTICAL_LR else TextDirection.VERTICAL_RL,
+            textDirection = VerticalFlow.fromPref(prefs.getString("Manga_Text_Direction", "0")).toTextDirection(),
             smartBackground = prefs.getBoolean("Manga_Smart_Background", true),
             autoDetectBubble = autoDetectBubble,
             fontSize = prefs.getFloat("Manga_Font_Size", 16f),
@@ -586,7 +596,14 @@ class MangaFloatingService : LifecycleService() {
             bgColor = prefs.getInt("Manga_BG_Color", android.graphics.Color.argb(200, 255, 255, 255)),
             ocrEngine = group.mangaOcr,
             detEngine = detEngine,
-            keepTextFree = prefs.getBoolean("Manga_Keep_Text_Free", true)
+            keepTextFree = prefs.getBoolean("Manga_Keep_Text_Free", true),
+            horizontalAlign = when (prefs.getString(TranslationCacheManager.KEY_MANGA_HORIZONTAL_ALIGN, "1")) {
+                "0" -> TextAlign.LEFT
+                "2" -> TextAlign.RIGHT
+                else -> TextAlign.CENTER
+            },
+            trackingRatio = prefs.getInt(TranslationCacheManager.KEY_MANGA_TRACKING, 0) / 100f,
+            leadingRatio = prefs.getInt(TranslationCacheManager.KEY_MANGA_LEADING, 0) / 100f
         )
     }
 
@@ -617,6 +634,7 @@ class MangaFloatingService : LifecycleService() {
         }
 
         windowManager.addView(floatingBallView, floatingBallParams)
+        ballViewAdded = true
 
         ballStateManager = BallStateManager(this, floatingBallView, BallStateManager.Mode.Comic)
         ballStateManager?.setState(BallStateManager.State.Idle)
@@ -646,6 +664,9 @@ class MangaFloatingService : LifecycleService() {
                 iconView.setImageResource(R.mipmap.icon_comic_default)
             }
         }
+
+        // 悬浮球配色跟着应用主题（Service 自己不随 AppCompat 重建）
+        rebuildThemedWindows()
 
         // 加载长按判定时间
         longPressDelay = prefs.getLong("Custom_Long_Press_Delay", 300L)
@@ -834,9 +855,12 @@ class MangaFloatingService : LifecycleService() {
     private fun showMenuSimple(cropLabel: String) {
         val modelLabel = comboLabel(currentCombo())
 
-        val langName = getCurrentSourceLangName()
-        val (dialog, listView) = Dialogs.mangaMenuDialogSimple(
-            this, autoTranslateEngine.isAutoTranslating, cropLabel, modelLabel, langName
+        // ⚠️ 必须用 ThemeManager.dialogContext：Service 自己拿的是系统默认浅色主题，
+        // 标题/正文恒为深色字，压在 dialog_background 翻出来的深色背景上会看不清
+        val dlgCtx = ThemeManager.dialogContext(this)
+        val langName = getCurrentSourceLangName(dlgCtx)
+        val (dialog, listView, _, dlgBg) = Dialogs.mangaMenuDialogSimple(
+            dlgCtx, autoTranslateEngine.isAutoTranslating, cropLabel, modelLabel, langName
         )
 
         listView.onItemClickListener = android.widget.AdapterView.OnItemClickListener { _, _, which, _ ->
@@ -875,7 +899,7 @@ class MangaFloatingService : LifecycleService() {
                         // 循环切换源语言，不关闭菜单
                         cycleSourceLang()
                         val adapter = listView.adapter as com.moe.starflow.translate.widget.MenuDialogAdapter
-                        adapter.updateLabel(3, "${getString(R.string.game_switch_language)}：${getCurrentSourceLangName()}")
+                        adapter.updateLabel(3, "${dlgCtx.getString(R.string.game_switch_language)}：${getCurrentSourceLangName(dlgCtx)}")
                     }
                 }
                 4 -> {
@@ -903,18 +927,52 @@ class MangaFloatingService : LifecycleService() {
 
         dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
         dialog.show()
-        dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
-        // 竖屏宽度限制，横屏保持原有比例
+        dialog.window?.setBackgroundDrawableResource(dlgBg)
+        applyMenuWindowSize(dialog)
+        menuDialog = dialog
+        dialog.setOnDismissListener {
+            isMenuShowing = false
+            menuDialog = null
+        }
+    }
+
+    /** 菜单窗口尺寸：竖屏限宽 80%、横屏限 40%×70%（重建菜单时同样要应用）。 */
+    private fun applyMenuWindowSize(dialog: android.app.AlertDialog) {
         val screenSize = getScreenSize()
         if (resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
-            val maxW = (screenSize.width * 0.4).toInt()
-            val maxH = (screenSize.height * 0.7).toInt()
-            dialog.window?.setLayout(maxW, maxH)
+            dialog.window?.setLayout((screenSize.width * 0.4).toInt(), (screenSize.height * 0.7).toInt())
         } else {
-            val maxW = (screenSize.width * 0.80f).toInt()
-            dialog.window?.setLayout(maxW, ViewGroup.LayoutParams.WRAP_CONTENT)
+            dialog.window?.setLayout((screenSize.width * 0.80f).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT)
         }
-        dialog.setOnDismissListener { isMenuShowing = false }
+    }
+
+    /** 重建菜单时复用同一套标题文案（与长按入口一致）。 */
+    private fun currentCropLabelForMenu(): String = if (cropRect != null) {
+        getString(R.string.manga_mode_crop)
+    } else {
+        getString(R.string.manga_mode_fullscreen)
+    }
+
+    /**
+     * 应用主题切换后重建在屏窗口。
+     *
+     * 悬浮窗是长命 Service，`AppCompatDelegate` 重建 Activity 时不会重建它，Service 自己的
+     * Resources 又恒定跟随系统 → 不主动重建的话：开着的菜单要等用户关掉重开才变色，悬浮球
+     * 一直停在旧配色。悬浮球用与主题同源的底色盘托住（自定义图标是用户 PNG，不能变色）。
+     */
+    private fun rebuildThemedWindows() {
+        // lateinit 字段在服务刚起、球还没加进窗口时不可读（`?.` 不防未初始化），先挡住
+        if (!ballViewAdded) return
+
+        floatingBallView.setBackground(ThemeManager.ballPlateDrawable(this))
+        // 在屏的菜单：AlertDialog 的 window 背景与主题上下文都是建时定死的，只能重建
+        val menu = menuDialog
+        if (menu != null && menu.isShowing) {
+            isMenuShowing = false
+            menu.setOnDismissListener(null)   // 别让 dismiss 把重建出来的菜单标记抹掉
+            menu.dismiss()
+            showMenuSimple(currentCropLabelForMenu())
+        }
     }
 
     private fun backToMainActivity() {
@@ -989,9 +1047,12 @@ class MangaFloatingService : LifecycleService() {
     /**
      * 获取当前源语言的显示名称
      */
-    private fun getCurrentSourceLangName(): String {
+    private fun getCurrentSourceLangName(): String = getCurrentSourceLangName(this)
+
+    /** 语言显示名的本地化跟随**弹窗上下文**：Service 自己的 Resources 不随 App_Language 变。 */
+    private fun getCurrentSourceLangName(ctx: android.content.Context): String {
         val lang = prefs.getString("Source_Language", "ja")
-        return com.moe.starflow.translate.CustomLocale.getInstance(lang).getDisplayName()
+        return com.moe.starflow.translate.CustomLocale.getInstance(lang).getDisplayName(ctx)
     }
 
     /**
@@ -1035,8 +1096,9 @@ class MangaFloatingService : LifecycleService() {
             if (idx < 0) sizes.indexOf("16").coerceAtLeast(0) else idx
         }
 
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(getString(R.string.manga_font_size_title))
+        val dlgCtx = ThemeManager.dialogContext(this)
+        val dialog = AlertDialog.Builder(dlgCtx)
+            .setTitle(dlgCtx.getString(R.string.manga_font_size_title))
             .setSingleChoiceItems(sizes, currentIndex) { d, which ->
                 if (which == 0) {
                     config = config.copy(autoFontSize = true)
@@ -1055,7 +1117,7 @@ class MangaFloatingService : LifecycleService() {
 
         dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
         dialog.show()
-        dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
+        dialog.window?.setBackgroundDrawableResource(ThemeManager.dialogBackgroundRes(this))
     }
 
     // ---------- Auto-translate — 智能状态机 ----------
@@ -1431,15 +1493,19 @@ class MangaFloatingService : LifecycleService() {
                             if (data.croppedBitmap != null) data.fullBitmap.recycle()
                             isProcessing = false
                             stopAutoTranslate()
-                            AlertDialog.Builder(this@MangaFloatingService)
-                                .setTitle(getString(R.string.dlg_manga_auto_timeout_title))
-                                .setMessage(getString(R.string.dlg_manga_auto_timeout_msg))
+                            val timeoutCtx = ThemeManager.dialogContext(this@MangaFloatingService)
+                            AlertDialog.Builder(timeoutCtx)
+                                .setTitle(timeoutCtx.getString(R.string.dlg_manga_auto_timeout_title))
+                                .setMessage(timeoutCtx.getString(R.string.dlg_manga_auto_timeout_msg))
                                 .setCancelable(false)
-                                .setPositiveButton(getString(R.string.confirm_ok), null)
+                                .setPositiveButton(timeoutCtx.getString(R.string.confirm_ok), null)
                                 .create()
                                 .apply {
                                     window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
                                     show()
+                                    window?.setBackgroundDrawableResource(
+                                        ThemeManager.dialogBackgroundRes(this@MangaFloatingService)
+                                    )
                                 }
                             return@collect
                         }
@@ -2211,7 +2277,11 @@ class MangaFloatingService : LifecycleService() {
                 bgColor = config.bgColor,
                 verticalDirection = config.textDirection,
                 fontTypeface = OverlayRenderer.loadResultTypeface(this@MangaFloatingService, prefs),
-                showCacheMarker = prefs.getBoolean(com.moe.starflow.data.TranslationCacheManager.KEY_CACHE_MARKER, false)
+                showCacheMarker = prefs.getBoolean(com.moe.starflow.data.TranslationCacheManager.KEY_CACHE_MARKER, false),
+                align = config.horizontalAlign,
+                trackingRatio = config.trackingRatio,
+                leadingRatio = config.leadingRatio,
+                density = resources.displayMetrics.density
             )
         }
         withContext(Dispatchers.Main) {
@@ -2264,7 +2334,11 @@ class MangaFloatingService : LifecycleService() {
                 bgColor = config.bgColor,
                 verticalDirection = config.textDirection,
                 fontTypeface = OverlayRenderer.loadResultTypeface(this@MangaFloatingService, prefs),
-                showCacheMarker = prefs.getBoolean(com.moe.starflow.data.TranslationCacheManager.KEY_CACHE_MARKER, false)
+                showCacheMarker = prefs.getBoolean(com.moe.starflow.data.TranslationCacheManager.KEY_CACHE_MARKER, false),
+                align = config.horizontalAlign,
+                trackingRatio = config.trackingRatio,
+                leadingRatio = config.leadingRatio,
+                density = resources.displayMetrics.density
             )
         }
 
@@ -2819,7 +2893,11 @@ class MangaFloatingService : LifecycleService() {
                     useOriginalText = copyOriginalMode,
                     verticalDirection = config.textDirection,
                     fontTypeface = OverlayRenderer.loadResultTypeface(this@MangaFloatingService, prefs),
-                    showCacheMarker = prefs.getBoolean(com.moe.starflow.data.TranslationCacheManager.KEY_CACHE_MARKER, false)
+                    showCacheMarker = prefs.getBoolean(com.moe.starflow.data.TranslationCacheManager.KEY_CACHE_MARKER, false),
+                    align = config.horizontalAlign,
+                    trackingRatio = config.trackingRatio,
+                leadingRatio = config.leadingRatio,
+                    density = resources.displayMetrics.density
                 )
             }
             withContext(Dispatchers.Main) {
@@ -3136,16 +3214,17 @@ class MangaFloatingService : LifecycleService() {
     private fun showStopTranslationDialog() {
         // ⚠️ 必须用 ThemeManager.dialogContext：Service 自己拿的是系统默认浅色主题，
         // 标题/正文恒为深色字，压在 dialog_background 翻出来的深色背景上会看不清
-        val dialog = android.app.AlertDialog.Builder(ThemeManager.dialogContext(this))
-            .setTitle(getString(R.string.dlg_translation_unfinished_title))
-            .setMessage(getString(R.string.dlg_translation_unfinished_msg))
-            .setPositiveButton(getString(R.string.stop)) { _, _ -> stopTranslationNow() }
-            .setNegativeButton(getString(R.string.continue_action), null)
+        val dlgCtx = ThemeManager.dialogContext(this)
+        val dialog = android.app.AlertDialog.Builder(dlgCtx)
+            .setTitle(dlgCtx.getString(R.string.dlg_translation_unfinished_title))
+            .setMessage(dlgCtx.getString(R.string.dlg_translation_unfinished_msg))
+            .setPositiveButton(dlgCtx.getString(R.string.stop)) { _, _ -> stopTranslationNow() }
+            .setNegativeButton(dlgCtx.getString(R.string.continue_action), null)
             .create()
         // ⚠️ Service 无 Activity token：必须先把对话框窗口类型设为 OVERLAY，否则 show() 抛 BadTokenException
         dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
         dialog.show()
-        dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
+        dialog.window?.setBackgroundDrawableResource(ThemeManager.dialogBackgroundRes(dlgCtx))
     }
 
     private fun stopTranslationNow() = cancelInFlightTranslation()

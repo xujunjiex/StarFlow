@@ -16,6 +16,7 @@ import android.graphics.Rect
 import android.graphics.Typeface
 import com.moe.starflow.manga.types.*
 import com.moe.starflow.manga.types.TextDirection
+import com.moe.starflow.manga.types.TextAlign
 import com.moe.starflow.utils.CustomPreference
 
 object OverlayRenderer {
@@ -40,15 +41,14 @@ object OverlayRenderer {
     private const val HORIZONTAL_SEPARATOR = "──"
 
     /**
-     * 竖排字符步距系数，必须与 VerticalTextRenderer 绘制一致（其内部 VERTICAL_CHAR_RATIO）。
-     * 尺寸计算若用更大的系数会高估每列容量不足 → 列数算多 → drawRect 宽出 1-2 列空白。
+     * 竖排字符步距系数。**单一来源已迁到 [LayoutEngine.VERTICAL_CHAR_RATIO]** ——
+     * 此前 OverlayRenderer 与 VerticalTextRenderer 各写一份并注释「必须一致」，
+     * 不一致即溢出（被 clipRect 静默裁掉）。这里保留别名只为合并块尺寸估算可读。
      */
-    private const val VERTICAL_CHAR_RATIO = 1.1f
+    private const val VERTICAL_CHAR_RATIO = LayoutEngine.VERTICAL_CHAR_RATIO
 
-    /**
-     * 横排行距系数（仅横排换行步进），保持与竖排字距解耦。
-     */
-    private const val HORIZONTAL_LINE_RATIO = 1.2f
+    /** 横排行距系数，单一来源同上。 */
+    private const val HORIZONTAL_LINE_RATIO = LayoutEngine.HORIZONTAL_LINE_RATIO
 
     /**
      * 竖排每列可容纳字符数，与 VerticalTextRenderer 绘制逻辑一致：
@@ -58,24 +58,6 @@ object OverlayRenderer {
         if (height <= 0) return 1
         val step = fontSize * VERTICAL_CHAR_RATIO
         return maxOf(1, ((height - fontSize) / step).toInt() + 1)
-    }
-
-    /** 竖排布局结果：列数 + 拉伸后的列距 */
-    private data class VerticalLayout(val columns: Int, val spacing: Float)
-
-    /**
-     * 竖排布局：列数由每列容量决定；列距在小范围 [1.0fs, 1.8fs] 内拉伸，
-     * 让文字列宽尽量填满 region 宽。
-     *
-     * 背景：列数是整数离散的（3 字要么 1 列要么 2 列），fit 字号无法精确填满气泡宽，
-     * 导致左侧空白列；拉伸列距（气泡宽/列数，clamp 到合理范围）可消除该空白。
-     */
-    private fun verticalLayout(textLength: Int, region: Rect, fontSize: Float): VerticalLayout {
-        val charsPerColumn = capacityForHeight(region.height(), fontSize)
-        val columns = (textLength + charsPerColumn - 1) / charsPerColumn
-        val target = region.width().toFloat() / columns.coerceAtLeast(1)
-        val spacing = target.coerceIn(fontSize, fontSize * 1.8f)
-        return VerticalLayout(columns, spacing)
     }
 
     /** 单气泡的绘制参数（Phase 1 产物） */
@@ -108,7 +90,11 @@ object OverlayRenderer {
         useOriginalText: Boolean = false,
         verticalDirection: TextDirection? = null,
         fontTypeface: Typeface? = null,
-        showCacheMarker: Boolean = false  // 缓存命中标记开关（⚡，默认关闭）
+        showCacheMarker: Boolean = false,  // 缓存命中标记开关（⚡，默认关闭）
+        align: TextAlign = TextAlign.CENTER,          // 横排对齐（竖排不受影响）
+        trackingRatio: Float = LayoutEngine.TRACKING_DEFAULT_RATIO,  // 用户字间距（×字号）
+        leadingRatio: Float = LayoutEngine.LEADING_DEFAULT_RATIO,    // 用户行间距（×字号）
+        density: Float = 1f                            // 用于把 MIN_PADDING_DP 换算成 px
     ): Bitmap {
         val result = original.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(result)
@@ -134,21 +120,24 @@ object OverlayRenderer {
             } else {
                 region.translatedText
             }
-            val baseFontSize = if (autoFit) region.fontSize else fontSize
-            // 自动：尽量放大填满气泡；非自动：用户字号原样，绝不缩放
+            // 自动模式的字号由 LayoutEngine 在绘制时按最终 drawRect 二分选定，此处不预估。
+            // ⚠️ 估计值只服务非自动路径的 calculateCompactRect：它决定 drawRect（收缩贴合 / 扩展），
+            // 而自动模式的 drawRect 恒为原气泡。
             val fitFontSize = if (autoFit) {
-                VerticalTextRenderer.calculateFitFontSize(
-                    displayText, region.rect, region.direction, baseFontSize
-                )
+                region.fontSize
             } else {
-                baseFontSize
+                fontSize
             }
             // 自动模式：drawRect 用原始气泡（覆盖原文区域），文字靠 fit 字号 + 列距填满气泡宽
             // 非自动模式：drawRect 贴合文字（收缩居中/平衡扩展）
             val neededRect = if (autoFit) {
                 region.rect
             } else {
-                calculateCompactRect(region.rect, displayText, region.direction, fitFontSize)
+                // 非自动模式：字号由用户定，矩形随文字实际尺寸扩展/收缩（见 calculateCompactRect）
+                calculateCompactRect(
+                    region.rect, displayText, region.direction, fitFontSize,
+                    trackingRatio, leadingRatio, LayoutEngine.MIN_PADDING_DP * density
+                )
             }
             Param(region, displayText, fitFontSize, neededRect)
         }
@@ -161,18 +150,20 @@ object OverlayRenderer {
         params.indices.groupBy { groupOf[it] }.forEach { (_, ids) ->
             val members = ids.map { params[it] }.filter { it.displayText.isNotEmpty() }
             if (members.isEmpty()) return@forEach
-            val singleton: DrawItem = {
+            // ⚠️ 「字号一致」这条只对**非自动**模式成立：那里字号由用户定，差异大时合并会比例失调。
+            // 自动模式下合并块由 LayoutEngine 的一次排版统一决定字号，「成员字号要一致」不再必要 ——
+            // 保留它反而会让原本能合并的组退回独立绘制，丢失 ◇ 分隔白块。
+            val sameFontOk = autoFit ||
+                members.all { kotlin.math.abs(it.fitFontSize - members[0].fitFontSize) < 2f }
+            if (members.size == 1) {
                 val m = members[0]
-                DrawItem(
+                drawItems += DrawItem(
                     m.neededRect, listOf(m.displayText), m.region.direction, m.fitFontSize,
                     merged = false, m.region.angle, m.region.centerX, m.region.centerY
                 )
-            }()
-            if (members.size == 1) {
-                drawItems += singleton
             } else if (members.all { !hasTilt(it.region) } &&
                 members.all { it.region.direction == members[0].region.direction } &&
-                members.all { kotlin.math.abs(it.fitFontSize - members[0].fitFontSize) < 2f }
+                sameFontOk
             ) {
                 // 同方向、无倾斜、字号一致 → 合并为一个白块，组内用记号分隔
                 drawItems += buildMergedItem(members)
@@ -212,35 +203,23 @@ object OverlayRenderer {
             } else {
                 item.displayTexts[0]
             }
-            // 竖排列距在小范围拉伸填满 drawRect 宽（列数是整数离散的，字号无法精确填满，
-            // 调列距可消除左侧空白列）
-            val columnSpacing = if (text.isNotEmpty() &&
-                (item.direction == TextDirection.VERTICAL_RL || item.direction == TextDirection.VERTICAL_LR)
-            ) {
-                verticalLayout(text.length, item.drawRect, item.fitFontSize).spacing
-            } else {
-                null
-            }
-            // 横排自动模式：填充排版（行距填高/字距填宽/垂直居中），译文尽量填满选区且不越界
-            val horizontalLayout = if (autoFit && item.direction == TextDirection.HORIZONTAL && text.isNotEmpty()) {
-                VerticalTextRenderer.computeHorizontalFillLayout(text, item.drawRect, item.fitFontSize)
-            } else {
-                null
-            }
-            VerticalTextRenderer.drawText(
-                canvas = canvas,
+            // 统一排版内核：字号选择 + 断行/分列 + 字距行距分配一次算完，产物保证不越出 drawRect。
+            // 自动模式由内核二分选字号；非自动模式字号原样、间距不拉伸（见三态行为矩阵）。
+            val layout = LayoutEngine.plan(
+                measurer = PaintTextMeasurer(Paint().apply { isAntiAlias = true; typeface = fontTypeface }),
                 text = text,
-                region = item.drawRect,
+                region = Box.from(item.drawRect),
                 direction = item.direction,
-                fontSize = item.fitFontSize,
-                textColor = textColor,
-                autoFit = false,
-                // 竖排列组水平居中：避免文字从右缘开始导致左侧整片空白
-                centered = true,
-                columnSpacingOverride = columnSpacing,
-                fontTypeface = fontTypeface,
-                horizontalLayout = horizontalLayout
+                requestedFontSize = item.fitFontSize,
+                autoFit = autoFit,
+                align = align,
+                trackingRatio = trackingRatio,
+                leadingRatio = leadingRatio,
+                // 绝对内边距：竖排左右、横排上下都留白，文字不贴 overlay 边缘。
+                // 用 px 而非「字号×比例」—— 自动字号会把字缩小，比例边距同步退化成 0。
+                minPaddingPx = LayoutEngine.MIN_PADDING_DP * density
             )
+            VerticalTextRenderer.draw(canvas, layout, textColor, fontTypeface)
             canvas.restore()
             canvas.restore()
         }
@@ -382,76 +361,57 @@ object OverlayRenderer {
     }
 
     /**
-     * 非自动模式专用：计算文字实际所需矩形。
+     * 非自动模式专用：计算文字实际所需矩形（字号由用户定，本函数只决定白块大小）。
      *
-     * 背景问题：小字号时文字不填满气泡，若 drawRect 用整个气泡 rect，背景色块会覆盖
-     * 大片空白。这里把 drawRect 收缩到「文字实际尺寸 + 小 padding」，视觉上白底贴合文字。
+     * 用户明确要求：**大文字超出原气泡就扩展、小文字就收缩**，且边距统一、
+     * 字号/字间距/行间距严格等于用户设定值。因此这里用 [LayoutEngine] 在**不限尺寸**的
+     * 虚构区域里量一次文字块的真实尺寸：
+     * - 任意文本都能精确量出（旧实现套用「平衡扩展」公式，与绘制未必一致 → 极长文本可能裁切）
+     * - 用户字距/行距被如实计入（旧实现只加 padding，间距调大了就会被裁）
      *
-     * 文字超出气泡（大字号长译文）时按文字实际所需尺寸扩展（贴合形状），锚点在文字流向
-     * 起始角；宽高都贴合文字，避免只横向拉宽 + 保留气泡原高导致的形状失衡与截断。
+     * 两侧边距严格相等：增长时以原气泡中心为锚点双向扩展（旧实现锚在「文字流向起始角」，
+     * 只往一侧长，看着像偏了）。
      */
     private fun calculateCompactRect(
         rect: Rect,
         text: String,
         direction: TextDirection,
-        fontSize: Float
+        fontSize: Float,
+        trackingRatio: Float,
+        leadingRatio: Float,
+        minPaddingPx: Float
     ): Rect {
-        val charHeight = fontSize * VERTICAL_CHAR_RATIO
-        val columnSpacing = fontSize * VERTICAL_CHAR_RATIO
-        val padding = (fontSize * 0.4f).toInt()
+        if (text.isEmpty() || fontSize <= 0f) return rect
+        val pad = LayoutEngine.paddingFor(
+            rect.width().toFloat(), rect.height().toFloat(), minPaddingPx
+        ).toInt()
 
-        val textW: Float
-        val textH: Float
-        when (direction) {
-            TextDirection.VERTICAL_RL, TextDirection.VERTICAL_LR -> {
-                // 列距拉伸填满气泡宽（列数离散，fit 字号无法精确填满，调列距消除左侧空白）
-                val layout = verticalLayout(text.length, rect, fontSize)
-                val charsPerColumn = capacityForHeight(rect.height(), fontSize)
-                textW = layout.columns * layout.spacing
-                textH = minOf(text.length, charsPerColumn) * charHeight
-            }
-            TextDirection.HORIZONTAL -> {
-                val paint = Paint().apply { textSize = fontSize }
-                val maxLineWidth = rect.width().toFloat()
-                var lines = 0
-                var maxLineW = 0f
-                for (paragraph in text.split("\n")) {
-                    if (paragraph.isEmpty()) { lines++; continue }
-                    var remaining = paragraph
-                    while (remaining.isNotEmpty()) {
-                        val count = paint.breakText(remaining, true, maxLineWidth, null)
-                        if (count <= 0) break
-                        val line = remaining.substring(0, count)
-                        maxLineW = maxOf(maxLineW, paint.measureText(line))
-                        remaining = remaining.substring(count)
-                        lines++
-                    }
-                }
-                textW = maxLineW
-                textH = lines * fontSize * HORIZONTAL_LINE_RATIO
-            }
+        // 量尺寸的区域：**只让「生长轴」无界**，另一轴沿用气泡尺寸以保持原有形状比例。
+        // ⚠️ 两轴都设无界是错的：竖排的每列容量由高度决定，高度无界 ⇒ 永远 1 列 ⇒ 文字块变成
+        // 一根极细极高的柱子（实测踩过）。横排向右排、向下生长；竖排向下排、向两侧生长。
+        val huge = if (direction == TextDirection.HORIZONTAL) {
+            Rect(0, 0, rect.width(), 1 shl 20)
+        } else {
+            Rect(0, 0, 1 shl 20, rect.height())
         }
+        val measured = LayoutEngine.plan(
+            measurer = PaintTextMeasurer(Paint().apply { textSize = fontSize; isAntiAlias = true }),
+            text = text,
+            region = Box.from(huge),
+            direction = direction,
+            requestedFontSize = fontSize,
+            autoFit = false,
+            align = TextAlign.LEFT,
+            trackingRatio = trackingRatio,
+            leadingRatio = leadingRatio,
+            minPaddingPx = 0f          // 尺寸已含 padding，这里不再叠加
+        )
+        if (measured.isEmpty) return rect
 
-        // 文字本体超出气泡 → 扩展：锚点在文字流向起始角（VERTICAL_RL 右上、VERTICAL_LR/HORIZONTAL 左上）。
-        if (textW > rect.width() || textH > rect.height()) {
-            if (direction == TextDirection.VERTICAL_RL || direction == TextDirection.VERTICAL_LR) {
-                // 竖排：宽高平衡扩展。长译文在矮气泡里若每列 1 字会无脑横向铺开，
-                // 覆盖大片无内容区域；限制列数、加大列高（利用垂直空间）换窄宽度。
-                val (bw, bh) = balancedVerticalSize(text.length, fontSize, rect.height(), rect.width())
-                val w = maxOf(1, bw + 2 * padding)
-                val h = maxOf(1, bh + 2 * padding)
-                val left = if (direction == TextDirection.VERTICAL_RL) rect.right - w else rect.left
-                return Rect(left, rect.top, left + w, rect.top + h)
-            }
-            // 横排：贴合文字形状（向下扩展）
-            val w = maxOf(1, (textW + 2 * padding).toInt())
-            val h = maxOf(1, (textH + 2 * padding).toInt())
-            return Rect(rect.left, rect.top, rect.left + w, rect.top + h)
-        }
+        val w = (measured.totalWidth + 2 * pad).toInt().coerceAtLeast(1)
+        val h = (measured.totalHeight + 2 * pad).toInt().coerceAtLeast(1)
 
-        // 收缩居中：背景贴合文字，气泡内其余区域露出原图（避免大片空白）
-        val w = (textW + 2 * padding).toInt().coerceIn(1, rect.width())
-        val h = (textH + 2 * padding).toInt().coerceIn(1, rect.height())
+        // 以原气泡中心为锚点：文字块比气泡小就收缩（露出原图），大就向外扩展
         val left = rect.centerX() - w / 2
         val top = rect.centerY() - h / 2
         return Rect(left, top, left + w, top + h)

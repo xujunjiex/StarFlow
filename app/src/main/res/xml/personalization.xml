@@ -124,6 +124,20 @@
             android:entries="@array/manga_text_direction_entries"
             android:entryValues="@array/manga_text_direction_values"/>
 
+        <ListPreference
+            android:key="manga_horizontal_align"
+            app:iconSpaceReserved="false"
+            android:defaultValue="1"
+            android:title="@string/manga_horizontal_align_title"
+            android:summary="@string/manga_horizontal_align_summary"
+            android:entries="@array/manga_horizontal_align_entries"
+            android:entryValues="@array/manga_horizontal_align_values"/>
+
+        <Preference
+            android:key="manga_spacing"
+            app:iconSpaceReserved="false"
+            android:title="@string/manga_spacing_title" />
+
         <com.jaredrummler.android.colorpicker.ColorPreferenceCompat
             android:key="manga_text_color"
             app:iconSpaceReserved="false"

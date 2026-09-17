@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.graphics.Rect
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -62,9 +63,55 @@ class OverlayRendererTest {
         out.recycle()
     }
 
+    /**
+     * ⚠️ 用户要求：**非自动模式也要应用用户填的字间距/行间距**（不只是自动模式）。
+     *
+     * 用较小字号让白块必然收缩在气泡内，然后断言「设了字距的白块更宽」——
+     * 若间距被忽略，两次结果会一模一样（旧实现正是如此）。
+     */
     @Test
-    fun smallFontNonAuto_compactRectCenteredInsideBubble() {
-        // 小字号非自动：drawRect 收缩居中，气泡内左边缘应露出原图（无大片空白），
+    fun nonAuto_spacingSettingsAffectDrawRect() {
+        val green = Color.rgb(0, 255, 0)
+        fun render(tracking: Float): Bitmap {
+            val bmp = solidBitmap(200, 200, green)
+            val bubble = TranslatedBubble(
+                rect = Rect(20, 20, 180, 180),
+                originalText = "ああ",
+                translatedText = "いいい",   // 3 字，留出字距空间
+                backgroundColor = Color.WHITE,
+                fontSize = 20f,             // 小字号 → 白块收缩在气泡内
+                direction = TextDirection.HORIZONTAL
+            )
+            val out = OverlayRenderer.renderOverlay(
+                original = bmp, regions = listOf(bubble),
+                fontSize = 20f, autoFit = false,
+                textColor = Color.BLACK, bgColor = Color.WHITE,
+                trackingRatio = tracking, density = 1f
+            )
+            bmp.recycle()
+            return out
+        }
+
+        val noSpacing = render(0f)
+        val withSpacing = render(1f)
+
+        // 沿白块中线量白色像素宽度（白底 + 黑字；只数纯白像素避免被字形干扰）
+        fun whiteRun(b: Bitmap): Int {
+            val y = b.height / 2
+            var count = 0
+            for (x in 0 until b.width) if (b.getPixel(x, y) == Color.WHITE) count++
+            return count
+        }
+        val w0 = whiteRun(noSpacing)
+        val w1 = whiteRun(withSpacing)
+        assertTrue("设了字距的白块应更宽（$w0 → $w1），否则说明间距没生效", w1 > w0)
+
+        noSpacing.recycle()
+        withSpacing.recycle()
+    }
+
+    @Test
+    fun smallFontNonAuto_compactRectCenteredInsideBubble() {        // 小字号非自动：drawRect 收缩居中，气泡内左边缘应露出原图（无大片空白），
         // 且中心点附近为文字背景（白底）。这里验证不崩溃 + 尺寸正确 + 气泡外像素不变。
         val green = Color.rgb(0, 255, 0)
         val bitmap = solidBitmap(100, 100, green)

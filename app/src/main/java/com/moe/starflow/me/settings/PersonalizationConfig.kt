@@ -28,6 +28,7 @@ import android.os.Bundle
 import android.provider.OpenableColumns
 import android.view.LayoutInflater
 import android.widget.EditText
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
@@ -37,6 +38,7 @@ import androidx.preference.PreferenceFragmentCompat
 import androidx.preference.SwitchPreference
 import com.jaredrummler.android.colorpicker.ColorPreferenceCompat
 import com.moe.starflow.R
+import com.moe.starflow.data.TranslationCacheManager
 import com.moe.starflow.translate.screenshot.AccessibilityServiceManager
 import com.moe.starflow.translate.CustomLocale
 import com.moe.starflow.translate.widget.Dialogs
@@ -128,6 +130,15 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
         resultFontSize.setOnPreferenceClickListener {
             showFontSizeDialog()
             true
+        }
+
+        // 漫画译文间距（字间距 + 行间距合并在一个面板里；整数百分比，读取方 /100 得 ×字号的倍率）
+        findPreference<Preference>("manga_spacing")?.let { p ->
+            updateSpacingSummary(p)
+            p.setOnPreferenceClickListener {
+                showSpacingDialog(p)
+                true
+            }
         }
 
         // UI 同步字体：切换后需重启应用生效，弹窗提示
@@ -342,6 +353,92 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
             Dialogs.FONT_SIZE_MIN.toInt().toString(),
             Dialogs.FONT_SIZE_MAX.toInt().toString()
         )
+    }
+
+    // ===== 字间距 / 行间距（一个面板管两项） =====
+
+    /** 间距上限（百分比）：100% = 一个字号。 */
+    private val MAX_SPACING_PERCENT = 100
+
+    /** 间距值：整数百分比 0..100（100% = 一个字号）。 */
+    private fun spacingPercent(key: String) =
+        prefs.getInt(key, 0).coerceIn(0, MAX_SPACING_PERCENT)
+
+    private fun updateSpacingSummary(pref: Preference) {
+        pref.summary = getString(
+            R.string.manga_spacing_summary_both,
+            spacingPercent(TranslationCacheManager.KEY_MANGA_TRACKING),
+            spacingPercent(TranslationCacheManager.KEY_MANGA_LEADING)
+        )
+    }
+
+    /** 一行「标签 + 百分比 + 滑块」；拖动时标签上的数值实时刷新。 */
+    private fun spacingRow(
+        ctx: android.content.Context,
+        labelRes: Int,
+        key: String
+    ): Pair<LinearLayout, android.widget.SeekBar> {
+        val density = ctx.resources.displayMetrics.density
+        val wrap = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, (12 * density).toInt(), 0, 0)
+        }
+        fun text(p: Int) = ctx.getString(labelRes) + "  " +
+            ctx.getString(R.string.manga_spacing_summary_value, p)
+        val label = TextView(ctx).apply {
+            text = text(spacingPercent(key))
+            textSize = 15f
+        }
+        val seek = android.widget.SeekBar(ctx).apply {
+            max = MAX_SPACING_PERCENT
+            progress = spacingPercent(key)
+            setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: android.widget.SeekBar?, p: Int, fromUser: Boolean) {
+                    label.text = text(p)
+                }
+                override fun onStartTrackingTouch(sb: android.widget.SeekBar?) = Unit
+                override fun onStopTrackingTouch(sb: android.widget.SeekBar?) = Unit
+            })
+        }
+        wrap.addView(label)
+        wrap.addView(seek)
+        return wrap to seek
+    }
+
+    /**
+     * 间距面板：字间距与行间距两个滑块同处一个弹窗，点「保存」一起落盘。
+     *
+     * ⚠️ 不用 `SeekBarPreference` —— 它在偏好条目里内联，拖动时数值不刷新（实测一直显示 0%），
+     * 且它把 progress 存成 int、与百分比语义容易打架。放对话框里自己控制最稳。
+     */
+    private fun showSpacingDialog(pref: Preference) {
+        val ctx = requireContext()
+        val container = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            val pad = (20 * ctx.resources.displayMetrics.density).toInt()
+            setPadding(pad, 0, pad, pad)
+        }
+        val (trackRow, trackSeek) = spacingRow(
+            ctx, R.string.manga_tracking_title, TranslationCacheManager.KEY_MANGA_TRACKING
+        )
+        val (leadRow, leadSeek) = spacingRow(
+            ctx, R.string.manga_leading_title, TranslationCacheManager.KEY_MANGA_LEADING
+        )
+        container.addView(trackRow)
+        container.addView(leadRow)
+
+        val dialog = AlertDialog.Builder(ctx)
+            .setTitle(R.string.manga_spacing_title)
+            .setView(container)
+            .setPositiveButton(R.string.save) { _, _ ->
+                prefs.setInt(TranslationCacheManager.KEY_MANGA_TRACKING, trackSeek.progress)
+                prefs.setInt(TranslationCacheManager.KEY_MANGA_LEADING, leadSeek.progress)
+                updateSpacingSummary(pref)
+            }
+            .setNegativeButton(R.string.user_cancel, null)
+            .create()
+        dialog.show()
+        dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
     }
 
     // 手势 key 列表，用于互换逻辑

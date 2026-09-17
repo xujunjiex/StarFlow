@@ -25,6 +25,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -58,8 +59,12 @@ class IncrementalBatchPipelineTest {
         var bubbleCount = 10
         var resolveRecLang: PPOcrV5Engine.RecLang? = PPOcrV5Engine.RecLang.JA
 
-        /** true 时识别返回空白文本 → 合并后无文字块，用于验证"首批为空"分支。 */
+        /** true 时识别返回空白文本 → 合并后无文字块，用于验证"整页无文字"分支。 */
         var blankRec = false
+
+        /** true 时**只有第一次识别**返回空白（= 首批无文字、次批有文字）。 */
+        var blankFirstCallOnly = false
+        private var recCallCount = 0
 
         override fun resolveRecLangV5(context: Context, lang: String): Pair<PPOcrV5Engine.RecLang?, String?> {
             calls += Call("resolveRecLangV5")
@@ -85,7 +90,8 @@ class IncrementalBatchPipelineTest {
             context: Context, crops: List<Bitmap>, lang: PPOcrV5Engine.RecLang,
         ): List<RecResult> {
             calls += Call("recognizeV5", crops.size)
-            return crops.mapIndexed { i, _ -> RecResult(if (blankRec) "" else "v5-$i", 1f) }
+            val blank = blankRec || (blankFirstCallOnly && recCallCount++ == 0)
+            return crops.mapIndexed { i, _ -> RecResult(if (blank) "" else "v5-$i", 1f) }
         }
 
         override suspend fun recognizeV6(context: Context, crops: List<Bitmap>): List<RecResult> {
@@ -279,16 +285,32 @@ class IncrementalBatchPipelineTest {
     }
 
     /**
-     * 对照用例：首批识别为空（识别返回空白文本）时，旧实现【会】调 finalizeIncremental，
-     * 所以这里必须是 Handled(emptyList())，不能一并归到 HandledEmpty。
+     * 首批识别为空（整组文字被识别成空白/合并掉）时，**第二批必须照常 OCR + 翻译**。
+     *
+     * 旧实现在首批为空时直接 return：第二批既不识别也不翻译、裁剪图也不回收，而服务侧照样
+     * 按「翻译完成」收尾（盖 lastTranslatedHash）——那半页永远翻不回来，自动翻译下还会
+     * 从此跳过该页。这条用例锁死「不能吞掉第二批」。
      */
     @Test
-    fun `首批识别为空仍走收尾路径`() = runTest {
+    fun `首批识别为空不得丢掉第二批`() = runTest {
+        ops.lineCount = 10
+        ops.blankFirstCallOnly = true
+        val host = FakeHost(ctx, FakeTranslator())
+        val outcome = pipeline(host, config(), this).run(bitmap())
+        val handled = outcome as? BatchOutcome.Handled
+        assertNotNull("首批空、次批有文字时必须按 Handled 收尾，实得 $outcome", handled)
+        assertTrue("第二批的译文不能被丢掉", handled!!.translated.isNotEmpty())
+    }
+
+    /**
+     * 两批都没识别出文字 → 与「未检测到文字」同义：走 HandledEmpty，绝不盖 lastTranslatedHash。
+     */
+    @Test
+    fun `两批都识别为空返回 HandledEmpty`() = runTest {
         ops.lineCount = 10
         ops.blankRec = true
         val host = FakeHost(ctx, FakeTranslator())
-        val outcome = pipeline(host, config(), this).run(bitmap())
-        assertEquals(BatchOutcome.Handled(emptyList()), outcome)
+        assertEquals(BatchOutcome.HandledEmpty, pipeline(host, config(), this).run(bitmap()))
     }
 
     @Test

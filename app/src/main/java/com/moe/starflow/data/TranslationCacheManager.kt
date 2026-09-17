@@ -28,6 +28,15 @@ class TranslationCacheManager(private val context: Context) {
 
         /** 缓存命中标记（⚡）开关 key，共享给 About 页与渲染配置 */
         const val KEY_CACHE_MARKER = "cache_hit_marker"
+
+        /** 横排译文对齐方式（"0"=左 / "1"=居中 / "2"=右，默认居中）。 */
+        const val KEY_MANGA_HORIZONTAL_ALIGN = "manga_horizontal_align"
+
+        /** 用户字间距（整数百分比 0..100，滑块 progress 1:1；读取时 /100 得倍率）。 */
+        const val KEY_MANGA_TRACKING = "manga_tracking"
+
+        /** 用户行间距（整数百分比 0..100，同上）。 */
+        const val KEY_MANGA_LEADING = "manga_leading"
         private const val SIMILARITY_THRESHOLD_MANGA = 0.95f  // 256-bit hash 相似度阈值（~13 bit 容差）
         private const val THUMBNAIL_SIZE = 200
         private const val AREA_RATIO_MIN = 0.8f   // 面积比下限（框选偏移面积变化 <1%，宽松允许 ±20%）
@@ -64,7 +73,10 @@ class TranslationCacheManager(private val context: Context) {
         val textColor: Int = android.graphics.Color.BLACK,
         val bgColor: Int = android.graphics.Color.argb(200, 255, 255, 255),
         val textDirection: com.moe.starflow.manga.types.TextDirection = com.moe.starflow.manga.types.TextDirection.VERTICAL_RL,
-        val showCacheMarker: Boolean = false  // 缓存命中标记（⚡，默认关闭）
+        val showCacheMarker: Boolean = false,  // 缓存命中标记（⚡，默认关闭）
+        val horizontalAlign: com.moe.starflow.manga.types.TextAlign = com.moe.starflow.manga.types.TextAlign.CENTER,
+        val trackingRatio: Float = 0f,         // 用户字间距（×字号）
+        val leadingRatio: Float = 0f           // 用户行间距（×字号）
     )
 
     /**
@@ -129,7 +141,11 @@ class TranslationCacheManager(private val context: Context) {
                         useOriginalText = (mode == OverlayMode.ORIGINAL),
                         verticalDirection = config.textDirection,
                         fontTypeface = fontTypeface,
-                        showCacheMarker = config.showCacheMarker
+                        showCacheMarker = config.showCacheMarker,
+                        align = config.horizontalAlign,
+                        trackingRatio = config.trackingRatio,
+                        leadingRatio = config.leadingRatio,
+                        density = context.resources.displayMetrics.density
                     )
                 } finally {
                     // fullBitmap 由 OverlayRenderer 内部 copy 后返回，需要 recycle 原图
@@ -165,7 +181,11 @@ class TranslationCacheManager(private val context: Context) {
                         useOriginalText = (mode == OverlayMode.ORIGINAL),
                         verticalDirection = config.textDirection,
                         fontTypeface = fontTypeface,
-                        showCacheMarker = config.showCacheMarker
+                        showCacheMarker = config.showCacheMarker,
+                        align = config.horizontalAlign,
+                        trackingRatio = config.trackingRatio,
+                        leadingRatio = config.leadingRatio,
+                        density = context.resources.displayMetrics.density
                     )
                 }
             } catch (e: Exception) {
@@ -183,10 +203,22 @@ class TranslationCacheManager(private val context: Context) {
         val autoFit = prefs.getBoolean("Manga_Auto_Font_Size", true)
         val textColor = prefs.getInt("Manga_Text_Color", android.graphics.Color.BLACK)
         val bgColor = prefs.getInt("Manga_BG_Color", android.graphics.Color.argb(200, 255, 255, 255))
-        val textDirection = if (prefs.getString("Manga_Text_Direction", "0") == "1")
-            com.moe.starflow.manga.types.TextDirection.VERTICAL_LR else com.moe.starflow.manga.types.TextDirection.VERTICAL_RL
+        val textDirection = com.moe.starflow.manga.types.VerticalFlow
+            .fromPref(prefs.getString("Manga_Text_Direction", "0"))
+            .toTextDirection()
         val showCacheMarker = prefs.getBoolean(KEY_CACHE_MARKER, false)
-        return OverlayConfig(fontSize, autoFit, textColor, bgColor, textDirection, showCacheMarker)
+        val horizontalAlign = when (prefs.getString(KEY_MANGA_HORIZONTAL_ALIGN, "1")) {
+            "0" -> com.moe.starflow.manga.types.TextAlign.LEFT
+            "2" -> com.moe.starflow.manga.types.TextAlign.RIGHT
+            else -> com.moe.starflow.manga.types.TextAlign.CENTER
+        }
+        // 存储是整数百分比（滑块 progress 1:1），读取时换算成 ×字号的倍率
+        val trackingRatio = prefs.getInt(KEY_MANGA_TRACKING, 0) / 100f
+        val leadingRatio = prefs.getInt(KEY_MANGA_LEADING, 0) / 100f
+        return OverlayConfig(
+            fontSize, autoFit, textColor, bgColor, textDirection,
+            showCacheMarker, horizontalAlign, trackingRatio, leadingRatio
+        )
     }
 
     // ========== 缓存操作 ==========

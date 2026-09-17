@@ -367,7 +367,7 @@ object BubbleDetector {
             TextLine(rect = rect, fontSize = fontSize, isVertical = isVertical, text = block.text)
         }
 
-        return doDetect(textLines, config.verticalTextDirection)
+        return doDetect(textLines, config.verticalFlow.toTextDirection())
     }
 
     /**

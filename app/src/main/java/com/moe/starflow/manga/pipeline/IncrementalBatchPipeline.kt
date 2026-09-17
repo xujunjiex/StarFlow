@@ -96,21 +96,28 @@ class IncrementalBatchPipeline(
      * 两批并行 OCR + 翻译 + 合并 + 上下文回滚 公共骨架（原 `translateFirstThenSecondBatch`）。
      * 调用方负责：第一批 OCR（[firstBubbleRegions]）、第二批 OCR 异步任务（[secondOcrJob]）的启动与取消。
      */
+    /** 分批翻译结果：译文 + 「有没有识别出任何文字块」（决定空结果算"未检测到文字"还是"翻译没产出"）。 */
+    private data class BatchTranslationResult(
+        val bubbles: List<TranslatedBubble>,
+        val recognizedAny: Boolean,
+    )
+
     private suspend fun translateFirstThenSecondBatch(
         firstBubbleRegions: List<BubbleRegion>,
         secondOcrJob: Deferred<List<TextBlockInfo>>,
-    ): List<TranslatedBubble> {
+    ): BatchTranslationResult {
         // 保存上下文历史大小，分批翻译完后回滚，避免污染后续页面的上下文
         val history = host.contextHistory()
         val contextSnapshotSize = history.size
+        suspend fun markTranslating() = withContext(Dispatchers.Main) {
+            host.onProgress(R.string.translating_do_not_tap)
+            host.onBallState(BallStateManager.State.Translating)
+        }
+
         val firstTranslated = if (firstBubbleRegions.isEmpty()) {
             emptyList()
         } else {
-            withContext(Dispatchers.Main) {
-                host.onProgress(R.string.translating_do_not_tap)
-                host.onBallState(BallStateManager.State.Translating)
-            }
-
+            markTranslating()
             val result = translateWithCache(firstBubbleRegions, forceContext = true) { partialBubbles ->
                 if (partialBubbles.isNotEmpty()) {
                     host.onPartialRender(partialBubbles)
@@ -119,20 +126,25 @@ class IncrementalBatchPipeline(
             if (result.isNotEmpty()) {
                 host.onBatchResult(result)
             }
+            result
+        }
 
-            val secondTextBlocks = secondOcrJob.await()
-            LogCollector.d(TAG, "第二批 OCR ${secondTextBlocks.size} 个文字块")
-            if (secondTextBlocks.isNotEmpty()) {
-                val secondBubbleRegions = MangaSpatialGrouping.textBlocksToBubbleRegions(
-                    secondTextBlocks, config.textDirection
-                )
-                result + translateWithCache(secondBubbleRegions, forceContext = true) { partialBubbles ->
-                    if (partialBubbles.isNotEmpty()) {
-                        host.onPartialRender(partialBubbles)
-                    }
+        // ⚠️ 第二批**必须**等出来并翻译：第一批识别为空（整组被合并/丢弃）时旧写法直接返回，
+        // 第二批既不 OCR 也不翻译、裁剪图也不回收，而服务侧照样按「翻译完成」收尾
+        // （盖 lastTranslatedHash）→ 这半页永远翻不回来，自动翻译下更是从此跳过该页
+        val secondTextBlocks = secondOcrJob.await()
+        LogCollector.d(TAG, "第二批 OCR ${secondTextBlocks.size} 个文字块")
+        val secondTranslated = if (secondTextBlocks.isEmpty()) {
+            emptyList()
+        } else {
+            if (firstTranslated.isEmpty()) markTranslating()  // 第一批没内容 → 这里补上翻译中状态
+            val secondBubbleRegions = MangaSpatialGrouping.textBlocksToBubbleRegions(
+                secondTextBlocks, config.textDirection
+            )
+            translateWithCache(secondBubbleRegions, forceContext = true) { partialBubbles ->
+                if (partialBubbles.isNotEmpty()) {
+                    host.onPartialRender(partialBubbles)
                 }
-            } else {
-                result
             }
         }
 
@@ -140,7 +152,10 @@ class IncrementalBatchPipeline(
         while (history.size > contextSnapshotSize) {
             history.removeLast()
         }
-        return firstTranslated
+        return BatchTranslationResult(
+            bubbles = firstTranslated + secondTranslated,
+            recognizedAny = firstBubbleRegions.isNotEmpty() || secondTextBlocks.isNotEmpty(),
+        )
     }
 
     /**
@@ -195,23 +210,41 @@ class IncrementalBatchPipeline(
             val firstTextBlocks = ops.recognizeCroppedBubbles(firstBatch, config.sourceLang)
             LogCollector.d(TAG, "rtDetrMangaOcr: 第一批 OCR ${firstTextBlocks.size} 个文字块")
 
-            val firstTranslated = if (firstTextBlocks.isEmpty()) {
+            val firstBubbleRegions = if (firstTextBlocks.isEmpty()) {
                 emptyList()
             } else {
-                val firstBubbleRegions = MangaSpatialGrouping.textBlocksToBubbleRegions(
-                    firstTextBlocks, config.textDirection
-                )
-                val ocr = scope.async(Dispatchers.IO) {
-                    ops.recognizeCroppedBubbles(secondBatch, config.sourceLang)
-                }
-                ocrJob = ocr
-                translateFirstThenSecondBatch(firstBubbleRegions, ocr)
+                MangaSpatialGrouping.textBlocksToBubbleRegions(firstTextBlocks, config.textDirection)
             }
+            val ocr = scope.async(Dispatchers.IO) {
+                ops.recognizeCroppedBubbles(secondBatch, config.sourceLang)
+            }
+            ocrJob = ocr
+            val batch = translateFirstThenSecondBatch(firstBubbleRegions, ocr)
 
-            return BatchOutcome.Handled(firstTranslated)
+            // 两批都没识别出文字 → 与「未检测到文字」同义：走 HandledEmpty（不盖 lastTranslatedHash）。
+            // 只翻不出东西（识别到了但翻译没产出）仍按 Handled 收尾，避免失败页被无脑重试
+            if (batch.bubbles.isEmpty() && !batch.recognizedAny) {
+                LogCollector.d(TAG, "rtDetrMangaOcr: 两批均无文字块")
+                if (!config.isAutoTranslating) {
+                    withContext(Dispatchers.Main) {
+                        host.onToast(host.context.getString(R.string.no_text_found), true)
+                    }
+                }
+                return BatchOutcome.HandledEmpty
+            }
+            return BatchOutcome.Handled(batch.bubbles)
         } catch (e: TranslationCancelledException) {
             // 用户停止翻译：重抛让 collector 识别为取消，绝不回退重新 OCR
             cancelAndJoinQuietly(ocrJob)
+            secondBatch.forEach { if (!it.croppedBitmap.isRecycled) it.croppedBitmap.recycle() }
+            throw e
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // 协程被取消（退出阅读器 / 关服务 / 双击暂停）：CancellationException 也是 Exception，
+            // 落到下面那个 catch 就会被记成「批次失败」并回退重跑 OCR（本文件的单批识别
+            // ocrBatch* 第 366/408 行就是这么处理的，这里必须一致）——重抛才是取消的语义
+            cancelAndJoinQuietly(ocrJob)
+            // 取消同样要回收第二批裁剪图：它不属于任何缓存，不回收就等 GC，下一批还要再分配一批
+            secondBatch.forEach { if (!it.croppedBitmap.isRecycled) it.croppedBitmap.recycle() }
             throw e
         } catch (e: Exception) {
             LogCollector.e(TAG, "rtDetrMangaOcr: 失败", e)
@@ -263,20 +296,37 @@ class IncrementalBatchPipeline(
             val firstTextBlocks = recognizePpBatchV5(firstBatch, ppRecLang)
             LogCollector.d(TAG, "ppOcrV5: 第一批 OCR ${firstTextBlocks.size} 个文字块")
 
-            val firstTranslated = if (firstTextBlocks.isEmpty()) {
+            val firstBubbleRegions = if (firstTextBlocks.isEmpty()) {
                 emptyList()
             } else {
-                val firstBubbleRegions = MangaSpatialGrouping.textBlocksToBubbleRegions(
-                    firstTextBlocks, config.textDirection
-                )
-                ocrJob = scope.async(Dispatchers.IO) { recognizePpBatchV5(secondBatch, ppRecLang) }
-                translateFirstThenSecondBatch(firstBubbleRegions, ocrJob)
+                MangaSpatialGrouping.textBlocksToBubbleRegions(firstTextBlocks, config.textDirection)
             }
+            val ocr = scope.async(Dispatchers.IO) { recognizePpBatchV5(secondBatch, ppRecLang) }
+            ocrJob = ocr
+            val batch = translateFirstThenSecondBatch(firstBubbleRegions, ocr)
 
-            return BatchOutcome.Handled(firstTranslated)
+            if (batch.bubbles.isEmpty() && !batch.recognizedAny) {
+                LogCollector.d(TAG, "ppOcrV5: 两批均无文字块")
+                if (!config.isAutoTranslating) {
+                    withContext(Dispatchers.Main) {
+                        host.onToast(host.context.getString(R.string.no_text_found), true)
+                    }
+                }
+                return BatchOutcome.HandledEmpty
+            }
+            return BatchOutcome.Handled(batch.bubbles)
         } catch (e: TranslationCancelledException) {
             // 用户停止翻译：重抛让 collector 识别为取消，绝不回退重新 OCR
             cancelAndJoinQuietly(ocrJob)
+            secondBatch.forEach { if (!it.croppedBitmap.isRecycled) it.croppedBitmap.recycle() }
+            throw e
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // 协程被取消（退出阅读器 / 关服务 / 双击暂停）：CancellationException 也是 Exception，
+            // 落到下面那个 catch 就会被记成「批次失败」并回退重跑 OCR（本文件的单批识别
+            // ocrBatch* 第 366/408 行就是这么处理的，这里必须一致）——重抛才是取消的语义
+            cancelAndJoinQuietly(ocrJob)
+            // 取消同样要回收第二批裁剪图：它不属于任何缓存，不回收就等 GC，下一批还要再分配一批
+            secondBatch.forEach { if (!it.croppedBitmap.isRecycled) it.croppedBitmap.recycle() }
             throw e
         } catch (e: Exception) {
             LogCollector.e(TAG, "ppOcrV5: 失败", e)
@@ -320,19 +370,36 @@ class IncrementalBatchPipeline(
             val firstTextBlocks = recognizePpBatchV6(firstBatch)
             LogCollector.d(TAG, "ppOcrV6: 第一批 OCR ${firstTextBlocks.size} 个文字块")
 
-            val firstTranslated = if (firstTextBlocks.isEmpty()) {
+            val firstBubbleRegions = if (firstTextBlocks.isEmpty()) {
                 emptyList()
             } else {
-                val firstBubbleRegions = MangaSpatialGrouping.textBlocksToBubbleRegions(
-                    firstTextBlocks, config.textDirection
-                )
-                ocrJob = scope.async(Dispatchers.IO) { recognizePpBatchV6(secondBatch) }
-                translateFirstThenSecondBatch(firstBubbleRegions, ocrJob)
+                MangaSpatialGrouping.textBlocksToBubbleRegions(firstTextBlocks, config.textDirection)
             }
+            val ocr = scope.async(Dispatchers.IO) { recognizePpBatchV6(secondBatch) }
+            ocrJob = ocr
+            val batch = translateFirstThenSecondBatch(firstBubbleRegions, ocr)
 
-            return BatchOutcome.Handled(firstTranslated)
+            if (batch.bubbles.isEmpty() && !batch.recognizedAny) {
+                LogCollector.d(TAG, "ppOcrV6: 两批均无文字块")
+                if (!config.isAutoTranslating) {
+                    withContext(Dispatchers.Main) {
+                        host.onToast(host.context.getString(R.string.no_text_found), true)
+                    }
+                }
+                return BatchOutcome.HandledEmpty
+            }
+            return BatchOutcome.Handled(batch.bubbles)
         } catch (e: TranslationCancelledException) {
             cancelAndJoinQuietly(ocrJob)
+            secondBatch.forEach { if (!it.croppedBitmap.isRecycled) it.croppedBitmap.recycle() }
+            throw e
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // 协程被取消（退出阅读器 / 关服务 / 双击暂停）：CancellationException 也是 Exception，
+            // 落到下面那个 catch 就会被记成「批次失败」并回退重跑 OCR（本文件的单批识别
+            // ocrBatch* 第 366/408 行就是这么处理的，这里必须一致）——重抛才是取消的语义
+            cancelAndJoinQuietly(ocrJob)
+            // 取消同样要回收第二批裁剪图：它不属于任何缓存，不回收就等 GC，下一批还要再分配一批
+            secondBatch.forEach { if (!it.croppedBitmap.isRecycled) it.croppedBitmap.recycle() }
             throw e
         } catch (e: Exception) {
             LogCollector.e(TAG, "ppOcrV6: 失败", e)

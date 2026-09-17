@@ -57,9 +57,8 @@ object DetectionBridge {
     private fun sortResultsByReadingOrder(results: List<TextBlockInfo>): List<TextBlockInfo> {
         if (results.isEmpty()) return results
 
-        val isVertical = results.count { r ->
-            r.boundingBox?.let { it.height() > it.width() } ?: false
-        } > results.size / 2
+        // 整页方向判定收敛到 BubbleOrientation（弱信号，按块 AABB 多数投票）
+        val isVertical = BubbleOrientation.isPageVertical(results)
 
         return if (isVertical) {
             results.sortedWith(compareBy({ r -> -((r.boundingBox?.centerX() ?: 0)) }, { r -> r.boundingBox?.centerY() ?: 0 }))
@@ -466,7 +465,7 @@ object DetectionBridge {
                 val text = texts[i].trim()
                 if (text.isNotBlank() && !isDotOnlyPattern(text)) {
                     val rect = sortedBubbles[i].rect
-                    val isVertical = rect.height() > rect.width()
+                    val isVertical = BubbleOrientation.textVerticalFromBubbleAabb(rect)
                     results.add(TextBlockInfo(
                         text = text,
                         boundingBox = rect,
@@ -580,7 +579,7 @@ object DetectionBridge {
             val text = texts[i].trim()
             if (text.isNotBlank() && !isDotOnlyPattern(text)) {
                 val bubble = croppedBubbles[i]
-                val isVertical = bubble.rect.height() > bubble.rect.width()
+                val isVertical = BubbleOrientation.textVerticalFromBubbleAabb(bubble.rect)
                 results.add(TextBlockInfo(
                     text = text,
                     boundingBox = bubble.rect,
@@ -625,7 +624,7 @@ object DetectionBridge {
             val trimmed = text.trim()
             if (trimmed.isNotBlank() && !isDotOnlyPattern(trimmed)) {
                 val bubble = croppedBubbles[i]
-                val isVertical = bubble.rect.height() > bubble.rect.width()
+                val isVertical = BubbleOrientation.textVerticalFromBubbleAabb(bubble.rect)
                 channel.send(Pair(i, TextBlockInfo(
                     text = trimmed,
                     boundingBox = bubble.rect,
@@ -955,9 +954,10 @@ object DetectionBridge {
 
             // 识别后合并（对齐参考项目 merge_bboxes_text_region）
             TextRegionMerger.refreshParams(context)
-            // 竖排方向遵循用户配置（Manga_Text_Direction）
-            val textDirection = if (com.moe.starflow.utils.CustomPreference.getInstance(context).getString("Manga_Text_Direction", "0") == "1")
-                TextDirection.VERTICAL_LR else TextDirection.VERTICAL_RL
+            // 竖排书写流向遵循用户配置（Manga_Text_Direction）；解析统一走 VerticalFlow
+            val textDirection = VerticalFlow
+                .fromPref(com.moe.starflow.utils.CustomPreference.getInstance(context).getString("Manga_Text_Direction", "0"))
+                .toTextDirection()
             val allMerged = TextRegionMerger.merge(textLines.map { TextRegion(quad = QuadBox(it.quadPoints), text = it.text, score = it.score) }, verticalDirection = textDirection)
             // 合并后内容过滤：丢弃空白、单字符、纯符号、短数字
             val mergedRegions = allMerged.filter { region ->
@@ -1069,9 +1069,10 @@ object DetectionBridge {
 
             // 识别后合并（对齐参考项目 merge_bboxes_text_region）
             TextRegionMerger.refreshParams(context)
-            // 竖排方向遵循用户配置（Manga_Text_Direction）
-            val textDirection = if (com.moe.starflow.utils.CustomPreference.getInstance(context).getString("Manga_Text_Direction", "0") == "1")
-                TextDirection.VERTICAL_LR else TextDirection.VERTICAL_RL
+            // 竖排书写流向遵循用户配置（Manga_Text_Direction）；解析统一走 VerticalFlow
+            val textDirection = VerticalFlow
+                .fromPref(com.moe.starflow.utils.CustomPreference.getInstance(context).getString("Manga_Text_Direction", "0"))
+                .toTextDirection()
             val allMerged = TextRegionMerger.merge(textLines.map { TextRegion(quad = QuadBox(it.quadPoints), text = it.text, score = it.score) }, verticalDirection = textDirection)
             // 合并后内容过滤：丢弃空白、单字符、纯符号、短数字
             val mergedRegions = allMerged.filter { region ->
