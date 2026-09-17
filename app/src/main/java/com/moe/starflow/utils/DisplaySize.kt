@@ -64,37 +64,48 @@ object DisplaySize {
      * 而**方向**才是它们都答不出的那一个问题。取值时用朝向校正宽高配对即可。
      */
     fun reportOrientation(isLandscape: Boolean) {
-        if (landscape == isLandscape) return
-        landscape = isLandscape
+        if (orientation == isLandscape) return
+        orientation = isLandscape
+        orientationAt = now()
         LogCollector.d(TAG, "朝向上报: ${if (isLandscape) "横屏" else "竖屏"}")
     }
 
     /** null = 未知（尚未收到配置变更，也没有窗口几何） */
     @Volatile
-    private var landscape: Boolean? = null
+    private var orientation: Boolean? = null
+    /** [orientation] 的写入时刻 */
+    @Volatile
+    private var orientationAt: Long = 0L
+
+    /** 单调时钟（比较新旧用，不受系统时间调整影响）。 */
+    private fun now(): Long = android.os.SystemClock.elapsedRealtime()
 
     /**
-     * 当前**已知**的朝向（来自窗口几何上报或上次配置回调）；null = 未知。
+     * 当前**已知**的朝向；null = 未知。
      *
-     * 用于判断「这次配置回调是否真的翻转了朝向」：`onConfigurationChanged` 对
-     * 改字号/语言/密度同样会触发，只有朝向变了才该清框停翻译。
-     * ⚠️ 比较基准必须是**这个**（它反映我们正在用的几何），不能是调用方自己
-     * 从 null 开始的局部变量 —— 那样服务启动后的**第一次**转屏会被当成「无法判断」而放过。
+     * ⚠️ 取「更新的那个来源」而不是某个固定优先级：朝向有两个写入方
+     * （本回调 vs 窗口几何上报），它们新鲜度不同、**谁对取决于谁更晚写**。
+     * 早期实现让其中一个无条件覆盖另一个，于是「窗口陈旧时压过新鲜朝向」与
+     * 「闩锁陈旧时对调窗口」两种 bug 交替出现 —— 调优先级永远调不对。
      */
-    fun currentOrientation(): Boolean? = landscape
+    fun currentOrientation(): Boolean? {
+        val laid = laidOut
+        if (laidAt > orientationAt && laid.x > 0 && laid.y > 0) return laid.x > laid.y
+        return orientation
+    }
 
     fun reportLaidOutSize(w: Int, h: Int) {
         if (w <= 0 || h <= 0) return
-        // ⚠️ 窗口的宽高关系**就是**当前朝向，用它覆盖闩锁。
-        // 不覆盖的话：进程内横屏过一次后闩锁永久为 true，之后竖屏下会把窗口读数
-        // 1080x2400 **对调**成 2400x1080 → 每次几何比对都判「变了」→ 框选后必被清掉
-        // （实测：时有时无，取决于本进程启动后有没有转过屏）。
-        landscape = w > h
+        laidAt = now()
         val old = laidOut
         if (old.x == w && old.y == h) return
         laidOut = Point(w, h)
         LogCollector.d(TAG, "已布局窗口几何更新: ${old.x}x${old.y} → ${w}x$h")
     }
+
+    /** 已布局窗口几何的写入时刻 */
+    @Volatile
+    private var laidAt: Long = 0L
 
     /**
      * 当前**显示**几何（物理像素，含系统栏区域）。
@@ -103,34 +114,42 @@ object DisplaySize {
      */
     fun size(ctx: Context): Point {
         val legacy = legacySize(ctx)
-        val r = resolve(laidOut.x, laidOut.y, legacy.x, legacy.y, landscape)
+        val laid = laidOut
+        val r = resolve(laid.x, laid.y, laidAt, legacy.x, legacy.y, orientation, orientationAt)
         // 结果与 Display 读数一致时才可信（不一致说明窗口被系统缩小、由 max 补齐过）
         isReliable = (r[0] == legacy.x && r[1] == legacy.y)
         return Point(r[0], r[1])
     }
 
     /**
-     * **纯函数**：由「已布局窗口 / Display 读数 / 已知朝向」推出显示尺寸。
+     * **纯函数**：由「已布局窗口（含写入时刻）/ Display 读数 / 已知朝向（含写入时刻）」
+     * 推出显示尺寸。
      *
-     * 单独抽出来的唯一目的是**可测**：`size()` 需要 Context/WindowManager，本机
-     * Robolectric 取屏幕尺寸不可靠，而这条规则历史上出过两次方向相关的回归
-     * （逐轴取 max 拼出畸形尺寸、闩锁把竖屏窗口对调），都只能靠直接测规则才发现。
+     * ## 为什么用时刻而不是优先级
      *
-     * 规则：
-     * 1. 无窗口读数 ⇒ 用 Display 读数，按已知朝向配对
-     * 2. 有窗口读数 ⇒ **朝向以窗口为准**（WMS 真布局，比"最后一次回调说了什么"可信）
-     * 3. 屏幕 ≥ 任何窗口 ⇒ 逐轴取大，但 Display 读数先按窗口方向配对（否则 max 会拼出畸形尺寸）
+     * 早期实现让两个来源之一**无条件**压过另一个，于是同一类 bug 反复以两种面貌出现：
+     * - 窗口优先 ⇒ 横屏框选后转回竖屏，**陈旧的窗口读数**把帧建回横屏 → 译文位置全错
+     * - 朝向优先 ⇒ 配置回调漏掉时，**非法的陈旧朝向**把新鲜窗口读数对调 → 框选后必被清
      *
-     * @param laid    已布局窗口尺寸（0,0 = 尚无）
-     * @param legacy  Display 读数
-     * @param orientationIsLandscape 已知朝向（null = 未知）
+     * 两者都不是「优先级选错了」，而是**依赖了一个没有时间信息的全局缓存**：
+     * 同一份状态两个写入方，谁对取决于谁更晚写。记下时刻后，判断从「策略」变成「事实」。
+     *
+     * ## 规则（无仲裁，只有一条时间比较）
+     *
+     * 1. 窗口读数**不比朝向更新**（含无窗口读数）⇒ 只信 Display 读数 + 已知朝向
+     * 2. 窗口读数更新 ⇒ 它的宽高关系**就是**当前朝向，像素逐轴取大（屏幕 ≥ 任何窗口）
      */
     fun resolve(
-        laidW: Int, laidH: Int, legacyW: Int, legacyH: Int, orientationIsLandscape: Boolean?
+        laidW: Int, laidH: Int, laidAt: Long,
+        legacyW: Int, legacyH: Int,
+        orientationIsLandscape: Boolean?, orientationAt: Long
     ): IntArray {
-        if (laidW <= 0 || laidH <= 0) {
+        val hasWindow = laidW > 0 && laidH > 0
+        if (!hasWindow || laidAt < orientationAt) {
+            // 窗口没有读数，或比朝向更旧（框选确认后 CropView 移除 → 值冻结在那一刻）
             return alignTo(legacyW, legacyH, orientationIsLandscape)
         }
+        // 窗口更新 ⇒ 它就是当前几何；Display 读数先按同方向配对，再逐轴取大
         val laidLandscape = laidW > laidH
         val legacy = alignTo(legacyW, legacyH, laidLandscape)
         return intArrayOf(maxOf(laidW, legacy[0]), maxOf(laidH, legacy[1]))
