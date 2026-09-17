@@ -130,7 +130,15 @@ object DisplaySize {
     private fun alignTo(w: Int, h: Int, asLandscape: Boolean?): IntArray {
         if (asLandscape == null || w <= 0 || h <= 0) return intArrayOf(w, h)
         if ((w > h) == asLandscape) return intArrayOf(w, h)
-        return intArrayOf(maxOf(w, h), minOf(w, h))
+        // ⚠️ 要横屏 → (长, 短)；要竖屏 → (短, 长)。
+        // 曾两种情况都返回 (max, min) —— 那对「要竖屏」是错的（结果仍是横屏形状），
+        // 随后逐轴 max 会把两个方向的分量撞成相等的**正方形**（实测 1080x2400 vs 2400x1080
+        // → 2400x2400），拿它去建 VirtualDisplay 帧就是废的。
+        return if (asLandscape) {
+            intArrayOf(maxOf(w, h), minOf(w, h))
+        } else {
+            intArrayOf(minOf(w, h), maxOf(w, h))
+        }
     }
 
     /**

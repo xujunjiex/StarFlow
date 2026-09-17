@@ -1244,9 +1244,13 @@ class MangaFloatingService : LifecycleService() {
      * ⚠️ 也不能用 `getScreenSize()`：它依赖 `CropView.onSizeChanged` 上报，框选确认后
      * CropView 已移除 → 该值冻结在框选那一刻，比对恒为「未变化」（与旧判据同样的失效模式）。
      */
-    private fun cropGeometryChanged(frame: android.util.Size? = null): Boolean {
+    private fun cropGeometryChanged(): Boolean {
         val saved = cropRectFrameSize ?: return false
-        val now = frame ?: getScreenSize().let { android.util.Size(it.width, it.height) }
+        // ⚠️ 基准与比较**必须同源**：都是 `getScreenSize()`。
+        // 曾用「框选时记 cropView 尺寸、之后比截图帧尺寸」——那两个不是同一个量
+        // （窗口避开手势条时 1080x2400，而 DisplaySize 会与 Display 读数取大补回屏幕），
+        // 于是**每次框选都被判「几何变化」**（实测稳态复现，不是偶发）。
+        val now = getScreenSize()
         return now.width != saved.width || now.height != saved.height
     }
 
@@ -1309,22 +1313,32 @@ class MangaFloatingService : LifecycleService() {
      * 这里直接清框，不经过几何查询：几何查询（`getScreenSize` → `CropView.onSizeChanged`
      * 上报）在框选确认、CropView 已移除之后是**冻结**的，问它必然答「没变」。
      */
+    /** 上一次配置回调的朝向：用于区分「真的翻转」与「改字号/语言」等无关变更 */
+    private var lastConfigLandscape: Boolean? = null
+
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
         // ⚠️ 上报当前朝向：转屏后这是进程里**唯一新鲜**的方向信号。
         // 不报的话 DisplaySize 会拿「框选窗已移除→窗口读数陈旧」+「Display 冻结」两个
         // 都指向旧方向的来源去建帧 → 设备已横屏而帧仍是竖屏 → OCR 跑在转了 90° 的图上。
-        com.moe.starflow.utils.DisplaySize.reportOrientation(
+        val nowLandscape =
             newConfig.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-        )
-        clearCropForScreenChange()
+        com.moe.starflow.utils.DisplaySize.reportOrientation(nowLandscape)
+        // ⚠️ 只在本回调**朝向真的翻转**时清框。`onConfigurationChanged` 对**任何**配置变更
+        // 都会触发（改字号 / 语言 / 密度 / uiMode…），那些不涉及坐标，无条件清框会把用户
+        // 刚框好、正在自动翻译的会话平白毁掉。
+        // 首次回调（prev==null）无法判断是否翻转 → 不清，交给几何比对（ensureCropStillValid）兜底。
+        val prev = lastConfigLandscape
+        lastConfigLandscape = nowLandscape
+        if (prev != null && prev != nowLandscape) clearCropForScreenChange()
     }
 
     private fun confirmCrop() {
         cropRect = RectF(cropView.mRect)
-        // 记下这次框选是在哪套几何下选的。用 cropView 自身尺寸 ——
-        // 框选窗口与截图帧同几何（帧尺寸正是从窗口学的），见 ensureCropStillValid
-        cropRectFrameSize = android.util.Size(cropView.width, cropView.height)
+        // ⚠️ 记的必须是 `getScreenSize()`（= DisplaySize.size()），**不能**用 cropView 尺寸 ——
+        // 二者不是同一个量（窗口避开手势条 1080x2400，DisplaySize 补回屏幕 1080x2400+），
+        // 拿窗口值当基准会让之后每次比对都不等 → 每次框选都被判「几何变化」。见 cropGeometryChanged。
+        cropRectFrameSize = getScreenSize()
         isCropActive = false
 
         try {
@@ -1620,10 +1634,7 @@ class MangaFloatingService : LifecycleService() {
 
                 // ⚠️ 判定要在拿到**新鲜帧**时做：帧尺寸与框选窗口同几何，是唯一不受
                 // 「CropView 已移除 → 几何查询冻结」影响的变化证据（见 ensureCropStillValid）。
-                if (cropRect != null && cropGeometryChanged(
-                        android.util.Size(data.fullBitmap.width, data.fullBitmap.height)
-                    )
-                ) {
+                if (cropRect != null && cropGeometryChanged()) {
                     // ⚠️ 本帧是**用旧框裁出来的**（截图请求发出时框还没失效），继续翻会按旧坐标出结果
                     LogCollector.d(TAG, "Screenshot collector: 截图帧几何变化，清框选并作废本帧")
                     clearCropForScreenChange()

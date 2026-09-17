@@ -1,6 +1,7 @@
 package com.moe.starflow.utils
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -94,6 +95,26 @@ class DisplaySizeResolveTest {
             1220 to 2712,
             resolve(laid = 0 to 0, legacy = 1220 to 2712, landscape = false)
         )
+    }
+
+    /**
+     * ⚠️ 实测 bug：`alignTo` 曾无论要哪个朝向都返回 `(max, min)`，于是「要竖屏」时配错，
+     * 随后逐轴 max 把两个方向的分量撞成**正方形**：
+     * 窗口 1080x2400、Display 读数 2400x1080 → **2400x2400**。
+     * 拿它建 VirtualDisplay，帧就是废的（宽高比全错）。
+     */
+    @Test
+    fun neverProducesSquareFromCrossOrientedSources() {
+        val got = resolve(laid = 1080 to 2400, legacy = 2400 to 1080, landscape = false)
+        assertTrue("不得拼出正方形尺寸：$got", got.first != got.second)
+        assertEquals("应保持窗口的竖屏形状", 1080 to 2400, got)
+    }
+
+    @Test
+    fun neverProducesSquare_landscapeWindow() {
+        val got = resolve(laid = 2400 to 1080, legacy = 1080 to 2400, landscape = true)
+        assertTrue("不得拼出正方形尺寸：$got", got.first != got.second)
+        assertEquals("应保持窗口的横屏形状", 2400 to 1080, got)
     }
 
     // ---------- 退化输入 ----------

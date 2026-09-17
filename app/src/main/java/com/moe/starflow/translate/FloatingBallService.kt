@@ -385,21 +385,30 @@ class FloatingBallService : LifecycleService() {
      * 屏幕旋转时：旧框选坐标（属于旋转前的坐标系）几何上已失效，
      * 强制置空 mRectF 要求重新框选；若正在自动翻译则停止，避免用错误坐标继续翻译。
      */
+    /** 上一次配置回调的朝向：用于区分「真的翻转」与「改字号/语言」等无关变更 */
+    private var lastConfigLandscape: Boolean? = null
+
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
         // ⚠️ 上报当前朝向：转屏后这是进程里**唯一新鲜**的方向信号。
         // 不报的话，DisplaySize 会拿「框选窗已移除→窗口读数陈旧」+「Display 冻结」两个
         // 都指向旧方向的来源去建帧 → 设备已横屏而帧仍是竖屏 → OCR 跑在转了 90° 的图上
         // → 识别 0 结果（实测 00:06:47 shot OK: 1220x2712，而当时设备是横屏）。
-        com.moe.starflow.utils.DisplaySize.reportOrientation(
+        val nowLandscape =
             newConfig.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-        )
+        com.moe.starflow.utils.DisplaySize.reportOrientation(nowLandscape)
         // ⚠️ 这里**直接**清框，不经过任何几何查询：本回调被触发本身就是「显示变了」的确证，
         // 而几何查询（getScreenSize → CropView.onSizeChanged 上报）在框选确认、CropView
         // 已移除之后是**冻结**的，问它必然答「没变」。用过期的判据去决定要不要失效，
         // 正是此前反复出错的模式（见 ensureCropStillValid 的注释）。
         // 横→竖、竖→横两个方向都会走到这里。
-        clearCropForScreenChange()
+        // ⚠️ 只在本回调**朝向真的翻转**时清框。`onConfigurationChanged` 对**任何**配置变更
+        // 都会触发（改字号 / 语言 / 密度 / uiMode…），那些不涉及坐标，无条件清框会把用户
+        // 刚框好、正在自动翻译的会话平白毁掉。
+        // 首次回调（prev==null）无法判断是否翻转 → 不清，交给几何比对（ensureCropStillValid）兜底。
+        val prev = lastConfigLandscape
+        lastConfigLandscape = nowLandscape
+        if (prev != null && prev != nowLandscape) clearCropForScreenChange()
     }
 
     // 缓存管理
@@ -1294,7 +1303,7 @@ class FloatingBallService : LifecycleService() {
         pendingAutoStart = false
 
         // 此处尚无截图帧：做一次「上次已知几何」的廉价判定（真正的判定在 collector 拿到帧后做）
-        if (ensureCropStillValid(null)) return
+        if (ensureCropStillValid()) return
         if (isTranslating.get()) {
             showToast(getString(R.string.is_translating), true)
         }
@@ -1416,9 +1425,12 @@ class FloatingBallService : LifecycleService() {
 
     private fun confirmCrop() {
         mRectF = cropView.mRect
-        // 记下这次框选是在哪套几何下选的。用 cropView 自身尺寸 ——
-        // 框选窗口与截图帧同几何（帧尺寸正是从窗口学的），见 ensureCropStillValid
-        mRectFrameSize = android.util.Size(cropView.width, cropView.height)
+        // ⚠️ 记的必须是 `getScreenSize()`（= DisplaySize.size()），**不能**用 cropView 尺寸。
+        // 二者不是同一个量：窗口会被系统缩小以避开手势条（1220x2660），而 DisplaySize 会与
+        // Display 读数取大补回屏幕（1220x2712）→ 拿窗口值当基准，之后每次比对都不等 →
+        // **每次框选都被判「几何变化」而清掉**（实测稳态复现，不是偶发）。
+        // 基准与比较必须同源，见 ensureCropStillValid。
+        mRectFrameSize = getScreenSize()
         // ⚠️ 复位「曾被屏幕变化清除」标志：用户已经重新框选，此后未框选的提示
         // 不该再归因于屏幕变化。不复位的话一次转屏之后**永远**显示
         // 「屏幕方向已变化…请重新框选」（实测误导用户）。
@@ -1504,26 +1516,24 @@ class FloatingBallService : LifecycleService() {
     private var cropClearedByScreenChange = false
 
     /**
-     * 截图帧的几何与「框选时」不一致 → 旧框选坐标已失效：清掉框选、停自动翻译、要求重新框选。
+     * 当前显示几何与「框选时」不一致 → 旧框选坐标已失效：清掉框选、停自动翻译、要求重新框选。
      *
-     * @param frame 本次截图帧的实测尺寸。传 null 表示「此刻拿不到新鲜帧」（如触发前守卫 /
-     *              配置变更回调），此时退回与**窗口几何查询**比对 —— 该查询在 CropView 已移除
-     *              后会失真，所以只能当廉价兜底，**真正的判定在 collector 拿到帧后做**。
+     * ⚠️ 基准与比较**必须同源**：都用 `getScreenSize()`（= `DisplaySize.size()`）。
+     * 曾用「框选时记 cropView 尺寸、之后比截图帧尺寸」——那两个是不同的量
+     * （窗口避开手势条时 1220x2660，而 DisplaySize 会补回屏幕 1220x2712），
+     * 于是**每次框选都被判「几何变化」**（实测稳态复现）。
+     *
      * @return true 表示已判定失效并处理（调用方应中止当前动作）
      */
-    private fun ensureCropStillValid(frame: android.util.Size?): Boolean {
+    private fun ensureCropStillValid(): Boolean {
         if (mRectF == null) return false
         val saved = mRectFrameSize ?: return false
-        val actual = frame ?: run {
-            // 无帧：用窗口几何查询兜底（帧与窗口同几何，两者本应一致）
-            val s = getScreenSize()
-            android.util.Size(s.width, s.height)
-        }
-        if (actual.width == saved.width && actual.height == saved.height) return false
+        val s = getScreenSize()
+        if (s.width == saved.width && s.height == saved.height) return false
 
         LogCollector.d(
             TAG,
-            "截图帧几何变化（框选时 ${saved.width}x${saved.height} → 现在 ${actual.width}x${actual.height}）"
+            "显示几何变化（框选时 ${saved.width}x${saved.height} → 现在 ${s.width}x${s.height}）"
         )
         return clearCropForScreenChange()
     }
@@ -1624,7 +1634,7 @@ class FloatingBallService : LifecycleService() {
                     return
                 }
 
-                if (ensureCropStillValid(null)) return
+                if (ensureCropStillValid()) return
 
                 if (isTranslating.get()) {
                     if (isAutoTranslating) {
@@ -1669,9 +1679,8 @@ class FloatingBallService : LifecycleService() {
         // 截图处理
         lifecycleScope.launch {
             ScreenshotManager.screenshotFlow.collect { data ->
-                // ⚠️ 判定要在拿到**新鲜帧**时做：帧尺寸与框选窗口同几何，是唯一不受
-                // 「CropView 已移除 → 几何查询冻结」影响的变化证据。见 ensureCropStillValid。
-                if (ensureCropStillValid(android.util.Size(data.fullBitmap.width, data.fullBitmap.height))) {
+                // 几何判定与框选时同源（都用 getScreenSize），见 ensureCropStillValid
+                if (ensureCropStillValid()) {
                     // ⚠️ 本帧是**用旧框裁出来的**（截图请求发出的那一刻框还没失效），
                     // 拿它继续翻译等于按旧坐标出结果。作废本帧，等用户重新框选后再翻。
                     LogCollector.d(TAG, "Screenshot collector: 几何变化已清框选，作废本帧")
