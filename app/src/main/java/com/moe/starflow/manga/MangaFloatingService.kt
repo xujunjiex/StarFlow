@@ -209,6 +209,12 @@ class MangaFloatingService : LifecycleService() {
     private var cropViewParams: WindowManager.LayoutParams? = null
     private var cropRect: RectF? = null
     private var isCropActive = false
+    /**
+     * `cropRect` 是在哪套几何下选出来的 —— **记的是那次截图帧的实测尺寸**（而非 `getScreenSize()`）。
+     * 后者依赖 `CropView.onSizeChanged` 上报，框选确认后 CropView 已移除、该值不再更新，
+     * 「几何变化」在框选界面关着时检测不到。帧尺寸每次截图都新鲜，且与框选窗口同几何。
+     */
+    private var cropRectFrameSize: android.util.Size? = null
 
     private lateinit var prefs: CustomPreference
     private lateinit var config: MangaModeConfig
@@ -1180,7 +1186,10 @@ class MangaFloatingService : LifecycleService() {
         }
 
         val screenSize = getScreenSize()
-        if (cropRect != null && resources.configuration.orientation == 1) {
+        // ⚠️ 原先判据是 `resources.configuration.orientation == 1` —— 该值在该机横屏下**恒为 1**
+        // （进程 configuration 被冻结在初始方向），于是条件退化成 `cropRect != null`，
+        // 横屏照样复用竖屏的旧框。改为几何比对：几何不同就不套旧框、重新居中。
+        if (cropRect != null && !cropGeometryChanged()) {
             cropView.setRect(cropRect!!)
         } else {
             // 等布局完成后用 view 自身尺寸计算居中框选区域
@@ -1212,8 +1221,44 @@ class MangaFloatingService : LifecycleService() {
         bringFloatingBallToFront()
     }
 
+    /**
+     * 屏幕几何是否与「框选时」不同 —— 比的是**截图帧的实测尺寸**。
+     *
+     * ⚠️ 判据**不能用** `resources.configuration.orientation` —— 该值在 Service 进程里可能被
+     * 冻结在初始化方向（横屏实测恒为 1），拿它比会恒为「未变化」。
+     * ⚠️ 也不能用 `getScreenSize()`：它依赖 `CropView.onSizeChanged` 上报，框选确认后
+     * CropView 已移除 → 该值冻结在框选那一刻，比对恒为「未变化」（与旧判据同样的失效模式）。
+     */
+    private fun cropGeometryChanged(frame: android.util.Size? = null): Boolean {
+        val saved = cropRectFrameSize ?: return false
+        val now = frame ?: getScreenSize().let { android.util.Size(it.width, it.height) }
+        return now.width != saved.width || now.height != saved.height
+    }
+
+    /**
+     * 屏幕几何变化 → 旧框选坐标已失效。
+     *
+     * 与游戏模式口径一致：**清空框选回退全屏**（而不是弹框选界面）—— 因为
+     * [triggerTranslation] 是自动翻译循环每帧都会过的路径，在那儿弹界面会让自动翻译彻底停摆。
+     * 用户想重新框选再点一次即可。
+     *
+     * @return true 表示已判定失效并处理（调用方应中止当前动作）
+     */
+    private fun ensureCropStillValid(): Boolean {
+        if (cropRect == null || !cropGeometryChanged()) return false
+        LogCollector.d(TAG, "屏幕几何变化，清除旧框选，回退全屏翻译")
+        cropRect = null
+        cropRectFrameSize = null
+        if (autoTranslateEngine.isAutoTranslating) stopAutoTranslate()
+        showToast(getString(R.string.manga_crop_cleared_orientation), true)
+        return true
+    }
+
     private fun confirmCrop() {
         cropRect = RectF(cropView.mRect)
+        // 记下这次框选是在哪套几何下选的。用 cropView 自身尺寸 ——
+        // 框选窗口与截图帧同几何（帧尺寸正是从窗口学的），见 ensureCropStillValid
+        cropRectFrameSize = android.util.Size(cropView.width, cropView.height)
         isCropActive = false
 
         try {
@@ -1284,6 +1329,9 @@ class MangaFloatingService : LifecycleService() {
             LogCollector.d(TAG, "triggerTranslation: crop is active, skipping")
             return
         }
+        // 屏幕几何变化 → 清框选回退全屏 + 停自动翻译（与游戏模式口径一致）。
+        // 放在这里是因为 triggerTranslation 是自动翻译循环每帧都会过的路径，覆盖最全。
+        if (ensureCropStillValid()) return
 
         // 只在 AccessibilityService 模式下检查无障碍服务
         val isMediaProjection = screenshotProvider is MediaProjectionProvider
@@ -1487,6 +1535,18 @@ class MangaFloatingService : LifecycleService() {
                 // ocrBitmap: 用于 OCR 和翻译流程的 bitmap（裁剪后或全屏）
                 val ocrBitmap = data.croppedBitmap ?: data.fullBitmap
                 LogCollector.d(TAG, "Screenshot collector: RECEIVED! full=${data.fullBitmap.width}x${data.fullBitmap.height}, ocr=${ocrBitmap.width}x${ocrBitmap.height}")
+
+                // ⚠️ 判定要在拿到**新鲜帧**时做：帧尺寸与框选窗口同几何，是唯一不受
+                // 「CropView 已移除 → 几何查询冻结」影响的变化证据（见 ensureCropStillValid）。
+                if (cropRect != null && cropGeometryChanged(
+                        android.util.Size(data.fullBitmap.width, data.fullBitmap.height)
+                    )
+                ) {
+                    LogCollector.d(TAG, "Screenshot collector: 截图帧几何变化，清框选回退全屏")
+                    cropRect = null
+                    cropRectFrameSize = null
+                    showToast(getString(R.string.manga_crop_cleared_orientation), true)
+                }
 
                 try {
                     // 无障碍重截图拦截：干净截图到达后直接用保存的检测 hash 处理
