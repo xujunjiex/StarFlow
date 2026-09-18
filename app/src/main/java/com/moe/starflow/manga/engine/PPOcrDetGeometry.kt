@@ -167,6 +167,19 @@ object PPOcrDetGeometry {
     }
 
     /**
+     * 诊断日志开关。**默认关闭、零开销**（每次调用一次 volatile 读）。
+     *
+     * 由调试面板的 `enableDebugLogging` 一类入口置位（与 `TextRegionMerger` 同一套约定）。
+     * 开启后 [sortDetCandidates] 会逐框打印**几何判定的依据**：每个框的
+     * `(left,top,right,bottom)`、宽高、判成竖排还是横排、以及最终排列结果。
+     *
+     * 排「识别方向与横竖屏的关系」这类问题时**必须**看这些数 ——
+     * 只打印拼接后的文本看不出判定对错（顺序对也可能是巧合，反之亦然）。
+     */
+    @Volatile
+    var enableDebugLogging: Boolean = false
+
+    /**
      * 把 det 结果排成**阅读顺序**（框数组为 `[x0,y0,x1,y1,x2,y2,x3,y3]`）。
      *
      * - 判定为**横排**的框（宽 > 高）→ 按 `top` 升序、同 top 按 `left` 升序（左→右、上→下）
@@ -225,6 +238,9 @@ object PPOcrDetGeometry {
         }
 
         val sortedBoxes = perm.map { boxes[it] }
+        if (enableDebugLogging) {
+            logSortDecision(boxes, perm, verticalScanFlowIsLr)
+        }
         if (scores.size != boxes.size) {
             LogCollector.w(
                 "PPOcrDetGeometry",
@@ -234,6 +250,58 @@ object PPOcrDetGeometry {
         }
         return BoxScoreResult(sortedBoxes, perm.map { scores[it] }, perm)
     }
+
+    /**
+     * 逐框打印**判定依据**。受 [enableDebugLogging] 控制。
+     *
+     * 输出形状刻意做成「一行结果 + 每框一行几何」，便于直接比对：
+     * - `order=` 最终排列（用原始下标表示）
+     * - 每框 `#i (l,t,r,b) WxH vert=true/false` —— **vert 就是走哪个分支的依据**
+     *
+     * 排查方向问题时看 `vert`：全 false 说明这些框被判成了横排（排序会退化成 top 主键
+     * = 自上而下），与设置无关。
+     */
+    private fun logSortDecision(
+        boxes: List<FloatArray>,
+        perm: List<Int>,
+        verticalScanFlowIsLr: Boolean
+    ) {
+        LogCollector.d(
+            "PPOcrDetGeometry",
+            "sortDetCandidates: n=${boxes.size}, LR=$verticalScanFlowIsLr, 输入序=$perm, " +
+                "输出序=${perm.map { boxes[it] }}"
+        )
+        for (i in boxes.indices) {
+            val b = boxes[i]
+            val l = boxLeft(b); val t = boxTop(b); val r = boxRight(b); val bt = boxBottom(b)
+            val w = r - l; val h = bt - t
+            LogCollector.d(
+                "PPOcrDetGeometry",
+                "  #$i (${l.toInt()},${t.toInt()},${r.toInt()},${bt.toInt()}) " +
+                    "${w.toInt()}x${h.toInt()} vert=${h > w + ORIENT_ASPECT_TOL}"
+            )
+        }
+    }
+
+    /**
+     * det 输入边长的 **32 对齐**：四舍五入到最近的 32 倍数，下限 32。
+     *
+     * ⚠️ **必须四舍五入，不能整除截断**。官方 RapidOCR 是
+     * `resize_h = int(round(resize_h / 32) * 32)`（`ch_ppocr_det/utils.py:100`），
+     * 截断版 `(x / 32) * 32` 会**最多白扔 31px**，而且对**两个轴各自独立**生效 ——
+     * 小尺寸裁剪时占比极高且两轴不等，等于把图**压扁**：
+     *
+     * ```
+     * 94x258 → 官方 96x256        截断 64x256   （横 −32% / 纵 −0.8%）
+     * 148x253 → 官方 160x256      截断 128x224  （横 −13.5% / 纵 −11.5%）
+     * ```
+     *
+     * 实测后果：竖排小字被压到认不出，det 框数暴涨（本该 3 个框出了 10 个）、
+     * 每框只认出零散一两个字（「武部沙織」→「武框織」）。
+     * **框选范围放大就恢复正常** —— 尺寸越大，被截掉的固定份额占比越小，
+     * 这正是该 bug 的判别特征。
+     */
+    fun alignTo32(value: Int): Int = max(32, (value / 32f).roundToInt() * 32)
 
     /** 框的 AABB 上边界（`boxes` 元素为 `[x0,y0,…,x3,y3]`）。 */
     fun boxTop(b: FloatArray): Float = minOf(b[1], b[3], b[5], b[7])

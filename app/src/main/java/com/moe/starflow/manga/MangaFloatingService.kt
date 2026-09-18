@@ -38,6 +38,8 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import com.moe.starflow.utils.LogCollector
+import com.moe.starflow.utils.MangaFontSize
+import com.moe.starflow.utils.MangaFontSizeDialog
 import com.moe.starflow.utils.OcrEngineManager
 import android.view.Gravity
 import android.view.LayoutInflater
@@ -407,7 +409,10 @@ class MangaFloatingService : LifecycleService() {
             "Manga_Text_Direction",
             TranslationCacheManager.KEY_MANGA_HORIZONTAL_ALIGN,
             TranslationCacheManager.KEY_MANGA_TRACKING,
-            TranslationCacheManager.KEY_MANGA_LEADING
+            TranslationCacheManager.KEY_MANGA_LEADING,
+            // 字号：设置页 / 阅读器面板改完要立刻重读 config，否则悬浮窗还用旧字号渲染
+            com.moe.starflow.utils.MangaFontSize.KEY_SIZE,
+            com.moe.starflow.utils.MangaFontSize.KEY_AUTO
         )
         prefChangeListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             when {
@@ -1108,41 +1113,26 @@ class MangaFloatingService : LifecycleService() {
         adapter.updateLabel(2, "${getString(R.string.manga_model_toggle)}：${comboLabel(next)}")
     }
 
+    /**
+     * 「字体大小」菜单弹窗。
+     *
+     * 读写一律走 [MangaFontSize]（个性化设置页 / 阅读器翻译面板也用它）——
+     * 三个入口共用同一对 prefs，任何一处改完另两处立刻一致。
+     */
     private fun showFontSizeDialog() {
-        val sizes = arrayOf(
-            getString(R.string.manga_font_size_auto),
-            "8", "10", "12", "14", "16", "18", "20", "24", "28", "32", "40", "48"
-        )
-        val currentIndex = if (config.autoFontSize) {
-            0
-        } else {
-            val idx = sizes.indexOf(config.fontSize.toInt().toString())
-            // 自定义值（不在列表）时指向默认 16
-            if (idx < 0) sizes.indexOf("16").coerceAtLeast(0) else idx
+        // 三处共用的弹窗实现（设置页 / 悬浮窗 / 阅读器面板）；悬浮窗是 overlay 窗口，需设类型。
+        // ⚠️ 深浅来源因入口而异：**设置页与悬浮窗走全局主题**（[ThemeManager.isNight]），
+        // **阅读器面板走它自己的内置主题**（darkPanel，随阅读背景）—— 不要混用。
+        val dark = ThemeManager.isNight(this)
+        val dialog = MangaFontSizeDialog.create(ThemeManager.dialogContext(this), dark = dark) {
+            // 弹窗里改完要立刻反映到下一次渲染：config 是启动时读一次的快照
+            config = config.copy(
+                fontSize = MangaFontSize.size(this),
+                autoFontSize = MangaFontSize.isAuto(this)
+            )
         }
-
-        val dlgCtx = ThemeManager.dialogContext(this)
-        val dialog = AlertDialog.Builder(dlgCtx)
-            .setTitle(dlgCtx.getString(R.string.manga_font_size_title))
-            .setSingleChoiceItems(sizes, currentIndex) { d, which ->
-                if (which == 0) {
-                    config = config.copy(autoFontSize = true)
-                    prefs.setBoolean("Manga_Auto_Font_Size", true)
-                    showToast(getString(R.string.manga_font_size_auto), true)
-                } else {
-                    val newSize = sizes[which].toFloat()
-                    config = config.copy(fontSize = newSize, autoFontSize = false)
-                    prefs.setFloat("Manga_Font_Size", newSize)
-                    prefs.setBoolean("Manga_Auto_Font_Size", false)
-                    showToast("${sizes[which]}sp", true)
-                }
-                d.dismiss()
-            }
-            .create()
-
         dialog.window?.setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY)
         dialog.show()
-        dialog.window?.setBackgroundDrawableResource(ThemeManager.dialogBackgroundRes(this))
     }
 
     // ---------- Auto-translate — 智能状态机 ----------
@@ -2477,6 +2467,8 @@ class MangaFloatingService : LifecycleService() {
                 align = config.horizontalAlign,
                 trackingRatio = config.trackingRatio,
                 leadingRatio = config.leadingRatio,
+                // 渲染阶段重叠合并开关（现读，改设置即刻生效）
+                mergeOverlap = prefs.getBoolean(com.moe.starflow.data.TranslationCacheManager.KEY_OVERLAP_MERGE, false),
                 density = resources.displayMetrics.density
             )
         }
@@ -2534,6 +2526,8 @@ class MangaFloatingService : LifecycleService() {
                 align = config.horizontalAlign,
                 trackingRatio = config.trackingRatio,
                 leadingRatio = config.leadingRatio,
+                // 渲染阶段重叠合并开关（现读，改设置即刻生效）
+                mergeOverlap = prefs.getBoolean(com.moe.starflow.data.TranslationCacheManager.KEY_OVERLAP_MERGE, false),
                 density = resources.displayMetrics.density
             )
         }
@@ -3123,6 +3117,7 @@ class MangaFloatingService : LifecycleService() {
                     align = config.horizontalAlign,
                     trackingRatio = config.trackingRatio,
                 leadingRatio = config.leadingRatio,
+                    mergeOverlap = prefs.getBoolean(com.moe.starflow.data.TranslationCacheManager.KEY_OVERLAP_MERGE, false),
                     density = resources.displayMetrics.density
                 )
             }

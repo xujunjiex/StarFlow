@@ -6,6 +6,7 @@ import android.graphics.Rect
 import com.moe.starflow.manga.TranslationCancelledException
 import com.moe.starflow.manga.engine.PPOcrV5Engine
 import com.moe.starflow.manga.state.RegionCacheManager
+import com.moe.starflow.manga.types.BubbleRegion
 import com.moe.starflow.manga.types.CroppedBubble
 import com.moe.starflow.manga.types.CroppedTextLine
 import com.moe.starflow.manga.types.DetEngine
@@ -443,5 +444,67 @@ class IncrementalBatchPipelineTest {
             thrown = true
         }
         assertTrue("取消必须重抛专用异常，否则会回退重跑 OCR", thrown)
+    }
+
+    // ---------- 文本级缓存统计口径 ----------
+
+    private fun bubble(text: String, top: Int = 0) = BubbleRegion(
+        rect = Rect(0, top, 100, top + 50),
+        texts = listOf(text),
+        fontSize = 20f,
+        direction = TextDirection.HORIZONTAL,
+    )
+
+    private fun cachePipeline(host: FakeHost) = IncrementalBatchPipeline(
+        host,
+        kotlinx.coroutines.CoroutineScope(UnconfinedTestDispatcher()),
+        config(),
+        ops,
+    )
+
+    @Test
+    fun cacheStats_coldCache_countsCandidatesAndNoHits() = runTest {
+        val p = cachePipeline(FakeHost(ctx, FakeTranslator()))
+        p.translateWithCache(listOf(bubble("あ"), bubble("い")))
+        assertEquals("有文字的气泡都计入分母", 2, p.cacheStats.candidates)
+        assertEquals("冷缓存不该有命中", 0, p.cacheStats.hits)
+    }
+
+    @Test
+    fun cacheStats_warmCache_countsExactHit() = runTest {
+        val host = FakeHost(ctx, FakeTranslator())
+        cachePipeline(host).translateWithCache(listOf(bubble("あ")))   // 预热：结果写进 host.cache
+        val p = cachePipeline(host)
+        p.translateWithCache(listOf(bubble("あ")))
+        assertEquals(1, p.cacheStats.candidates)
+        assertEquals("命中必须被计数", 1, p.cacheStats.hits)
+    }
+
+    /**
+     * 符号气泡由 `translateBubbles` 直接以原文当译文产出，**也**会被放进 `fromCache` 那个列表。
+     * 若把"在 fromCache 里"当成命中，分子会虚高、用户看到"命中 5/5"却全是标点。
+     */
+    @Test
+    fun cacheStats_symbolOnly_countsAsCandidateNotAsHit() = runTest {
+        val p = cachePipeline(FakeHost(ctx, FakeTranslator()))
+        p.translateWithCache(listOf(bubble("!!!")))
+        assertEquals("符号气泡有文字（只是没语义）-> 计入分母", 1, p.cacheStats.candidates)
+        assertEquals("符号气泡不是缓存命中", 0, p.cacheStats.hits)
+    }
+
+    @Test
+    fun cacheStats_blankBubbles_areExcluded() = runTest {
+        val p = cachePipeline(FakeHost(ctx, FakeTranslator()))
+        p.translateWithCache(listOf(bubble("   "), bubble("")))
+        assertEquals("空白气泡不参与判定", 0, p.cacheStats.candidates)
+    }
+
+    /** 一条路线会调两次 `translateWithCache`（两批）-> 统计必须相加。 */
+    @Test
+    fun cacheStats_accumulateAcrossBatches() = runTest {
+        val p = cachePipeline(FakeHost(ctx, FakeTranslator()))
+        p.translateWithCache(listOf(bubble("あ"), bubble("い")))
+        p.translateWithCache(listOf(bubble("う")))
+        assertEquals(3, p.cacheStats.candidates)
     }
 }

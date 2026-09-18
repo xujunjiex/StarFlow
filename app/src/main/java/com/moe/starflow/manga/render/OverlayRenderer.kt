@@ -50,16 +50,6 @@ object OverlayRenderer {
     /** 横排行距系数，单一来源同上。 */
     private const val HORIZONTAL_LINE_RATIO = LayoutEngine.HORIZONTAL_LINE_RATIO
 
-    /**
-     * 竖排每列可容纳字符数，与 VerticalTextRenderer 绘制逻辑一致：
-     * 起点 y = top + fontSize，每字步进 fontSize*VERTICAL_CHAR_RATIO，超出 bottom 换列。
-     */
-    private fun capacityForHeight(height: Int, fontSize: Float): Int {
-        if (height <= 0) return 1
-        val step = fontSize * VERTICAL_CHAR_RATIO
-        return maxOf(1, ((height - fontSize) / step).toInt() + 1)
-    }
-
     /** 单气泡的绘制参数（Phase 1 产物） */
     private data class Param(
         val region: TranslatedBubble,
@@ -94,6 +84,8 @@ object OverlayRenderer {
         align: TextAlign = TextAlign.CENTER,          // 横排对齐（竖排不受影响）
         trackingRatio: Float = LayoutEngine.TRACKING_DEFAULT_RATIO,  // 用户字间距（×字号）
         leadingRatio: Float = LayoutEngine.LEADING_DEFAULT_RATIO,    // 用户行间距（×字号）
+        /** 渲染阶段重叠合并开关（个性化页可关，见 OverlayConfig.mergeOverlap）。 */
+        mergeOverlap: Boolean = true,
         density: Float = 1f                            // 用于把 MIN_PADDING_DP 换算成 px
     ): Bitmap {
         val result = original.copy(Bitmap.Config.ARGB_8888, true)
@@ -143,7 +135,7 @@ object OverlayRenderer {
         }
 
         // Phase 2: neededRect 重叠的气泡合并成组（union-find 传递闭包）
-        val groupOf = mergeOverlapping(params)
+        val groupOf = if (mergeOverlap) mergeOverlapping(params) else IntArray(params.size) { it }
 
         // Phase 3: 构建绘制单元。同方向合并组 → 一个大白块 + 记号分隔；异方向/倾斜/字号不一致 → 独立绘制
         val drawItems = mutableListOf<DrawItem>()
@@ -251,8 +243,17 @@ object OverlayRenderer {
 
     /**
      * 同方向合并组：各成员文本用记号连接成一个绘制单元。
-     * drawRect 容纳连接文本，锚点在组内流向起始角（VERTICAL_RL 右上、VERTICAL_LR/HORIZONTAL 左上），
-     * 宽高贴合文本所需，避免重叠的白块叠白块。
+     *
+     * ⚠️ **绘制区恒等于「成员气泡区域的并集」，与合并后文字有多长无关** —— 这是硬约束，
+     * 踩过很惨的一次：旧实现按**文本长度**反推块尺寸（`balancedVerticalSize(合并文本长度, …)`
+     * 定宽、`maxOf(高度, 文字块高)` 定高，还不够就 `maxOf(blockSize, …)` 撑），
+     * 而块内字号又由 `LayoutEngine` 按**块尺寸**二分选定（区域越大字号上限越高），
+     * 于是「文本越长 → 块越大 → 字号越大 → 文本需要更多地方」形成正反馈 ——
+     * 真机上直接并出一个盖住大半页、里面文字同样巨大的白块。
+     * 按气泡取并集后，块永远不会超出这些气泡原本占的地方，字号也就跟着落回正常量级。
+     *
+     * 组内文本按阅读顺序用记号（[VERTICAL_SEPARATOR]/[HORIZONTAL_SEPARATOR]）连接后交给
+     * `LayoutEngine` 排版；文本超出并集区域时由它自行缩字号/断行，**不截断、也不越界**。
      */
     private fun buildMergedItem(members: List<Param>): DrawItem {
         val direction = members[0].region.direction
@@ -271,93 +272,15 @@ object OverlayRenderer {
             )
         }
         val texts = sorted.map { it.displayText }
-
-        val top = members.minOf { it.neededRect.top }
-        val bottom = members.maxOf { it.neededRect.bottom }
-        val leftAll = members.minOf { it.neededRect.left }
-        val rightAll = members.maxOf { it.neededRect.right }
-        val height = (bottom - top).coerceAtLeast(1)
-
-        val charHeight = fontSize * HORIZONTAL_LINE_RATIO
-        val padding = (fontSize * 0.4f).toInt()
-
-        val drawRect = when (direction) {
-            TextDirection.VERTICAL_RL -> {
-                val sep = VERTICAL_SEPARATOR
-                val mergedText = texts.joinToString(sep)
-                // 宽高平衡：限制列数，避免合并文本无脑横向铺开
-                val (bw, bh) = balancedVerticalSize(mergedText.length, fontSize, height, rightAll - leftAll)
-                val width = bw + 2 * padding
-                val drawHeight = maxOf(height, bh + 2 * padding)
-                Rect(rightAll - width, top, rightAll, top + drawHeight)
-            }
-            TextDirection.VERTICAL_LR -> {
-                val sep = VERTICAL_SEPARATOR
-                val mergedText = texts.joinToString(sep)
-                val (bw, bh) = balancedVerticalSize(mergedText.length, fontSize, height, rightAll - leftAll)
-                val width = bw + 2 * padding
-                val drawHeight = maxOf(height, bh + 2 * padding)
-                Rect(leftAll, top, leftAll + width, top + drawHeight)
-            }
-            TextDirection.HORIZONTAL -> {
-                val sep = HORIZONTAL_SEPARATOR
-                val mergedText = texts.joinToString(sep)
-                val paint = Paint().apply { textSize = fontSize }
-                val maxLineWidth = (rightAll - leftAll).toFloat().coerceAtLeast(1f)
-                var lines = 0
-                for (paragraph in mergedText.split("\n")) {
-                    if (paragraph.isEmpty()) { lines++; continue }
-                    var remaining = paragraph
-                    while (remaining.isNotEmpty()) {
-                        val count = paint.breakText(remaining, true, maxLineWidth, null)
-                        if (count <= 0) break
-                        remaining = remaining.substring(count)
-                        lines++
-                    }
-                }
-                val w = (rightAll - leftAll) + 2 * padding
-                val h = (lines * charHeight).toInt() + 2 * padding
-                Rect(leftAll, top, leftAll + w, top + h)
-            }
-        }
+        // 并集：必须用**成员的气泡矩形**（region.rect），不是非自动模式下扩过的 neededRect ——
+        // 「绝不超出原始两个气泡占据的空间」以气泡为准。
+        val drawRect = Rect(
+            members.minOf { it.region.rect.left },
+            members.minOf { it.region.rect.top },
+            members.maxOf { it.region.rect.right },
+            members.maxOf { it.region.rect.bottom }
+        )
         return DrawItem(drawRect, texts, direction, fontSize, merged = true)
-    }
-
-    /**
-     * 竖排文字平衡扩展尺寸：限制列数上限，列数超出时加大列高（利用垂直空间）换窄宽度。
-     * 避免长译文在矮气泡里"无脑横向"（每列 1 字 → 列数 = 字数 → 覆盖大片无内容区域）。
-     *
-     * @param textLength 文字长度
-     * @param fontSize 字号
-     * @param regionHeight 区域高度（原气泡高 / 合并组并集高），决定自然列数
-     * @param regionWidth 区域宽度（原气泡宽 / 合并组并集宽），决定列数上限
-     * @return (宽, 高) 文字所需尺寸
-     */
-    private fun balancedVerticalSize(
-        textLength: Int,
-        fontSize: Float,
-        regionHeight: Int,
-        regionWidth: Int
-    ): Pair<Int, Int> {
-        val charHeight = fontSize * VERTICAL_CHAR_RATIO
-        val columnSpacing = fontSize * VERTICAL_CHAR_RATIO
-        // 最多列数：至少 4 列，宽区域可更多
-        val maxColumns = maxOf(4, (regionWidth / columnSpacing).toInt()).coerceAtLeast(1)
-        // 自然列数：优先利用区域高度（每列尽量多字），容量与绘制函数一致
-        val baseCharsPerCol = capacityForHeight(regionHeight, fontSize)
-        val naturalColumns = (textLength + baseCharsPerCol - 1) / baseCharsPerCol
-        return if (naturalColumns <= maxColumns) {
-            // 区域高度足够 → 保持自然列数
-            val w = (naturalColumns * columnSpacing).toInt()
-            val h = (minOf(textLength, baseCharsPerCol) * charHeight).toInt()
-            w to h
-        } else {
-            // 列数超上限 → 加大列高（高度扩展）换窄宽度，最多 maxColumns 列
-            val charsPerCol = (textLength + maxColumns - 1) / maxColumns
-            val w = (maxColumns * columnSpacing).toInt()
-            val h = (charsPerCol * charHeight).toInt()
-            w to h
-        }
     }
 
     /**

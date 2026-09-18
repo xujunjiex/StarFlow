@@ -472,10 +472,22 @@ class FloatingBallService : LifecycleService() {
      * 每次识别**现读**（非缓存字段），设置改动即时生效。
      * 仅 PP-OCRv5/v6 会用它排序；ML Kit / manga-ocr 走各自引擎的阅读序，忽略此值。
      */
-    private fun readVerticalDirection(): TextDirection =
-        com.moe.starflow.manga.types.VerticalFlow
+    private fun readVerticalDirection(): TextDirection {
+        val dir = com.moe.starflow.manga.types.VerticalFlow
             .fromPref(prefs.getString("Game_Text_Direction", "0"))
             .toTextDirection()
+        // 排「识别方向 / 横竖屏」类问题的观测点：方向设置本身、以及本次是否开了调试开关。
+        // enableDebugLogging 打开后 PPOcrDetGeometry 会逐框打印判定依据（见其注释）。
+        if (isGameDebugEnabled()) {
+            LogCollector.d(
+                TAG,
+                "readVerticalDirection: Game_Text_Direction=" +
+                    "${prefs.getString("Game_Text_Direction", "0")} → $dir, " +
+                    "det逐框诊断=${com.moe.starflow.manga.engine.PPOcrDetGeometry.enableDebugLogging}"
+            )
+        }
+        return dir
+    }
 
     private fun showDebugOverlay() {
         if (!isGameDebugEnabled()) return
@@ -687,6 +699,8 @@ class FloatingBallService : LifecycleService() {
         // 初始化 OCR 引擎
         ocrEngine = GameOcrEngine(this) { msg -> showToast(msg, true) }
         LogCollector.d(TAG, "OCR 引擎初始化: ${getOcrEngineName()}")
+        // 游戏调试开关同时打开 det 后处理的逐框诊断（默认关闭、零开销）
+        com.moe.starflow.manga.engine.PPOcrDetGeometry.enableDebugLogging = isGameDebugEnabled()
 
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
 
@@ -1873,7 +1887,22 @@ class FloatingBallService : LifecycleService() {
                     ballStateManager?.setState(BallStateManager.State.Processing)
                     updateDebugStatus("【检测中】手动翻译")
                     translateStartTime = System.currentTimeMillis()
-                    val txt = ocrEngine.recognize(bitmap, readVerticalDirection())
+                    val dir = readVerticalDirection()
+                    if (isGameDebugEnabled()) {
+                        LogCollector.d(
+                            TAG,
+                            "识别输入: 位图=${com.moe.starflow.utils.DisplaySize.describe(bitmap.width, bitmap.height)}, " +
+                                "dir=$dir, 框选=[${mRectF?.let { "${it.left.toInt()},${it.top.toInt()},${it.right.toInt()},${it.bottom.toInt()}" } ?: "无"}], " +
+                                "屏幕=${com.moe.starflow.utils.DisplaySize.describeCurrent(this)}"
+                        )
+                    }
+                    val txt = ocrEngine.recognize(bitmap, dir)
+                    if (isGameDebugEnabled()) {
+                        LogCollector.d(
+                            TAG,
+                            "识别输出: ${txt.length} 字, 文本='${txt.replace("\n", "⏎").take(120)}'"
+                        )
+                    }
                     if (txt.isBlank()) {
                         updateDebugStatus("【跳过】OCR 结果为空")
                         statusOverlay.showImmediate(getString(R.string.toast_no_text_detected))

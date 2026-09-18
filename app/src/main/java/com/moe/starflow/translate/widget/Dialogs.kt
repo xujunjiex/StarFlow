@@ -421,8 +421,8 @@ object Dialogs {
                     val size = sizeText.toFloat()
                     // 字号范围限制：太小看不见，太大溢出屏幕
                     if (size in FONT_SIZE_MIN..FONT_SIZE_MAX) {
-                        // 保存字体大小
-                        prefs.setFloat("Custom_Result_Font_Size", size)
+                        // ⚠️ 这里**不再自己写 prefs**：字号只有一个来源，由调用方经
+                        // CustomFontSize / MangaFontSize 落盘（游戏与漫画是两套独立设置）
                         if (view != null){
                             MainScope().launch{
                                 view.textSize = size

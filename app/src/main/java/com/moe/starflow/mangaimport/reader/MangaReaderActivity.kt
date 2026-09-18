@@ -80,6 +80,11 @@ class MangaReaderActivity : AppCompatActivity() {
 
         /** 上下 UI 显隐的淡入淡出时长（短促，跟随系统「动画时长」缩放）。 */
         private const val CHROME_FADE_MS = 160L
+
+        /** 重建时恢复现场用（见 [onSaveInstanceState]）。 */
+        private const val STATE_CURRENT_PAGE = "reader_state_page"
+        private const val STATE_FROM_SETTINGS = "reader_state_from_settings"
+        private const val STATE_TRANSLATE_MODE = "reader_state_translate_mode"
     }
 
     private lateinit var binding: ActivityMangaReaderBinding
@@ -120,6 +125,17 @@ class MangaReaderActivity : AppCompatActivity() {
     /** 尺寸变化（旋转/分屏）之前所在的页；-1 = 无待对齐。见 [realignPagerAfterResize]。 */
     private var pendingRealignPage = -1
 
+    /** 本次离开是去「个性化设置」页 —— 返回时重建 Activity，让设置项真正生效（见 onStart）。 */
+    private var returnedFromSettings = false
+
+    /**
+     * 重建前记下的翻译模式；**-1 表示本次不是"从设置页返回"触发的重建**（全新进入阅读器时就是这个值）。
+     *
+     * ⚠️ 恢复时必须判 `>= 0`，不能判 `!= MODE_MANUAL` —— 后者对 -1 为真，
+     * 会把 -1 当成模式塞进控制器（历史 bug：一进阅读器就自动开翻）。
+     */
+    private var restoredTranslateMode = -1
+
     /** 仿真/高级动画共享状态（折线触点 + 翻页方向）。 */
     private val animState = ReaderAnimationState()
     private var webtoonTapDetector: GestureDetector? = null
@@ -159,7 +175,15 @@ class MangaReaderActivity : AppCompatActivity() {
         updateRotateMode(rotateMode, persist = false)
         applyPager()
 
-        goToPage(manga.lastReadPage.coerceIn(0, (source.size - 1).coerceAtLeast(0)))
+        // 重建（旋转 / 从设置页返回）时恢复现场：当前页、翻译模式、以及"这是从设置页返回"
+        if (savedInstanceState != null) {
+            returnedFromSettings = savedInstanceState.getBoolean(STATE_FROM_SETTINGS, false)
+            restoredTranslateMode = savedInstanceState.getInt(STATE_TRANSLATE_MODE, -1)
+            pendingRealignPage = savedInstanceState.getInt(STATE_CURRENT_PAGE, -1)
+        }
+        // 从设置返回触发的重建：回到用户当时那一页（lastReadPage 只在翻页时写库，可能滞后）
+        val startPage = if (pendingRealignPage >= 0) pendingRealignPage else manga.lastReadPage
+        goToPage(startPage.coerceIn(0, (source.size - 1).coerceAtLeast(0)))
 
         // 阅读器内嵌翻译：载入每页记录（含失败/成功态），接右下角翻译按钮与进度条
         translationController = ReaderTranslationController(this, manga, lifecycleScope).also { c ->
@@ -181,12 +205,13 @@ class MangaReaderActivity : AppCompatActivity() {
             c.onPhase = ::onTranslatePhase
             // Webtoon 显示态（原图/译文）落在控制器上：applyPager()/预热都按它决定渲不渲染
             c.setWebtoonTranslated(webtoonTranslated)
-            // 打开面板 / 退出阅读器暂停翻译并回退手动 → 系统底部提示
-            c.onPaused = {
-                runOnUiThread {
-                    UiUtils.showToast(this, getString(R.string.reader_translate_paused_to_manual))
-                }
-            }
+        }
+        // ⚠️ 只有**确实是从设置页返回触发的重建**才恢复翻译模式（`>= 0` 就是那个判据）。
+        // 绝不能只看"模式 != 手动"：控制器是刚新建的，translateMode 恒为手动，
+        // 而 `restoredTranslateMode` 在全新进入阅读器时是 **-1**，
+        // `-1 != MODE_MANUAL` 为真 → 把 -1 当模式塞进控制器 → **一进阅读器就自动开翻**（踩过）。
+        if (restoredTranslateMode >= 0) {
+            translationController?.setMode(restoredTranslateMode)
         }
         lifecycleScope.launch {
             translationController?.load()
@@ -205,6 +230,17 @@ class MangaReaderActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         updateAutoTurn()
+        // ⚠️ 从设置页返回必须**重建阅读器**：个性化里那一批参数（字号/颜色/字距行距/竖排方向/
+        // 文字合并…）是在 Activity 创建时被读进缓存、并由已经渲染好的译图固化的，
+        // 就地刷新既漏项又容易只改一半 —— 直接重建是最可靠、也最容易解释的做法。
+        // 首次 onStart 不算「返回」，不会触发。
+        if (returnedFromSettings) {
+            // 先置回再 recreate：onSaveInstanceState 会把当时的字段值再存一次，
+            // 不在这儿清掉的话，重建出来的那个实例仍带着 true → 无限重建。
+            returnedFromSettings = false
+            recreate()
+            return
+        }
         translationController?.resumeFromBackground()
     }
 
@@ -334,6 +370,15 @@ class MangaReaderActivity : AppCompatActivity() {
      *    ⚠️ 走 [applyPageVisual] 而不是裸 `notifyItemChanged`：它会先把译图渲染/预热进缓存再重绑，
      *    否则译图恰好被 LRU 淘汰时重绑会退回显示原图。同槽位重绑不清图（见 ReaderAdapters.loadTo）→ 不闪白。
      */
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        // 设置页返回时本 Activity 已被销毁重建，字段不保留 —— 当前页、翻译模式、和
+        // 「这次重建正是从设置页返回」都要带过去，否则会跳回上次写库的页并把模式打回手动。
+        outState.putInt(STATE_CURRENT_PAGE, currentPage)
+        outState.putBoolean(STATE_FROM_SETTINGS, returnedFromSettings)
+        outState.putInt(STATE_TRANSLATE_MODE, restoredTranslateMode)
+    }
+
     private fun realignPagerAfterResize() {
         if (mode == 3) { pendingRealignPage = -1; return } // Webtoon 行高由 webtoonList 的宽度监听重算
         // 目标页用**尺寸变化前**记下的那一页：新布局可能让 ViewPager2 把「吸附页」重算成别页
@@ -784,7 +829,9 @@ class MangaReaderActivity : AppCompatActivity() {
                 )
                 ReaderTranslatePhase.SUCCESS -> {
                     overlay.dismiss()
-                    overlay.show(getString(R.string.reader_translate_done))
+                    // message 携带缓存说明（「12 条里命中 3 条」）；无缓存命中时它是 null，走原文案。
+                    // 用户必须能分辨「真的调了 API」和「全部命中缓存」——否则同页重翻会像凭空成功。
+                    overlay.show(message ?: getString(R.string.reader_translate_done))
                     refreshProgressTranslation()
                     // 成功页要立刻出现三态按钮（此前要等下一次 onVisual 重绑才出现）
                     refreshTranslationChrome()
@@ -899,6 +946,14 @@ class MangaReaderActivity : AppCompatActivity() {
         // 调色对比图：异步加载当前页
         lifecycleScope.launch {
             val previewBmp = withContext(Dispatchers.IO) { source.loadFull(currentPage) }
+            // ⚠️ **顺序敏感**：面板一打开，控制器就会回退到手动模式（setPanelOpen → pauseToManual），
+            // 所以必须在这里、回退发生**之前**记下模式：
+            //   · 提示用 —— 从自动/增量退下来要告知用户，否则用户以为设置被清掉了
+            //   · 面板初值用 —— 否则面板会直接显示"手动"，连"退回过"都看不出来
+            // 控制器侧没有对应回调可用：它只能看到"原本有没有任务在跑"，队列空闲时不会提示，
+            // 而那种情况恰恰最需要提示。
+            val modeBeforeOpen = translationController?.translateMode?.value
+                ?: ReaderTranslationController.MODE_MANUAL
             val sheet = ReaderMenuSheet(
                 ReaderMenuState(
                     mode = mode,
@@ -912,7 +967,7 @@ class MangaReaderActivity : AppCompatActivity() {
                     isDarkPanel = dark,
                     previewBitmap = previewBmp,
                     webtoonTranslated = webtoonTranslated,
-                    translateMode = translationController?.translateMode?.value ?: 0,
+                    translateMode = modeBeforeOpen,
                     debounceMs = translationController?.debounceMs?.value ?: 500,
                     aheadPages = translationController?.aheadPages?.value ?: 5,
                     pageTranslations = translationController?.records() ?: emptyList()
@@ -930,6 +985,9 @@ class MangaReaderActivity : AppCompatActivity() {
                     if (isTranslateDisabledByMode()) {
                         translationController?.setMode(ReaderTranslationController.MODE_MANUAL)
                         TranslationStatusOverlay.getInstance(this@MangaReaderActivity).dismiss()
+                        // Webtoon 下整个翻译浮层组都隐藏，但面板可能正开着 —— 模式选项也要回到手动
+                        (supportFragmentManager.findFragmentByTag(ReaderMenuSheet.TAG) as? ReaderMenuSheet)
+                            ?.setTranslateMode(ReaderTranslationController.MODE_MANUAL)
                     }
                     // 切模式后按钮的置灰态要重刷
                     refreshTranslationChrome()
@@ -970,9 +1028,19 @@ class MangaReaderActivity : AppCompatActivity() {
                 onRotate = { updateRotateMode((rotateMode + 1) % 3, persist = true) },
                 onDownload = { showDownloadDialog() },
                 onSettings = {
+                    // 从个性化设置返回后重建阅读器（配置项要重新读取才生效，见 onStart）。
+                    // 顺带记下翻译模式：控制器随 Activity 一起重建，不恢复的话自动/增量会退回手动。
+                    returnedFromSettings = true
+                    restoredTranslateMode =
+                        translationController?.translateMode?.value ?: ReaderTranslationController.MODE_MANUAL
                     startActivity(Intent(this@MangaReaderActivity, SettingPageActivity::class.java)
                         .putExtra(SettingPageActivity.EXTRA_FRAGMENT_TYPE, SettingPageActivity.TYPE_FRAGMENT_PERSONALIZATION))
                 },
+                // ⚠️ 面板必须能回读宿主**真实**模式：onPanelOpened 里 setPanelOpen(true) 会把模式
+                // 回退到手动（ReaderTranslationController.pauseToManual）。面板若只认打开时的旧快照，
+                // 就会显示「自动」而实际是手动 —— 用户想切回自动时点的正是那个已勾选的条目，
+                // RadioButton 同组内重复选中不派发回调 → 模式彻底切不动。
+                currentTranslateMode = { translationController?.translateMode?.value ?: 0 },
                 onTranslateMode = { m ->
                     translationController?.setMode(m)
                     // 切回手动时队列已停，「翻译中…」常驻芯片必须清掉，否则会一直挂在屏幕上
@@ -989,6 +1057,10 @@ class MangaReaderActivity : AppCompatActivity() {
                 onPanelOpened = {
                     translationController?.setPanelOpen(true)
                     TranslationStatusOverlay.getInstance(this@MangaReaderActivity).dismiss()
+                    // 回退到手动必须告知（modeBeforeOpen 是回退前的模式，见上方说明）
+                    if (modeBeforeOpen != ReaderTranslationController.MODE_MANUAL) {
+                        UiUtils.showToast(this@MangaReaderActivity, getString(R.string.reader_translate_paused_to_manual))
+                    }
                 },
                 onPanelClosed = { translationController?.setPanelOpen(false) },
                 onOpenModelManagement = {

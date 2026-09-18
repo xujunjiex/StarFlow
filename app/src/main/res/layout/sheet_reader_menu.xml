@@ -272,6 +272,20 @@
                 </LinearLayout>
                 <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000"/>
 
+                <!-- 字体大小：与「OCR模型 / 翻译模型」两行**完全同款**（同字号、同布局、同 › 指示符），
+                     不另起一套样式。内容与个性化设置页「字体大小」、悬浮窗「字体大小」菜单是同一份
+                     设置（都走 utils/MangaFontSize），任何一处改完三处一致。 -->
+                <LinearLayout android:id="@+id/btn_font_size" android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:paddingTop="10dp" android:paddingBottom="10dp"
+                    android:gravity="center_vertical" android:clickable="true">
+                    <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="14sp" android:autoSizeStepGranularity="1sp"
+                        android:id="@+id/tv_font_size_row" android:layout_width="0dp" android:layout_height="wrap_content"
+                        android:layout_weight="1" android:textSize="14sp" android:textColor="#333333"/>
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="›" android:textSize="16sp" android:textColor="#BBBBBB"/>
+                </LinearLayout>
+                <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000"/>
+
                 <!-- 语言区：源/目标语言选择（两格圆角并排 + 互换），下拉弹窗 -->
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:orientation="horizontal" android:gravity="center_vertical"
@@ -308,6 +322,7 @@
                     </LinearLayout>
                 </LinearLayout>
                 <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000"/>
+
 
                 <TextView android:id="@+id/tv_translate_summary" android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:paddingTop="8dp" android:paddingBottom="2dp" android:textSize="13sp"/>

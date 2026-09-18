@@ -27,6 +27,8 @@ import com.moe.starflow.translate.LanguageSelectionDialog
 import com.moe.starflow.translate.TranslateTools
 import com.moe.starflow.utils.Constants
 import com.moe.starflow.utils.CustomPreference
+import com.moe.starflow.utils.MangaFontSize
+import com.moe.starflow.utils.MangaFontSizeDialog
 import com.moe.starflow.utils.OcrEngineManager
 import translationapi.hymt2translation.HyMt2Languages
 
@@ -73,6 +75,14 @@ class ReaderMenuCallbacks(
     val onPanelClosed: () -> Unit = {},
     val onOpenModelManagement: () -> Unit = {},
     val onOpenApiConfig: () -> Unit = {},
+    /**
+     * 回读宿主**当前真实**的翻译模式。
+     *
+     * ⚠️ 必须：宿主在 [onPanelOpened] 里会把模式回退到手动，面板若不回读就会停在打开前的
+     * 选中项（例如「自动」）—— 而用户想切回自动时点的正是那个已选中的条目，
+     * RadioButton 在同组内重复选中不派发 onCheckedChanged → 模式彻底切不动。
+     */
+    val currentTranslateMode: () -> Int = { 0 },
 )
 
 /**
@@ -89,6 +99,51 @@ class ReaderMenuSheet(
 
     /** 默认 SharedPreferences 监听（模型/语言 prefs 变化 → 刷新面板；跳设置页返回后也能生效）。 */
     private var appPrefsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
+
+    /** 当前翻译模式（0 手动 / 1 自动 / 2 增量）。宿主可经 [setTranslateMode] 单向回灌。 */
+    private var translateMode = 0
+
+    /** 当前翻译模式（0 手动 / 1 自动 / 2 增量）。 */
+    @androidx.annotation.VisibleForTesting
+    fun getTranslateMode(): Int = translateMode
+
+    /**
+     * 宿主 → 面板的**单向**回灌：把面板选中态对齐到宿主真实模式。
+     *
+     * ⚠️ 不会回调 [ReaderMenuCallbacks.onTranslateMode]（那是「面板 → 宿主」方向）。
+     * 两边互相回写就会形成「宿主改 → 面板回调 → 宿主再改」的回环。
+     *
+     * 视图尚未创建时只记状态，`onCreateView` / `onStart` 会各自应用一次（幂等）。
+     */
+    fun setTranslateMode(mode: Int) {
+        translateMode = mode
+        val radios = modeRadios
+        if (radios.isEmpty()) return
+        val target = radios.getOrNull(mode)
+        // 已经是目标态就不用动：省掉一次组内互斥的重绘，也让回灌真正幂等
+        if (target?.isChecked != true) {
+            reapplyingMode = true
+            try {
+                target?.isChecked = true
+            } finally {
+                reapplyingMode = false
+            }
+        }
+        view?.let { applyAheadRowVisibility(it, mode) }
+    }
+
+    /** 三个模式单选钮（创建视图后填充；供 [setTranslateMode] 回灌选中态）。 */
+    private var modeRadios: List<RadioButton> = emptyList()
+
+    /**
+     * 正在由 [setTranslateMode] 程序化改动选中态。
+     *
+     * ⚠️ `isChecked = true` **同样会触发 `OnCheckedChangeListener`**（它不区分来源）。
+     * 不挡一下的话，「宿主 → 面板」的回灌会立刻反向调一次
+     * [ReaderMenuCallbacks.onTranslateMode]，方向契约就破了。生产里因为 [setMode] 有
+     * 同值早退而不显症状，但那是别人给的巧合，不该靠它。
+     */
+    private var reapplyingMode = false
 
     private val pageAdapter by lazy {
         ReaderPageStateAdapter(onJump = { cb.onTranslatePageJump(it) })
@@ -109,12 +164,17 @@ class ReaderMenuSheet(
 
     override fun onStart() {
         super.onStart()
-        // 面板打开 → 暂停翻译队列（用户在调设置，不该后台继续翻）
+        // 面板打开 → 暂停翻译队列（用户在调设置，不该后台继续翻）。
         cb.onPanelOpened()
+        // ⚠️ 顺序不能反：onPanelOpened 里宿主会把模式回退到手动，随后必须回读覆盖面板选中态，
+        // 否则面板显示「自动」而实际是手动，用户点那个已选中的条目不会有任何反应。
+        setTranslateMode(cb.currentTranslateMode())
         // 面板容器背景初始跟随当前深浅（此后由 applyPanelTheme 实时维护）
         reapplySheetContainerBg()
         // 模型/语言 prefs 变化（跳设置页返回等）→ 即时刷新模型名；无需关面板
         refreshModelRows()
+        // 插件初始化期间可能没走到下面 onStart 的赋值，这里再补一次（幂等）
+        setTranslateMode(cb.currentTranslateMode())
         view?.let { refreshLangRow(it) }
         val sp = PreferenceManager.getDefaultSharedPreferences(requireContext())
         appPrefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
@@ -165,9 +225,23 @@ class ReaderMenuSheet(
         tv.alpha = if (isWebtoon) 0.4f else 1f
     }
 
+    /**
+     * 测试缝：`onCreateView` 完成主题应用后回调一次。
+     *
+     * ⚠️ 这个缝是被 Robolectric 逼出来的：[`show()`][BottomSheetDialogFragment.show] 在测试里会走
+     * FragmentManager 注册、并让 `BottomSheetDialog` 去操作一个没有真实窗口的 Dialog，噪音覆盖收益。
+     * 而这里需要断言的恰恰是「inflate 出来的面板长什么样」—— 所以让测试用真实的
+     * `sheet_reader_menu.xml` 走完整的 `onCreateView`，只把布局里那部分被观察的控件换掉。
+     * 生产路径一条语句都不会被跳过。
+     */
+    @androidx.annotation.VisibleForTesting
+    var onViewReady: ((View) -> Unit)? = null
+
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         val view = inflater.inflate(R.layout.sheet_reader_menu, container, false)
         val root = view.findViewById<View>(R.id.sheet_root)
+        // 先给测试缝机会补全布局，再统一上色 —— 反过来注入的控件就赶不上这次主题应用
+        onViewReady?.invoke(view)
         applyPanelTheme(view, root)
 
         val panelPaging = view.findViewById<View>(R.id.panel_paging)
@@ -278,7 +352,7 @@ class ReaderMenuSheet(
         view.findViewById<TextView>(R.id.tv_rotate_value).text = state.rotateLabel
         view.findViewById<TextView>(R.id.tv_download_value).text = state.downloadLabel
 
-        // 翻译面板：模式骨架（手动可用，自动/增量置灰）+ 汇总 + 过滤 + 每页列表 + 重试
+        // 翻译面板：模式骨架（手动/自动/增量三选一）+ 汇总 + 过滤 + 每页列表
         currentRecords = state.pageTranslations
         val rvPages = view.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rv_translate_pages)
         rvPages.layoutManager = LinearLayoutManager(requireContext())
@@ -287,17 +361,33 @@ class ReaderMenuSheet(
         val rbManual = view.findViewById<RadioButton>(R.id.translate_mode_manual)
         val rbAuto = view.findViewById<RadioButton>(R.id.translate_mode_auto)
         val rbAhead = view.findViewById<RadioButton>(R.id.translate_mode_incremental)
-        rbManual.isChecked = state.translateMode == 0
-        rbAuto.isChecked = state.translateMode == 1
-        rbAhead.isChecked = state.translateMode == 2
+        modeRadios = listOf(rbManual, rbAuto, rbAhead)
+        setTranslateMode(cb.currentTranslateMode())
+        // ⚠️ 初值必须取自 [ReaderMenuCallbacks.currentTranslateMode]（宿主**此刻**的真实模式），
+        // 不能用 `state.translateMode` —— 那是构造面板那一刻的快照，创建视图这一段是异步的，
+        // 中间宿主完全可能已经改过模式（例如面板打开就回退手动）。
         rbManual.setOnCheckedChangeListener { _, c ->
-            if (c) { cb.onTranslateMode(0); applyAheadRowVisibility(view, 0) }
+            if (c && !reapplyingMode) { translateMode = 0; cb.onTranslateMode(0) }
+            applyAheadRowVisibility(view, translateMode)
         }
         rbAuto.setOnCheckedChangeListener { _, c ->
-            if (c) { cb.onTranslateMode(1); applyAheadRowVisibility(view, 1) }
+            if (c && !reapplyingMode) { translateMode = 1; cb.onTranslateMode(1) }
+            applyAheadRowVisibility(view, translateMode)
         }
         rbAhead.setOnCheckedChangeListener { _, c ->
-            if (c) { cb.onTranslateMode(2); applyAheadRowVisibility(view, 2) }
+            if (c && !reapplyingMode) { translateMode = 2; cb.onTranslateMode(2) }
+            applyAheadRowVisibility(view, translateMode)
+        }
+
+        // 译文大小：**同一份设置**（个性化 → 漫画翻译结果字体大小）。这里改完，
+        // 悬浮窗与设置页显示同步跟着变；改动经 prefs 落盘，重翻时按新字号渲染。
+        val tvFontSize = view.findViewById<TextView>(R.id.tv_font_size_row)
+        fun refreshFontSizeRow() {
+            tvFontSize.text = getString(R.string.reader_translate_font_size, MangaFontSize.summary(requireContext()))
+        }
+        refreshFontSizeRow()
+        view.findViewById<View>(R.id.btn_font_size).setOnClickListener {
+            showFontSizeDialog { refreshFontSizeRow() }
         }
 
         // 启动延迟（防抖）：翻页停留多久才开翻。自动/增量共用。
@@ -323,7 +413,7 @@ class ReaderMenuSheet(
             tvAhead.text = "$n"
             cb.onAheadPages(n)
         })
-        applyAheadRowVisibility(view, state.translateMode)
+        applyAheadRowVisibility(view, translateMode)
 
         setupTranslateFilter(view)
         updateSummary(currentRecords)
@@ -411,7 +501,9 @@ class ReaderMenuSheet(
             R.id.tv_rotate_label, R.id.tv_auto_turn_label, R.id.tv_download_label, R.id.tv_settings_label,
             R.id.tv_ocr_model_row, R.id.tv_translator_model_row,
             R.id.tv_source_lang_value, R.id.tv_target_lang_value,
-            R.id.tv_debounce_label, R.id.tv_ahead_label
+            R.id.tv_debounce_label, R.id.tv_ahead_label,
+            // 与「OCR模型 / 翻译模型」两行同为 14sp 正文色
+            R.id.tv_font_size_row
         ).forEach { id ->
             view.findViewById<TextView>(id).setTextColor(labelColor)
         }
@@ -440,6 +532,10 @@ class ReaderMenuSheet(
         listOf(R.id.iv_source_spinner, R.id.iv_target_spinner).forEach { id ->
             view.findViewById<ImageView>(id).setColorFilter(spinnerColor)
         }
+        // ⚠️ 翻译模式三选项是 RadioButton：文字/按钮颜色来自**主题**（DayNight 的浅色分支给的是
+        // 接近白的浅色文字），而本面板底色是写死的 0xFFFFFFFF → 浅色下白字压白底，看不见也点不着。
+        // 必须与同类 TextView 一样显式着色，并显式给按钮 tint（默认 tint 同样来自主题）。
+        applyTranslateModeTheme(view, dark)
         // 外层面板容器背景实时跟随深浅（不再只用 onStart 初始值）
         reapplySheetContainerBg()
         // 语言两格圆角背景随深浅
@@ -449,6 +545,30 @@ class ReaderMenuSheet(
         }
         listOf(R.id.btn_source_lang, R.id.btn_target_lang).forEach { id ->
             view.findViewById<View>(id).background = langCellBg
+        }
+    }
+
+    /**
+     * 翻译模式三选项（`RadioButton`）配色。
+     *
+     * 它们是本面板唯一的系统按钮类控件（其余都是自绘/ImageView/Switch）。不加这段时，文字与
+     * 圆形按钮的 tint 全部来自主题 `Theme.MaterialComponents.DayNight`（见 Manifest 里
+     * MangaReaderActivity 的 `android:theme`）：浅色分支给的是浅色文字，压在面板写死的
+     * `0xFFFFFFFF` 底色上 → 「白字白底」，用户既看不清也点不准。深色面板下则反过来被主题的
+     * 浅色 tint 兜住、看起来正常 —— 所以这个 bug 只在浅色背景时暴露。
+     */
+    private fun applyTranslateModeTheme(view: View, dark: Boolean) {
+        val text = if (dark) 0xFFE2E2E4.toInt() else 0xFF333333.toInt()
+        // 按钮圆圈沿用分段选中色的蓝，未选中用与其它图标一致的灰
+        val onColor = 0xFF55AEEA.toInt()
+        val offColor = if (dark) 0xFFB8BCC2.toInt() else 0xFF777777.toInt()
+        for (id in listOf(R.id.translate_mode_manual, R.id.translate_mode_auto, R.id.translate_mode_incremental)) {
+            val rb = view.findViewById<RadioButton>(id) ?: continue
+            rb.setTextColor(text)
+            rb.buttonTintList = ColorStateList(
+                arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf()),
+                intArrayOf(onColor, offColor)
+            )
         }
     }
 
@@ -578,13 +698,34 @@ class ReaderMenuSheet(
             CustomLocale.getInstance(prefs.getString("Target_Language", "zh")).getDisplayName()
     }
 
+    /**
+     * 测试缝：语言下拉数据源。
+     *
+     * `TranslateTools.getLanguagesList` 会读真实 prefs（`OcrEngineManager` 的引擎组、
+     * `CustomPreference` 的当前语言）。它在 `onCreateView` 里就会被调用，任何只想断言面板
+     * 结构的测试都会被这些外部状态拖住 —— 换掉它即可。
+     */
+    @androidx.annotation.VisibleForTesting
+    var languagesList: (Int, OcrEngineGroup?) -> List<CustomLocale> = { type, group ->
+        TranslateTools.getLanguagesList(requireContext(), type, group) ?: emptyList()
+    }
+
+    /**
+     * 译文大小选择。走三处共用的 [MangaFontSizeDialog]（设置页/悬浮窗/阅读器面板同一份实现），
+     * 配色只需告诉它当前面板深浅 —— 阅读器面板不随全局主题，必须显式传。
+     */
+    private fun showFontSizeDialog(onChanged: () -> Unit) {
+        MangaFontSizeDialog.create(requireContext(), dark = darkPanel) { onChanged() }.show()
+    }
+
     /** 语言选择弹窗（复刻主页 showLanguageListDialog，主题随 darkPanel）。 */
     private fun showLangDialog(type: Int) {
         val ctx = requireContext()
         val appPrefs = PreferenceManager.getDefaultSharedPreferences(ctx)
         val customPrefs = CustomPreference.getInstance(ctx)
         val ocrGroup = if (type == 1) OcrEngineManager.getOcrEngineGroup(appPrefs) else null
-        val locales = TranslateTools.getLanguagesList(ctx, type, ocrGroup) ?: return
+        val locales = languagesList(type, ocrGroup)
+        if (locales.isEmpty()) return
         val isHyMt2 = appPrefs.getInt("Text_API", Constants.TextApi.BING.id) == Constants.TextApi.AI.id &&
             appPrefs.getInt("Text_AI", Constants.TextAI.NLLB.id) == Constants.TextAI.HYMT2.id
         val disabledTargets = if (type == 2) TranslateTools.getDisabledTargetLangs(customPrefs) else emptySet()

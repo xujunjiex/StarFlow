@@ -340,8 +340,12 @@ object PPOcrV6Engine {
         }
 
         // 2. 对齐 32 的倍数
-        resizeH = max(32, (resizeH / 32) * 32)
-        resizeW = max(32, (resizeW / 32) * 32)
+        // ⚠️ 必须走 PPOcrDetGeometry.alignTo32（**四舍五入**，对齐官方 RapidOCR）。
+        // 曾写成 `(resizeH / 32) * 32`（整数截断）→ 两轴各自最多白扔 31px →
+        // 小尺寸裁剪被**压扁**（94x258 变 64x256，横 −32%），竖排小字认不出、
+        // det 框数暴涨。见 alignTo32 的文档。
+        resizeH = PPOcrDetGeometry.alignTo32(resizeH)
+        resizeW = PPOcrDetGeometry.alignTo32(resizeW)
 
         // 2a. 安全保护：防止极薄横屏框选（如 2400x20）触发 min_side 缩放产生极端尺寸
         // 案例：min_side=20 → ratio=1.5 → resizeW=3529 → limit_side 阶段再 ratio=24.5 → 86,558x736
@@ -353,8 +357,8 @@ object PPOcrV6Engine {
             resizeH = (resizeH * capRatio).roundToInt()
             resizeW = (resizeW * capRatio).roundToInt()
             // 重新对齐 32
-            resizeH = max(32, (resizeH / 32) * 32)
-            resizeW = max(32, (resizeW / 32) * 32)
+            resizeH = PPOcrDetGeometry.alignTo32(resizeH)
+            resizeW = PPOcrDetGeometry.alignTo32(resizeW)
             LogCollector.w(TAG, "!!! det 尺寸超限已截断到 ${resizeW}x${resizeH}（原图 ${bitmap.width}x${bitmap.height}）")
         }
 

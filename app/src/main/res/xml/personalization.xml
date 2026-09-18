@@ -102,13 +102,6 @@
             android:entries="@array/show_source_text_entries"
             android:entryValues="@array/show_source_text_values"/>
 
-        <SwitchPreference
-            android:key="text_shadow_enabled"
-            android:title="@string/text_shadow_title"
-            android:summary="@string/text_shadow_summary"
-            android:defaultValue="true"
-            app:iconSpaceReserved="false" />
-
         <ListPreference
             android:key="Game_Text_Direction"
             app:iconSpaceReserved="false"
@@ -118,11 +111,26 @@
             android:entries="@array/manga_text_direction_entries"
             android:entryValues="@array/manga_text_direction_values"/>
 
+        <SwitchPreference
+            android:key="text_shadow_enabled"
+            android:title="@string/text_shadow_title"
+            android:summary="@string/text_shadow_summary"
+            android:defaultValue="true"
+            app:iconSpaceReserved="false" />
+
     </PreferenceCategory>
 
     <PreferenceCategory
         android:title="@string/manga_result_setting_title"
         app:iconSpaceReserved="false">
+
+        <!-- 漫画翻译结果字号：**最初始的位置**。悬浮窗的「字体大小」菜单与阅读器翻译面板的
+             字号组件都读写同一对 prefs（Manga_Font_Size / Manga_Auto_Font_Size），
+             统一走 utils/MangaFontSize.kt。 -->
+        <Preference
+            android:key="manga_font_size"
+            app:iconSpaceReserved="false"
+            android:title="@string/manga_font_size_title" />
 
         <ListPreference
             android:key="Manga_Text_Direction"
@@ -185,6 +193,18 @@
             android:defaultValue="true"
             android:title="@string/manga_text_merge_title"
             android:summary="@string/manga_text_merge_summary" />
+
+        <!-- 翻译结果与**原文区域**重叠时的处理：开启=并成一个大白块（默认），
+             关闭=各自独立绘制并允许叠白块。
+             ⚠️ 与上面那个 Manga_Text_Merge 完全不是一回事：`Manga_Text_Merge` 是
+             **检测阶段的识别后合并**（TextRegionMerger，管"哪些文字行属于同一句"），
+             本项是**渲染阶段的重叠合并**（OverlayRenderer，管"输出的白块画几块"）。 -->
+        <SwitchPreference
+            android:key="Manga_Overlap_Merge"
+            app:iconSpaceReserved="false"
+            android:defaultValue="false"
+            android:title="@string/manga_overlap_merge_title"
+            android:summary="@string/manga_overlap_merge_summary" />
 
     </PreferenceCategory>
 

@@ -29,6 +29,17 @@ class TranslationCacheManager(private val context: Context) {
         /** 缓存命中标记（⚡）开关 key，共享给 About 页与渲染配置 */
         const val KEY_CACHE_MARKER = "cache_hit_marker"
 
+        /**
+         * 渲染阶段「重叠合并」开关（个性化页「漫画翻译结果设置」）。
+         *
+         * ⚠️ 与 `Manga_Text_Merge` **不是一回事**：那个是**检测阶段**的识别后合并
+         * （`TextRegionMerger`，决定哪些文字行属于同一句），本项是**渲染阶段**的
+         * `OverlayRenderer` Phase 2 —— `neededRect` 两两相交就并成一个白块。
+         * 关闭后每个气泡各自绘制（允许白块相叠），用于排查"白块横跨半屏"这类
+         * 由传递性合并造成的异常（A∩B、B∩C 会让整个包围盒被并成一块）。
+         */
+        const val KEY_OVERLAP_MERGE = "Manga_Overlap_Merge"
+
         /** 横排译文对齐方式（"0"=左 / "1"=居中 / "2"=右，默认居中）。 */
         const val KEY_MANGA_HORIZONTAL_ALIGN = "manga_horizontal_align"
 
@@ -76,7 +87,9 @@ class TranslationCacheManager(private val context: Context) {
         val showCacheMarker: Boolean = false,  // 缓存命中标记（⚡，默认关闭）
         val horizontalAlign: com.moe.starflow.manga.types.TextAlign = com.moe.starflow.manga.types.TextAlign.CENTER,
         val trackingRatio: Float = 0f,         // 用户字间距（×字号）
-        val leadingRatio: Float = 0f           // 用户行间距（×字号）
+        val leadingRatio: Float = 0f,          // 用户行间距（×字号）
+        /** 渲染阶段重叠合并（见 [KEY_OVERLAP_MERGE]）。关闭 = 每个气泡各自绘制，允许白块相叠。 */
+        val mergeOverlap: Boolean = true
     )
 
     /**
@@ -145,6 +158,7 @@ class TranslationCacheManager(private val context: Context) {
                         align = config.horizontalAlign,
                         trackingRatio = config.trackingRatio,
                         leadingRatio = config.leadingRatio,
+                        mergeOverlap = config.mergeOverlap,
                         density = context.resources.displayMetrics.density
                     )
                 } finally {
@@ -185,6 +199,7 @@ class TranslationCacheManager(private val context: Context) {
                         align = config.horizontalAlign,
                         trackingRatio = config.trackingRatio,
                         leadingRatio = config.leadingRatio,
+                        mergeOverlap = config.mergeOverlap,
                         density = context.resources.displayMetrics.density
                     )
                 }
@@ -207,8 +222,9 @@ class TranslationCacheManager(private val context: Context) {
             .fromPref(prefs.getString("Manga_Text_Direction", "0"))
             .toTextDirection()
         val showCacheMarker = prefs.getBoolean(KEY_CACHE_MARKER, false)
-        val horizontalAlign = when (prefs.getString(KEY_MANGA_HORIZONTAL_ALIGN, "1")) {
-            "0" -> com.moe.starflow.manga.types.TextAlign.LEFT
+        // 每次现读（与 showCacheMarker 同样口径）：个性化页改完立刻生效，不必重启服务
+        val mergeOverlap = prefs.getBoolean(KEY_OVERLAP_MERGE, false)
+        val horizontalAlign = when (prefs.getString(KEY_MANGA_HORIZONTAL_ALIGN, "1")) {            "0" -> com.moe.starflow.manga.types.TextAlign.LEFT
             "2" -> com.moe.starflow.manga.types.TextAlign.RIGHT
             else -> com.moe.starflow.manga.types.TextAlign.CENTER
         }
@@ -217,7 +233,7 @@ class TranslationCacheManager(private val context: Context) {
         val leadingRatio = prefs.getInt(KEY_MANGA_LEADING, 0) / 100f
         return OverlayConfig(
             fontSize, autoFit, textColor, bgColor, textDirection,
-            showCacheMarker, horizontalAlign, trackingRatio, leadingRatio
+            showCacheMarker, horizontalAlign, trackingRatio, leadingRatio, mergeOverlap
         )
     }
 

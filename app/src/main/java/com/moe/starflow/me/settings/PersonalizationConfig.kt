@@ -46,8 +46,12 @@ import com.moe.starflow.translate.FloatingBallService
 import com.moe.starflow.manga.MangaFloatingService
 import com.moe.starflow.utils.Constants
 import com.moe.starflow.utils.CustomPreference
+import com.moe.starflow.utils.MangaFontSize
+import com.moe.starflow.utils.MangaFontSizeDialog
+import com.moe.starflow.utils.CustomFontSize
 import com.moe.starflow.utils.LanguageManager
 import com.moe.starflow.utils.ServiceUtils
+import com.moe.starflow.utils.ThemeManager
 import com.moe.starflow.utils.UiUtils
 import java.io.File
 import java.io.FileOutputStream
@@ -130,6 +134,15 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
         resultFontSize.setOnPreferenceClickListener {
             showFontSizeDialog()
             true
+        }
+
+        // 漫画翻译结果字体大小（与悬浮窗菜单、阅读器面板同一份设置）
+        findPreference<Preference>("manga_font_size")?.let { p ->
+            p.setOnPreferenceClickListener {
+                showMangaFontSizeDialog()
+                true
+            }
+            updateMangaFontSizeSummary()
         }
 
         // 漫画译文间距（字间距 + 行间距合并在一个面板里；整数百分比，读取方 /100 得 ×字号的倍率）
@@ -557,11 +570,31 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
     }
 
     private fun showFontSizeDialog(){
-        val dialog = Dialogs.fontSizeDialog(requireContext(), null){
+        val dialog = Dialogs.fontSizeDialog(requireContext(), null){ size ->
+            // 弹窗只负责收集数值，落盘在这里 —— 游戏结果字号由 CustomFontSize 统一管理
+            CustomFontSize.setSize(requireContext(), size)
             updateFontSizeSummary()
         }
         dialog.show()
         dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
+    }
+
+    /**
+     * 漫画翻译结果**字号**：自动 / 固定档位。
+     *
+     * 与悬浮窗的「字体大小」菜单弹窗、阅读器翻译面板的字号组件是**同一份设置**
+     * （都走 [MangaFontSize]），任何一处改完另两处立刻一致。
+     */
+    private fun showMangaFontSizeDialog() {
+        // 三处共用的弹窗实现；设置页与悬浮窗一样走**全局主题**（ThemeManager.isNight），
+        // 阅读器面板才用它自己的内置主题
+        MangaFontSizeDialog.create(requireContext(), dark = ThemeManager.isNight(requireContext())) {
+            updateMangaFontSizeSummary()
+        }.show()
+    }
+
+    private fun updateMangaFontSizeSummary() {
+        findPreference<Preference>("manga_font_size")?.summary = MangaFontSize.summary(requireContext())
     }
 
     private fun handleDefaultIcon(prefKey: String) {

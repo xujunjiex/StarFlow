@@ -44,7 +44,12 @@ class GameOcrEngine(
      *   横屏时同一段竖排文字在帧里转了 90°、顺序会整段翻过来。这里统一补一次
      *   阅读顺序排序（横排恒左→右，不受设置影响），让「识别顺序」不再随屏幕方向变。
      *
-     *   ML Kit / manga-ocr **不接**：ML Kit 自带阅读序，改了反而破坏其语言模型输出。
+     *   ⚠️ **ML Kit / manga-ocr 不接，且不要接**：ML Kit 的 block 是它自己版式分析的
+     *   产物（官方文档：*"a contiguous set of text lines, such as a paragraph or a
+     *   **column**"*）—— 一个竖排整列常常就是**一个 block**，块内读序封在它手里、
+     *   我们插不进去。曾试图按 `line.boundingBox` 重排，表现为「设置时灵时不灵」，
+     *   比不支持更难解释，已删除（见 `OCRTextRecognizer` 的说明）。manga-ocr 借 ML Kit
+     *   定位，同理不接。
      * @return 识别出的文字
      */
     suspend fun recognize(
@@ -58,20 +63,13 @@ class GameOcrEngine(
             1 -> recognizeWithPPOcrV5(bitmap, language, verticalDirection)
             2 -> recognizeWithMangaOcr(bitmap, language)
             3 -> recognizeWithPPOcrV6(bitmap, language, verticalDirection)
-            else -> recognizeWithMLKit(bitmap, language, verticalDirection)
+            else -> recognizeWithMLKit(bitmap, language)
         }
     }
 
-    /**
-     * ML Kit 路径：**按几何自行重排**（ML Kit 的块序插不进去，必须在拼接时自己排）。
-     * 见 `OCRTextRecognizer.getPicText(language, bitmap, verticalDirection)`。
-     */
-    private suspend fun recognizeWithMLKit(
-        bitmap: Bitmap,
-        language: String,
-        verticalDirection: TextDirection
-    ): String {
-        return OCRTextRecognizer.getPicText(language, bitmap, verticalDirection)
+    /** ML Kit 路径：**不接方向设置** —— 理由见 [recognize] 的说明。 */
+    private suspend fun recognizeWithMLKit(bitmap: Bitmap, language: String): String {
+        return OCRTextRecognizer.getPicText(language, bitmap)
     }
 
     private suspend fun recognizeWithPPOcrV5(
@@ -91,7 +89,7 @@ class GameOcrEngine(
             result.toReadOrderText(verticalDirection)
         } else {
             LogCollector.w(TAG, "PP-OCRv5 不支持语言: $language, 回退 ML Kit")
-            recognizeWithMLKit(bitmap, language, verticalDirection)
+            recognizeWithMLKit(bitmap, language)
         }
     }
 
@@ -102,7 +100,7 @@ class GameOcrEngine(
             textBlocks.joinToString("\n") { it.text }
         } else {
             LogCollector.w(TAG, "manga-ocr 未初始化, 回退 ML Kit")
-            recognizeWithMLKit(bitmap, language, TextDirection.VERTICAL_RL)
+            recognizeWithMLKit(bitmap, language)
         }
     }
 
@@ -150,7 +148,16 @@ class GameOcrEngine(
         val ordered = PPOcrDetGeometry.sortDetCandidates(
             boxes, scores, verticalDirection == TextDirection.VERTICAL_LR
         )
-        return ordered.reorder(texts).joinToString("")
+        val reordered = ordered.reorder(texts)
+        if (PPOcrDetGeometry.enableDebugLogging) {
+            // 最终送进翻译的拼接顺序（按气泡/列逐条列出，便于与 det 逐框日志对照）
+            LogCollector.d(
+                TAG,
+                "toReadOrderText: dir=$verticalDirection, n=${reordered.size}, " +
+                    "顺序=${reordered.mapIndexed { i, t -> "$i:'${t.take(8)}'" }}"
+            )
+        }
+        return reordered.joinToString("")
     }
 
     private fun initPPOcrV6IfNeeded() {

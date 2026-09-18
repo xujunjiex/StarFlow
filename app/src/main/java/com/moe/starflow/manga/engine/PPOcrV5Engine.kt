@@ -432,8 +432,11 @@ object PPOcrV5Engine {
         }
 
         // 2. 对齐 32 的倍数
-        resizeH = max(32, (resizeH / 32) * 32)
-        resizeW = max(32, (resizeW / 32) * 32)
+        // ⚠️ 必须走 PPOcrDetGeometry.alignTo32（**四舍五入**，对齐官方 RapidOCR）。
+        // 曾写成 `(resizeH / 32) * 32`（整数截断）→ 两轴各自最多白扔 31px →
+        // 小尺寸裁剪被**压扁**，竖排小字认不出、det 框数暴涨。见 alignTo32 的文档。
+        resizeH = PPOcrDetGeometry.alignTo32(resizeH)
+        resizeW = PPOcrDetGeometry.alignTo32(resizeW)
 
         // 2a. 安全保护：防止极薄横屏框选 + 用户误调 limit_side_len 到很大值时爆 OOM
         val absoluteMax = 4000
@@ -441,8 +444,8 @@ object PPOcrV5Engine {
             val capRatio = absoluteMax.toFloat() / max(resizeW, resizeH)
             resizeH = (resizeH * capRatio).roundToInt()
             resizeW = (resizeW * capRatio).roundToInt()
-            resizeH = max(32, (resizeH / 32) * 32)
-            resizeW = max(32, (resizeW / 32) * 32)
+            resizeH = PPOcrDetGeometry.alignTo32(resizeH)
+            resizeW = PPOcrDetGeometry.alignTo32(resizeW)
             LogCollector.w(TAG, "!!! det 尺寸超限已截断到 ${resizeW}x${resizeH}（原图 ${bitmap.width}x${bitmap.height}）")
         }
 

@@ -36,6 +36,10 @@ private class Shared(val source: ReaderPageSource) {
 private fun bindImageCommon(img: ZoomableImageView, shared: Shared, page: Int, isCurrent: () -> Boolean) {
     if (img.onInteraction == null) img.onInteraction = shared.onInteraction
     if (img.onSingleTapConfirmed == null) img.onSingleTapConfirmed = shared.onTap
+    // ⚠️ 阅读器把屏幕划分成翻页区/显隐区/菜单区，这些操作与图片缩放互不冲突：
+    // 放大的页面上点中间必须仍能显隐 UI、点左右仍能翻页。默认的门控（放大即不派发单击）
+    // 会让用户放大后"什么都点不动"，必须双击缩回原尺寸才恢复。
+    img.dispatchTapWhenZoomed = true
     loadTo(img, shared, page, isCurrent)
 }
 

@@ -473,7 +473,7 @@
     <string name="manga_direction_switched">已切换文字方向</string>
     <string name="manga_auto_translate_start">漫画自动翻译已开启</string>
     <string name="manga_auto_translate_stop">漫画自动翻译已关闭</string>
-    <string name="manga_font_size_title">漫画翻译字体大小</string>
+    <string name="manga_font_size_title">字体大小</string>
     <string name="manga_crop_confirm">翻译区域已设置</string>
     <string name="manga_crop_active">请先完成当前框选</string>
     <string name="manga_mode_vertical">竖排</string>
@@ -499,9 +499,9 @@
     <string name="manga_text_color_summary">当前漫画翻译结果的文字颜色</string>
     <string name="manga_bg_color_summary">当前漫画翻译结果的背景颜色</string>
     <string name="game_text_direction_title">竖排读取方向</string>
-    <string name="game_text_direction_summary">竖排字幕先读右列还是左列；PP-OCRv5/v6 与 ML Kit 适用</string>
+    <string name="game_text_direction_summary">竖排字幕先读右列还是左列；仅 PP-OCRv5/v6 适用</string>
     <string name="manga_text_direction_title">竖排方向</string>
-    <string name="manga_text_direction_summary">竖排先读右列还是左列；PP-OCRv5/v6 与 ML Kit 适用</string>
+    <string name="manga_text_direction_summary">竖排先读右列还是左列；仅 PP-OCRv5/v6 适用</string>
     <string name="manga_text_direction_rl">从右往左识别，日漫常用</string>
     <string name="manga_text_direction_lr">从左往右识别</string>
 
@@ -522,6 +522,8 @@
     <string name="manga_keep_text_free_summary">开启后，RT-DETR-V2 检测到的自由文字（如旁白、音效）也会被识别和翻译</string>
     <string name="manga_text_merge_title">文本合并</string>
     <string name="manga_text_merge_summary">合并相邻文本行使翻译语义连贯；关闭后各行独立翻译，适合表格等场景</string>
+    <string name="manga_overlap_merge_title">重叠合并</string>
+    <string name="manga_overlap_merge_summary">译文区域重叠的气泡合并成一个白块显示；关闭后各自绘制（重叠处会互相覆盖）。</string>
     <string name="auto_translate_dismiss_delay">翻译结果消失后重新检测延迟（漫画翻译专用）</string>
     <string name="auto_translate_dismiss_delay_summary">当前延迟：%s ms\n漫画翻译自动翻译模式下，点击消除翻译结果后等待该时间再重新开始检测翻译</string>
     <string name="set_dismiss_delay">设置漫画翻译消除翻译结果后的重新检测延迟</string>
@@ -926,6 +928,7 @@
     <string name="reader_translate_summary">共 %1$d 页 · 已译 %2$d · 翻译中 %3$d · 失败 %4$d</string>
     <string name="reader_translate_ocr_model">OCR模型：%1$s</string>
     <string name="reader_translate_translator_model">翻译模型：%1$s</string>
+    <string name="reader_translate_font_size">字体大小：%1$s</string>
     <string name="reader_translate_source_lang_label">源语言</string>
     <string name="reader_translate_target_lang_label">目标语言</string>
     <string name="reader_translate_filter_all">全部</string>
@@ -965,6 +968,8 @@
     <string name="reader_translate_batch_translate">翻译中（%1$d/2）…</string>
     <string name="reader_translate_queue_drained">翻译队列已耗尽，翻页后继续</string>
     <string name="reader_translate_waiting_other">等待其他翻译任务完成…</string>
+    <string name="reader_translate_all_cached">翻译完成（%1$d 条全部命中缓存）</string>
+    <string name="reader_translate_partial_cached">翻译完成（%1$d/%2$d 命中缓存，%3$d 条调用 API）</string>
     <string name="reader_translate_paused_to_manual">翻译已暂停，回退到手动翻译</string>
     <string name="reader_translate_cancelled">已停止，退回手动翻译</string>
     <string name="reader_translate_debounce">启动延迟</string>

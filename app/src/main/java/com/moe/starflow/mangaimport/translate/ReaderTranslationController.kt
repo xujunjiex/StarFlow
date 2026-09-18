@@ -22,6 +22,7 @@ import com.moe.starflow.manga.state.RegionCacheManager
 import com.moe.starflow.manga.types.DetEngine
 import com.moe.starflow.manga.types.OcrEngine
 import com.moe.starflow.manga.types.TextBlockInfo
+import com.moe.starflow.manga.types.TextDirection
 import com.moe.starflow.manga.types.TranslatedBubble
 import com.moe.starflow.mangaimport.data.ImportedManga
 import com.moe.starflow.translate.TranslationTextAPI
@@ -230,8 +231,12 @@ class ReaderTranslationController(
 
     /**
      * 翻译面板开合。
-     * - 打开：**暂停并回退到手动模式**（用户要调设置，后台不该继续烧），并回调 [onPaused] 弹提示
+     * - 打开：**暂停并回退到手动模式**（用户要调设置，后台不该继续烧）
      * - 关闭：恢复队列（模式已是手动则不动）—— 即"翻译要等退出面板后才开始"
+     *
+     * ⚠️ 本方法**不负责提示**：「回退到手动」的提示由宿主按回退前的模式判断
+     * （见阅读器 `onPanelOpened`）。放在这里的话，判据会是"原本有没有任务在跑"，
+     * 而最需要提示的那种情况（面板打开前本来就是手动、队列空闲）恰好不满足。
      */
     fun setPanelOpen(open: Boolean) {
         if (panelOpen == open) return
@@ -250,16 +255,20 @@ class ReaderTranslationController(
         version.value += 1
     }
 
-    /** 停止一切在途翻译并回退到手动模式；原本有在跑则回调 [onPaused]。 */
+    /**
+     * 停止一切在途翻译并回退到手动模式。
+     *
+     * ⚠️ **曾经**这里靠 `wasActive`（原本有没有在跑）决定要不要回调 `onPaused` 弹提示，结果
+     * 最需要提示的那种情况——面板打开前本来就是手动、队列空闲——恰好**不**触发提示。
+     * 现在统一由宿主按「回退前的模式」自己判断（见阅读器 `onPanelOpened`），
+     * 判据少了一层间接，也不会再出现"该提示却没提示"。
+     */
     private fun pauseToManual() {
-        val wasActive = translateMode.value != MODE_MANUAL ||
-            queueJob?.isActive == true || manualJob?.isActive == true
         cancelEverything()
         if (translateMode.value != MODE_MANUAL) {
             translateMode.value = MODE_MANUAL
             version.value += 1
         }
-        if (wasActive) onPaused()
     }
 
     /**
@@ -503,22 +512,31 @@ class ReaderTranslationController(
             }
         }
 
+        // 引擎组与语言先解析出来：逐气泡日志的「来源/引擎」字段要它们，失败记录也要它们兜底
+        val (det, ocr) = try {
+            TranslationEngineInit.ensureReady(context)
+        } catch (e: Exception) {
+            LogCollector.e(TAG, "engine init failed page=$page", e)
+            val msg = context.getString(R.string.reader_translate_model_missing, e.message.orEmpty())
+            withContext(kotlinx.coroutines.NonCancellable) {
+                runCatching { fail(page, "OCR_MODEL_MISSING", msg) }
+            }
+            phase(ReaderTranslatePhase.FAILED, msg)
+            OcrLock.release()
+            return
+        }
+        runDet = det
+        runOcr = ocr
+
         try {
             upsertState(page, ImportedPageTranslation.STATE_TRANSLATING)
             // 清掉上一轮可能残留的半成品：否则重翻时 cachedDisplayBitmap 会先把旧半成品显示出来
             renderLru.remove(partialKey(page))
+            // 本次翻译的统计从零起（管线是每次 runTranslate 新建的，这里跟着重置）
+            cacheCandidates = 0
+            cacheHits = 0
 
             phase(ReaderTranslatePhase.DETECTING, null)
-
-            val (det, ocr) = try {
-                TranslationEngineInit.ensureReady(context)
-            } catch (e: Exception) {
-                LogCollector.e(TAG, "engine init failed page=$page", e)
-                val msg = context.getString(R.string.reader_translate_model_missing, e.message.orEmpty())
-                fail(page, "OCR_MODEL_MISSING", msg)
-                phase(ReaderTranslatePhase.FAILED, msg)
-                return
-            }
 
             val translator: TranslationTextAPI? =
                 TranslatorFactory.create(context, customPrefs, TranslatorFactory.Mode.MANGA)
@@ -543,6 +561,13 @@ class ReaderTranslationController(
 
             // 增量模式禁用分批与流式：翻的是用户没在看的页面，"先出一部分"没有观众
             val batchingOn = translateMode.value != MODE_AHEAD
+            // 逐气泡日志（位置 / 原文 / 译文 / 来源）——阅读器排查时唯一能看清"这一页到底翻了什么"
+            // 的地方，与截屏翻译的 `RT-DETR-V2(MangaOcr) [i]: rect=..., text='...'` 对齐
+            LogCollector.d(
+                TAG,
+                "translate page=$page 开始: 引擎=$det/$ocr, ${srcLang}->${tgtLang}, " +
+                    "分批=$batchingOn, 位图=${bitmap.width}x${bitmap.height}, mode=${translateMode.value}"
+            )
 
             val translated: List<TranslatedBubble> =
                 translateWithPipelineOn(
@@ -565,6 +590,8 @@ class ReaderTranslationController(
             if (shouldRender()) {
                 renderInto(page, translated, TranslationCacheManager.OverlayMode.TRANSLATED, bitmap, overlayConfig)
             }
+            // 逐气泡明细（rect / 原文 / 译文 / 来源）：阅读器排查时唯一能看清"这页到底翻了什么"的地方
+            logBubbles(page, translated)
             // 半成品不论是否上屏都要清：用户翻走后整页渲染不执行，那个 PARTIAL 会永久占着
             // 100MB 渲染缓存（只能靠 LRU 淘汰），且同页重翻时会先闪出旧半成品
             renderLru.remove(partialKey(page))
@@ -586,7 +613,7 @@ class ReaderTranslationController(
             dao.upsert(row)
             version.value += 1
             onVisual()
-            phase(ReaderTranslatePhase.SUCCESS, null)
+            phase(ReaderTranslatePhase.SUCCESS, cacheNotice(page, translated.size))
             LogCollector.d(TAG, "translated page=$page bubbles=${translated.size} fromQueue=$fromQueue")
         } catch (e: TranslationCancelledException) {
             // 用户主动停止：**不能**保持 TRANSLATING（会永久卡死该页），退回未翻译
@@ -656,6 +683,10 @@ class ReaderTranslationController(
             null
         }
 
+        // 管线每次 run 新建，缓存统计按「两条路线相加」取回
+        cacheCandidates += pipeline.cacheStats.candidates
+        cacheHits += pipeline.cacheStats.hits
+
         when (outcome) {
             null -> {
                 // 管线抛异常（非取消）：用通用失败文案。**不能**用 reader_translate_ocr_empty ——
@@ -696,6 +727,13 @@ class ReaderTranslationController(
             DetectionBridge.runOCR(bitmap, srcLang, det.value, ocr.value, context)
         val overlayConfig = cacheManager.getOverlayConfig(appPrefs)
         val bubbleRegions = DetectionBridge.ocrToBubbleRegions(blocks, overlayConfig.textDirection)
+        // ⚠️ 这条路径**不查文本缓存**（缓存只在分批管线的 translateWithCache 里）。
+        // 打出来是为了不让「同页重翻有时调 API 有时不调」变成谜：走哪条路决定了有没有缓存。
+        LogCollector.d(
+            TAG,
+            "translatePlain: OCR ${blocks.size} 个文字块 -> ${bubbleRegions.size} 个气泡" +
+                "（此路径不经文本缓存，全部走 API）"
+        )
         if (bubbleRegions.isEmpty()) {
             val msg = context.getString(R.string.reader_translate_ocr_empty)
             fail(page, "OCR_EMPTY", msg)
@@ -780,6 +818,14 @@ class ReaderTranslationController(
     /** 阅读器侧上下文历史（分批的批次间上下文用；阅读器按页翻译，正常不跨页复用）。 */
     private val readerContextHistory = LinkedList<Pair<String, String>>()
     private val readerTextCache = RegionCacheManager()
+
+    /** 本次 [runTranslate] 的文本缓存候选/命中数（两条路线相加）。见 [reportCacheOutcome]。 */
+    private var cacheCandidates = 0
+    private var cacheHits = 0
+
+    /** 本次 [runTranslate] 的识别引擎，用于逐气泡日志里的「来源」字段。 */
+    private var runDet: DetEngine = DetEngine.PP_OCR_V6
+    private var runOcr: OcrEngine = OcrEngine.PPOcrV6
 
     // ========== 渲染 ==========
 
@@ -899,6 +945,64 @@ class ReaderTranslationController(
         centerY = if (centerY >= 0f) centerY * s else centerY,
     )
 
+    // ========== 日志与缓存提示 ==========
+
+    /**
+     * 逐气泡日志：序号 + 矩形 + 竖排标记 + 原文 → 译文 + **来源**。
+     *
+     * 阅读器以前整条链路没有一条气泡级日志，出问题只能靠猜（哪块漏翻、哪块被合并、哪块命中了缓存
+     * 全看不出来）。格式与截屏翻译的 `RT-DETR-V2(MangaOcr) [i]: rect=..., text='...'` 对齐，方便
+     * 两边对照。来源按「本次有没有真的调过 API」判定，不用渲染时的 `fromCache` —— 那个标志还被
+     * 「缓存命中标记」设置控制，不能当作事实来源。
+     */
+    private fun logBubbles(page: Int, bubbles: List<TranslatedBubble>) {
+        if (bubbles.isEmpty()) return
+        LogCollector.d(TAG, "page=$page 气泡明细（共 ${bubbles.size} 个，引擎=$runDet/$runOcr）：")
+        bubbles.forEachIndexed { i, b ->
+            val origin = originOf(b)
+            val vertical = b.direction != TextDirection.HORIZONTAL
+            LogCollector.d(
+                TAG,
+                "  [$i] rect=[${b.rect.left},${b.rect.top},${b.rect.right},${b.rect.bottom}] " +
+                    "v=$vertical fs=${b.fontSize.roundToInt()} 来源=$origin\n" +
+                    "      src='${b.originalText}'\n" +
+                    "      dst='${b.translatedText}'"
+            )
+        }
+    }
+
+    /**
+     * 气泡的来源：唯一权威是数据本身带的两个缓存标志（阅读器路径上只有「精确命中」与
+     * 「模糊命中」两处会置位），不靠计数推算 —— 推算在分批/流式下容易错位。
+     *
+     * 模糊命中时**拿不到**当时那条缓存原文（`TranslatedBubble` 不带这个字段），要看它得翻
+     * 管线打印的 `Text cache hit (fuzzy): 'A' ~ 'B' → 'C'`。
+     */
+    private fun originOf(b: TranslatedBubble): String = when {
+        b.isInMemoryCache -> "精确缓存"
+        b.fromCache -> "模糊缓存"
+        else -> "API"
+    }
+
+    /**
+     * 完成提示里的缓存说明；没有缓存命中时返回 null（走原来的「翻译完成」文案）。
+     *
+     * 用户要求：提示「12 条里面命中 3 条」这个口径，而不是笼统说一句"有缓存"。
+     */
+    private fun cacheNotice(page: Int, total: Int): String? {
+        if (cacheHits <= 0) return null
+        val fromApi = (cacheCandidates - cacheHits).coerceIn(0, total)
+        LogCollector.d(
+            TAG,
+            "page=$page 缓存命中 $cacheHits/$cacheCandidates（译文 $fromApi 条来自 API，共 $total 条）"
+        )
+        return when {
+            fromApi <= 0 -> context.getString(R.string.reader_translate_all_cached, total)
+            else -> context.getString(R.string.reader_translate_partial_cached, cacheHits, cacheCandidates, fromApi)
+        }
+    }
+
+    /** 渲染一行气泡到页图（阅读器渲染的统一出口）。 */
     private fun renderBubbles(
         original: Bitmap,
         bubbles: List<TranslatedBubble>,
@@ -918,6 +1022,7 @@ class ReaderTranslationController(
         align = cfg.horizontalAlign,
         trackingRatio = cfg.trackingRatio,
         leadingRatio = cfg.leadingRatio,
+        mergeOverlap = cfg.mergeOverlap,
         density = context.resources.displayMetrics.density
     )
 
@@ -1065,9 +1170,6 @@ class ReaderTranslationController(
 
     /** 翻译阶段变化（检测中/翻译中/完成/失败/队列耗尽）。 */
     var onPhase: (ReaderTranslatePhase, String?) -> Unit = { _, _ -> }
-
-    /** 翻译被暂停并回退到手动（打开面板 / 退出阅读器）→ Activity 弹底部提示。 */
-    var onPaused: () -> Unit = {}
 
     // ========== 私有：写记录 ==========
 

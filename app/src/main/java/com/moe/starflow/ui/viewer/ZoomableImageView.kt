@@ -36,6 +36,18 @@ class ZoomableImageView @JvmOverloads constructor(
     /** 单击确认回调（x, y，view 坐标），供阅读器做点击分区翻页/唤出菜单。可选，默认 null。 */
     var onSingleTapConfirmed: ((Float, Float) -> Unit)? = null
 
+    /**
+     * 缩放状态下是否仍派发单击。
+     *
+     * 默认 false = 保持**漫画浏览器**（[com.moe.starflow.ui.viewer] 的 MangaViewerActivity）的既有行为：
+     * 放大后单击必须留给拖动看图，不能触发翻页。
+     *
+     * 阅读器把它置为 true —— 它把屏幕划分成「上/下半屏翻页 + 中间一格显隐 UI + 右上角菜单」，
+     * 那些操作**与图片缩放互不冲突**，而已有的 `currentScale <= 1.05f` 门控会让用户在放大后
+     * 完全点不动（既翻不了页、也显隐不了 UI，必须双击缩回原尺寸才恢复），属于误伤。
+     */
+    var dispatchTapWhenZoomed: Boolean = false
+
     private val matrix = Matrix()
     private val savedMatrix = Matrix()
     private val matrixValues = FloatArray(9)
@@ -78,8 +90,9 @@ class ZoomableImageView @JvmOverloads constructor(
         }
 
         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
-            // 放大状态不翻页：单击只在未缩放时派发（缩回初始后恢复翻页）
-            if (currentScale <= 1.05f) onSingleTapConfirmed?.invoke(e.x, e.y)
+            // 放大状态是否派发由宿主决定（见 dispatchTapWhenZoomed）：
+            // 漫画浏览器要在放大时保留拖动看图、不翻页；阅读器的翻页/显隐 UI 则不该被缩放误伤。
+            if (dispatchTapWhenZoomed || currentScale <= 1.05f) onSingleTapConfirmed?.invoke(e.x, e.y)
             return true
         }
     })

@@ -96,6 +96,19 @@ class IncrementalBatchPipeline(
      * 两批并行 OCR + 翻译 + 合并 + 上下文回滚 公共骨架（原 `translateFirstThenSecondBatch`）。
      * 调用方负责：第一批 OCR（[firstBubbleRegions]）、第二批 OCR 异步任务（[secondOcrJob]）的启动与取消。
      */
+    /**
+     * 文本级缓存的命中统计。
+     *
+     * [candidates] 刻意大于「气泡数」：只含符号/空白的气泡不走翻译，但它们也是"这次没调 API"
+     * 的一条 —— 不计入的话「3/12」的分母会比用户数出来的气泡少，看起来像漏报。
+     */
+    class TextCacheStats {
+        var candidates: Int = 0
+            internal set
+        var hits: Int = 0
+            internal set
+    }
+
     /** 分批翻译结果：译文 + 「有没有识别出任何文字块」（决定空结果算"未检测到文字"还是"翻译没产出"）。 */
     private data class BatchTranslationResult(
         val bubbles: List<TranslatedBubble>,
@@ -495,6 +508,9 @@ class IncrementalBatchPipeline(
         return mergedRegions.map { it.toTextBlockInfo() }.filter { it.text.isNotBlank() }
     }
 
+    /** 本次 [run] 的文本缓存累计统计（两条路线各自持有实例，由面板相加）。 */
+    val cacheStats = TextCacheStats()
+
     // ========== 批次内翻译（含文本级缓存）==========
 
     /**
@@ -512,6 +528,9 @@ class IncrementalBatchPipeline(
         // 用户已停止翻译：OCR 等耗时段结束后立即终止，避免继续走翻译/渲染残留进度条
         if (host.isCancelled()) throw TranslationCancelledException()
 
+        // 缓存统计按「单次调用」累计：一条路线里两批各调一次，面板侧再相加
+        var candidates = 0
+        var cacheHits = 0
         val cache = host.textCache()
         LogCollector.d(
             TAG,
@@ -526,10 +545,12 @@ class IncrementalBatchPipeline(
             val combinedText = bubble.texts.map { TranslateUtils.cleanOcrText(it) }
                 .filter { it.isNotBlank() }.joinToString("")
             if (combinedText.isBlank()) continue
+            candidates++   // 有文字可判定的气泡，无论后面走缓存还是 API
 
             // 精确匹配
             val exactMatch = cache.findExact(combinedText, combinedText.hashCode())
             if (exactMatch != null) {
+                cacheHits++
                 fromCache.add(bubble.toTranslated(exactMatch.translation, isInMemoryCache = true))
                 // 更新时间
                 cache.remove(exactMatch)
@@ -542,6 +563,7 @@ class IncrementalBatchPipeline(
                 // 模糊匹配：编辑距离自适应阈值
                 val fuzzyMatch = cache.findFuzzyMatch(combinedText)
                 if (fuzzyMatch != null) {
+                    cacheHits++
                     fromCache.add(bubble.toTranslated(fuzzyMatch.translation, fromCache = true))
                     cache.remove(fuzzyMatch)
                     cache.add(fuzzyMatch.copy(translatedAt = System.currentTimeMillis()))
@@ -556,11 +578,21 @@ class IncrementalBatchPipeline(
         }
 
         if (needTranslation.isEmpty()) {
-            LogCollector.d(TAG, "translateWithCache: all ${bubbles.size} from text cache")
+            cacheStats.candidates += candidates
+            cacheStats.hits += cacheHits
+            LogCollector.d(
+                TAG,
+                "translateWithCache: ${bubbles.size} 个气泡 -> $candidates 个有文字，全部命中文本缓存（0 次 API）；" +
+                    "命中 ${fromCache.size}/${candidates}（精确+模糊）"
+            )
             return fromCache
         }
 
-        LogCollector.d(TAG, "translateWithCache: ${fromCache.size} cached + ${needTranslation.size} need API")
+        LogCollector.d(
+            TAG,
+            "translateWithCache: ${bubbles.size} 个气泡 -> $candidates 个有文字，缓存命中 $cacheHits，" +
+                "需调 API ${needTranslation.size}"
+        )
         // 用户已停止翻译：不重新显示「正在翻译」进度（避免取消后进度条残留/跳动）
         if (host.isCancelled()) throw TranslationCancelledException()
         host.onProgress(R.string.manga_translating)
@@ -583,6 +615,8 @@ class IncrementalBatchPipeline(
                 "Cached bubble: '${result.originalText.take(20)}' → '${result.translatedText.take(20)}'"
             )
         }
+        cacheStats.candidates += candidates
+        cacheStats.hits += cacheHits
         return fromCache + results
     }
 
