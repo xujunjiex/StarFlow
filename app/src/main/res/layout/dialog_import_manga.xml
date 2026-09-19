@@ -23,14 +23,6 @@
         android:text="@string/import_manga_option_single_dir"/>
 
     <TextView
-        android:id="@+id/btn_import_multi_dir"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:padding="12dp"
-        android:textSize="15sp"
-        android:text="@string/import_manga_option_multi_dir"/>
-
-    <TextView
         android:id="@+id/tv_storage_hint"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

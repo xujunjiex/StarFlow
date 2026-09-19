@@ -89,7 +89,15 @@ class TranslationCacheManager(private val context: Context) {
         val trackingRatio: Float = 0f,         // 用户字间距（×字号）
         val leadingRatio: Float = 0f,          // 用户行间距（×字号）
         /** 渲染阶段重叠合并（见 [KEY_OVERLAP_MERGE]）。关闭 = 每个气泡各自绘制，允许白块相叠。 */
-        val mergeOverlap: Boolean = true
+        val mergeOverlap: Boolean = true,
+        /**
+         * 用户「译文替换表」（漫画翻译结果设置 → 二级面板）。
+         *
+         * ⚠️ 在**渲染时**套用（不是翻译时）：译文只存文本，overlay 是后期画上去的，
+         * 所以改完规则**不用重翻**，重新渲染该页即可（阅读器返回时自动作废译图缓存，
+         * 见 `ReaderTranslationController.refreshIfRulesChanged`）。
+         */
+        val replacementRules: List<com.moe.starflow.manga.config.ReplacementRule> = emptyList()
     )
 
     /**
@@ -159,6 +167,7 @@ class TranslationCacheManager(private val context: Context) {
                         trackingRatio = config.trackingRatio,
                         leadingRatio = config.leadingRatio,
                         mergeOverlap = config.mergeOverlap,
+                        replacementRules = config.replacementRules,
                         density = context.resources.displayMetrics.density
                     )
                 } finally {
@@ -200,6 +209,7 @@ class TranslationCacheManager(private val context: Context) {
                         trackingRatio = config.trackingRatio,
                         leadingRatio = config.leadingRatio,
                         mergeOverlap = config.mergeOverlap,
+                        replacementRules = config.replacementRules,
                         density = context.resources.displayMetrics.density
                     )
                 }
@@ -233,7 +243,9 @@ class TranslationCacheManager(private val context: Context) {
         val leadingRatio = prefs.getInt(KEY_MANGA_LEADING, 0) / 100f
         return OverlayConfig(
             fontSize, autoFit, textColor, bgColor, textDirection,
-            showCacheMarker, horizontalAlign, trackingRatio, leadingRatio, mergeOverlap
+            showCacheMarker, horizontalAlign, trackingRatio, leadingRatio, mergeOverlap,
+            // 替换表现读（与 mergeOverlap 同口径）：改完规则重新渲染即生效，不必重翻
+            replacementRules = com.moe.starflow.manga.config.TranslationTextRules.load(prefs)
         )
     }
 

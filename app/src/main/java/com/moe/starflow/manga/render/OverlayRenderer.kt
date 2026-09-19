@@ -86,6 +86,13 @@ object OverlayRenderer {
         leadingRatio: Float = LayoutEngine.LEADING_DEFAULT_RATIO,    // 用户行间距（×字号）
         /** 渲染阶段重叠合并开关（个性化页可关，见 OverlayConfig.mergeOverlap）。 */
         mergeOverlap: Boolean = true,
+        /**
+         * 用户「译文替换表」（漫画翻译结果设置 → 二级面板），**在渲染时套用**。
+         *
+         * 为什么不是翻译时：译文只存文本，overlay 是后期画上去的 —— 改完规则重新渲染该页即可，
+         * 没必要（也不该）逼用户重翻一遍 API。顺带覆盖历史/缓存里的老译文。
+         */
+        replacementRules: List<com.moe.starflow.manga.config.ReplacementRule> = emptyList(),
         density: Float = 1f                            // 用于把 MIN_PADDING_DP 换算成 px
     ): Bitmap {
         val result = original.copy(Bitmap.Config.ARGB_8888, true)
@@ -105,12 +112,21 @@ object OverlayRenderer {
         val params = effectiveRegions.map { region ->
             // 实际显示的文字：原文模式用 originalText，否则用译文
             // 注意：⚡ 标志只用于翻译进程中的内存缓存命中（isInMemoryCache），数据库反序列化的 bubbles 永远不显示 ⚡
-            val displayText = if (useOriginalText) {
+            // ⚠️ 这里跑译文文本规则：① 点串归一化（修复前存进库的 `.\n.\n.` 也要正常显示）
+            // ② 用户「译文替换表」。两步都幂等；放在渲染层 = 改完规则**重新渲染即生效，不用重翻**。
+            val rawText = if (useOriginalText) {
                 region.originalText
             } else if (region.isInMemoryCache && showCacheMarker) {
                 "⚡${region.translatedText}"
             } else {
                 region.translatedText
+            }
+            // ⚠️ 替换表只作用于**译文**：三态切到「原文」时不能把用户规则套在识别原文上
+            // （否则用户看到的"原文"是被改过的）。点串归一化两边都做 —— 它只是显示层修复。
+            val displayText = if (useOriginalText) {
+                TranslationTextRules.normalizeEllipsis(rawText)
+            } else {
+                TranslationTextRules.process(rawText, replacementRules)
             }
             // 自动模式的字号由 LayoutEngine 在绘制时按最终 drawRect 二分选定，此处不预估。
             // ⚠️ 估计值只服务非自动路径的 calculateCompactRect：它决定 drawRect（收缩贴合 / 扩展），

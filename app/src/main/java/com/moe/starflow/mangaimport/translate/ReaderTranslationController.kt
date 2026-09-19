@@ -12,6 +12,8 @@ import com.moe.starflow.data.TranslationHistoryDatabase
 import com.moe.starflow.manga.OcrLock
 import com.moe.starflow.manga.TranslationCancelledException
 import com.moe.starflow.manga.TranslateUtils
+import com.moe.starflow.manga.config.MangaModeConfig
+import com.moe.starflow.manga.config.TranslationTextRules
 import com.moe.starflow.manga.engine.DetectionBridge
 import com.moe.starflow.manga.pipeline.BatchOutcome
 import com.moe.starflow.manga.pipeline.BatchPipelineConfig
@@ -19,6 +21,7 @@ import com.moe.starflow.manga.pipeline.BatchPipelineHost
 import com.moe.starflow.manga.pipeline.IncrementalBatchPipeline
 import com.moe.starflow.manga.render.OverlayRenderer
 import com.moe.starflow.manga.state.RegionCacheManager
+import com.moe.starflow.manga.types.CroppedBubble
 import com.moe.starflow.manga.types.DetEngine
 import com.moe.starflow.manga.types.OcrEngine
 import com.moe.starflow.manga.types.TextBlockInfo
@@ -133,6 +136,48 @@ class ReaderTranslationController(
     private val customPrefs get() = CustomPreference.getInstance(context)
 
     /**
+     * 「译文替换表」的原始存储串（指纹，**不解析 JSON**）：它一变就说明规则被改过。
+     * 见 [refreshIfRulesChanged] —— 替换表在**渲染时**套用，改了就必须作废已渲染的译图。
+     */
+    private fun rulesRaw(): String =
+        appPrefs.getString(TranslationTextRules.KEY_REPLACEMENTS, "").orEmpty()
+
+    private var appliedRulesRaw: String = rulesRaw()
+
+    /**
+     * 渲染代次：替换表一变就 +1。
+     *
+     * ⚠️ 光 `evictAll()` 不够：在途的 `prewarmWebtoon` / `showPartial` 渲染完仍会把**旧规则**的位图
+     * 写回缓存（它们的 `isActive` 检查在循环开头，渲染返回后就不再检查），而预热又按
+     * `webtoonLru.get(p) == null` 挑页 → 这些页会被永久跳过，规则永远不生效。
+     * 所以每个渲染任务开工时记下代次，写缓存前比对，代次变了就丢弃结果。
+     */
+    private var renderGeneration = 0L
+
+    /**
+     * 替换表变过 → 作废所有已渲染译图（分页 `renderLru` + Webtoon `webtoonLru`），并让在途渲染作废。
+     *
+     * ⚠️ 为什么需要它：替换表是**渲染时**套用的（译文只存文本，overlay 后期才画），
+     * 所以「改完规则不用重翻」；但已渲染好的位图还在缓存里，不作废就永远看不到新规则。
+     * 调用方（阅读器 `onStart`）拿到 true 后触发重渲染，译文从数据库行重建 —— **不调翻译 API**。
+     */
+    fun refreshIfRulesChanged(): Boolean {
+        val now = rulesRaw()
+        if (now == appliedRulesRaw) return false
+        appliedRulesRaw = now
+        renderGeneration++
+        // 在途任务先取消：它们的产物已按旧规则渲染，写回缓存就是脏数据
+        webtoonPrewarmJob?.cancel()
+        webtoonPrewarmJob = null
+        partialJob?.cancel()
+        partialJob = null
+        renderLru.evictAll()
+        clearWebtoonCache()
+        LogCollector.d(TAG, "译文替换表已变更 → 作废已渲染译图（代次 $renderGeneration），等待重渲染")
+        return true
+    }
+
+    /**
      * 漫画身份指纹。
      *
      * ⚠️ **只用 `addedAt`，绝不要把 `title` 拼进来**：书架有「重命名」功能
@@ -140,8 +185,10 @@ class ReaderTranslationController(
      * 一旦标题变化，含 title 的指纹就全部失配 → 整本书的译文读不出来（数据还在库里，
      * 但显示为未翻译，且 `purgeOrphanTranslations` 也清不到它们，会永久堆积）。
      * `addedAt` 每次导入唯一，本身已足够区分。
+     *
+     * 推导收敛在 [ImportedManga.translationKey]（书架删除前的「有没有译文」提示用同一个值）。
      */
-    private val mangaKey: String = manga.addedAt.toString()
+    private val mangaKey: String = manga.translationKey
 
     private val renderLru = object : LruCache<String, Bitmap>(RENDER_CACHE_KB) {
         override fun sizeOf(key: String, value: Bitmap) =
@@ -661,7 +708,7 @@ class ReaderTranslationController(
             sourceLang = srcLang,
             targetLang = tgtLang,
             textDirection = cacheManager.getOverlayConfig(appPrefs).textDirection,
-            keepTextFree = appPrefs.getBoolean("Manga_Keep_Text_Free", true),
+            keepTextFree = appPrefs.getBoolean(MangaModeConfig.KEY_KEEP_TEXT_FREE, true),
             prefs = customPrefs,
             // 分批开关：增量模式强制关，其余跟随用户设置
             incrementalEnabled = enabled && appPrefs.getBoolean("Incremental_Render", true),
@@ -705,9 +752,21 @@ class ReaderTranslationController(
                 phase(ReaderTranslatePhase.FAILED, msg)
                 return null
             }
+            is BatchOutcome.DetectedNotBatched -> {
+                // 分批**已经跑完检测**，只是气泡太少不值得分批：复用它的裁剪结果，只补跑识别，
+                // 省掉普通路径的第二次整页 RT 检测（气泡少的页面恒定走这条，开销省一半）
+                return translatePlain(
+                    bitmap, det, ocr, srcLang, tgtLang, translator, phase, page,
+                    cfg.keepTextFree, outcome.bubbles
+                )
+            }
             is BatchOutcome.NotApplicable -> {
-                // 普通路径（增量模式 / 引擎组合不支持分批 / 气泡太少）
-                return translatePlain(bitmap, det, ocr, srcLang, tgtLang, translator, phase, page)
+                // 普通路径（增量模式 / 引擎组合不支持分批 / 中途出错回退）。
+                // ⚠️ keepTextFree 必须**显式**带过去：这条路径会重新检测一次，漏传就会丢掉自由文字，
+                // 而同一次翻译的分批路径是保留的 —— 表现为「同一页有时有旁白、有时没有」
+                return translatePlain(
+                    bitmap, det, ocr, srcLang, tgtLang, translator, phase, page, cfg.keepTextFree, null
+                )
             }
         }
     }
@@ -722,9 +781,26 @@ class ReaderTranslationController(
         translator: TranslationTextAPI,
         phase: (ReaderTranslatePhase, String?) -> Unit,
         page: Int,
+        /** RT-DETR-V2 是否保留自由文字。由分批配置带过来，两条路径必须一致。 */
+        keepTextFree: Boolean,
+        /**
+         * 非 null = 复用分批路径**已经跑完**的检测（只补跑识别，不再整页检测）。
+         * 成功识别时 `recognizeCroppedBubbles` 会自己回收这些裁剪图；失败则本函数兜底回收。
+         */
+        preDetected: List<CroppedBubble>?,
     ): List<TranslatedBubble>? {
-        val blocks: List<TextBlockInfo> =
-            DetectionBridge.runOCR(bitmap, srcLang, det.value, ocr.value, context)
+        val blocks: List<TextBlockInfo> = if (preDetected != null) {
+            LogCollector.d(TAG, "translatePlain: 复用分批检测的 ${preDetected.size} 个气泡，只跑识别")
+            try {
+                DetectionBridge.recognizeCroppedBubbles(preDetected, srcLang)
+            } catch (e: Exception) {
+                // 成功路径由 recognizeCroppedBubbles 内部回收；抛异常时可能一张都没回收 → 这里兜底
+                preDetected.forEach { if (!it.croppedBitmap.isRecycled) it.croppedBitmap.recycle() }
+                throw e
+            }
+        } else {
+            DetectionBridge.runOCR(bitmap, srcLang, det.value, ocr.value, context, keepTextFree)
+        }
         val overlayConfig = cacheManager.getOverlayConfig(appPrefs)
         val bubbleRegions = DetectionBridge.ocrToBubbleRegions(blocks, overlayConfig.textDirection)
         // ⚠️ 这条路径**不查文本缓存**（缓存只在分批管线的 translateWithCache 里）。
@@ -880,8 +956,14 @@ class ReaderTranslationController(
         if (page != currentPageProvider()) return
         if (partialJob?.isActive == true) return
         partialJob = scope.launch(Dispatchers.IO) {
+            val gen = renderGeneration
             val cfg = cacheManager.getOverlayConfig(appPrefs)
             val out = renderBubbles(bitmap, bubbles, TranslationCacheManager.OverlayMode.TRANSLATED, cfg)
+            // 代次变了 = 期间替换表被改过，这张半成品是旧规则的 → 丢弃（最终整页结果会覆盖）
+            if (gen != renderGeneration) {
+                LogCollector.d(TAG, "showPartial: 替换表已变，丢弃旧规则的半成品 page=$page")
+                return@launch
+            }
             renderLru.put(partialKey(page), out)
             withContext(Dispatchers.Main) { onVisual() }
         }
@@ -1023,6 +1105,8 @@ class ReaderTranslationController(
         trackingRatio = cfg.trackingRatio,
         leadingRatio = cfg.leadingRatio,
         mergeOverlap = cfg.mergeOverlap,
+        // 用户译文替换表（渲染时套用 → 改完规则返回阅读器即生效，见 refreshIfRulesChanged）
+        replacementRules = cfg.replacementRules,
         density = context.resources.displayMetrics.density
     )
 
@@ -1135,6 +1219,7 @@ class ReaderTranslationController(
         if (pending.isEmpty()) return
 
         webtoonPrewarmJob = scope.launch(Dispatchers.IO) {
+            val gen = renderGeneration
             val cfg = cacheManager.getOverlayConfig(appPrefs)
             val loader = loadWebtoon ?: return@launch
             val widthOf = originalWidthOf ?: { 0 }
@@ -1150,6 +1235,12 @@ class ReaderTranslationController(
                 // Webtoon 只有「原图」与「译文」两态：原图不经渲染（适配器直出采样图），
                 // 所以这里恒按译文渲染
                 val out = renderBubbles(src, scaled, TranslationCacheManager.OverlayMode.TRANSLATED, cfg)
+                // 代次变了 = 渲染期间替换表被改过 → 这张是旧规则的，写进去会被预热的
+                // 「webtoonLru.get(p) == null」过滤永久跳过（规则再也生效不了）
+                if (gen != renderGeneration) {
+                    LogCollector.d(TAG, "prewarmWebtoon: 替换表已变，丢弃旧规则的译图 page=$p")
+                    break
+                }
                 webtoonLru.put(p, out)
                 withContext(Dispatchers.Main) { onVisual() }
             }

@@ -72,6 +72,7 @@ import com.moe.starflow.translate.screenshot.ScreenCapturePermissionActivity
 import com.moe.starflow.translate.TranslationTextAPI
 import com.moe.starflow.utils.Constants
 import com.moe.starflow.utils.CustomPreference
+import com.moe.starflow.utils.FloatingBallStyle
 import com.moe.starflow.utils.KeystoreManager
 import com.moe.starflow.utils.TextSimilarity
 import com.moe.starflow.utils.ThemeManager
@@ -403,7 +404,7 @@ class MangaFloatingService : LifecycleService() {
             "Source_Language",
             "Manga_Det_Model",
             "Manga_Rec_Model",
-            "Manga_Keep_Text_Free",
+            com.moe.starflow.manga.config.MangaModeConfig.KEY_KEEP_TEXT_FREE,
             "Manga_Text_Color",
             "Manga_BG_Color",
             "Manga_Text_Direction",
@@ -420,6 +421,8 @@ class MangaFloatingService : LifecycleService() {
                 key == "Text_API" || key == "Text_AI" -> initTranslator()
                 // 主题切换：Service 不随 AppCompat 重建，在屏的悬浮球/弹窗要手动重建才跟上
                 key == ThemeManager.KEY -> rebuildThemedWindows()
+                // 悬浮球大小 / 透明度：设置页拖完立刻应用到在屏的球
+                key in FloatingBallStyle.KEYS -> applyBallStyle()
                 key in watchedKeys -> {
                     config = loadConfig()
                     checkLanguageHints()
@@ -622,7 +625,9 @@ class MangaFloatingService : LifecycleService() {
             bgColor = prefs.getInt("Manga_BG_Color", android.graphics.Color.argb(200, 255, 255, 255)),
             ocrEngine = group.mangaOcr,
             detEngine = detEngine,
-            keepTextFree = prefs.getBoolean("Manga_Keep_Text_Free", true),
+            keepTextFree = prefs.getBoolean(
+                com.moe.starflow.manga.config.MangaModeConfig.KEY_KEEP_TEXT_FREE, true
+            ),
             horizontalAlign = when (prefs.getString(TranslationCacheManager.KEY_MANGA_HORIZONTAL_ALIGN, "1")) {
                 "0" -> TextAlign.LEFT
                 "2" -> TextAlign.RIGHT
@@ -693,6 +698,10 @@ class MangaFloatingService : LifecycleService() {
 
         // 悬浮球配色跟着应用主题（Service 自己不随 AppCompat 重建）
         rebuildThemedWindows()
+
+        // 悬浮球大小 / 透明度（个性化设置；游戏与漫画共用同一份，改完由 prefChangeListener 实时应用）
+        // 走 applyBallStyle() 而不是裸 apply：它同时按新尺寸把窗口夹回屏内（球变大只向右下长）
+        applyBallStyle()
 
         // 加载长按判定时间
         longPressDelay = prefs.getLong("Custom_Long_Press_Delay", 300L)
@@ -850,15 +859,17 @@ class MangaFloatingService : LifecycleService() {
 
     private fun handleLongPress() {
         currentGesture = GestureType.LongPress
-        // 长按震动反馈动画（缩放+透明度）
+        // 长按震动反馈动画（缩放+透明度）；透明度以用户设置值为基准，收尾必须回到设置值，
+        // 否则一次长按就把用户设的透明度抹成不透明
+        val ballAlpha = FloatingBallStyle.alpha(prefs.getSharedPreferences())
         floatingBallView.animate()
             .scaleX(1.2f).scaleY(1.2f)
-            .alpha(0.7f)
+            .alpha(ballAlpha * 0.7f)
             .setDuration(100)
             .withEndAction {
                 floatingBallView.animate()
                     .scaleX(1f).scaleY(1f)
-                    .alpha(1f)
+                    .alpha(ballAlpha)
                     .setDuration(100)
                     .start()
             }
@@ -1002,6 +1013,22 @@ class MangaFloatingService : LifecycleService() {
             menu.setOnDismissListener(null)   // 别让 dismiss 把重建出来的菜单标记抹掉
             menu.dismiss()
             showMenuSimple(currentCropLabelForMenu())
+        }
+    }
+
+    /** 把「悬浮球大小 / 透明度」设置应用到在屏的球（球还没加进窗口时跳过）。 */
+    private fun applyBallStyle() {
+        if (!ballViewAdded) return
+        val sp = prefs.getSharedPreferences()
+        FloatingBallStyle.apply(floatingBallView, sp)
+        // 尺寸变了球只向右下长 → 贴边会出屏，转屏后甚至整球不可达：按新尺寸把窗口夹回屏内
+        val screen = getScreenSize()
+        val params = floatingBallParams
+        if (FloatingBallStyle.clampIntoDisplay(
+                params, FloatingBallStyle.sizePx(this, sp), screen.width, screen.height
+            )
+        ) {
+            params?.let { windowManager.updateViewLayout(floatingBallView, it) }
         }
     }
 
@@ -1885,6 +1912,14 @@ class MangaFloatingService : LifecycleService() {
         return when (val outcome = batchPipeline(bitmap).run(bitmap)) {
             is BatchOutcome.NotApplicable -> false
 
+            // 检测跑了但气泡太少不值得分批：管线把裁剪结果交回来了，**必须**由这里回收
+            // （见 BatchOutcome.DetectedNotBatched 的「谁复用谁回收」）。悬浮窗不复用，
+            // 直接回收后走原有单批流程 —— 行为与改动前一致。
+            is BatchOutcome.DetectedNotBatched -> {
+                outcome.bubbles.forEach { if (!it.croppedBitmap.isRecycled) it.croppedBitmap.recycle() }
+                false
+            }
+
             // 未检测到文字/气泡：已弹过提示。跳过原流程，但【绝不调 finalizeIncremental】——
             // 旧实现在这两个出口是直接 return true。finalizeIncremental 即使收到空列表也会执行
             // `lastTranslatedHash = currentPHash`，会让自动翻译状态机把空页误判为"已翻译"而永久跳过。
@@ -2226,7 +2261,10 @@ class MangaFloatingService : LifecycleService() {
                             pageCache = cached.pageCache,
                             mode = TranslationCacheManager.OverlayMode.TRANSLATED,
                             forFullImage = false,
-                            config = TranslationCacheManager.OverlayConfig(config.fontSize, config.autoFontSize, config.textColor, config.bgColor, config.textDirection)
+                            // ⚠️ 必须用 getOverlayConfig：这里曾手写位置参数只传 5 个字段，
+                            // 于是「译文替换表 / 重叠合并 / 对齐 / 字距行距 / 缓存标记」全部落默认值 ——
+                            // 表现为同一页**缓存命中时看不到用户规则**，与刚翻完时不一致。
+                            config = cacheManager.getOverlayConfig(prefs.getSharedPreferences())
                         )
                     } else null
                     statusOverlay.showImmediate(getString(R.string.cache_hit))
@@ -2469,6 +2507,8 @@ class MangaFloatingService : LifecycleService() {
                 leadingRatio = config.leadingRatio,
                 // 渲染阶段重叠合并开关（现读，改设置即刻生效）
                 mergeOverlap = prefs.getBoolean(com.moe.starflow.data.TranslationCacheManager.KEY_OVERLAP_MERGE, false),
+                // 译文替换表：渲染时套用（现读 → 下次渲染/截屏即生效，与上面几个渲染项同口径）
+                replacementRules = TranslationTextRules.load(prefs.getSharedPreferences()),
                 density = resources.displayMetrics.density
             )
         }
@@ -2528,6 +2568,8 @@ class MangaFloatingService : LifecycleService() {
                 leadingRatio = config.leadingRatio,
                 // 渲染阶段重叠合并开关（现读，改设置即刻生效）
                 mergeOverlap = prefs.getBoolean(com.moe.starflow.data.TranslationCacheManager.KEY_OVERLAP_MERGE, false),
+                // 译文替换表：渲染时套用（现读）
+                replacementRules = TranslationTextRules.load(prefs.getSharedPreferences()),
                 density = resources.displayMetrics.density
             )
         }
@@ -3118,6 +3160,8 @@ class MangaFloatingService : LifecycleService() {
                     trackingRatio = config.trackingRatio,
                 leadingRatio = config.leadingRatio,
                     mergeOverlap = prefs.getBoolean(com.moe.starflow.data.TranslationCacheManager.KEY_OVERLAP_MERGE, false),
+                    // 译文替换表：渲染时套用（现读）
+                    replacementRules = TranslationTextRules.load(prefs.getSharedPreferences()),
                     density = resources.displayMetrics.density
                 )
             }

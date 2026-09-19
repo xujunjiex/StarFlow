@@ -469,20 +469,50 @@ class ReaderMenuSheet(
         fun refreshProc() {
             ivProc.colorFilter = cur().toColorFilter()
         }
-        refreshProc()
-        sbBright.progress = (state.colorFilter.brightness * 100).toInt().coerceIn(-100, 100)
-        sbContrast.progress = (state.colorFilter.contrast * 100).toInt().coerceIn(-100, 100)
-        swInvert.isChecked = state.colorFilter.isInverted
-        swGray.isChecked = state.colorFilter.isGrayscale
-        swBook.isChecked = state.colorFilter.isBookBackground
-        tvBright.text = "${sbBright.progress}%"
-        tvContrast.text = "${sbContrast.progress}%"
-        sbBright.setOnSeekBarChangeListener(slider { tvBright.text = "${sbBright.progress}%"; refreshProc(); push() })
-        sbContrast.setOnSeekBarChangeListener(slider { tvContrast.text = "${sbContrast.progress}%"; refreshProc(); push() })
-        swInvert.setOnCheckedChangeListener { _, _ -> refreshProc(); push() }
-        swGray.setOnCheckedChangeListener { _, _ -> refreshProc(); push() }
-        swBook.setOnCheckedChangeListener { _, _ -> refreshProc(); push() }
-        view.findViewById<View>(R.id.btn_reset_color).setOnClickListener { cb.onResetColor() }
+
+        // 程序化改控件期间抑制 push：否则会把「改了一半」的中间态写给宿主（先改亮度、对比度还没改）
+        var suppressPush = false
+        fun pushIfUser() {
+            if (!suppressPush) push()
+        }
+
+        /**
+         * 把一份滤镜状态**整块写回控件**（滑块 / 开关 / 百分比 / 右侧预览）。
+         *
+         * ⚠️ 别只写一部分：SeekBar 的监听只在 `fromUser=true` 时触发（见 [slider]），程序化改
+         * `progress` 既不会刷标签、也不会刷预览 —— 「点重置后两个滑块不归位、要重进面板才对」
+         * 和「带着滤镜打开面板时右侧预览是没处理的图」都是同一个原因。必须走同一个函数灌值。
+         */
+        fun syncControls(f: ReaderColorFilter) {
+            sbBright.progress = (f.brightness * 100).toInt().coerceIn(-100, 100)
+            sbContrast.progress = (f.contrast * 100).toInt().coerceIn(-100, 100)
+            swInvert.isChecked = f.isInverted
+            swGray.isChecked = f.isGrayscale
+            swBook.isChecked = f.isBookBackground
+            tvBright.text = "${sbBright.progress}%"
+            tvContrast.text = "${sbContrast.progress}%"
+            refreshProc()
+        }
+
+        sbBright.setOnSeekBarChangeListener(slider { tvBright.text = "${sbBright.progress}%"; refreshProc(); pushIfUser() })
+        sbContrast.setOnSeekBarChangeListener(slider { tvContrast.text = "${sbContrast.progress}%"; refreshProc(); pushIfUser() })
+        swInvert.setOnCheckedChangeListener { _, _ -> refreshProc(); pushIfUser() }
+        swGray.setOnCheckedChangeListener { _, _ -> refreshProc(); pushIfUser() }
+        swBook.setOnCheckedChangeListener { _, _ -> refreshProc(); pushIfUser() }
+
+        // 初始态：把宿主的当前滤镜灌进控件（含右侧预览）。宿主已有这份值，不必回推
+        suppressPush = true
+        syncControls(state.colorFilter)
+        suppressPush = false
+
+        view.findViewById<View>(R.id.btn_reset_color).setOnClickListener {
+            // 面板自己归位（控件 + 预览），宿主侧由 onResetColor 负责（写 prefs + 重载当前页）。
+            // 归位期间禁止 push：中间态（亮度已归零、开关还没）不该落盘
+            suppressPush = true
+            syncControls(ReaderColorFilter.EMPTY)
+            suppressPush = false
+            cb.onResetColor()
+        }
 
         return view
     }

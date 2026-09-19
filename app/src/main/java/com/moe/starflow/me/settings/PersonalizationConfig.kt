@@ -39,6 +39,7 @@ import androidx.preference.SwitchPreference
 import com.jaredrummler.android.colorpicker.ColorPreferenceCompat
 import com.moe.starflow.R
 import com.moe.starflow.data.TranslationCacheManager
+import com.moe.starflow.manga.config.TranslationTextRules
 import com.moe.starflow.translate.screenshot.AccessibilityServiceManager
 import com.moe.starflow.translate.CustomLocale
 import com.moe.starflow.translate.widget.Dialogs
@@ -46,6 +47,7 @@ import com.moe.starflow.translate.FloatingBallService
 import com.moe.starflow.manga.MangaFloatingService
 import com.moe.starflow.utils.Constants
 import com.moe.starflow.utils.CustomPreference
+import com.moe.starflow.utils.FloatingBallStyle
 import com.moe.starflow.utils.MangaFontSize
 import com.moe.starflow.utils.MangaFontSizeDialog
 import com.moe.starflow.utils.CustomFontSize
@@ -124,6 +126,15 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
             true
         }
 
+        // 悬浮球大小 / 透明度（游戏与漫画共用同一份设置；两个 Service 监听 prefs 实时生效）
+        findPreference<Preference>("floating_ball_style")?.let { p ->
+            updateBallStyleSummary(p)
+            p.setOnPreferenceClickListener {
+                showBallStyleDialog(p)
+                true
+            }
+        }
+
         // 字体相关（FloatingBallService 监听 prefs 变化实时更新 view，无需先停服务）
         resultFont.setOnPreferenceClickListener {
             showFontOptionsDialog()
@@ -153,6 +164,9 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
                 true
             }
         }
+
+        // 译文替换表（二级面板，见 TranslationReplacementFragment）：摘要显示规则条数
+        findPreference<Preference>("manga_translation_replacements")?.let { updateReplacementSummary(it) }
 
         // UI 同步字体：切换后需重启应用生效，弹窗提示
         findPreference<SwitchPreference>("ui_apply_custom_font")?.setOnPreferenceChangeListener { _, _ ->
@@ -454,6 +468,94 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
         dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
     }
 
+    // ===== 悬浮球大小 / 透明度（一个面板管两项，游戏与漫画共用） =====
+
+    private fun updateBallStyleSummary(pref: Preference) {
+        val sp = prefs.getSharedPreferences()
+        pref.summary = getString(
+            R.string.floating_ball_style_summary,
+            FloatingBallStyle.sizePercent(sp),
+            FloatingBallStyle.alphaPercent(sp)
+        )
+    }
+
+    /** 一行「标签 + 百分比 + 滑块」，范围 [min, max]；拖动时数值实时刷新。 */
+    private fun percentSliderRow(
+        ctx: android.content.Context,
+        labelRes: Int,
+        key: String,
+        min: Int,
+        max: Int,
+        default: Int
+    ): Pair<LinearLayout, android.widget.SeekBar> {
+        val density = ctx.resources.displayMetrics.density
+        val current = prefs.getInt(key, default).coerceIn(min, max)
+        val wrap = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, (12 * density).toInt(), 0, 0)
+        }
+        fun text(v: Int) = ctx.getString(labelRes) + "  " +
+            ctx.getString(R.string.floating_ball_style_value, v)
+        val label = TextView(ctx).apply {
+            text = text(current)
+            textSize = 15f
+        }
+        val seek = android.widget.SeekBar(ctx).apply {
+            this.max = max - min          // SeekBar 从 0 起，取值 = progress + min
+            progress = current - min
+            setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: android.widget.SeekBar?, p: Int, fromUser: Boolean) {
+                    label.text = text(p + min)
+                }
+                override fun onStartTrackingTouch(sb: android.widget.SeekBar?) = Unit
+                override fun onStopTrackingTouch(sb: android.widget.SeekBar?) = Unit
+            })
+        }
+        wrap.addView(label)
+        wrap.addView(seek)
+        return wrap to seek
+    }
+
+    /**
+     * 悬浮球大小/透明度面板：两个滑块同处一个弹窗，点「保存」一起落盘。
+     *
+     * 落盘后不用通知任何 Service —— 两个 Service 都注册了 `OnSharedPreferenceChangeListener`，
+     * 收到这两个 key 就把新尺寸/透明度应用到在屏的球（见 [FloatingBallStyle.apply]）。
+     */
+    private fun showBallStyleDialog(pref: Preference) {
+        val ctx = requireContext()
+        val container = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            val pad = (20 * ctx.resources.displayMetrics.density).toInt()
+            setPadding(pad, 0, pad, pad)
+        }
+        val (sizeRow, sizeSeek) = percentSliderRow(
+            ctx, R.string.floating_ball_size_label, FloatingBallStyle.KEY_SIZE,
+            FloatingBallStyle.MIN_SIZE_PERCENT, FloatingBallStyle.MAX_SIZE_PERCENT,
+            FloatingBallStyle.DEFAULT_SIZE_PERCENT
+        )
+        val (alphaRow, alphaSeek) = percentSliderRow(
+            ctx, R.string.floating_ball_alpha_label, FloatingBallStyle.KEY_ALPHA,
+            FloatingBallStyle.MIN_ALPHA_PERCENT, FloatingBallStyle.MAX_ALPHA_PERCENT,
+            FloatingBallStyle.DEFAULT_ALPHA_PERCENT
+        )
+        container.addView(sizeRow)
+        container.addView(alphaRow)
+
+        val dialog = AlertDialog.Builder(ctx)
+            .setTitle(R.string.floating_ball_style_title)
+            .setView(container)
+            .setPositiveButton(R.string.save) { _, _ ->
+                prefs.setInt(FloatingBallStyle.KEY_SIZE, sizeSeek.progress + FloatingBallStyle.MIN_SIZE_PERCENT)
+                prefs.setInt(FloatingBallStyle.KEY_ALPHA, alphaSeek.progress + FloatingBallStyle.MIN_ALPHA_PERCENT)
+                updateBallStyleSummary(pref)
+            }
+            .setNegativeButton(R.string.user_cancel, null)
+            .create()
+        dialog.show()
+        dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
+    }
+
     // 手势 key 列表，用于互换逻辑
     private val gestureKeys = listOf("Ball_Gesture_Single_Click", "Ball_Gesture_Double_Click", "Ball_Gesture_Long_Press")
     private val gesturePrefs = mutableListOf<ListPreference>()
@@ -595,6 +697,26 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
 
     private fun updateMangaFontSizeSummary() {
         findPreference<Preference>("manga_font_size")?.summary = MangaFontSize.summary(requireContext())
+    }
+
+    /**
+     * 译文替换表摘要 = 当前规则条数。
+     *
+     * ⚠️ 必须在 `onResume` 里再刷一次：用户从二级面板返回时本页只是 resume（不重建），
+     * 只在 onCreatePreferences 里设一次的话条数会一直停在进面板之前的数字。
+     */
+    private fun updateReplacementSummary(pref: Preference) {
+        val count = TranslationTextRules.load(prefs.getSharedPreferences()).size
+        pref.summary = if (count == 0) {
+            getString(R.string.manga_replacement_summary_empty)
+        } else {
+            getString(R.string.manga_replacement_summary, count)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        findPreference<Preference>("manga_translation_replacements")?.let { updateReplacementSummary(it) }
     }
 
     private fun handleDefaultIcon(prefKey: String) {

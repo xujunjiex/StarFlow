@@ -116,7 +116,14 @@ object TranslateUtils {
             translateBubblesSequential(translator, preparedBubbles, sourceLang, targetLang)
         }
 
-        return symbolOnlyBubbles + translatedResults
+        // 译文后处理：只做**点串归一化**（`.\n.\n.` → `...`，硬保证；顺序路径的译文没走
+        // parseNumberedTranslations，所以这里兜一次，幂等）。
+        // ⚠️ 用户「译文替换表」**不在这里**：它在渲染时套用（OverlayRenderer）—— 译文只存文本、
+        // overlay 后期才画，所以改规则只需重新渲染，不必重翻 API。
+        return (symbolOnlyBubbles + translatedResults).map { bubble ->
+            val out = TranslationTextRules.normalizeEllipsis(bubble.translatedText)
+            if (out == bubble.translatedText) bubble else bubble.copy(translatedText = out)
+        }
     }
 
     // ========== AI 批量翻译 ==========
@@ -454,11 +461,15 @@ object TranslateUtils {
     /**
      * 解析带编号的翻译结果
      * 支持格式: "[1] 翻译文本" 或 "1. 翻译文本" 或 "1、翻译文本"
+     *
+     * ⚠️ 先做点串归一化：`[\s\S]*?` 抓的是**跨行**内容，模型把一条译文写成
+     * `[1] .` / `.` / `.` 三行时，这条译文就真的是 `".\n.\n."`（用户看到的「每个点占一行」）。
      */
     fun parseNumberedTranslations(text: String, expectedCount: Int): List<String> {
+        val normalized = TranslationTextRules.normalizeEllipsis(text)
         val results = mutableListOf<String>()
         // 匹配 [N] 或 N. 或 N、开头的行
-        val matches = NUMBERED_TRANSLATION_REGEX.findAll(text).toList()
+        val matches = NUMBERED_TRANSLATION_REGEX.findAll(normalized).toList()
 
         if (matches.size >= expectedCount) {
             for (match in matches.take(expectedCount)) {
@@ -466,7 +477,7 @@ object TranslateUtils {
             }
         } else {
             // 降级：按行拆分
-            val lines = text.lines().map { it.trim() }.filter { it.isNotBlank() }
+            val lines = normalized.lines().map { it.trim() }.filter { it.isNotBlank() }
             for (line in lines) {
                 val cleaned = line.replace(Regex("""^\[?\d+]?[.、\s]*"""), "").trim()
                 if (cleaned.isNotBlank()) {
@@ -486,10 +497,13 @@ object TranslateUtils {
      * 解析带编号翻译结果中「已完整」的条目（仅流式显示用）。
      * 一条目后跟有下一个 [N] 才视为完整；最后一条可能仍在生成中，跳过不渲染。
      * 返回 (编号, 文本) 对，调用方按编号匹配气泡，可跳过越界/幻觉编号，防止错位与崩溃。
+     *
+     * 同 [parseNumberedTranslations]：先归一化点串，避免流式过程中闪出「每行一个点」。
      */
     fun parseNumberedTranslationsPartial(text: String): List<Pair<Int, String>> {
+        val normalized = TranslationTextRules.normalizeEllipsis(text)
         val results = mutableListOf<Pair<Int, String>>()
-        val matches = NUMBERED_TRANSLATION_REGEX.findAll(text).toList()
+        val matches = NUMBERED_TRANSLATION_REGEX.findAll(normalized).toList()
         for (idx in 0 until matches.size - 1) {
             val number = matches[idx].groupValues[1].toIntOrNull()
             val content = matches[idx].groupValues[2].trim()
@@ -574,7 +588,7 @@ object TranslateUtils {
         }
 
         // 自由文字：开关打开 + 检测器是 RT-DETR-V2
-        val keepTextFreeEnabled = prefs.getBoolean("Manga_Keep_Text_Free", true)
+        val keepTextFreeEnabled = prefs.getBoolean(MangaModeConfig.KEY_KEEP_TEXT_FREE, true)
         if (keepTextFreeEnabled && detEngine == DetEngine.RT_DETR_V2) {
             parts.add("自由文字✓")
         } else if (keepTextFreeEnabled) {

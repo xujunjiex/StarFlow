@@ -2,9 +2,9 @@ package com.moe.starflow.manga.render
 
 import android.graphics.Paint
 import android.graphics.Rect
+import com.moe.starflow.manga.config.TranslationTextRules
 import com.moe.starflow.manga.types.TextAlign
 import com.moe.starflow.manga.types.TextDirection
-import kotlin.math.ceil
 import kotlin.math.floor
 
 /**
@@ -342,15 +342,20 @@ object LayoutEngine {
         availW: Float,
         availH: Float
     ): TextLayout {
+        // ⚠️ 竖排里换行**没有意义**（排版是连续竖流），但 `\n` 会老老实实占掉一个字符格 ——
+        // 于是「模型把 `...` 写成三行」在竖排里表现为每个点之间空一格（用户看到的「每个点占一行」）。
+        // 这里直接去掉换行；配合 TranslationTextRules.normalizeEllipsis 的「点串不跨行」双保险。
+        val flow = text.replace("\r", "").replace("\n", "")
+
         // 列内字距叠加在自然字步距上；列距叠加在自然列步距上。两者都参与字号二分预算。
         val charStep = font * (VERTICAL_CHAR_RATIO + trackingRatio.coerceAtLeast(0f))
         val colStep = font * (VERTICAL_CHAR_RATIO + leadingRatio.coerceAtLeast(0f))
         val capacity = verticalCapacity(availH, font, charStep)
-        if (capacity <= 0) return TextLayout(font, emptyList(), 0f, 0f, 0f, 0f, 0f)
+        if (capacity <= 0 || flow.isEmpty()) return TextLayout(font, emptyList(), 0f, 0f, 0f, 0f, 0f)
 
-        val n = text.length
-        val columns = ceil(n.toFloat() / capacity).toInt().coerceAtLeast(1)
-        val charsInTallest = minOf(n, capacity)
+        val chunks = wrapVertical(flow, capacity)
+        val columns = chunks.size
+        val charsInTallest = chunks.maxOf { it.length }
 
         val colHeight = if (charsInTallest <= 1) font else (charsInTallest - 1) * charStep + font
         val totalWidth = if (columns <= 1) font else (columns - 1) * colStep + font
@@ -360,10 +365,7 @@ object LayoutEngine {
         val topPad = ((availH - colHeight) / 2f).coerceAtLeast(0f)
         val firstBaseline = region.top + pad + topPad + font
 
-        val out = (0 until columns).map { j ->
-            val from = j * capacity
-            val to = minOf(n, from + capacity)
-            val chunk = text.substring(from, to)
+        val out = chunks.mapIndexed { j, chunk ->
             val count = chunk.length
             val x = when (direction) {
                 TextDirection.VERTICAL_RL -> blockLeft + totalWidth - font / 2f - j * colStep
@@ -379,6 +381,44 @@ object LayoutEngine {
         }
         return TextLayout(font, out, charStep - font * VERTICAL_CHAR_RATIO, colStep, charStep, totalWidth, colHeight)
     }
+
+    /**
+     * 竖排分列：按列容量切，但**切点绝不落在点串中间** —— `...`/`…`/`。。。` 整串进下一列。
+     *
+     * 真实反馈：`...` 被排成「每列一个点」（三个点占三列），既难看又白占 overlay 高度。
+     * 点串长过一列时无从避让，只能按容量硬切（不溢出、不丢字仍是硬约束）。
+     */
+    private fun wrapVertical(text: String, capacity: Int): List<String> {
+        if (capacity <= 0) return emptyList()
+        val out = mutableListOf<String>()
+        var i = 0
+        while (i < text.length) {
+            var end = minOf(i + capacity, text.length)
+            end = pullBackToDotRunStart(text, i, end)
+            if (end <= i) end = minOf(i + capacity, text.length)   // 兜底：整串比一列还长
+            out.add(text.substring(i, end))
+            i = end
+        }
+        return out
+    }
+
+    /**
+     * 切点 [end] 落在点串内部时，把切点前移到该串开头（整串挪到下一行/下一列），返回新切点。
+     *
+     * 点串从 [start] 就开始（说明它自己一行都放不下）→ 原样返回，由调用方硬切。
+     */
+    private fun pullBackToDotRunStart(text: String, start: Int, end: Int): Int {
+        if (end <= start || end >= text.length) return end
+        if (!TranslationTextRules.isEllipsisDot(text[end - 1]) ||
+            !TranslationTextRules.isEllipsisDot(text[end])
+        ) {
+            return end
+        }
+        var runStart = end - 1
+        while (runStart > start && TranslationTextRules.isEllipsisDot(text[runStart - 1])) runStart--
+        return if (runStart == start) end else runStart
+    }
+
 
     /**
      * 竖排每列可容纳字符数：起点 y = 首字基线，每字步进 `step`（含用户字距），
@@ -423,6 +463,10 @@ object LayoutEngine {
                         count--
                     }
                 }
+                // 点串不可断：`...` 被拆成「每行一个点」是最主要的用户反馈（见 TranslationTextRules）。
+                // 只前移切点 → 行更短，必然仍装得下，不影响上面的预算判定。
+                count = pullBackToDotRunStart(remaining, 0, count)
+                if (count <= 0) break
                 lines.add(remaining.substring(0, count))
                 remaining = remaining.substring(count)
             }

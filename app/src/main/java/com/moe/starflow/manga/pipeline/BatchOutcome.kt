@@ -1,5 +1,6 @@
 package com.moe.starflow.manga.pipeline
 
+import com.moe.starflow.manga.types.CroppedBubble
 import com.moe.starflow.manga.types.TranslatedBubble
 
 /**
@@ -8,6 +9,7 @@ import com.moe.starflow.manga.types.TranslatedBubble
  * 与旧 `MangaFloatingService.incrementalTranslateFlow(): Boolean` 的对应关系：
  * - [Handled] ← 旧返回值 `true`（调用方跳过原有流程）
  * - [NotApplicable] ← 旧返回值 `false`（调用方走原有流程；包含"气泡太少"与"中途出错回退"两种情况）
+ * - [DetectedNotBatched] ← 旧返回值 `false`，但**检测已经跑过**，调用方可以直接复用而不必重跑
  */
 sealed interface BatchOutcome {
 
@@ -30,6 +32,19 @@ sealed interface BatchOutcome {
      */
     data object HandledEmpty : BatchOutcome
 
-    /** 不该走 / 走不通分批：开关关闭、Hy-MT2、引擎组合不支持、气泡数 ≤ 阈值、或中途异常回退。 */
+    /** 不该走 / 走不通分批：开关关闭、Hy-MT2、引擎组合不支持、或中途异常回退。 */
     data object NotApplicable : BatchOutcome
+
+    /**
+     * 「检测**已经跑完**，只是气泡太少不值得分批」——把裁剪好的检测结果交回调用方**复用**。
+     *
+     * 存在意义：普通路径（气泡少的页面恒定走它）本来会**再跑一遍整页检测**。RT-DETR-V2 的一次
+     * 前向在手机上是几百毫秒级的开销，气泡少的页面重复付一次纯属浪费。
+     *
+     * ⚠️ **谁复用谁回收**：管线**不再**回收 [bubbles] 里的 `croppedBitmap`。调用方要么拿去识别
+     * （`DetectionBridge.recognizeCroppedBubbles` 成功时会自己回收），要么直接逐个 `recycle()`
+     * 后按 [NotApplicable] 处理。忘了回收就是内存泄漏。
+     */
+    data class DetectedNotBatched(val bubbles: List<CroppedBubble>) : BatchOutcome
 }
+

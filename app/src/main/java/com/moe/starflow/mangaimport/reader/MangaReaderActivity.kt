@@ -241,6 +241,21 @@ class MangaReaderActivity : AppCompatActivity() {
             recreate()
             return
         }
+        // 「译文替换表」可能在设置页被改过（从**主设置页**进来时不会走上面的 recreate）：
+        // 替换表是在**渲染时**套用的（overlay 后期才画），所以作废已渲染译图后重渲染当前页即可 ——
+        // 译文从数据库行重建，**不调翻译 API、不需要重翻**。
+        translationController?.let { controller ->
+            if (controller.refreshIfRulesChanged()) {
+                if (mode == 3) {
+                    // Webtoon：译图由 prewarmWebtoon 逐页重渲染，每渲染完一页自己会经 onVisual 重绑。
+                    // ⚠️ 这里若先 applyPageVisual（rebind），缓存已清空 → 适配器回落到 source.loadWebtoon
+                    // 原图 → 可见页先闪回"未翻译"再变译文。
+                    controller.prewarmWebtoon(currentPage)
+                } else {
+                    applyPageVisual(currentPage)
+                }
+            }
+        }
         translationController?.resumeFromBackground()
     }
 
@@ -1020,10 +1035,10 @@ class MangaReaderActivity : AppCompatActivity() {
                 },
                 onColorFilterChanged = { f -> applyColorFilter(f) },
                 onResetColor = {
-                    prefs.edit().putFloat(KEY_BRIGHTNESS, 0f).putFloat(KEY_CONTRAST, 0f)
-                        .putBoolean(KEY_INVERT, false).putBoolean(KEY_GRAY, false).putBoolean(KEY_BOOK, false).apply()
-                    colorFilter = ReaderColorFilter.EMPTY
-                    reloadCurrentPageColor()
+                    // 复用 applyColorFilter：它写 prefs + 更新 colorFilter + 给**两条适配器**上实时滤镜。
+                    // 原来这里手写 prefs 后调 reloadCurrentPageColor()（notifyItemChanged 触发重绑，
+                    // 重新解码是异步的）→ 点重置后页面不会立刻恢复，面板侧也拿不到任何刷新信号。
+                    applyColorFilter(ReaderColorFilter.EMPTY)
                 },
                 onRotate = { updateRotateMode((rotateMode + 1) % 3, persist = true) },
                 onDownload = { showDownloadDialog() },
@@ -1151,12 +1166,11 @@ class MangaReaderActivity : AppCompatActivity() {
             .putBoolean(KEY_BOOK, f.isBookBackground)
             .apply()
         colorFilter = f
-        // 实时预览当前可见页
+        // 实时预览当前可见页。⚠️ **两条适配器都要刷**：分页只有一页（visibleImage 单槽），
+        // Webtoon 同屏多页（按 attached child 逐页上滤镜）。只刷分页那条的话，
+        // 「连续滑动」模式下拖滑块/点重置完全没反应，要滚动一下才生效。
         pageAdapter?.applyLiveColor(f)
-    }
-
-    private fun reloadCurrentPageColor() {
-        pageAdapter?.notifyItemChanged(currentPage)
+        (binding.webtoonList.adapter as? WebtoonAdapter)?.applyLiveColor(f)
     }
 
     // ===== 旋转（configChanges 声明，不重建 Activity） =====

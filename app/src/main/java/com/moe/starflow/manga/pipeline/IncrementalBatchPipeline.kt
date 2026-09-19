@@ -208,8 +208,8 @@ class IncrementalBatchPipeline(
 
         if (croppedBubbles.size <= INCREMENTAL_THRESHOLD) {
             LogCollector.d(TAG, "rtDetrMangaOcr: ${croppedBubbles.size} <= $INCREMENTAL_THRESHOLD，不触发")
-            croppedBubbles.forEach { it.croppedBitmap.recycle() }
-            return BatchOutcome.NotApplicable
+            // ⚠️ 不回收裁剪图：交给调用方复用（少跑一次整页 RT 检测）。见 BatchOutcome.DetectedNotBatched
+            return BatchOutcome.DetectedNotBatched(croppedBubbles)
         }
 
         val sorted = MangaSpatialGrouping.sortByMangaReadingOrder(croppedBubbles)
@@ -262,6 +262,11 @@ class IncrementalBatchPipeline(
         } catch (e: Exception) {
             LogCollector.e(TAG, "rtDetrMangaOcr: 失败", e)
             cancelAndJoinQuietly(ocrJob)
+            // ⚠️ 首批裁剪图也要回收：`recognizeCroppedBubbles` 只在**识别成功后**回收，
+            // 识别本身抛异常（引擎未初始化 / native 异常）时首批就漏在这儿了。
+            // isRecycled 守卫保证成功过的那批（已回收）不会重复回收。
+            firstBatch.forEach { if (!it.croppedBitmap.isRecycled) it.croppedBitmap.recycle() }
+            secondBatch.forEach { if (!it.croppedBitmap.isRecycled) it.croppedBitmap.recycle() }
             return BatchOutcome.NotApplicable
         }
     }

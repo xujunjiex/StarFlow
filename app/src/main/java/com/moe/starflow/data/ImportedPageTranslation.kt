@@ -63,12 +63,33 @@ interface ImportedPageTranslationDao {
     @Query("SELECT DISTINCT mangaKey FROM imported_page_translation WHERE mangaId = :mangaId")
     suspend fun mangaKeysFor(mangaId: Long): List<String>
 
+    /**
+     * 该部漫画是否有翻译记录（按身份指纹过滤，孤儿行不算）。
+     * 删除书架前提示「译文会一起删除」用（用户可能没导出过译文）。
+     */
+    @Query("SELECT COUNT(*) FROM imported_page_translation WHERE mangaId = :mangaId AND mangaKey = :mangaKey")
+    suspend fun countFor(mangaId: Long, mangaKey: String): Int
+
     /** 把某漫画下一页记录的指纹从 [oldKey] 改写成 [newKey]（只改指纹，不动译文载荷）。 */
     @Query("UPDATE imported_page_translation SET mangaKey = :newKey WHERE mangaId = :mangaId AND mangaKey = :oldKey")
     suspend fun rewriteMangaKey(mangaId: Long, oldKey: String, newKey: String)
 
+    /** 删除单部漫画的全部记录（孤儿清理用：该 id 已不在书架里）。 */
     @Query("DELETE FROM imported_page_translation WHERE mangaId = :mangaId")
     suspend fun deleteManga(mangaId: Long)
+
+    /**
+     * 删除「某 id + 某身份指纹」的记录（顺带清掉同 id 下 key 为 NULL 的升级前残留）。
+     *
+     * ⚠️ **必须带 key**：漫画 id 会被复用（`nextId` = 清单最大 id + 1），而删除翻译记录是**异步**的
+     * （进程级作用域）。只按 id 删的话，用户完全可能在它落地前就导入了一本复用同 id 的新书并翻了几页
+     * → 把这本**新书**的翻译行删掉。指纹过滤与读取侧（[forManga] / [countFor]）保持同一口径。
+     */
+    @Query(
+        "DELETE FROM imported_page_translation " +
+            "WHERE mangaId = :mangaId AND (mangaKey = :mangaKey OR mangaKey IS NULL)"
+    )
+    suspend fun deleteMangaScoped(mangaId: Long, mangaKey: String)
 
     /**
      * 把残留的「翻译中」重置为「未翻译」。

@@ -37,6 +37,11 @@
             android:title="@string/floating_ball_comic_icon_title" />
 
         <Preference
+            android:key="floating_ball_style"
+            app:iconSpaceReserved="false"
+            android:title="@string/floating_ball_style_title" />
+
+        <Preference
             android:key="floating_ball_press"
             app:iconSpaceReserved="false"
             android:title="@string/floating_ball_press_title" />
@@ -205,6 +210,14 @@
             android:defaultValue="false"
             android:title="@string/manga_overlap_merge_title"
             android:summary="@string/manga_overlap_merge_summary" />
+
+        <!-- 译文替换表：二级面板（app:fragment 点进去换成子 Preference 屏，返回键回本页） -->
+        <PreferenceScreen
+            android:key="manga_translation_replacements"
+            app:iconSpaceReserved="false"
+            app:fragment="com.moe.starflow.me.settings.TranslationReplacementFragment"
+            android:title="@string/manga_replacement_title"
+            android:summary="@string/manga_replacement_summary_empty" />
 
     </PreferenceCategory>
 

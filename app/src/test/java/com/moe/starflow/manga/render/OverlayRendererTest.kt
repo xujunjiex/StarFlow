@@ -64,6 +64,77 @@ class OverlayRendererTest {
     }
 
     /**
+     * ⚠️ 用户要求：译文替换表必须**在渲染时**套用（overlay 是后期渲染到原图上的），
+     * 所以「加一条规则」不该逼用户重新翻译 —— 重新渲染当前页就行。
+     *
+     * 用「把整条译文替换成空串」做判据：命中后该气泡没有文字可画，白块也不会画 →
+     * 输出应与输入**逐像素一致**。规则若没进渲染层，这里会画出一块白色（旧实现就是如此）。
+     */
+    @Test
+    fun replacementRules_areAppliedAtRenderTime() {
+        val green = Color.rgb(0, 255, 0)
+        val bitmap = solidBitmap(200, 100, green)
+        val bubble = TranslatedBubble(
+            rect = Rect(10, 20, 180, 80),
+            originalText = "……",
+            translatedText = "...",
+            backgroundColor = Color.WHITE,
+            fontSize = 30f,
+            direction = TextDirection.HORIZONTAL
+        )
+
+        val plain = OverlayRenderer.renderOverlay(
+            original = bitmap, regions = listOf(bubble),
+            fontSize = 30f, autoFit = false, bgColor = Color.WHITE
+        )
+        assertNotEquals("无规则时应画白块", green, plain.getPixel(95, 50))
+
+        val ruled = OverlayRenderer.renderOverlay(
+            original = bitmap, regions = listOf(bubble),
+            fontSize = 30f, autoFit = false, bgColor = Color.WHITE,
+            replacementRules = listOf(
+                com.moe.starflow.manga.config.ReplacementRule("...", "")
+            )
+        )
+        assertEquals("规则命中（译文变空）后不该再画任何东西", green, ruled.getPixel(95, 50))
+        assertEquals("整图应与输入一致", green, ruled.getPixel(20, 30))
+
+        bitmap.recycle()
+        plain.recycle()
+        ruled.recycle()
+    }
+
+    /** 替换表**只**作用于译文：三态切到「原文」时不能把用户规则套在识别原文上。 */
+    @Test
+    fun replacementRules_doNotTouchOriginalTextMode() {
+        val green = Color.rgb(0, 255, 0)
+        val bitmap = solidBitmap(200, 100, green)
+        val bubble = TranslatedBubble(
+            rect = Rect(10, 20, 180, 80),
+            originalText = "...",
+            translatedText = "...",
+            backgroundColor = Color.WHITE,
+            fontSize = 30f,
+            direction = TextDirection.HORIZONTAL
+        )
+
+        // 原文模式 + 规则「...→空」：若规则误作用到原文，这里就什么都不画了
+        val out = OverlayRenderer.renderOverlay(
+            original = bitmap, regions = listOf(bubble),
+            fontSize = 30f, autoFit = false, bgColor = Color.WHITE,
+            useOriginalText = true,
+            replacementRules = listOf(com.moe.starflow.manga.config.ReplacementRule("...", ""))
+        )
+
+        assertNotEquals(
+            "原文模式必须原样画出识别到的原文（规则只作用于译文）",
+            green, out.getPixel(95, 50)
+        )
+        bitmap.recycle()
+        out.recycle()
+    }
+
+    /**
      * ⚠️ 用户要求：**非自动模式也要应用用户填的字间距/行间距**（不只是自动模式）。
      *
      * 用较小字号让白块必然收缩在气泡内，然后断言「设了字距的白块更宽」——

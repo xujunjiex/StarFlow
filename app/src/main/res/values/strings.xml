@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">StarFlow</string>
     <string name="floating_ball_menu_1">Floating Ball Menu</string>
@@ -12,13 +12,36 @@
     <string name="import_manga_empty_hint">Tap + to import manga</string>
     <string name="import_manga_deleted">Deleted</string>
     <string name="import_manga_option_files">Import files (zip/cbz)</string>
-    <string name="import_manga_option_single_dir">Import single manga folder</string>
-    <string name="import_manga_option_multi_dir">Import multiple manga folders</string>
+    <string name="import_manga_option_single_dir">Import folder (whole folder = one manga)</string>
     <string name="import_folder_hint">Tip: some devices only allow choosing a newly-created folder. If blocked, create a folder in the picker first.</string>
     <string name="import_storage_hint">Stored to app\'s internal storage:&#10;%1$s</string>
     <string name="browse">Browse</string>
     <string name="import_delete">Delete</string>
     <string name="import_delete_selected_confirm">Delete %1$d selected manga? App-local copies will also be removed.</string>
+    <string name="import_delete_with_translations_confirm">Delete %1$d selected manga?\n\n%2$d of them have translation records — these cannot be recovered.\nTo keep them, open the reader → Download → Translated (or Bilingual) and export first.\n\nApp-local copies (images/archives) will also be removed.</string>
+    <string name="import_delete_export_first">Export first</string>
+    <!-- Translation replacement table (Manga result settings → sub-panel) -->
+    <string name="manga_replacement_title">Translation replacement table</string>
+    <string name="manga_replacement_summary">%1$d rule(s) — applied when rendering, changes take effect immediately</string>
+    <string name="manga_replacement_summary_empty">Replace parts of the translation, e.g. turn ... into .</string>
+    <string name="manga_replacement_empty_title">No rules yet</string>
+    <string name="manga_replacement_empty_hint">Tap “Add rule” below, e.g. find ... → replace with .</string>
+    <string name="manga_replacement_add">Add rule</string>
+    <string name="manga_replacement_add_summary">%1$d / %2$d rules</string>
+    <string name="manga_replacement_from_label">Find</string>
+    <string name="manga_replacement_to_label">Replace with</string>
+    <string name="manga_replacement_from_hint">e.g. ...</string>
+    <string name="manga_replacement_to_hint">e.g. . (empty = delete it)</string>
+    <string name="manga_replacement_row_summary">Replace with: %1$s</string>
+    <string name="manga_replacement_row_summary_delete">Replace with nothing (delete it)</string>
+    <string name="manga_replacement_add_title">Add replacement rule</string>
+    <string name="manga_replacement_edit_title">Edit replacement rule</string>
+    <string name="manga_replacement_delete">Delete</string>
+    <string name="manga_replacement_deleted">Rule deleted</string>
+    <string name="manga_replacement_from_empty">“Find” cannot be empty</string>
+    <string name="manga_replacement_limit">At most %1$d rules</string>
+    <string name="manga_replacement_note_title">When it applies</string>
+    <string name="manga_replacement_note_summary">Applied while rendering the overlay: after editing rules, just return to the reader — pages re-render automatically, no re-translation needed</string>
     <string name="import_selected_count">%1$d selected</string>
     <string name="import_rename">Rename</string>
     <string name="import_change_cover">Cover</string>
@@ -36,8 +59,27 @@
     <string name="import_close_selection">Close selection</string>
     <string name="select_all">Select all</string>
     <string name="import_pages_count">%1$d pages</string>
-    <string name="import_failed">Import failed: %1$d file(s) could not be imported (not a zip/cbz, or damaged)</string>
-    <string name="import_failed_dir">Import failed — make sure the selected folder contains images</string>
+    <!-- 导入进度（占位卡片：图片位显示进度） -->
+    <string name="import_task_scanning">Scanning files…</string>
+    <string name="import_task_copying">Copying…</string>
+    <string name="import_task_copying_percent">Copying %1$d%%</string>
+    <string name="import_task_percent">%1$d%%</string>
+    <string name="import_task_cancel">✕</string>
+    <string name="import_task_cancel_desc">Cancel import</string>
+    <string name="import_cancel_title">Cancel import</string>
+    <string name="import_cancel_msg">Cancel importing %1$s? The copied content will be deleted.</string>
+    <string name="import_cancelled">Import cancelled</string>
+    <string name="import_cancel_too_late">This one already finished importing</string>
+    <!-- 导入结果弹窗 -->
+    <string name="import_result_failed_title">Import failed</string>
+    <string name="import_result_failed_msg">%1$s: %2$s</string>
+    <string name="import_fail_not_archive">not a valid zip/cbz archive, or the file is damaged</string>
+    <string name="import_fail_unreadable">cannot read the file (permission denied, or the file has moved)</string>
+    <string name="import_fail_directory">cannot read the selected folder (permission denied, or it has moved)</string>
+    <string name="import_fail_unknown">unknown error — see the log for details</string>
+    <string name="import_empty_title">No images found</string>
+    <string name="import_empty_folder">No images were found in %1$s or its subfolders. It was added to the shelf as a 0-page manga.\nSupported: jpg / jpeg / png / webp / gif / bmp — archives inside the folder are not detected.</string>
+    <string name="import_empty_archive">%1$s contains no images. It was added to the shelf as a 0-page manga.</string>
     <string name="import_read_progress">Read %1$d / %2$d</string>
     <string name="list_mode">List mode</string>
     <string name="mode_list">List</string>
@@ -343,6 +385,11 @@
     <string name="floating_ball_press_summary">Current judgment time：%s ms\nPress and hold the floating ball, and the judgment time of the menu will pop up, in milliseconds</string>
     <string name="floating_ball_game_icon_title">Game floating ball icon</string>
     <string name="floating_ball_comic_icon_title">Comic floating ball icon</string>
+    <string name="floating_ball_style_title">Floating ball size &amp; opacity</string>
+    <string name="floating_ball_style_summary">Size %1$d%% · Opacity %2$d%%</string>
+    <string name="floating_ball_size_label">Size</string>
+    <string name="floating_ball_alpha_label">Opacity</string>
+    <string name="floating_ball_style_value">%1$d%%</string>
     <string name="ball_gesture_single_click">Single click action</string>
     <string name="ball_gesture_double_click">Double click action</string>
     <string name="ball_gesture_long_press">Long press action</string>

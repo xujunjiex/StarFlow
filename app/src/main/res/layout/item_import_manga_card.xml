@@ -77,6 +77,45 @@
                 android:textSize="10sp"
                 android:visibility="gone"/>
 
+            <!-- 导入进度遮罩（仅「导入中占位」显示）：图片位直接显示进度 + 取消 -->
+            <FrameLayout
+                android:id="@+id/import_overlay"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:background="#B3000000"
+                android:visibility="gone">
+
+                <TextView
+                    android:id="@+id/tv_import_percent"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:textColor="@color/white"
+                    android:textSize="15sp"
+                    android:textStyle="bold"/>
+
+                <ProgressBar
+                    android:id="@+id/pb_import"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="4dp"
+                    android:layout_gravity="bottom"
+                    android:max="100"/>
+
+                <TextView
+                    android:id="@+id/tv_import_cancel"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="top|end"
+                    android:layout_margin="2dp"
+                    android:padding="6dp"
+                    android:contentDescription="@string/import_task_cancel_desc"
+                    android:text="@string/import_task_cancel"
+                    android:textColor="@color/white"
+                    android:textSize="13sp"/>
+
+            </FrameLayout>
+
         </FrameLayout>
 
         <TextView

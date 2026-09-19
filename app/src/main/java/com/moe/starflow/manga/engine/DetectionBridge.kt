@@ -408,8 +408,18 @@ object DetectionBridge {
         bitmap: Bitmap,
         @Suppress("UNUSED_PARAMETER") language: String,
         @Suppress("UNUSED_PARAMETER") context: Context,
-        keepTextFree: Boolean = false
+        /**
+         * 是否保留自由文字（旁白/音效）。**null = 读设置**（[MangaModeConfig.KEY_KEEP_TEXT_FREE]，
+         * 默认 true）。
+         *
+         * ⚠️ 别再改回 `false` 默认值：应用默认是"保留"，默认 false 会让调用方漏传时**静默丢自由文字**
+         * （`runOCR` 就踩过这个坑）。没有 Context 的两个重载
+         * （[detectAndCropRTDetrV2] / [detectWithRTDetrV2Debug]）仍保留 `false` 默认，
+         * 调用方**必须**显式传 `config.keepTextFree`。
+         */
+        keepTextFree: Boolean? = null
     ): List<TextBlockInfo> {
+        val keepTextFree = resolveKeepTextFree(context, keepTextFree)
         try {
             LogCollector.d(TAG, "使用 RT-DETR-V2 + MangaOcr 检测文字区域...")
 
@@ -494,6 +504,9 @@ object DetectionBridge {
      * RT-DETR-V2 检测+裁剪，不做 OCR 识别。
      * 用于分批渲染场景：先检测所有气泡位置，再分批调用 OCR。
      *
+     * ⚠️ [keepTextFree] 默认 `false` = 丢弃自由文字（旁白/音效）。本函数没有 Context，读不了设置 ——
+     * 调用方**必须**显式传 `config.keepTextFree`（真实应用默认是 true；漏传就是静默丢内容）。
+     *
      * @return 按 confidence 降序排列的裁剪结果列表
      */
     suspend fun detectAndCropRTDetrV2(
@@ -542,13 +555,25 @@ object DetectionBridge {
         LogCollector.d(TAG, "detectAndCropRTDetrV2: 过滤后 ${sortedBubbles.size} 个区域 (text_bubble=${allBubbles.count { it.classId == 1 }}, text_free=${if (keepTextFree) "保留(${allBubbles.count { it.classId == 2 }})" else "丢弃"}, bubble保留=${dedupedBubbles.size - greenBubbles.size})")
 
         // Step 5: 裁剪图片（10px padding）
-        val cropped = sortedBubbles.map { bubble ->
-            CroppedBubble(
-                croppedBitmap = cropBitmap(bitmap, bubble.rect),
-                rect = bubble.rect,
-                classId = bubble.classId,
-                confidence = bubble.confidence
-            )
+        //
+        // ⚠️ 必须丢掉「裁剪退化」的那些：`cropBitmap` 在 padded rect 完全落在图外时会**原样返回入参
+        // bitmap**（见它的退化分支）。而本函数的产物带着 `croppedBitmap` 交给调用方回收
+        // （分批管线 / 阅读器复用路径 / 悬浮窗都会 recycle）—— 一旦那张"裁剪图"其实就是调用方的
+        // 源位图，回收它 = 把调用方马上还要用的截图/页图 recycle 掉（随后 Recycled bitmap 崩溃或垃圾像素）。
+        // 这种框本来就是无效检测（整个框在图外），丢掉既正确又安全。
+        val cropped = sortedBubbles.mapNotNull { bubble ->
+            val crop = cropBitmap(bitmap, bubble.rect)
+            if (crop === bitmap) {
+                LogCollector.w(TAG, "detectAndCropRTDetrV2: 跳过退化检测框（裁剪区在图外）rect=${bubble.rect}")
+                null
+            } else {
+                CroppedBubble(
+                    croppedBitmap = crop,
+                    rect = bubble.rect,
+                    classId = bubble.classId,
+                    confidence = bubble.confidence
+                )
+            }
         }
 
         LogCollector.d(TAG, "detectAndCropRTDetrV2: 完成，${cropped.size} 个裁剪区域")
@@ -690,13 +715,18 @@ object DetectionBridge {
 
     /**
      * 统一 OCR 入口：根据检测引擎和 OCR 引擎整数 ID 自动路由到对应检测+识别方法。
-     * 供 MangaViewerActivity 等非服务组件直接调用。
+     * 供阅读器（阅读器内嵌翻译）与 MangaViewerActivity（截图历史重翻）直接调用。
      *
      * @param bitmap 输入图片
      * @param language 语言代码
      * @param detEngine 检测引擎整数 ID（对应 DetEngine.value）
      * @param ocrEngine OCR 引擎整数 ID（对应 OcrEngine.value）
      * @param context Context
+     * @param keepTextFree RT-DETR-V2 是否保留自由文字（旁白/音效）。
+     *        **null = 读设置**（[MangaModeConfig.KEY_KEEP_TEXT_FREE]，默认开）。
+     *        ⚠️ 默认读设置是刻意的：这里曾恒用 `false`（漏传参数走了 `detectWithRTDetrV2` 的默认值），
+     *        于是**非分批路径**（关增量 / 本地 Hy-MT2 引擎 / 气泡 ≤6 个）的 RT 检测把自由文字整片丢掉，
+     *        用户看到的现象是「设置里的『识别自由文字』像被自动关了」。
      * @return TextBlockInfo 列表
      */
     suspend fun runOCR(
@@ -704,7 +734,8 @@ object DetectionBridge {
         language: String,
         detEngine: Int,
         ocrEngine: Int,
-        context: Context
+        context: Context,
+        keepTextFree: Boolean? = null
     ): List<TextBlockInfo> {
         val det = DetEngine.fromValue(detEngine)
         val ocr = OcrEngine.fromValue(ocrEngine)
@@ -714,8 +745,9 @@ object DetectionBridge {
                 OCRBridge.recognizeWithLocation(language, bitmap)
             }
             DetEngine.RT_DETR_V2 -> {
-                LogCollector.d(TAG, "使用 RT-DETR-V2 检测, ocr=$ocr, language=$language")
-                detectWithRTDetrV2(bitmap, language, context)
+                val keep = resolveKeepTextFree(context, keepTextFree)
+                LogCollector.d(TAG, "使用 RT-DETR-V2 检测, ocr=$ocr, language=$language, keepTextFree=$keep")
+                detectWithRTDetrV2(bitmap, language, context, keep)
             }
             DetEngine.PP_OCR_V5 -> {
                 LogCollector.d(TAG, "使用 PP-OCRv5 独立检测+识别, language=$language")
@@ -727,6 +759,18 @@ object DetectionBridge {
             }
         }
     }
+
+    /**
+     * RT-DETR-V2 的自由文字开关解析：**显式传入优先，否则读设置**（[MangaModeConfig.KEY_KEEP_TEXT_FREE]，
+     * 未设置时默认开 —— 与 `MangaModeConfig.keepTextFree` 的默认值一致）。
+     *
+     * 独立成函数是为了可测：这条契约（漏传参数 ⇒ 读设置 ⇒ 默认是开）曾因恒用 `false` 而静默失效。
+     * 读的就是 `CustomPreference` 包的那一份默认 SharedPreferences。
+     */
+    fun resolveKeepTextFree(context: Context, explicit: Boolean?): Boolean =
+        explicit ?: androidx.preference.PreferenceManager
+            .getDefaultSharedPreferences(context)
+            .getBoolean(MangaModeConfig.KEY_KEEP_TEXT_FREE, true)
 
     /**
      * 将 OCR 结果转换为 BubbleRegion 列表（正常翻译和重翻共用）。

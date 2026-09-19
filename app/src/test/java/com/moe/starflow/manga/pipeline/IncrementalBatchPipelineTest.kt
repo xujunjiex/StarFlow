@@ -406,6 +406,32 @@ class IncrementalBatchPipelineTest {
         assertEquals(2, names.count { it == "recognizeCroppedBubbles" })
     }
 
+    /**
+     * RT 路线「气泡太少」的出口：**把已检测的裁剪结果交回调用方复用**，而不是回收掉让调用方
+     * 再检测一遍 —— 普通路径（气泡少的页面恒定走它）本来要付两次整页 RT 前向。
+     *
+     * 契约有两半，缺一不可：① 带着裁剪图返回；② 管线**不**回收（调用方要么拿去识别、
+     * 要么自己 recycle），所以这里断言「还没被回收」，由测试自己收尾。
+     */
+    @Test
+    fun `rt-detr 气泡等于阈值时交回检测结果且不回收`() = runTest {
+        ops.bubbleCount = 6   // == INCREMENTAL_THRESHOLD，判定是 > 而非 >=
+        val host = FakeHost(ctx, FakeTranslator())
+        val cfg = config(det = DetEngine.RT_DETR_V2, ocr = OcrEngine.MangaOcr)
+
+        val outcome = pipeline(host, cfg, this).run(bitmap())
+
+        val reusable = outcome as BatchOutcome.DetectedNotBatched
+        assertEquals(6, reusable.bubbles.size)
+        assertEquals("只检测一次，识别交给调用方", 1, ops.calls.count { it.name == "detectBubblesRTDetr" })
+        assertEquals(0, ops.calls.count { it.name == "recognizeCroppedBubbles" })
+        assertTrue(
+            "裁剪图不能被管线回收（调用方要拿去复用）",
+            reusable.bubbles.none { it.croppedBitmap.isRecycled }
+        )
+        reusable.bubbles.forEach { if (!it.croppedBitmap.isRecycled) it.croppedBitmap.recycle() }
+    }
+
     @Test
     fun `第一批完整结果会上屏`() = runTest {
         ops.lineCount = 10

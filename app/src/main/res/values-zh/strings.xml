@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">星译</string>
     <string name="floating_ball_menu_1">哎呀，摸鱼被发现啦～</string>
@@ -12,13 +12,36 @@
     <string name="import_manga_empty_hint">点击右下角 + 导入漫画</string>
     <string name="import_manga_deleted">已删除</string>
     <string name="import_manga_option_files">导入文件（zip/cbz）</string>
-    <string name="import_manga_option_single_dir">导入单个漫画文件夹</string>
-    <string name="import_manga_option_multi_dir">导入多个漫画文件夹</string>
+    <string name="import_manga_option_single_dir">导入文件夹（整个文件夹 = 一部漫画）</string>
     <string name="import_folder_hint">提示：部分机型系统文件选择器只允许选择「新建的文件夹」，若无法选择请先在系统选择器里新建一个文件夹</string>
     <string name="import_storage_hint">已导入的漫画保存在应用专属目录（Android/data 下，可通过文件管理器 / 数据线访问）：&#10;%1$s</string>
     <string name="browse">浏览</string>
     <string name="import_delete">删除</string>
     <string name="import_delete_selected_confirm">删除选中的 %1$d 部漫画？应用内副本将一并删除。</string>
+    <string name="import_delete_with_translations_confirm">删除选中的 %1$d 部漫画？\n\n其中 %2$d 部有翻译记录，删除后无法恢复。\n如需保留译文，请先进入阅读器 → 下载 → 译文（或双语）导出，再回来删除。\n\n应用内副本（图片/压缩包）将一并删除。</string>
+    <string name="import_delete_export_first">先去导出</string>
+    <!-- 译文替换表（漫画翻译结果设置 → 二级面板） -->
+    <string name="manga_replacement_title">译文替换表</string>
+    <string name="manga_replacement_summary">已有 %1$d 条规则（渲染译文时套用，改完即生效）</string>
+    <string name="manga_replacement_summary_empty">把译文里的指定内容替换成别的内容，例如把 ... 换成 .</string>
+    <string name="manga_replacement_empty_title">还没有规则</string>
+    <string name="manga_replacement_empty_hint">点下面的「添加规则」新建一条，例如：查找 ... → 替换为 .</string>
+    <string name="manga_replacement_add">添加规则</string>
+    <string name="manga_replacement_add_summary">共 %1$d / %2$d 条</string>
+    <string name="manga_replacement_from_label">查找内容</string>
+    <string name="manga_replacement_to_label">替换为</string>
+    <string name="manga_replacement_from_hint">例如 ...</string>
+    <string name="manga_replacement_to_hint">例如 .（留空 = 删除该内容）</string>
+    <string name="manga_replacement_row_summary">替换为：%1$s</string>
+    <string name="manga_replacement_row_summary_delete">替换为空（删除这段内容）</string>
+    <string name="manga_replacement_add_title">添加替换规则</string>
+    <string name="manga_replacement_edit_title">编辑替换规则</string>
+    <string name="manga_replacement_delete">删除</string>
+    <string name="manga_replacement_deleted">已删除该规则</string>
+    <string name="manga_replacement_from_empty">「查找内容」不能为空</string>
+    <string name="manga_replacement_limit">最多 %1$d 条规则</string>
+    <string name="manga_replacement_note_title">生效范围</string>
+    <string name="manga_replacement_note_summary">渲染译文时套用：改完规则回到阅读器即自动重渲染生效，不用重新翻译；已翻译页也是直接生效</string>
     <string name="import_selected_count">已选 %1$d 部</string>
     <string name="import_rename">重命名</string>
     <string name="import_change_cover">换封面</string>
@@ -36,8 +59,27 @@
     <string name="import_close_selection">关闭多选</string>
     <string name="select_all">全选</string>
     <string name="import_pages_count">%1$d 页</string>
-    <string name="import_failed">导入失败：%1$d 个文件无法导入（可能不是 zip/cbz 或文件已损坏）</string>
-    <string name="import_failed_dir">导入失败，请确认所选文件夹内有图片</string>
+    <!-- 导入进度（占位卡片：图片位显示进度） -->
+    <string name="import_task_scanning">正在扫描文件…</string>
+    <string name="import_task_copying">正在复制…</string>
+    <string name="import_task_copying_percent">正在复制 %1$d%%</string>
+    <string name="import_task_percent">%1$d%%</string>
+    <string name="import_task_cancel">✕</string>
+    <string name="import_task_cancel_desc">取消导入</string>
+    <string name="import_cancel_title">取消导入</string>
+    <string name="import_cancel_msg">确定取消导入 %1$s？已复制的内容会被删除。</string>
+    <string name="import_cancelled">已取消导入</string>
+    <string name="import_cancel_too_late">这一部已经导入完成了</string>
+    <!-- 导入结果弹窗 -->
+    <string name="import_result_failed_title">导入失败</string>
+    <string name="import_result_failed_msg">%1$s：%2$s</string>
+    <string name="import_fail_not_archive">不是有效的 zip/cbz 压缩包，或文件已损坏</string>
+    <string name="import_fail_unreadable">无法读取文件（权限不足或文件已被移动）</string>
+    <string name="import_fail_directory">无法读取所选文件夹（权限不足或已被移动）</string>
+    <string name="import_fail_unknown">未知错误，详情见日志</string>
+    <string name="import_empty_title">没有找到图片</string>
+    <string name="import_empty_folder">%1$s 及其子文件夹内没有图片，已作为 0 页漫画加入书架。\n支持格式：jpg / jpeg / png / webp / gif / bmp；文件夹里的压缩包不会被识别。</string>
+    <string name="import_empty_archive">%1$s 压缩包内没有图片，已作为 0 页漫画加入书架。</string>
     <string name="import_read_progress">已阅读 %1$d / %2$d</string>
     <string name="list_mode">列表模式</string>
     <string name="mode_list">列表</string>
@@ -257,6 +299,11 @@
     <string name="floating_ball_press_summary">当前判定时间：%s ms\n长按悬浮球，弹出菜单的判定时间，单位为毫秒</string>
     <string name="floating_ball_game_icon_title">游戏悬浮球图标</string>
     <string name="floating_ball_comic_icon_title">漫画悬浮球图标</string>
+    <string name="floating_ball_style_title">悬浮球大小与透明度</string>
+    <string name="floating_ball_style_summary">大小 %1$d%% · 不透明度 %2$d%%</string>
+    <string name="floating_ball_size_label">大小</string>
+    <string name="floating_ball_alpha_label">不透明度</string>
+    <string name="floating_ball_style_value">%1$d%%</string>
     <string name="ball_gesture_single_click">单击动作</string>
     <string name="ball_gesture_double_click">双击动作</string>
     <string name="ball_gesture_long_press">长按动作</string>

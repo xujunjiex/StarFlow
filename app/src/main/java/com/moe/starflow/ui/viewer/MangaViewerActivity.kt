@@ -10,6 +10,7 @@ import com.moe.starflow.translate.autotranslate.*
 import com.moe.starflow.translate.screenshot.*
 
 import android.content.ComponentCallbacks2
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Bundle
@@ -769,8 +770,8 @@ class MangaViewerActivity : AppCompatActivity() {
                         val prefs = CustomPreference.getInstance(this@MangaViewerActivity)
                         val engineName = prefs.getString("history_retranslate_engine", "PP_OCR_V5")
                         val (detEngine, ocrEngine) = mapEngineToDetOcr(engineName)
-                        val sourceLang = prefs.getString("Manga_Source_Language", "ja")
-                        val targetLang = prefs.getString("Manga_Target_Language", "zh")
+                        val sourceLang = prefs.getString("Source_Language", "ja")
+                        val targetLang = prefs.getString("Target_Language", "zh")
 
                         initializeEngines(detEngine, ocrEngine)
 
@@ -826,7 +827,7 @@ class MangaViewerActivity : AppCompatActivity() {
                 clearAttachedImageViewRefsForEntry(entry.id)
                 // 清掉该 entry 三 mode 的缓存 bitmap（让 cache MISS 触发协程重新渲染 overlay）
                 for (mode in TranslationCacheManager.OverlayMode.values()) {
-                    renderCache.remove("${entry.id}_${mode.name}_crop")
+                    renderCache.remove(overlayCacheKey(this@MangaViewerActivity, entry.id, mode))
                 }
                 overlayState = TranslationCacheManager.OverlayMode.TRANSLATED
                 binding.btnToggleImage.setImageResource(android.R.drawable.ic_menu_camera)
@@ -939,6 +940,26 @@ data class TranslationDetailItem(
 /**
  * 每页显示一个 pHash 组的代表图片。支持三态 overlay 渲染。
  */
+/**
+ * overlay 渲染缓存 key（"crop" scope：历史页只显示框选范围）。
+ *
+ * ⚠️ 必须带**译文替换表指纹**：替换表是渲染时套用的，规则一改就该重渲染；而这里以前只拼
+ * `id_mode_crop` 且没有 onResume 失效 —— 用户去设置里改了规则再回到查看器，看到的仍是旧图。
+ *
+ * ⚠️ 格式仍须以 `${entryId}_` 开头：`BitmapLruCache.retainEntries` 靠 `substringBefore('_')` 认 id。
+ * ⚠️ 放**文件级**（不在 Activity / PageGroupAdapter 任一类内）：两处都要用同一个 key 格式。
+ */
+private fun overlayCacheKey(
+    context: Context,
+    entryId: Long,
+    mode: TranslationCacheManager.OverlayMode
+): String = "${entryId}_${mode.name}_crop_r${rulesFingerprint(context)}"
+
+private fun rulesFingerprint(context: Context): Int =
+    CustomPreference.getInstance(context)
+        .getString(TranslationTextRules.KEY_REPLACEMENTS, "")
+        .orEmpty().hashCode()
+
 class PageGroupAdapter(
     private val pageGroups: List<MangaViewerActivity.PageGroup>,
     private val pageCacheMap: Map<Long, PageCacheEntity>,
@@ -999,8 +1020,7 @@ class PageGroupAdapter(
         val mode = getOverlayState()
         // cacheKey 包含 scope（crop/full）—— 历史页默认只渲染 crop 区域
         // （"显示框选范围"，不显示原图其它区域）
-        val scope = "crop"
-        val cacheKey = "${entry.id}_${mode.name}_$scope"
+        val cacheKey = overlayCacheKey(holder.itemView.context, entry.id, mode)
 
         // 防御性释放：先清空 ImageView 旧 bitmap 引用，避免外部 recycle 后
         // 残留 dangling reference 在 rebind 之间的 draw cycle 中触发崩溃。

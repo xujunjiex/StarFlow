@@ -7,6 +7,11 @@ import org.json.JSONObject
 /**
  * 导入漫画清单持久化（SharedPreferences + JSON）。
  * 清单是小数据（几十部漫画），不用 Room。
+ *
+ * ⚠️ **全部方法 @Synchronized**：写操作是「load → 改 → save」三步，不是原子的。
+ * 导入改成「一个文件/文件夹一个并发任务」之后，两个任务同毫秒收尾就会互相覆盖
+ * （各自读到不含对方的旧列表 → 后写的把先写的整条吞掉 = 书架少一部、占位卡片凭空消失）。
+ * 同进程内共用一个监视器即可解决；跨进程不存在（只有一个应用进程写这份 prefs）。
  */
 object ImportedMangaStore {
 
@@ -16,6 +21,7 @@ object ImportedMangaStore {
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
+    @Synchronized
     fun load(context: Context): List<ImportedManga> {
         val raw = prefs(context).getString(KEY, null) ?: return emptyList()
         return try {
@@ -28,22 +34,26 @@ object ImportedMangaStore {
         }
     }
 
+    @Synchronized
     fun save(context: Context, list: List<ImportedManga>) {
         val arr = JSONArray()
         list.forEach { arr.put(it.toJson()) }
         prefs(context).edit().putString(KEY, arr.toString()).apply()
     }
 
+    @Synchronized
     fun add(context: Context, manga: ImportedManga) {
         val list = load(context).toMutableList()
         list.add(manga)
         save(context, list)
     }
 
+    @Synchronized
     fun remove(context: Context, id: Long) {
         save(context, load(context).filterNot { it.id == id })
     }
 
+    @Synchronized
     fun update(context: Context, manga: ImportedManga) {
         val list = load(context).toMutableList()
         val idx = list.indexOfFirst { it.id == manga.id }

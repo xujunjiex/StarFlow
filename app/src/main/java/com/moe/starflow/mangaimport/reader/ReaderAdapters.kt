@@ -4,7 +4,9 @@ import android.graphics.Bitmap
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ImageView
 import androidx.recyclerview.widget.RecyclerView
+import com.moe.starflow.R
 import com.moe.starflow.databinding.ItemMangaReaderPageBinding
 import com.moe.starflow.databinding.ItemWebtoonPageBinding
 import com.moe.starflow.ui.viewer.ZoomableImageView
@@ -228,7 +230,36 @@ class WebtoonAdapter(
         }
     }
 
+    /** 本适配器当前附着的列表（给已上屏页上实时滤镜用；Webtoon 同屏可能有好几页）。 */
+    private var attachedList: RecyclerView? = null
+
+    override fun onAttachedToRecyclerView(recyclerView: RecyclerView) {
+        super.onAttachedToRecyclerView(recyclerView)
+        attachedList = recyclerView
+    }
+
+    /**
+     * 实时预览：给**当前已上屏**的所有页上滤镜。
+     *
+     * ⚠️ 必须存在：Webtoon 的滤镜只在 `onBindViewHolder` 里上（`img.colorFilter = shared.filter()`），
+     * 拖亮度/对比度或点「重置」时不会重绑 → 「连续滑动」模式下整个调色面板看起来毫无反应，
+     * 得滚动一下（把页绑一遍）才生效。分页模式靠 `ReaderPageAdapter.applyLiveColor` 解决过同一个问题，
+     * Webtoon 一直漏着。
+     *
+     * ⚠️ 类型必须是 `ImageView`：`item_webtoon_page.xml` 的 `webtoon_image` 就是普通 ImageView
+     * （只有**分页**的 `item_manga_reader_page` 才是 ZoomableImageView）。写成 ZoomableImageView 会在
+     * 第一次拖滑块时 ClassCastException 崩掉整个阅读器。
+     */
+    fun applyLiveColor(f: ReaderColorFilter?) {
+        val c = f?.toColorFilter()
+        val list = attachedList ?: return
+        for (i in 0 until list.childCount) {
+            list.getChildAt(i)?.findViewById<ImageView>(R.id.webtoon_image)?.colorFilter = c
+        }
+    }
+
     override fun onDetachedFromRecyclerView(recyclerView: RecyclerView) {
+        attachedList = null
         shared.scope.cancel()
         super.onDetachedFromRecyclerView(recyclerView)
     }

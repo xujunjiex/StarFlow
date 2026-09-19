@@ -67,6 +67,7 @@ import com.moe.starflow.manga.engine.PPOcrV5Engine
 import com.moe.starflow.manga.engine.PPOcrV6Engine
 import com.moe.starflow.utils.Constants
 import com.moe.starflow.utils.CustomPreference
+import com.moe.starflow.utils.FloatingBallStyle
 import com.moe.starflow.utils.KeystoreManager
 import com.moe.starflow.translate.TranslationStatusOverlay
 import com.moe.starflow.utils.UiUtils
@@ -595,6 +596,8 @@ class FloatingBallService : LifecycleService() {
                     }
                 }
                 key in watchedKeys -> checkLanguageHints()
+                // 悬浮球大小 / 透明度：设置页拖完立刻应用到在屏的球
+                key in FloatingBallStyle.KEYS -> applyBallStyle()
                 // 主题切换：Service 不随 AppCompat 重建，在屏的悬浮球/弹窗要手动重建才跟上
                 key == ThemeManager.KEY -> rebuildThemedWindows()
                 key in styleKeys -> {
@@ -782,6 +785,16 @@ class FloatingBallService : LifecycleService() {
         }
 
         applyBallIcon()
+        // 悬浮球大小 / 透明度（个性化设置；改完由 prefChangeListener 实时应用）
+        val ballPrefs = prefs.getSharedPreferences()
+        FloatingBallStyle.apply(floatingBallView, ballPrefs)
+        // 球变大只向右下长 → 上次停在贴边位置的球会有一部分在屏外：加进窗口前按新尺寸夹一次
+        // （此处尚未 addView，直接改参数即可，不需要 updateViewLayout）
+        val ballScreen = getScreenSize()
+        FloatingBallStyle.clampIntoDisplay(
+            floatingBallParams, FloatingBallStyle.sizePx(this, ballPrefs),
+            ballScreen.width, ballScreen.height
+        )
         // 设置长按判定时间
         floatingBallConfig.LONG_PRESS_DELAY = prefs.getLong("Custom_Long_Press_Delay", 300L)
 
@@ -822,6 +835,22 @@ class FloatingBallService : LifecycleService() {
             }
         } catch (e: Exception) {
             iconView.setImageResource(R.mipmap.icon_game_default)
+        }
+    }
+
+    /** 把「悬浮球大小 / 透明度」设置应用到在屏的球（球还没加进窗口时跳过）。 */
+    private fun applyBallStyle() {
+        if (!ballViewAdded) return
+        val sp = prefs.getSharedPreferences()
+        FloatingBallStyle.apply(floatingBallView, sp)
+        // 尺寸变了球只向右下长 → 贴边会出屏，转屏后甚至整球不可达：按新尺寸把窗口夹回屏内
+        val screen = getScreenSize()
+        val params = floatingBallParams
+        if (FloatingBallStyle.clampIntoDisplay(
+                params, FloatingBallStyle.sizePx(this, sp), screen.width, screen.height
+            )
+        ) {
+            params?.let { windowManager.updateViewLayout(floatingBallView, it) }
         }
     }
 
@@ -942,15 +971,17 @@ class FloatingBallService : LifecycleService() {
 
     private fun handleLongPress() {
         currentGesture = GestureType.LongPress
-        // 长按震动反馈动画（缩放+透明度）
+        // 长按震动反馈动画（缩放+透明度）；透明度以用户设置值为基准，收尾必须回到设置值，
+        // 否则一次长按就把用户设的透明度抹成不透明
+        val ballAlpha = FloatingBallStyle.alpha(prefs.getSharedPreferences())
         floatingBallView.animate()
             .scaleX(1.2f).scaleY(1.2f)
-            .alpha(0.7f)
+            .alpha(ballAlpha * 0.7f)
             .setDuration(100)
             .withEndAction {
                 floatingBallView.animate()
                     .scaleX(1f).scaleY(1f)
-                    .alpha(1f)
+                    .alpha(ballAlpha)
                     .setDuration(100)
                     .start()
             }

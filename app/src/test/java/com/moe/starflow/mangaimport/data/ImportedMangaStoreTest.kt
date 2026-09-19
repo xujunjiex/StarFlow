@@ -69,4 +69,25 @@ class ImportedMangaStoreTest {
         ImportedMangaStore.save(context, emptyList())
         assertNull(ImportedMangaStore.load(context).firstOrNull())
     }
+
+    /**
+     * `importing` 系列是**瞬态**字段（导入中的占位卡片）：绝不能落盘。
+     * 否则进程被杀/重启后书架会留下一条永远「导入中」、没有本地文件的僵尸条目。
+     */
+    @Test
+    fun saveThenLoad_dropsTransientImportState() {
+        val placeholder = sample(1).copy(
+            localRoot = "",
+            importing = true,
+            importPhase = ImportPhase.COPYING,
+            importPercent = 42
+        )
+        ImportedMangaStore.save(context, listOf(placeholder))
+
+        val loaded = ImportedMangaStore.load(context).single()
+        assertEquals(sample(1).copy(localRoot = ""), loaded)
+        assertEquals(false, loaded.importing)
+        assertNull(loaded.importPhase)
+        assertEquals(-1, loaded.importPercent)
+    }
 }

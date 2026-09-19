@@ -495,4 +495,96 @@ class LayoutEngineTest {
             assertTrue("退化输入应返回空排版", layout.isEmpty)
         }
     }
+
+    // ---------- ⑦ 点串（省略号）绝不拆行/拆列 ----------
+
+    /**
+     * 修复前的真实反馈：模型把一条译文写成三行（`[1] .` / `.` / `.`），译文里就带着 `\n`，
+     * 竖排渲染时 `\n` 占掉一个字符格 → 用户看到「每个点占一行」，白占高度、字号被压小。
+     *
+     * 竖排是连续竖流，换行没有意义：必须在排版前去掉，点串自然连在同一列里。
+     */
+    @Test
+    fun vertical_newlineInsideDotRunStaysInOneColumn() {
+        val layout = LayoutEngine.plan(
+            measurer = measurer(charRatio = 1f, lineRatio = 1f),
+            text = ".${NEWLINE}.${NEWLINE}.",
+            region = Box(0f, 0f, 200f, 200f), direction = TextDirection.VERTICAL_RL,
+            requestedFontSize = 10f, autoFit = false,
+            align = TextAlign.CENTER, trackingRatio = 0f, leadingRatio = 0f, minPaddingPx = PAD
+        )
+        assertEquals("三个点必须在同一列", listOf("..."), layout.lines.map { it.text })
+    }
+
+    /**
+     * 竖排按列容量切分时，切点不能落在点串中间（否则 `...` 会被排成「每列一个点」）。
+     * 例子：容量 4 的 `ab...cd` → 切点本会落在第三个点上，必须前移到串首。
+     */
+    @Test
+    fun vertical_neverSplitsDotRun() {
+        // availH = 3×charStep + font = 3×11 + 10 = 43 → 容量 4（字号 10，步距 = 10×1.1）
+        val layout = LayoutEngine.plan(
+            measurer = measurer(charRatio = 1f, lineRatio = 1f),
+            text = "ab...cd",
+            region = Box(0f, 0f, 200f, 43f + 2 * PAD), direction = TextDirection.VERTICAL_RL,
+            requestedFontSize = 10f, autoFit = false,
+            align = TextAlign.CENTER, trackingRatio = 0f, leadingRatio = 0f, minPaddingPx = PAD
+        )
+        assertEquals(listOf("ab", "...c", "d"), layout.lines.map { it.text })
+        assertEquals("不丢字", "ab...cd", layout.lines.joinToString("") { it.text })
+        assertNoOverflow(layout, Box(0f, 0f, 200f, 43f + 2 * PAD))
+    }
+
+    /** 横排同理：宽度只够 4 个字时，`ab...cd` 不能断在点串中间。 */
+    @Test
+    fun horizontal_neverSplitsDotRun() {
+        // 字号 10、字宽 10 + gap 1 → 4 个字占 4×11-1 = 43，可用宽 45 → 每行 4 个
+        val layout = LayoutEngine.plan(
+            measurer = measurer(charRatio = 1f, lineRatio = 1f),
+            text = "ab...cd",
+            region = Box(0f, 0f, 45f + 2 * PAD, 300f), direction = TextDirection.HORIZONTAL,
+            requestedFontSize = 10f, autoFit = false,
+            align = TextAlign.LEFT, trackingRatio = 0f, leadingRatio = 0f, minPaddingPx = PAD
+        )
+        assertEquals(listOf("ab", "...c", "d"), layout.lines.map { it.text })
+        assertEquals("不丢字", "ab...cd", layout.lines.joinToString("") { it.text })
+    }
+
+    /**
+     * 兜底：点串比一整列/一行还长时只能硬切 —— 但**不丢字、不越界**仍是硬约束
+     * （宁可拆点串，也不能溢出或截断）。
+     */
+    @Test
+    fun dotRunLongerThanLine_fallsBackToHardBreakWithoutLosingText() {
+        val region = Box(0f, 0f, 19f + 2 * PAD, 300f)   // 可用宽 19 → 每行 1 个字
+        val layout = LayoutEngine.plan(
+            measurer = measurer(charRatio = 1f, lineRatio = 1f),
+            text = "...",
+            region = region, direction = TextDirection.HORIZONTAL,
+            requestedFontSize = 10f, autoFit = false,
+            align = TextAlign.LEFT, trackingRatio = 0f, leadingRatio = 0f, minPaddingPx = PAD
+        )
+        assertEquals("不丢字", "...", layout.lines.joinToString("") { it.text })
+        assertNoOverflow(layout, region)
+    }
+
+    /**
+     * 竖排同样的兜底分支：点串比**一整列**还长（容量 1）时不能死循环、不能丢字。
+     * 这条正是 `pullBackToDotRunStart` 里 `runStart == start → 原样返回`（硬切）那条路的守卫。
+     */
+    @Test
+    fun dotRunLongerThanColumn_verticalHardBreakWithoutLosingText() {
+        // 容量 1：availH = font = 10 → 每列 1 个字
+        val region = Box(0f, 0f, 200f, 10f + 2 * PAD)
+        val layout = LayoutEngine.plan(
+            measurer = measurer(charRatio = 1f, lineRatio = 1f),
+            text = "...",
+            region = region, direction = TextDirection.VERTICAL_RL,
+            requestedFontSize = 10f, autoFit = false,
+            align = TextAlign.CENTER, trackingRatio = 0f, leadingRatio = 0f, minPaddingPx = PAD
+        )
+        assertEquals("每列一个点（硬切）", listOf(".", ".", "."), layout.lines.map { it.text })
+        assertEquals("不丢字", "...", layout.lines.joinToString("") { it.text })
+        assertNoOverflow(layout, region)
+    }
 }

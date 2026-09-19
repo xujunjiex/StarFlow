@@ -88,6 +88,66 @@ class ImportedPageTranslationDaoTest {
     }
 
     /**
+     * 书架删除走这条：**按 (id, 指纹) 成对删**。
+     *
+     * ⚠️ 为什么必须带指纹：漫画 id 会被复用（id = 清单最大 id + 1），而删除是异步的 ——
+     * 只按 id 删的话，用户完全可能在它落地前就导入了一本复用同 id 的新书并翻了几页，
+     * 把那本**新书**的记录一起删掉。这里断言「同 id 但不同指纹的行必须留下」。
+     */
+    @Test
+    fun deleteMangaScoped_keepsRowsOfOtherIdentity() = runBlocking {
+        db = Room.inMemoryDatabaseBuilder(
+            RuntimeEnvironment.getApplication(), TranslationHistoryDatabase::class.java
+        ).build()
+        dao().upsert(row(1, ImportedPageTranslation.STATE_SUCCESS))                        // id7 + "manga|1"
+        dao().upsert(row(2, ImportedPageTranslation.STATE_SUCCESS))                        // id7 + "manga|1"
+        // 同 id 的另一本书（删掉重导复用 id 的形态）
+        dao().upsert(row(1, ImportedPageTranslation.STATE_SUCCESS).copy(mangaKey = "1789000000000"))
+        // 别的 mangaId
+        dao().upsert(row(1, ImportedPageTranslation.STATE_SUCCESS).copy(mangaId = 99L))
+
+        dao().deleteMangaScoped(7L, "manga|1")
+
+        assertEquals(0, dao().forManga(7L, "manga|1").size)
+        assertEquals("同 id 的另一本书不能被删", 1, dao().forManga(7L, "1789000000000").size)
+        assertEquals(1, dao().forManga(99L, "manga|1").size)
+    }
+
+    /** 升级前写入的 key 为 NULL 的残留行，跟着同 id 的删除一起清掉。 */
+    @Test
+    fun deleteMangaScoped_alsoClearsLegacyNullKeyRows() = runBlocking {
+        db = Room.inMemoryDatabaseBuilder(
+            RuntimeEnvironment.getApplication(), TranslationHistoryDatabase::class.java
+        ).build()
+        dao().upsert(row(1, ImportedPageTranslation.STATE_SUCCESS).copy(mangaKey = null))
+
+        dao().deleteMangaScoped(7L, "1789000000000")
+
+        assertEquals(0, dao().forManga(7L, "1789000000000").size)
+    }
+
+    /**
+     * 删除前的「这本书有译文，删了不可恢复」提示靠它判断。
+     *
+     * ⚠️ 必须按身份指纹过滤：删掉再导入会复用同一个 mangaId，孤儿行不能算成新书的译文
+     * （否则会提示用户「有翻译记录」而实际什么都没有）。
+     */
+    @Test
+    fun countForFiltersByMangaKey() = runBlocking {
+        db = Room.inMemoryDatabaseBuilder(
+            RuntimeEnvironment.getApplication(), TranslationHistoryDatabase::class.java
+        ).build()
+        // 同 id 的孤儿行（旧指纹）
+        dao().upsert(row(1, ImportedPageTranslation.STATE_SUCCESS).copy(mangaKey = "old-title|100"))
+        assertEquals(0, dao().countFor(7L, "manga|1"))
+
+        dao().upsert(row(2, ImportedPageTranslation.STATE_SUCCESS))
+        assertEquals(1, dao().countFor(7L, "manga|1"))
+        assertEquals(1, dao().countFor(7L, "old-title|100"))
+        assertEquals(0, dao().countFor(8L, "manga|1"))
+    }
+
+    /**
      * `resetTranslating` 是「记录永久卡在翻译中」的唯一兜底：该状态在翻译**开始时**写库，
      * 退出阅读器/崩溃会让它停在 TRANSLATING，之后该页既不显示译文也再也翻不了。
      *
