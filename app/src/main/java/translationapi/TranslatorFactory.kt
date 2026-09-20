@@ -173,7 +173,7 @@ object TranslatorFactory {
     fun engineLabel(context: Context, prefs: CustomPreference): String = when (prefs.getInt("Text_API", Constants.TextApi.BING.id)) {
         Constants.TextApi.AI.id -> when (prefs.getInt("Text_AI", Constants.TextAI.NLLB.id)) {
             Constants.TextAI.NLLB.id, 1 -> "NLLB"
-            Constants.TextAI.HYMT2.id -> "Hy-MT2 1.8B"
+            Constants.TextAI.HYMT2.id -> "Hy-MT2 1.25-bit"
             else -> context.getString(R.string.ai_engine_label)
         }
         Constants.TextApi.BING.id -> context.getString(R.string.bingapi_name)

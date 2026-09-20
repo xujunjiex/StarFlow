@@ -115,7 +115,7 @@
     <string name="hymt2_section_download">Model Download</string>
     <string name="hymt2_section_params">Translation Parameters</string>
     <string name="hymt2_section_intro">About the Model</string>
-    <string name="hymt2_intro">Tencent Hy-MT2 1.8B multilingual translation model, fully local offline inference — text never leaves the device, works without network.
+    <string name="hymt2_intro">Tencent Hy-MT2 (1.25-bit quantized, ~440MB) multilingual translation model, fully local offline inference — text never leaves the device, works without network.
 
 ★ Streaming output: the translation appears token by token, no need to wait for completion.
 ★ Two stages: “read source” (batch prefill) then “generate translation” (token-by-token output). Stage thread counts are adjustable below.

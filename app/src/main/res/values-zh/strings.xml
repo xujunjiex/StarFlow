@@ -1129,7 +1129,7 @@
     <string name="hymt2_section_download">模型下载</string>
     <string name="hymt2_section_params">翻译参数</string>
     <string name="hymt2_section_intro">关于模型</string>
-    <string name="hymt2_intro">腾讯 Hy-MT2 1.8B 多语言翻译模型，完全本地离线推理——文本不离开设备，无需联网即可使用。\n\n★ 流式输出：译文逐字出现，无需等待全部生成完成。\n★ 两个阶段：「读取原文」（批量 prefill）→「生成译文」（逐字输出）。两个阶段的线程数可在下方分别调整。\n\n──────────────\n⚠️ 本地推理吃 CPU：芯片越强翻译越快（如旗舰/中高端），低端芯片会明显变慢。</string>
+    <string name="hymt2_intro">腾讯 Hy-MT2（1.25-bit 量化版，约 440MB）多语言翻译模型，完全本地离线推理——文本不离开设备，无需联网即可使用。\n\n★ 流式输出：译文逐字出现，无需等待全部生成完成。\n★ 两个阶段：「读取原文」（批量 prefill）→「生成译文」（逐字输出）。两个阶段的线程数可在下方分别调整。\n\n──────────────\n⚠️ 本地推理吃 CPU：芯片越强翻译越快（如旗舰/中高端），低端芯片会明显变慢。</string>
     <string name="hymt2_download_help">手动下载（模型约 440MB，需手动下载，不会自动下载）</string>
     <string name="hymt2_prompt_label">提示词模板</string>
     <string name="hymt2_threads_label">生成线程数</string>
