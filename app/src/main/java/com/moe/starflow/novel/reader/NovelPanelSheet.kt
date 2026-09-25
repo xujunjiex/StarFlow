@@ -1,5 +1,6 @@
 package com.moe.starflow.novel.reader
 
+import android.content.Context
 import android.content.SharedPreferences
 import android.content.res.ColorStateList
 import android.os.Bundle
@@ -297,11 +298,25 @@ class NovelPanelSheet(
         val sbBottom = view.findViewById<SeekBar>(R.id.sb_bottom_padding)
         val tvBottomValue = view.findViewById<TextView>(R.id.tv_bottom_padding_value)
 
-        view.findViewById<View>(R.id.btn_reset_typography).setOnClickListener { cb.onResetTypography() }
+        view.findViewById<View>(R.id.btn_reset_typography).setOnClickListener {
+            cb.onResetTypography()
+            // ⚠️ 恢复默认是**宿主**在 prefs 上改的值，而面板持有的是打开面板那一刻的快照 ——
+            // 不回读的话滑块还停在旧位置，用户看到的就是「点了恢复默认面板没反应」。
+            reloadTypography(view)
+        }
 
-        sbFont.progress = state.fontSizeSp.toInt()
-            .coerceIn(NovelPanelStyle.FONT_SIZE_MIN.toInt(), NovelPanelStyle.FONT_SIZE_MAX.toInt())
-        tvFontValue.text = "${sbFont.progress} sp"
+        // 初始值统一由 [bindTypography] 填：与「恢复默认」后的回读是同一段代码
+        curReaderMode = state.readerMode
+        bindTypography(
+            view,
+            fontSp = state.fontSizeSp,
+            lineStep = state.lineSpacingStep,
+            paraDp = state.paragraphSpacingDp,
+            padDp = state.paddingDp,
+            topDp = state.topPaddingDp,
+            bottomDp = state.bottomPaddingDp,
+        )
+
         sbFont.setOnSeekBarChangeListener(sliderLabel({ tvFontValue.text = "$it sp" }) {
             curFontSp = it.toFloat()
             cb.onFontSize(curFontSp)
@@ -309,8 +324,6 @@ class NovelPanelSheet(
             refreshDerivedUi(view)
         })
 
-        sbLine.progress = state.lineSpacingStep
-        tvLine.text = NovelPanelStyle.lineSpacingLabel(state.lineSpacingStep)
         sbLine.setOnSeekBarChangeListener(sliderLabel(
             onLabel = { tvLine.text = NovelPanelStyle.lineSpacingLabel(it) },
             onSettle = { v ->
@@ -321,23 +334,13 @@ class NovelPanelSheet(
             },
         ))
 
-        sbPara.progress = state.paragraphSpacingDp
         sbPara.setOnSeekBarChangeListener(sliderLabel({ tvPara.text = "$it dp" }) { cb.onParagraphSpacing(it) })
 
-        sbPad.progress = state.paddingDp
-        tvPad.text = "${state.paddingDp} dp"
         sbPad.setOnSeekBarChangeListener(sliderLabel({ tvPad.text = "$it dp" }) { cb.onPadding(it) })
 
-        sbTop.progress = state.topPaddingDp
-        tvTopValue.text = "${state.topPaddingDp} dp"
-        sbBottom.progress = state.bottomPaddingDp
-        tvBottomValue.text = "${state.bottomPaddingDp} dp"
         sbTop.setOnSeekBarChangeListener(sliderLabel({ tvTopValue.text = "$it dp" }) { cb.onTopPadding(it) })
         sbBottom.setOnSeekBarChangeListener(sliderLabel({ tvBottomValue.text = "$it dp" }) { cb.onBottomPadding(it) })
 
-        curReaderMode = state.readerMode
-        curFontSp = state.fontSizeSp
-        curLineStep = state.lineSpacingStep
         refreshDerivedUi(view)
 
         // ---- 翻译：模式 / 防抖 / 向后章数 / 每批段数 / 模型 / 字号 / 语言 / 章节列表 ----
@@ -462,6 +465,69 @@ class NovelPanelSheet(
     private fun applyAheadRowVisibility(view: View, mode: Int) {
         view.findViewById<View>(R.id.row_ahead_chapters).visibility =
             if (mode == NovelPanelStyle.MODE_AUTO_AHEAD) View.VISIBLE else View.GONE
+    }
+
+    /**
+     * 把一组排版参数写进控件（滑块位置 + 数值文本），并刷新派生 UI。
+     *
+     * ⚠️ **只有一个出口**：`onCreateView` 的初始填充与「恢复默认」后的回读都走这里 ——
+     * 两边各写一套的话，迟早出现「打开时显示对了、复位后漏刷一个」。
+     * 程序化设 `progress` 不会触发回调（[sliderLabel] 只在 `fromUser` 时回调节点），所以不必额外加锁。
+     */
+    private fun bindTypography(
+        view: View,
+        fontSp: Float,
+        lineStep: Int,
+        paraDp: Int,
+        padDp: Int,
+        topDp: Int,
+        bottomDp: Int,
+    ) {
+        val sbFont = view.findViewById<SeekBar>(R.id.sb_font_size)
+        sbFont.progress = fontSp.toInt()
+            .coerceIn(NovelPanelStyle.FONT_SIZE_MIN.toInt(), NovelPanelStyle.FONT_SIZE_MAX.toInt())
+        view.findViewById<TextView>(R.id.tv_font_size_value).text = "${sbFont.progress} sp"
+
+        val sbLine = view.findViewById<SeekBar>(R.id.sb_line_spacing)
+        sbLine.progress = lineStep
+        view.findViewById<TextView>(R.id.tv_line_spacing_value).text =
+            NovelPanelStyle.lineSpacingLabel(lineStep)
+
+        val sbPara = view.findViewById<SeekBar>(R.id.sb_para_spacing)
+        sbPara.progress = paraDp
+        view.findViewById<TextView>(R.id.tv_para_spacing_value).text = "$paraDp dp"
+
+        val sbPad = view.findViewById<SeekBar>(R.id.sb_padding)
+        sbPad.progress = padDp
+        view.findViewById<TextView>(R.id.tv_padding_value).text = "$padDp dp"
+
+        val sbTop = view.findViewById<SeekBar>(R.id.sb_top_padding)
+        sbTop.progress = topDp
+        view.findViewById<TextView>(R.id.tv_top_padding_value).text = "$topDp dp"
+
+        val sbBottom = view.findViewById<SeekBar>(R.id.sb_bottom_padding)
+        sbBottom.progress = bottomDp
+        view.findViewById<TextView>(R.id.tv_bottom_padding_value).text = "$bottomDp dp"
+
+        // 工作状态同步：段距的合法区间是按「当前字号 + 当前行距」算的
+        curFontSp = fontSp
+        curLineStep = lineStep
+        refreshDerivedUi(view)
+    }
+
+    /** 从 prefs 回读排版参数并刷新控件（见「恢复默认」按钮处的说明）。 */
+    private fun reloadTypography(view: View) {
+        val p = requireContext().getSharedPreferences(NovelPanelStyle.PREFS_NAME, Context.MODE_PRIVATE)
+        val font = NovelPanelStyle.fontSizeSp(p)
+        bindTypography(
+            view,
+            fontSp = font,
+            lineStep = NovelPanelStyle.lineSpacingStep(p),
+            paraDp = NovelPanelStyle.paragraphSpacingDp(p, font),
+            padDp = NovelPanelStyle.paddingDp(p),
+            topDp = NovelPanelStyle.topPaddingDp(p),
+            bottomDp = NovelPanelStyle.bottomPaddingDp(p),
+        )
     }
 
     /**
