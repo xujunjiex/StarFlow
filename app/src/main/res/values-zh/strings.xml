@@ -1333,11 +1333,11 @@
 
     <!-- LlamaCpp 引擎与模型管理页 -->
     <string name="llamacpp_name">LlamaCpp 本地模型</string>
-    <string name="llamacpp_description">在本机离线运行 GGUF 模型（内置 Hy-MT2，也可导入任意 llama.cpp 兼容模型）。<b><u>建议设备内存 6GB 以上。</u></b>点击下方「管理 LlamaCpp 模型」可选择、导入或删除模型。</string>
+    <string name="llamacpp_description">在本机离线运行 GGUF 模型（可下载官方 Hy-MT2，也可导入任意 llama.cpp 兼容模型）。<b><u>建议设备内存 6GB 以上。</u></b>点击下方「管理 LlamaCpp 模型」可选择、导入或删除模型。</string>
     <string name="manage_llamacpp_models">管理 LlamaCpp 模型</string>
     <string name="llamacpp_no_active_model">尚未选择 LlamaCpp 模型。请先打开「管理 LlamaCpp 模型」选择或导入一个。</string>
     <string name="llamacpp_manager_title">LlamaCpp 模型</string>
-    <string name="llamacpp_group_builtin">内置模型</string>
+    <string name="llamacpp_group_official">官方模型</string>
     <string name="llamacpp_import_notification_title">模型导入</string>
     <string name="llamacpp_import_running">已有一个导入任务在进行，请等待完成</string>
     <string name="llamacpp_group_imported">导入的模型</string>
@@ -1348,7 +1348,7 @@
     <string name="llamacpp_empty_imported">还没有导入模型。点「添加模型」，选择本地的 .gguf 文件。</string>
     <string name="llamacpp_badge_active">使用中</string>
     <string name="llamacpp_badge_missing">文件已丢失</string>
-    <string name="llamacpp_badge_builtin">内置</string>
+    <string name="llamacpp_badge_official">官方</string>
     <string name="llamacpp_set_active">设为当前使用</string>
     <string name="llamacpp_active_set">已将「%1$s」设为当前模型</string>
     <string name="llamacpp_import_started">正在导入…</string>
@@ -1361,23 +1361,23 @@
     <string name="llamacpp_delete_title">删除模型</string>
     <string name="llamacpp_delete_message">确认删除「%1$s」？模型文件会一并从设备删除。</string>
     <string name="llamacpp_delete_done">已删除</string>
-    <string name="llamacpp_delete_builtin_message">确认删除已下载的内置模型「%1$s」？之后可以重新下载。</string>
+    <string name="llamacpp_delete_official_message">确认删除已下载的官方模型「%1$s」？之后可以重新下载。</string>
     <string name="llamacpp_meta_format">%1$s · %2$s</string>
-    <string name="llamacpp_source_builtin">内置</string>
+    <string name="llamacpp_source_official">官方</string>
     <string name="llamacpp_source_imported">导入</string>
     <string name="llamacpp_params_title">「%1$s」的设置</string>
     <string name="llamacpp_params_saved">设置已保存</string>
-    <string name="llamacpp_params_builtin_note">该模型使用 Hy-MT2 的对话格式（指令放 system 段），下面的模板就是指令部分。</string>
+    <string name="llamacpp_params_official_note">该模型使用 Hy-MT2 的对话格式（指令放 system 段），下面的模板就是指令部分。</string>
     <string name="llamacpp_params_generic_note">该模型用 GGUF 自带的对话模板渲染，下面的 system 提示词与模板分别作为 system / user 消息。</string>
     <string name="llamacpp_system_prompt_label">系统提示词</string>
-    <string name="llamacpp_system_prompt_hint">仅对导入的模型生效（内置 Hy-MT2 有自己的对话格式）</string>
+    <string name="llamacpp_system_prompt_hint">仅对导入的模型生效（官方 Hy-MT2 有自己的对话格式）</string>
     <string name="llamacpp_enable_thinking_label">启用思考（推理）</string>
     <string name="llamacpp_enable_thinking_hint">关闭可加快翻译。仅对支持推理的模型（如 Qwen3）生效。</string>
     <string name="llamacpp_params_effect_hint">上下文长度与线程数在下次加载模型时生效；提示词与采样参数立即生效。</string>
     <string name="llamacpp_params_help">参数说明</string>
     <string name="llamacpp_reset_default">恢复默认</string>
     <string name="llamacpp_intro_title">LlamaCpp 本地推理</string>
-    <string name="llamacpp_intro_content">LlamaCpp 本地推理\n\n• 内置模型：Hy-MT2 1.8B 两个量化档（1.25-bit 约 461MB / Q4_K_M 约 1.08GB），下载完成后即可离线使用。\n• 导入模型：支持任意 llama.cpp 兼容的 GGUF 文件（Qwen、Gemma、混元 等），按模型自带的对话模板渲染，保持模型原始格式。\n• 每个模型独立保存提示词模板与采样参数。\n\n提示：本地推理占用 CPU 与内存，芯片性能越好翻译越快；推理期间设备会发热并增加耗电。</string>
+    <string name="llamacpp_intro_content">LlamaCpp 本地推理\n\n• 官方模型：Hy-MT2 1.8B 两个量化档（1.25-bit 约 461MB / Q4_K_M 约 1.08GB），需下载后离线使用。\n• 导入模型：支持任意 llama.cpp 兼容的 GGUF 文件（Qwen、Gemma、混元 等），按模型自带的对话模板渲染，保持模型原始格式。\n• 每个模型独立保存提示词模板与采样参数。\n\n提示：本地推理占用 CPU 与内存，芯片性能越好翻译越快；推理期间设备会发热并增加耗电。</string>
     <string name="llamacpp_section_prompt">提示词</string>
     <string name="llamacpp_section_sampling">采样参数</string>
     <string name="llamacpp_section_performance">性能</string>

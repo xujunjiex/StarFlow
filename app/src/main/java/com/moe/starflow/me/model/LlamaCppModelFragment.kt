@@ -34,11 +34,13 @@ import kotlinx.coroutines.launch
  * LlamaCpp 模型管理页。
  *
  * 结构（用户 2026-09 定稿）：
- *  - **内置模型**卡片组：Hy-MT2 1.8B（1.25-bit / Q4_K_M 两张卡），仍走既有下载流水线
+ *  - **官方模型**卡片组：Hy-MT2 1.8B（1.25-bit / Q4_K_M 两张卡）—— 只是**提供下载**（不打进 APK），
+ *    所以叫「官方模型」而不是「内置模型」，仍走既有下载流水线
  *    （ModelKey.HY_MT2_GROUP / ModelKey.HY_MT2_Q4_KM），可下载/暂停/继续/取消/删除，
  *    下载完成后点卡片激活；
  *  - **导入的模型**列表：用户从本地 SAF 选择的任意 .gguf（允许激活/改参数/删除）；
- *  - **添加模型 = 直接导入本地 GGUF**（不做预设列表下载）。
+ *  - **添加模型 = 直接导入本地 GGUF**（不做预设列表下载）；
+ *  - 底部固定操作区：「添加模型」按钮**始终贴在页面最底部**（不随内容滚动），导入进度也在这一区。
  *
  * 所有状态以 `LlamaCppModelStore.models`（清单 + 磁盘检查）与
  * `ModelDownloadRepository`（内置模型下载状态）为真值，本页只负责渲染与转发操作。
@@ -155,7 +157,7 @@ class LlamaCppModelFragment : Fragment() {
         row.rowName.text = m.displayName
         val missing = LlamaCppModelStore.fileMissing(m)
         val sourceLabel = getString(
-            if (m.source == LlamaCppModelSource.BUILTIN) R.string.llamacpp_source_builtin
+            if (m.source == LlamaCppModelSource.BUILTIN) R.string.llamacpp_source_official
             else R.string.llamacpp_source_imported
         )
         row.rowMeta.text = getString(
@@ -168,7 +170,7 @@ class LlamaCppModelFragment : Fragment() {
         val badge = when {
             m.id == activeId -> getString(R.string.llamacpp_badge_active)
             missing -> getString(R.string.llamacpp_badge_missing)
-            m.source == LlamaCppModelSource.BUILTIN -> getString(R.string.llamacpp_badge_builtin)
+            m.source == LlamaCppModelSource.BUILTIN -> getString(R.string.llamacpp_badge_official)
             else -> null
         }
         row.rowBadge.visibility = if (badge == null) View.GONE else View.VISIBLE
@@ -272,15 +274,16 @@ class LlamaCppModelFragment : Fragment() {
     /** 渲染导入进度（回到页面时如果后台仍在导入，会立刻接着显示）。 */
     private fun renderImportProgress(p: LlamaCppImporter.ImportProgress?) {
         val b = _binding ?: return
+        // 导入中禁用「添加模型」：TextView 按钮不会自动变灰，手动降透明度提示「现在点不动」
+        b.btnAddModel.isEnabled = p == null
+        b.btnAddModel.alpha = if (p == null) 1f else 0.5f
         if (p == null) {
             b.importProgressBox.visibility = View.GONE
-            b.btnAddModel.isEnabled = true
         } else {
             b.importProgressBox.visibility = View.VISIBLE
             b.importProgress.progress = p.percent
             b.importProgressText.text =
                 p.fileName + "\n" + getString(R.string.llamacpp_importing, p.percent)
-            b.btnAddModel.isEnabled = false
         }
     }
 
@@ -292,7 +295,7 @@ class LlamaCppModelFragment : Fragment() {
             .setTitle(R.string.llamacpp_delete_title)
             .setMessage(
                 getString(
-                    if (isBuiltin) R.string.llamacpp_delete_builtin_message else R.string.llamacpp_delete_message,
+                    if (isBuiltin) R.string.llamacpp_delete_official_message else R.string.llamacpp_delete_message,
                     m.displayName,
                 )
             )
@@ -325,7 +328,7 @@ class LlamaCppModelFragment : Fragment() {
         val p = m.params
 
         b.noteText.text = getString(
-            if (isBuiltin) R.string.llamacpp_params_builtin_note else R.string.llamacpp_params_generic_note
+            if (isBuiltin) R.string.llamacpp_params_official_note else R.string.llamacpp_params_generic_note
         ) + "\n\n" + getString(R.string.llamacpp_params_effect_hint)
         b.systemPromptBox.visibility = if (isBuiltin) View.GONE else View.VISIBLE
         b.thinkingBox.visibility = if (isBuiltin) View.GONE else View.VISIBLE
