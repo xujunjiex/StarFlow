@@ -7,6 +7,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
+import android.widget.LinearLayout
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.moe.starflow.R
@@ -41,6 +42,10 @@ import kotlinx.coroutines.launch
  *
  * 所有状态以 `LlamaCppModelStore.models`（清单 + 磁盘检查）与
  * `ModelDownloadRepository`（内置模型下载状态）为真值，本页只负责渲染与转发操作。
+ *
+ * ⚠️ **卡片间距**：行模板 `item_llamacpp_model_row.xml` 用 `layout_marginBottom` 提供卡片间距，
+ * 所以 inflate 必须走 [inflateModelRow]（带父容器）——`null` parent 会丢掉 margin，
+ * 相邻卡片会贴在一起像重叠。
  */
 class LlamaCppModelFragment : Fragment() {
 
@@ -116,19 +121,35 @@ class LlamaCppModelFragment : Fragment() {
     private fun renderAll(models: List<LlamaCppModel>, activeId: String?) {
         val b = _binding ?: return
 
-        b.builtinContainer.removeAllViews()
-        models.filter { it.source == LlamaCppModelSource.BUILTIN }.forEach { m ->
-            b.builtinContainer.addView(buildRow(m, activeId))
-        }
+        val builtins = models.filter { it.source == LlamaCppModelSource.BUILTIN }
+        fillRows(b.builtinContainer, builtins) { buildRow(it, activeId, b.builtinContainer) }
 
         val imported = models.filter { it.source == LlamaCppModelSource.IMPORTED }
         b.importedEmpty.visibility = if (imported.isEmpty()) View.VISIBLE else View.GONE
-        b.importedContainer.removeAllViews()
-        imported.forEach { m -> b.importedContainer.addView(buildRow(m, activeId)) }
+        fillRows(b.importedContainer, imported) { buildRow(it, activeId, b.importedContainer) }
     }
 
-    private fun buildRow(m: LlamaCppModel, activeId: String?): View {
-        val row = ItemLlamacppModelRowBinding.inflate(layoutInflater, null, false)
+    /**
+     * 往容器里铺卡片：**最后一张不留 `layout_marginBottom`**（区块间距由下一段标题的 marginTop 负责），
+     * 卡片之间的间距取自行模板 XML 里的 `layout_marginBottom`（必须经 [inflateModelRow] 带父容器 inflate 才拿得到）。
+     */
+    private fun fillRows(
+        container: LinearLayout,
+        models: List<LlamaCppModel>,
+        build: (LlamaCppModel) -> View,
+    ) {
+        container.removeAllViews()
+        models.forEachIndexed { index, m ->
+            val v = build(m)
+            if (index == models.lastIndex) {
+                (v.layoutParams as? ViewGroup.MarginLayoutParams)?.bottomMargin = 0
+            }
+            container.addView(v)
+        }
+    }
+
+    private fun buildRow(m: LlamaCppModel, activeId: String?, parent: ViewGroup): View {
+        val row = inflateModelRow(layoutInflater, parent)
         val ctx = requireContext()
 
         row.rowName.text = m.displayName
@@ -424,3 +445,17 @@ class LlamaCppModelFragment : Fragment() {
         private const val TAG = "LlamaCppModelFragment"
     }
 }
+
+/**
+ * inflate 一张模型卡片行。
+ *
+ * ⚠️ `parent` **故意不可空**：`inflate(inflater, null, false)` 时 XML 里的 `layout_*` 属性
+ * 一个都不会被解析（LayoutParams 只在有父容器时才生成），随后 `addView` 会让 LinearLayout
+ * 补一份 `margin = 0` 的默认 params —— 结果是 **相邻卡片零间距**，20dp 圆角贴在一起，
+ * 看起来像卡片互相重叠（2026-09 用户反馈的故障）。
+ * 带父容器 inflate（`attachToRoot = false`）即可正确拿到 `layout_marginBottom` 的卡片间距。
+ */
+internal fun inflateModelRow(
+    inflater: LayoutInflater,
+    parent: ViewGroup,
+): ItemLlamacppModelRowBinding = ItemLlamacppModelRowBinding.inflate(inflater, parent, false)

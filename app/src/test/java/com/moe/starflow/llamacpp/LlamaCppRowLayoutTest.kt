@@ -10,6 +10,7 @@ import android.widget.TextView
 import androidx.core.content.ContextCompat
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -88,5 +89,35 @@ class LlamaCppRowLayoutTest {
         val radio = row.findViewById<RadioButton>(R.id.rowActive)
         assertFalse("RadioButton 自身不可点：切换只走整行点击，避免多点选中", radio.isClickable)
         assertFalse(radio.isFocusable)
+    }
+
+    /**
+     * 卡片间距（2026-09 用户反馈「相邻卡片重叠」）。
+     *
+     * 行间距来自行模板的 `layout_marginBottom`，而 XML 里的 `layout_*` 属性**只有带父容器 inflate
+     * 才会被解析成 LayoutParams**；`inflate(inflater, null, false)` 之后 `addView` 会补一份
+     * margin=0 的默认 params → 相邻卡片零间距、20dp 圆角贴在一起看着像重叠。
+     * 之前内置只有 1 张卡（不挨着）所以看不出来，加到 2 张就暴露了。
+     */
+    @Test
+    fun `相邻卡片必须保留间距`() {
+        val ctx = RuntimeEnvironment.getApplication()
+        val container = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+
+        // 正确姿势：走 Fragment 用的同一个入口
+        val row = com.moe.starflow.me.model.inflateModelRow(LayoutInflater.from(ctx), container)
+        container.addView(row.root)
+        val lp = row.root.layoutParams as LinearLayout.LayoutParams
+        assertTrue("行根必须保留 layout_marginBottom 作为卡片间距，实际=${lp.bottomMargin}", lp.bottomMargin > 0)
+
+        // 反证：null-parent inflate 拿不到 XML 的 margin —— 这就是「卡片重叠」的成因
+        val broken = LayoutInflater.from(ctx).inflate(R.layout.item_llamacpp_model_row, null)
+        assertNull("null-parent inflate 不会有 LayoutParams", broken.layoutParams)
+        container.addView(broken)
+        assertEquals(
+            "null-parent inflate 的卡片间距必然为 0（故禁止这么写）",
+            0,
+            (broken.layoutParams as LinearLayout.LayoutParams).bottomMargin,
+        )
     }
 }
