@@ -86,7 +86,6 @@ import translationapi.customtranslation.CustomTranslationText
 import translationapi.deepltranslation.DeepLTranslation
 import translationapi.niutrans.NiuTranslation
 import translationapi.nllbtranslation.NLLBTranslation
-import translationapi.hymt2translation.HyMT2Translation
 import translationapi.openaitranslation.OpenAITranslation
 import translationapi.tencentcloud.TencentTranslationImage
 import translationapi.tencentcloud.TencentTranslationText

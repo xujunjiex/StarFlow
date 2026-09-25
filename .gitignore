@@ -18,6 +18,7 @@ local.properties
 
 # cpp
 app/.cxx
+llamacpp/.cxx
 
 # OS-specific files
 .DS_Store

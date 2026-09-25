@@ -397,8 +397,6 @@ class TranslateFragment : Fragment() {
                     // 用磁盘文件检查 NLLB 是否已完整下载，替代旧的 Download_NLLB 布尔标记
                     val nllbDownloaded = ModelDownloadRepository.getInstance(requireContext())
                         .isFullyDownloaded(ModelKey.NLLB_GROUP)
-                    val hymt2Downloaded = ModelDownloadRepository.getInstance(requireContext())
-                        .isFullyDownloaded(ModelKey.HY_MT2_GROUP)
                     if (textAi == Constants.TextAI.NLLB.id && !nllbDownloaded) {
                         LogCollector.d(TAG, "NLLB fully downloaded: $nllbDownloaded")
                         val dialog = AlertDialog.Builder(requireContext())
@@ -420,17 +418,20 @@ class TranslateFragment : Fragment() {
                         dialog.show()
                         dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
                         false
-                    } else if (textAi == Constants.TextAI.HYMT2.id && !hymt2Downloaded) {
+                    } else if (textAi == Constants.TextAI.HYMT2.id &&
+                        com.moe.starflow.llamacpp.LlamaCppModelStore.also { it.init(requireContext()) }
+                            .let { store -> store.active()?.let { store.fileMissing(it) } ?: true }
+                    ) {
                         val dialog = AlertDialog.Builder(requireContext())
-                            .setTitle(R.string.hymt2_not_download_title)
-                            .setMessage(R.string.hymt2_not_download_content)
+                            .setTitle(R.string.llamacpp_no_active_model)
+                            .setMessage(R.string.llamacpp_description)
                             .setCancelable(false)
                             .setPositiveButton(R.string.go_to_download) { _, _ ->
                                 val intent =
                                     Intent(requireContext(), ManageActivity::class.java).apply {
                                         putExtra(
                                             ManageActivity.EXTRA_FRAGMENT_TYPE,
-                                            ManageActivity.TYPE_FRAGMENT_MANAGE_HYMT2
+                                            ManageActivity.TYPE_FRAGMENT_MANAGE_LLAMACPP
                                         )
                                     }
                                 startActivity(intent)
@@ -976,13 +977,17 @@ class TranslateFragment : Fragment() {
             val locales = TranslateTools.getLanguagesList(requireContext(), type, ocrGroup) ?: return
             LogCollector.d(TAG, locales.toString())
             val disabledTargets = if (type == 2) TranslateTools.getDisabledTargetLangs(prefs) else emptySet()
-            // Hy-MT2 只支持官方 38 种目标语言：用白名单（supportedCodes）置灰其余 ~30 种，避免选了模型不支持的语种输出垃圾
-            val isHyMt2 = prefs.getInt("Text_API", Constants.TextApi.BING.id) == Constants.TextApi.AI.id &&
+            // 只有「预制 Hy-MT2」才套官方 38 种目标语言白名单；用户导入的任意 GGUF 不限制（模型能力未知，交给用户）
+            val isLlamaCppEngine = prefs.getInt("Text_API", Constants.TextApi.BING.id) == Constants.TextApi.AI.id &&
                 prefs.getInt("Text_AI", Constants.TextAI.NLLB.id) == Constants.TextAI.HYMT2.id
+            val isHyMt2 = if (isLlamaCppEngine) {
+                com.moe.starflow.llamacpp.LlamaCppModelStore.init(requireContext())
+                com.moe.starflow.llamacpp.LlamaCppModelStore.isHyMt2Active()
+            } else false
             val enabled = when (type) {
                 1 -> locales.map { ocrGroup!!.sourceLangs.contains(it.getOriCode()) }
                 2 -> if (isHyMt2) {
-                    locales.map { it.getOriCode() in translationapi.hymt2translation.HyMt2Languages.supportedCodes }
+                    locales.map { it.getOriCode() in com.moe.starflow.llamacpp.LlamaCppLanguages.hyMt2SupportedCodes }
                 } else {
                     locales.map { it.getOriCode() !in disabledTargets }
                 }

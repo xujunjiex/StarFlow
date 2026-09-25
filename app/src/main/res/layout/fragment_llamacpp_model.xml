@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  LlamaCpp 模型管理页。
+
+  结构（2026-09 用户明确）：
+    - 上半部：**可滚动**的内容区（预制模型卡片组 + 导入的模型列表）；
+    - 下半部：**固定操作区**——「添加模型」按钮始终贴在页面最底部，不随内容滚动跑掉
+      （内容少时不会飘到半空，内容多时也不用滚到底才找得到）；导入进度与导入说明也在这一区；
+    - 「功能说明」入口放在页首标题行右侧：原来它在按钮下方，会把按钮顶离底部。
+
+  文字颜色全部显式指定（@color/text_primary / text_tertiary）：深浅主题下都不会与卡片/页面底色融在一起。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
+
+    <ScrollView
+        android:id="@+id/contentScroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingHorizontal="16dp"
+            android:paddingTop="12dp">
+
+            <!-- ========== 标题行：预制模型 + 功能说明入口 ========== -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingBottom="8dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/llamacpp_group_preset"
+                    android:textColor="@color/text_primary"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/btnIntroLink"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="?android:attr/selectableItemBackground"
+                    android:paddingHorizontal="6dp"
+                    android:paddingVertical="4dp"
+                    android:text="@string/llamacpp_view_intro"
+                    android:textColor="@color/text_tertiary"
+                    android:textSize="12sp" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/builtinContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+
+            <!-- ========== 导入的模型 ========== -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="18dp"
+                android:paddingBottom="8dp"
+                android:text="@string/llamacpp_group_imported"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/importedEmpty"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="4dp"
+                android:text="@string/llamacpp_empty_imported"
+                android:textColor="@color/text_tertiary"
+                android:textSize="13sp" />
+
+            <LinearLayout
+                android:id="@+id/importedContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+
+            <Space
+                android:layout_width="match_parent"
+                android:layout_height="12dp" />
+        </LinearLayout>
+    </ScrollView>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/divider" />
+
+    <LinearLayout
+        android:id="@+id/bottomBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingHorizontal="16dp"
+        android:paddingTop="10dp"
+        android:paddingBottom="14dp">
+
+        <!-- 导入进度（导入期间显示；任务在应用级作用域，离开页面也会继续） -->
+        <LinearLayout
+            android:id="@+id/importProgressBox"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/dialog_background"
+            android:orientation="vertical"
+            android:paddingHorizontal="14dp"
+            android:paddingVertical="12dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/importProgressText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/llamacpp_import_started"
+                android:textColor="@color/text_primary"
+                android:textSize="12sp" />
+
+            <ProgressBar
+                android:id="@+id/importProgress"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:max="100" />
+
+            <TextView
+                android:id="@+id/btnCancelImport"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="end"
+                android:layout_marginTop="6dp"
+                android:background="@drawable/btn_neutral"
+                android:gravity="center"
+                android:minHeight="32dp"
+                android:minWidth="72dp"
+                android:text="@string/cancel"
+                android:textColor="@color/text_primary"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <!-- 导入说明在按钮上方：按钮必须是页面最后一个元素（用户要求「始终在最底部」） -->
+        <TextView
+            android:id="@+id/addHint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:lineSpacingExtra="2dp"
+            android:text="@string/llamacpp_import_hint"
+            android:textColor="@color/text_tertiary"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/btnAddModel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/btn_download"
+            android:gravity="center"
+            android:minHeight="44dp"
+            android:text="@string/llamacpp_add_model"
+            android:textColor="@android:color/white"
+            android:textSize="14sp" />
+    </LinearLayout>
+</LinearLayout>

@@ -12,8 +12,9 @@ import translationapi.baidutranslation.BaiduTranslationText
 import translationapi.bingtranslation.BingTranslation
 import translationapi.customtranslation.CustomTranslationText
 import translationapi.deepltranslation.DeepLTranslation
-import translationapi.hymt2translation.HyMT2SharedHolder
-import translationapi.hymt2translation.HyMT2Translation
+import com.moe.starflow.llamacpp.LlamaCppModelStore
+import com.moe.starflow.llamacpp.LlamaCppSharedHolder
+import com.moe.starflow.llamacpp.LlamaCppTranslation
 import translationapi.niutrans.NiuTranslation
 import translationapi.nllbtranslation.NLLBTranslation
 import com.moe.starflow.me.apiconfig.BuiltinProviders
@@ -38,9 +39,11 @@ object TranslatorFactory {
     enum class Mode { GAME, MANGA, TEXT }
 
     fun create(context: Context, prefs: CustomPreference, mode: Mode): TranslationTextAPI? {
-        // 引擎切换后换出旧共享 Hy-MT2 模型：切到 NLLB/API 等非 Hy-MT2 引擎时，
-        // 缓存的共享实例不再有调用方（get() 只在 Hy-MT2 分支被调），立即释放 440MB
-        HyMT2SharedHolder.releaseIfNotCurrent(prefs)
+        // 引擎切换后换出旧共享模型：切到 NLLB/在线 API 时，缓存的 LlamaCpp 实例不再有调用方，
+        // 立即把几百 MB ~ 几 GB 的模型换出内存（get() 只在 LlamaCpp 分支被调，切走后不会自动触发）
+        LlamaCppModelStore.init(context)
+        val activeModel = LlamaCppModelStore.active()
+        LlamaCppSharedHolder.releaseIfNotCurrent(activeModel)
         val textApi = prefs.getInt("Text_API", Constants.TextApi.BING.id)
         return try {
             when (textApi) {
@@ -50,10 +53,16 @@ object TranslatorFactory {
                             LogCollector.d(TAG, "引擎初始化: NLLB Translation")
                             NLLBTranslation(context)
                         }
+                        // 本地 GGUF 引擎（原 Hy-MT2 分支；Text_AI 持久化值 2 保持不变，老用户配置不失配）
                         Constants.TextAI.HYMT2.id -> {
-                            LogCollector.d(TAG, "引擎初始化: Hy-MT2 Translation")
-                            // 全 app 共享同一 Hy-MT2 热模型实例：避免各自冷加载（冷加载后解码慢 42 倍）
-                            HyMT2SharedHolder.get(context, prefs)
+                            if (activeModel == null) {
+                                LogCollector.e(TAG, "未选择 LlamaCpp 模型（清单为空）")
+                                null
+                            } else {
+                                LogCollector.d(TAG, "引擎初始化: LlamaCpp（${activeModel.displayName}）")
+                                // 全 app 共享同一热模型实例：避免各自冷加载（冷加载后解码明显变慢）
+                                LlamaCppSharedHolder.get(context, activeModel)
+                            }
                         }
                         else -> {
                             LogCollector.e(TAG, "Unknown AI Translator: ${prefs.getInt("Text_AI", 0)}")
@@ -155,25 +164,29 @@ object TranslatorFactory {
         return CustomTranslationText(apiList[selectedIndex].config)
     }
 
-    /** 本地引擎判定：NLLB / Hy-MT2 为本地离线推理，其余为联网 API。 */
+    /** 本地引擎判定：NLLB / LlamaCpp（本地 GGUF）为本地离线推理，其余为联网 API。 */
     fun isLocal(translator: TranslationTextAPI): Boolean =
-        translator is NLLBTranslation || translator is HyMT2Translation
+        translator is NLLBTranslation || translator is LlamaCppTranslation
 
     /**
-     * 文本翻译页专用：Hy-MT2 走进程级共享实例（跨页面切换不释放、不重载 440MB），其余引擎同 create(TEXT)。
+     * 文本翻译页专用：LlamaCpp 走进程级共享实例（跨页面切换不释放、不重载整个模型），
+     * 其余引擎同 create(TEXT)。
      */
     fun createForText(context: Context, prefs: CustomPreference): TranslationTextAPI? {
         val t = create(context, prefs, Mode.TEXT) ?: return null
-        return if (t is HyMT2Translation) {
-            HyMT2SharedHolder.get(context, prefs)
+        return if (t is LlamaCppTranslation) {
+            LlamaCppModelStore.active()?.let { LlamaCppSharedHolder.get(context, it) } ?: t
         } else t
     }
 
-    /** 引擎展示名：OpenAI 兼容显示实际模型名，其余显示厂商名。用于页面引擎指示条。 */
+    /** 引擎展示名：OpenAI 兼容显示实际模型名，本地 GGUF 显示当前模型名。用于页面引擎指示条。 */
     fun engineLabel(context: Context, prefs: CustomPreference): String = when (prefs.getInt("Text_API", Constants.TextApi.BING.id)) {
         Constants.TextApi.AI.id -> when (prefs.getInt("Text_AI", Constants.TextAI.NLLB.id)) {
             Constants.TextAI.NLLB.id, 1 -> "NLLB"
-            Constants.TextAI.HYMT2.id -> "Hy-MT2 1.25-bit"
+            Constants.TextAI.HYMT2.id -> {
+                LlamaCppModelStore.init(context)
+                LlamaCppModelStore.active()?.displayName ?: context.getString(R.string.llamacpp_name)
+            }
             else -> context.getString(R.string.ai_engine_label)
         }
         Constants.TextApi.BING.id -> context.getString(R.string.bingapi_name)

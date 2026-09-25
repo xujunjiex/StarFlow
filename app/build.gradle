@@ -167,6 +167,9 @@ dependencies {
     kapt "androidx.room:room-compiler:2.6.1"
     implementation "androidx.room:room-ktx:2.6.1"
 
+    // 本地 GGUF 推理（llama.cpp 源码自编，含 minja 对话模板）
+    implementation project(':llamacpp')
+
     // 单元测试
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.robolectric:robolectric:4.11.1'

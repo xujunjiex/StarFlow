@@ -34,7 +34,7 @@ import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.LogCollector
 import com.moe.starflow.utils.UiUtils
 import com.moe.starflow.me.ManageActivity
-import translationapi.hymt2translation.HyMt2Native
+import translationapi.llamacpp.LlamaCppNative
 import nl.dionsegijn.konfetti.core.Party
 import nl.dionsegijn.konfetti.core.Position
 import nl.dionsegijn.konfetti.core.emitter.Emitter

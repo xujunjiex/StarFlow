@@ -55,7 +55,7 @@ class ChatHistoryViewModel(app: Application) : AndroidViewModel(app) {
         val ai = prefs.getInt("Text_AI", Constants.TextAI.NLLB.id)
         return when {
             api == Constants.TextApi.AI.id && ai == Constants.TextAI.HYMT2.id ->
-                HyMt2ChatEngine(getApplication(), prefs)
+                LlamaCppChatEngine(getApplication(), prefs)
             api == Constants.TextApi.OPENAI.id ->
                 OpenAIChatEngine(getApplication(), prefs)
             else -> null
@@ -77,7 +77,12 @@ class ChatHistoryViewModel(app: Application) : AndroidViewModel(app) {
     fun currentEngineKey(): String {
         val api = prefs.getInt("Text_API", Constants.TextApi.BING.id)
         val ai = prefs.getInt("Text_AI", Constants.TextAI.NLLB.id)
-        return "api=$api|ai=$ai"
+        // 本地模型也进 key：换模型后旧历史不适用，要重建引擎并提示
+        val modelId = if (api == Constants.TextApi.AI.id && ai == Constants.TextAI.HYMT2.id) {
+            com.moe.starflow.llamacpp.LlamaCppModelStore.init(getApplication())
+            com.moe.starflow.llamacpp.LlamaCppModelStore.active()?.id ?: ""
+        } else ""
+        return "api=$api|ai=$ai|model=$modelId"
     }
 
     /** 上次对话使用的引擎与当前不同（模型已切换，历史是旧模型的） */

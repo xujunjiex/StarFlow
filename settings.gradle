@@ -14,3 +14,5 @@ dependencyResolutionManagement {
 }
 rootProject.name = "StarFlow"
 include ':app'
+// 本地 GGUF 推理（llama.cpp 源码自编）—— 独立模块的原因见 llamacpp/src/main/cpp/CMakeLists.txt
+include ':llamacpp'

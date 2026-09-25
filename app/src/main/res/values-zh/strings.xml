@@ -134,7 +134,7 @@
     <string name="internet_error">网络出现问题，请检查后重试</string>
     <string name="get_notification_error">获取通知失败，可能是网络未连接</string>
     <string name="translation_mode">翻译设置</string>
-    <string name="api_configuration">API配置</string>
+    <string name="api_configuration">翻译模型配置</string>
     <string name="personalization_setting">个性化设置</string>
     <string name="article_page">壹日 · 壹篇</string>
     <string name="faq_title">常见问题</string>
@@ -155,7 +155,7 @@
     <string name="baiduapi_description">百度翻译的API，点击下方的"管理百度翻译API"即可设置API，还可以在其中查看API的申请教程（每月有100万字符的免费调用额度）。</string>
     <string name="tencentapi_name">腾讯云</string>
     <string name="tencentapi_description">腾讯云的翻译API，点击下方的"管理腾讯云API"即可设置API，还可以在其中查看API的申请教程（每月有500万字符的免费调用额度）。</string>
-    <string name="ai_title">本地机器翻译</string>
+    <string name="ai_title">本地翻译</string>
     <string name="pre_api_title">云端机器翻译API</string>
     <string name="custom_api_text_title"><b><u>（高级设置）</u></b>自定义云端文本翻译API</string>
     <string name="custom_api_text_1">自定义云端<b><u>文本</u></b>翻译API1</string>
@@ -400,7 +400,7 @@
     <string name="faq_a1">这是由于华为更新HarmonyOS后（注意并不是HarmonyOS NEXT），其底层的Android API不再能被用户直观地看出。对于<b><u>大部分较新款</u></b>的华为手机，HarmonyOS 2.0对应Android 10 (API 29)；HarmonyOS 3.0对应Android 12 (API 31)。但对于部分较旧的华为机型，虽然更新了HarmonyOS 3.0，但实际上并未更新底层的Android API，一些机型底层的Android版本仍为Android 10。因此<b><u>系统仍没有达到本软件要求</u></b>的Android 11 (API 30)。下面是一些已知的型号：\n\n搭载麒麟980及以下的机型，如mate20，P30，Nova5等机型，HarmonyOS 3.0对应的Android版本是10 (API 29)。这些机型的HarmonyOS 3.0其实并不是真正的3.0，功能缺失比较多，主要升级是：更新了版本号，使用了3.0的新主题，增加了一些不依赖Android 12的小功能。</string>
     <string name="faq_q2">为什么我已经授予了无障碍权限，但软件依旧提示没有获取到无障碍权限？</string>
     <string name="faq_a2">这是由于<b><u>无障碍权限被系统回收</u></b>导致的；在安卓系统中，无障碍是一个非常重要的权限。大部分基于安卓的系统在您退出软件或者关机重启时就会将无障碍权限回收，这也是出于安全考虑（当然，本软件是开源的，不会收集您的任何信息）。\n\n明白了原因，解决起来也非常方便。只要软件首页点击右上角的"？"->找到授予无障碍权限的那一步->点击"去授予该权限"->找到本软件，然后<b><u>关闭软件的无障碍权限，重新授予</u></b>即可。</string>
-    <string name="more_api">在【设置】页面的"翻译设置"和"API配置"中调整该选项</string>
+    <string name="more_api">在【设置】页面的"翻译设置"和"翻译模型配置"中调整该选项</string>
     <string name="faq_q3">为什么点击了悬浮球，长时间没有翻译结果，最后报错？</string>
     <string name="faq_a3">这大概率是<b><u>由于网络不畅导致的</u></b>。很多外服游戏需要使用加速器，但使用加速器后，再访问国内的翻译API就比较慢了。所以就会导致翻译超时，出现错误。\n\n这时请<b><u>关闭您的wifi，打开数据流量，然后重新用加速器加速</u></b>。这时应该就能流畅使用翻译了。<b><u>无需担心流量消耗</u></b>，一般来说，当您使用"本地OCR识别+文本翻译"的翻译模式时，花费的流量是微乎其微的。</string>
     <string name="faq_q4">为什么模型管理页面无法下载模型、无法更新软件、看不到更新公告？</string>
@@ -421,7 +421,7 @@
     <string name="faq_q11">录屏模式自动翻译卡死，翻页无变化，手动翻译始终显示同一页的缓存结果？</string>
     <string name="faq_a11">这是<b><u>录屏服务与系统录屏功能冲突</u></b>导致的截图通道失效。\n\n<b>症状表现：</b>\n• 自动翻译：翻页后始终检测不到页面变化，进度条一直显示"自动检测中"，或 30 秒后弹出超时提示\n• 手动翻译：每次点击翻译都提示"⚡ 缓存"（缓存命中），显示的始终是同一页的翻译结果，翻页后翻译内容不更新\n\n<b>原因：</b>\n系统录屏、投屏、或某些应用的屏幕录制功能会独占 MediaProjection 通道，导致本应用的 VirtualDisplay 无法获取新的屏幕画面。截图拿到的永远是卡死前最后一帧画面，所以 pHash 检测不到变化，翻译结果也始终不变。\n\n<b>解决方法：</b>\n• <b>关闭系统录屏</b>：下拉通知栏，关闭系统自带的屏幕录制\n• <b>关闭投屏</b>：断开手机投屏/镜像连接\n• <b>检查其他录屏应用</b>：关闭游戏助手、直播助手等可能占用录屏通道的应用\n• <b>重启翻译服务</b>：关闭所有可能的录屏后，重新开启漫画翻译\n• <b>切换到无障碍截图模式</b>：在「设置 → 关于 → 截图方式」中切换为无障碍服务，不受录屏冲突影响\n\n该问题在所有使用 MediaProjection 的应用中都存在，不是本应用独有的 bug。</string>
     <string name="faq_q12">如何连接本地局域网/电脑上部署的翻译模型？</string>
-    <string name="faq_a12">软件支持通过<b><u>OpenAI 兼容接口</u></b>连接<b><u>同一局域网内电脑上部署的本地模型服务</u></b>（如 llama.cpp、LM Studio、Ollama 等），无需公网 API 密钥。\n\n<b><u>第一步：在电脑上启动本地模型服务</u></b>\n用你常用的工具加载模型并启动服务，记下端口号。<b>关键是让服务监听 0.0.0.0（允许局域网访问）</b>，否则手机连不上。各工具开启方式：\n• <b>llama-server</b>：--host 0.0.0.0\n• <b>LM Studio</b>：设置里开启「局域网/远程访问」\n• <b>Ollama</b>：默认监听 0.0.0.0，无需设置\n• <b>其他</b>：查文档「允许远程/局域网访问」\n\n<b><u>第二步：查询电脑局域网 IP</u></b>\n运行 ipconfig，记下 IPv4 地址（如 192.168.1.100）。\n\n<b><u>第三步：手机验证连通</u></b>\n手机浏览器打开 http://电脑IP:端口，能打开即网络通畅。打不开按顺序排查：\n1. 手机和电脑是否同一局域网\n2. 服务是否监听 0.0.0.0\n3. 电脑防火墙是否放行该端口（只有连不上才处理）\n\n<b><u>第四步：在软件中配置</u></b>\n设置 → API 配置 → 添加自定义 API：Base URL 填 http://电脑IP:端口/v1，API Key 和模型名任意填，测试连接通过即可使用。\n\n<b><u>其他注意</u></b>\n• 电脑的代理不影响手机直连（局域网直连不走代理）\n• 用明文 http 地址时，需软件版本已放行明文流量</string>
+    <string name="faq_a12">软件支持通过<b><u>OpenAI 兼容接口</u></b>连接<b><u>同一局域网内电脑上部署的本地模型服务</u></b>（如 llama.cpp、LM Studio、Ollama 等），无需公网 API 密钥。\n\n<b><u>第一步：在电脑上启动本地模型服务</u></b>\n用你常用的工具加载模型并启动服务，记下端口号。<b>关键是让服务监听 0.0.0.0（允许局域网访问）</b>，否则手机连不上。各工具开启方式：\n• <b>llama-server</b>：--host 0.0.0.0\n• <b>LM Studio</b>：设置里开启「局域网/远程访问」\n• <b>Ollama</b>：默认监听 0.0.0.0，无需设置\n• <b>其他</b>：查文档「允许远程/局域网访问」\n\n<b><u>第二步：查询电脑局域网 IP</u></b>\n运行 ipconfig，记下 IPv4 地址（如 192.168.1.100）。\n\n<b><u>第三步：手机验证连通</u></b>\n手机浏览器打开 http://电脑IP:端口，能打开即网络通畅。打不开按顺序排查：\n1. 手机和电脑是否同一局域网\n2. 服务是否监听 0.0.0.0\n3. 电脑防火墙是否放行该端口（只有连不上才处理）\n\n<b><u>第四步：在软件中配置</u></b>\n设置 → 翻译模型配置 → 添加自定义 API：Base URL 填 http://电脑IP:端口/v1，API Key 和模型名任意填，测试连接通过即可使用。\n\n<b><u>其他注意</u></b>\n• 电脑的代理不影响手机直连（局域网直连不走代理）\n• 用明文 http 地址时，需软件版本已放行明文流量</string>
     <string name="github_repo_title">GitHub仓库</string>
     <string name="github_repo_content">本项目使用LGPL-3.0协议开源，您可以随时访问GitHub仓库，欢迎给项目点一个"Star🌟"。</string>
     <string name="have_look">去看看</string>
@@ -614,8 +614,8 @@
     <string name="builtin_api_prefix">内置</string>
 
     <!-- 模型管理 -->
-    <string name="model_management">模型管理</string>
-    <string name="model_management_tip">管理已下载的识别模型</string>
+    <string name="model_management">OCR 模型管理</string>
+    <string name="model_management_tip">管理已下载的 OCR 识别模型</string>
     <string name="detector_section">检测器</string>
     <string name="detector_rtdetr_desc">块级+气泡检测，速度快，11MB</string>
     <string name="detector_mlkit_desc">Google ML Kit 检测+识别，约10MB，速度快适合字幕翻译</string>
@@ -917,7 +917,7 @@
     <string name="model_count_limit">每个 provider 最多添加 %d 个自定义模型</string>
 
     <!-- API 错误文案（OpenAI 兼容接口，服务端说明拼在后面） -->
-    <string name="api_model_not_selected">未选择模型：请到「API 配置」中为该厂商添加模型或点「获取模型列表」</string>
+    <string name="api_model_not_selected">未选择模型：请到「翻译模型配置」中为该厂商添加模型或点「获取模型列表」</string>
     <string name="api_http_unauthorized">HTTP %1$d 未授权（API Key 无效）：%2$s</string>
     <string name="api_http_error">HTTP %1$d：%2$s</string>
 
@@ -1120,42 +1120,25 @@
     <string name="manga_reading">读取原文中…</string>
 
     <!-- ===== Hy-MT2 ===== -->
-    <string name="hymt2_name">Hy-MT2 本地翻译模型</string>
-    <string name="hymt2_description">Hy-MT2 是腾讯混元开源的新一代多语言翻译模型，支持 33 种语言互译。1.25-bit 版本（约 440MB）可在设备端完全离线运行。请先通过下方「管理 Hy-MT2 模型文件」下载模型文件。</string>
-    <string name="manage_hymt2_models">管理 Hy-MT2 模型文件</string>
-    <string name="hymt2_model_loading">Hy-MT2 模型加载中…</string>
-    <string name="hymt2_loaded">Hy-MT2 模型加载完成</string>
-    <string name="hymt2_init_failed">Hy-MT2 模型加载失败</string>
-    <string name="hymt2_released_translate">翻译引擎已释放，请重启翻译服务。</string>
-    <string name="hymt2_not_download_title">Hy-MT2 模型文件未下载</string>
-    <string name="hymt2_not_download_content">你选择的翻译模型是 Hy-MT2，但模型文件尚未下载，无法进行翻译。请点击「前往下载」或改用其它翻译 API。</string>
-    <string name="hymt2_not_download_translate">Hy-MT2 模型未下载，无法翻译。请先下载模型文件。</string>
-    <string name="hymt2_section_download">模型下载</string>
-    <string name="hymt2_section_params">翻译参数</string>
-    <string name="hymt2_section_intro">关于模型</string>
-    <string name="hymt2_intro">腾讯 Hy-MT2（1.25-bit 量化版，约 440MB）多语言翻译模型，完全本地离线推理——文本不离开设备，无需联网即可使用。\n\n★ 流式输出：译文逐字出现，无需等待全部生成完成。\n★ 两个阶段：「读取原文」（批量 prefill）→「生成译文」（逐字输出）。两个阶段的线程数可在下方分别调整。\n\n──────────────\n⚠️ 本地推理吃 CPU：芯片越强翻译越快（如旗舰/中高端），低端芯片会明显变慢。</string>
-    <string name="hymt2_download_help">手动下载（模型约 440MB，需手动下载，不会自动下载）</string>
-    <string name="hymt2_prompt_label">提示词模板</string>
-    <string name="hymt2_threads_label">生成线程数</string>
-    <string name="hymt2_batch_threads_label">批处理线程数</string>
-    <string name="hymt2_context_label">上下文长度</string>
-    <string name="hymt2_sample_subtitle">采样参数</string>
-    <string name="hymt2_temp_label">温度</string>
-    <string name="hymt2_top_p_label">top_p</string>
-    <string name="hymt2_top_k_label">top_k</string>
-    <string name="hymt2_rep_penalty_label">重复惩罚</string>
-    <string name="hymt2_max_tokens_label">最大输出长度</string>
-    <string name="hymt2_save_params">保存参数</string>
-    <string name="hymt2_params_saved">参数已保存</string>
-    <string name="hymt2_help_prompt">官方默认翻译提示词。翻译时 {target_lang} 会被替换为目标语言全称（如「日语」），{source_text} 会被替换为待翻译文本。</string>
-    <string name="hymt2_help_threads">生成阶段的 CPU 线程数（llama.cpp n_threads）。默认按设备核心数取值（不会超过核心数）。线程太少算力用不满；超过核心数会互相争抢而变慢。可按需调整。</string>
-    <string name="hymt2_help_batch_threads">读取原文（prefill/批量）阶段的 CPU 线程数（llama.cpp n_threads_batch）。默认用满设备核心数。与生成线程数相互独立、可分别调整；不要超过核心数。</string>
-    <string name="hymt2_help_context">最大上下文长度。1024≈500-700 个汉字，2048≈1000-1400 个，4096≈2000-2800 个。</string>
-    <string name="hymt2_help_temperature">随机性温度，控制创造性与多样性。翻译建议 0.1（严格直译、高度稳定）到 0.7（适合意译、更自然）。</string>
-    <string name="hymt2_help_top_p" formatted="false">核采样阈值：只从累计概率达到 60% 的候选词中取样。top_p 越低（如 0.6）越能过滤低概率词，译文更严谨。</string>
-    <string name="hymt2_help_top_k">Top-k：每次生成只从概率最高的 20 个候选词中取样，避免译出跑题或错词。</string>
-    <string name="hymt2_help_rep_penalty">重复惩罚，对已生成的 token 轻度惩罚。1.05 可避免无休止重复，又不会破坏正常重复（排版、标点）。</string>
-    <string name="hymt2_help_max_tokens">单次请求的最大输出 token 数。限制一次翻译的输出长度，不是模型上下文（-c）。</string>
+    <string name="llamacpp_section_params">模型设置</string>
+    <string name="llamacpp_prompt_label">提示词模板</string>
+    <string name="llamacpp_threads_label">生成线程数</string>
+    <string name="llamacpp_batch_threads_label">批处理线程数</string>
+    <string name="llamacpp_context_label">上下文长度</string>
+    <string name="llamacpp_temp_label">温度</string>
+    <string name="llamacpp_top_p_label">top_p</string>
+    <string name="llamacpp_top_k_label">top_k</string>
+    <string name="llamacpp_rep_penalty_label">重复惩罚</string>
+    <string name="llamacpp_max_tokens_label">最大输出长度</string>
+    <string name="llamacpp_help_prompt">默认翻译提示词（取自腾讯 Hy-MT2 官方示例）。翻译时 {target_lang} 会被替换为目标语言全称（如「日语」），{source_text} 会被替换为待翻译文本。</string>
+    <string name="llamacpp_help_threads">生成阶段的 CPU 线程数（llama.cpp n_threads）。默认按设备核心数取值（不会超过核心数）。线程太少算力用不满；超过核心数会互相争抢而变慢。可按需调整。</string>
+    <string name="llamacpp_help_batch_threads">读取原文（prefill/批量）阶段的 CPU 线程数（llama.cpp n_threads_batch）。默认用满设备核心数。与生成线程数相互独立、可分别调整；不要超过核心数。</string>
+    <string name="llamacpp_help_context">最大上下文长度。1024≈500-700 个汉字，2048≈1000-1400 个，4096≈2000-2800 个。</string>
+    <string name="llamacpp_help_temperature">随机性温度，控制创造性与多样性。翻译建议 0.1（严格直译、高度稳定）到 0.7（适合意译、更自然）。</string>
+    <string name="llamacpp_help_top_p" formatted="false">核采样阈值：只从累计概率达到阈值（默认 0.8）的候选词中取样。top_p 越低（如 0.6）越能过滤低概率词，译文更严谨。</string>
+    <string name="llamacpp_help_top_k">Top-k：每次生成只从概率最高的 20 个候选词中取样，避免译出跑题或错词。</string>
+    <string name="llamacpp_help_rep_penalty">重复惩罚，对已生成的 token 轻度惩罚。1.05 可避免无休止重复，又不会破坏正常重复（排版、标点）。</string>
+    <string name="llamacpp_help_max_tokens">单次请求的最大输出 token 数。限制一次翻译的输出长度，不是模型上下文（-c）。</string>
     <string name="manga_ocr_downloading">正在下载 OCR 模型…</string>
     <string name="manga_ocr_download_failed">下载失败：%1$s</string>
     <string name="manga_rec_model_version_title">识别模型版本</string>
@@ -1339,5 +1322,70 @@
     <string name="error_download_cancelled">下载被取消</string>
     <string name="error_download_incomplete">下载不完整：期望 %1$s，实际 %2$s</string>
     <string name="error_md5_failed">MD5 校验失败</string>
+
+    <!-- LlamaCpp 通用本地引擎（模型管理页文案在后续阶段继续补） -->
+    <string name="llamacpp_released_translate">本地模型已被释放，请重试</string>
+    <string name="llamacpp_model_file_missing">找不到模型文件「%1$s」，请重新下载或重新导入</string>
+    <string name="llamacpp_init_failed">本地模型加载失败</string>
+    <string name="llamacpp_error_text_too_long">输入文本过长（超过模型上下文）</string>
+    <string name="llamacpp_error_unsupported_quant">该模型的量化类型当前引擎无法识别（多为腾讯专有量化，例如 2-bit）。请改用 Q4_K_M 等标准量化，或本引擎支持的模型。</string>
+    <string name="llamacpp_empty_result">模型返回了空结果</string>
+
+    <!-- LlamaCpp 引擎与模型管理页 -->
+    <string name="llamacpp_name">LlamaCpp 本地模型</string>
+    <string name="llamacpp_description">在本机离线运行 GGUF 模型（预制模型可直接下载，也可导入任意 llama.cpp 兼容模型）。<b><u>建议设备内存 6GB 以上。</u></b>点击下方「管理 LlamaCpp 模型」可选择、导入或删除模型。</string>
+    <string name="manage_llamacpp_models">管理 LlamaCpp 模型</string>
+    <string name="llamacpp_no_active_model">尚未选择 LlamaCpp 模型。请先打开「管理 LlamaCpp 模型」选择或导入一个。</string>
+    <string name="llamacpp_manager_title">LlamaCpp 模型</string>
+    <string name="llamacpp_group_preset">预制模型</string>
+    <string name="llamacpp_import_notification_title">模型导入</string>
+    <string name="llamacpp_import_running">已有一个导入任务在进行，请等待完成</string>
+    <string name="llamacpp_group_imported">导入的模型</string>
+    <string name="llamacpp_add_model">添加模型</string>
+    <string name="llamacpp_add_local">导入本地 GGUF 文件</string>
+    <string name="llamacpp_add_local_desc">从设备存储中选择一个 .gguf 文件（llama.cpp 兼容的任意模型）。</string>
+    <string name="llamacpp_import_hint">文件会被复制进应用专属目录并校验（GGUF 文件头 + MD5）；已在库中的同内容模型不会重复导入。</string>
+    <string name="llamacpp_empty_imported">还没有导入模型。点「添加模型」，选择本地的 .gguf 文件。</string>
+    <string name="llamacpp_badge_active">使用中</string>
+    <string name="llamacpp_badge_missing">文件已丢失</string>
+    <string name="llamacpp_badge_preset">预制</string>
+    <string name="llamacpp_set_active">设为当前使用</string>
+    <string name="llamacpp_active_set">已将「%1$s」设为当前模型</string>
+    <string name="llamacpp_import_started">正在导入…</string>
+    <string name="llamacpp_importing">正在导入… %1$d%%</string>
+    <string name="llamacpp_import_completed">已导入「%1$s」</string>
+    <string name="llamacpp_import_failed">导入失败：%1$s</string>
+    <string name="llamacpp_import_duplicate">该模型已在库中（「%1$s」），无需重复导入</string>
+    <string name="llamacpp_import_cancelled">已取消导入</string>
+    <string name="llamacpp_not_gguf">只支持 .gguf 文件</string>
+    <string name="llamacpp_import_too_large">文件超过 %1$dGB</string>
+    <string name="llamacpp_import_no_space">存储空间不足：需要 %1$dMB，可用 %2$dMB</string>
+    <string name="llamacpp_import_bad_header">不是有效的 GGUF 文件（文件头校验失败）</string>
+    <string name="llamacpp_import_error_copy">文件复制失败</string>
+    <string name="llamacpp_import_error_rename">导入的文件保存失败</string>
+    <string name="llamacpp_delete_title">删除模型</string>
+    <string name="llamacpp_delete_message">确认删除「%1$s」？模型文件会一并从设备删除。</string>
+    <string name="llamacpp_delete_done">已删除</string>
+    <string name="llamacpp_delete_preset_message">确认删除已下载的预制模型「%1$s」？之后可以重新下载。</string>
+    <string name="llamacpp_meta_format">%1$s · %2$s</string>
+    <string name="llamacpp_source_preset">预制</string>
+    <string name="llamacpp_source_imported">导入</string>
+    <string name="llamacpp_params_title">「%1$s」的设置</string>
+    <string name="llamacpp_params_saved">设置已保存</string>
+    <string name="llamacpp_params_preset_note">该模型使用 Hy-MT2 的对话格式（指令放 system 段），下面的模板就是指令部分。</string>
+    <string name="llamacpp_params_generic_note">该模型用 GGUF 自带的对话模板渲染，下面的 system 提示词与模板分别作为 system / user 消息。</string>
+    <string name="llamacpp_system_prompt_label">系统提示词</string>
+    <string name="llamacpp_system_prompt_hint">仅对导入的模型生效（预制 Hy-MT2 有自己的对话格式）</string>
+    <string name="llamacpp_enable_thinking_label">启用思考（推理）</string>
+    <string name="llamacpp_enable_thinking_hint">关闭可加快翻译。仅对支持推理的模型（如 Qwen3）生效。</string>
+    <string name="llamacpp_params_effect_hint">上下文长度与线程数在下次加载模型时生效；提示词与采样参数立即生效。</string>
+    <string name="llamacpp_params_help">参数说明</string>
+    <string name="llamacpp_reset_default">恢复默认</string>
+    <string name="llamacpp_intro_title">LlamaCpp 本地推理</string>
+    <string name="llamacpp_intro_content">LlamaCpp 本地推理\n\n• 预制模型：Hy-MT2 1.8B 两个量化档（1.25-bit 约 461MB / Q4_K_M 约 1.08GB），需下载后离线使用。\n• 导入模型：支持任意 llama.cpp 兼容的 GGUF 文件（Qwen、Gemma、混元 等），按模型自带的对话模板渲染，保持模型原始格式。\n• 每个模型独立保存提示词模板与采样参数。\n\n提示：本地推理占用 CPU 与内存，芯片性能越好翻译越快；推理期间设备会发热并增加耗电。</string>
+    <string name="llamacpp_section_prompt">提示词</string>
+    <string name="llamacpp_section_sampling">采样参数</string>
+    <string name="llamacpp_section_performance">性能</string>
+    <string name="llamacpp_view_intro">功能说明</string>
 
 </resources>

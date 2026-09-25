@@ -220,6 +220,7 @@ class ModelDownloadService : LifecycleService() {
     private fun ModelKey.displayName(): String = when (this) {
         ModelKey.NLLB_GROUP -> "NLLB"
         ModelKey.HY_MT2_GROUP -> "Hy-MT2"
+        ModelKey.HY_MT2_Q4_KM -> "Hy-MT2 Q4_K_M"
         ModelKey.MANGA_OCR_GROUP -> "manga-ocr"
         ModelKey.RT_DETR_V2 -> "RT-DETR-V2"
         ModelKey.PP_OCR_V5_DET -> "PP-OCRv5 DET"
@@ -342,6 +343,8 @@ class ModelDownloadService : LifecycleService() {
 
         if (result.isSuccess) {
             // downloadModel 内部已按服务器 Content-Length + MD5 校验，文件有效。
+            // 本地 GGUF 再多一步：1.25-bit 类型重打标（42→43，幂等）
+            retagIfGguf(destFile)
             if (fileCount == 1) {
                 // 单文件模型：下载完成立即标记 Done。
                 // 否则状态会停在 Running，只有重启 initialize() 才能识别成 Done。
@@ -421,11 +424,41 @@ class ModelDownloadService : LifecycleService() {
             file.delete()
             return VerifyResult.DAMAGED
         }
-        if (fileInfo.checksum.isNotEmpty() && !ChecksumHelper.verifyChecksum(file, fileInfo.checksum)) {
+        // ⚠️ 本地 GGUF 有两种**都算正确**的形态：官方原件（未重打标）与重打标后
+        //    （张量类型 42→43，MD5 随之改变，见 patches/README.md）。两个 MD5 都必须接受：
+        //    只认官方 → 已重打标的文件被当损坏删掉、然后重复下载；
+        //    只认标记 → 会被**过期的** `<file>.retagged` 骗到（删掉模型重新下载时该标记还在，
+        //    它描述的是上一个文件）。所以一次 MD5、对多个候选比对，避免 GB 级文件算两遍。
+        val candidates = buildList {
+            if (fileInfo.checksum.isNotEmpty()) add(fileInfo.checksum)
+            com.moe.starflow.llamacpp.GgufTypeRetag.retaggedMd5(file)?.let { add(it) }
+        }
+        if (!ChecksumHelper.verifyChecksum(file, candidates)) {
             file.delete()
             return VerifyResult.DAMAGED
         }
         return VerifyResult.COMPLETE
+    }
+
+    /**
+     * GGUF 模型下载完成后做量化类型重打标（幂等；只有含 42 号张量的 1.25-bit 文件会被改写），
+     * 并把新的 MD5 同步进 LlamaCpp 模型清单。
+     */
+    private fun retagIfGguf(file: File) {
+        if (!file.name.endsWith(".gguf", ignoreCase = true)) return
+        if (!com.moe.starflow.llamacpp.GgufTypeRetag.ensureRetagged(file)) return
+        val md5 = com.moe.starflow.llamacpp.GgufTypeRetag.retaggedMd5(file)
+        LogCollector.d(TAG, "GGUF 重打标完成：${file.name} md5=$md5")
+        if (md5 != null) {
+            com.moe.starflow.llamacpp.LlamaCppModelStore.init(applicationContext)
+            // 内置模型不止一个（1.25-bit / Q4_K_M）→ 按文件名把所有命中的条目都更新
+            com.moe.starflow.llamacpp.LlamaCppModelStore.models.value
+                .filter {
+                    it.fileName == file.name &&
+                        it.source == com.moe.starflow.llamacpp.LlamaCppModelSource.BUILTIN
+                }
+                .forEach { com.moe.starflow.llamacpp.LlamaCppModelStore.markRetagged(it.id, md5) }
+        }
     }
 
     private fun targetFileFor(modelKey: ModelKey, fileName: String): File {
@@ -437,6 +470,7 @@ class ModelDownloadService : LifecycleService() {
     private fun baseDirFor(modelKey: ModelKey): File = when (modelKey) {
         ModelKey.NLLB_GROUP -> File(applicationContext.getExternalFilesDir(null), "models")
         ModelKey.HY_MT2_GROUP -> File(applicationContext.getExternalFilesDir(null), "models")
+        ModelKey.HY_MT2_Q4_KM -> File(applicationContext.getExternalFilesDir(null), "models")
         ModelKey.MANGA_OCR_GROUP -> File(applicationContext.getExternalFilesDir(null), "manga_ocr_download")
         ModelKey.RT_DETR_V2 -> File(applicationContext.getExternalFilesDir(null), "rt_detr")
         ModelKey.PP_OCR_V6_MEDIUM_DET, ModelKey.PP_OCR_V6_MEDIUM_REC ->

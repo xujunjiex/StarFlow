@@ -10,7 +10,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
-import translationapi.hymt2translation.HyMT2Translation
+import com.moe.starflow.llamacpp.LlamaCppTranslation
 
 @RunWith(RobolectricTestRunner::class)
 class TranslatorFactoryTest {
@@ -23,12 +23,13 @@ class TranslatorFactoryTest {
     }
 
     @Test
-    fun textAiHymt2_returnsHyMT2AndLocal() {
+    fun textAiLlamaCpp_returnsLocalEngine() {
         val p = prefs()
         p.getSharedPreferences().edit().putInt("Text_API", Constants.TextApi.AI.id)
                 .putInt("Text_AI", Constants.TextAI.HYMT2.id).commit()
         val t = TranslatorFactory.create(RuntimeEnvironment.getApplication(), p, TranslatorFactory.Mode.TEXT)
-        assertTrue(t is HyMT2Translation)
+        // 本地 GGUF 引擎（原 Hy-MT2 分支）：工厂走共享热实例，构造函数不加载模型（懒加载）
+        assertTrue(t is LlamaCppTranslation)
         assertTrue(TranslatorFactory.isLocal(t!!))
     }
 

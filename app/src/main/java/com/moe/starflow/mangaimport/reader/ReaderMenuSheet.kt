@@ -30,7 +30,6 @@ import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.MangaFontSize
 import com.moe.starflow.utils.MangaFontSizeDialog
 import com.moe.starflow.utils.OcrEngineManager
-import translationapi.hymt2translation.HyMt2Languages
 
 /** 阅读器底部工具栏初始状态。mode:0=LTR 1=RTL 2=竖排 3=Webtoon；animation:0无 1默认 2高级 3仿真；bg:0默认 1浅 2深 3白 4黑 5自动。 */
 class ReaderMenuState(
@@ -756,12 +755,17 @@ class ReaderMenuSheet(
         val ocrGroup = if (type == 1) OcrEngineManager.getOcrEngineGroup(appPrefs) else null
         val locales = languagesList(type, ocrGroup)
         if (locales.isEmpty()) return
-        val isHyMt2 = appPrefs.getInt("Text_API", Constants.TextApi.BING.id) == Constants.TextApi.AI.id &&
-            appPrefs.getInt("Text_AI", Constants.TextAI.NLLB.id) == Constants.TextAI.HYMT2.id
+        // 只有「预制 Hy-MT2」套官方 38 种白名单；导入的任意 GGUF 不限制
+        val isHyMt2 = com.moe.starflow.llamacpp.LlamaCppModelStore.isHyMt2ActiveFromPrefs(customPrefs)
         val disabledTargets = if (type == 2) TranslateTools.getDisabledTargetLangs(customPrefs) else emptySet()
         val enabled = when (type) {
             1 -> locales.map { ReaderTranslationInfo.isSourceSupported(it.getOriCode(), ocrGroup!!.sourceLangs) }
-            2 -> locales.map { ReaderTranslationInfo.isTargetSupported(it.getOriCode(), isHyMt2, HyMt2Languages.supportedCodes, disabledTargets) }
+            2 -> locales.map {
+                ReaderTranslationInfo.isTargetSupported(
+                    it.getOriCode(), isHyMt2,
+                    com.moe.starflow.llamacpp.LlamaCppLanguages.hyMt2SupportedCodes, disabledTargets
+                )
+            }
             else -> null
         }
         LanguageSelectionDialog(

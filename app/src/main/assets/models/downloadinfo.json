@@ -192,6 +192,18 @@
           "checksum": "9b96b598c36e9ffbfcafedd919b2fd54"
         }
       ]
+    },
+    {
+      "model_key": "HY_MT2_Q4_KM",
+      "browser_url": "https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF/tree/main",
+      "files": [
+        {
+          "file_name": "Hy-MT2-1.8B-Q4_K_M.gguf",
+          "download_url": "https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF/resolve/main/Hy-MT2-1.8B-Q4_K_M.gguf",
+          "file_size": 1133080448,
+          "checksum": "436f3ec23b236b2ac1d05dd7a713f8ae"
+        }
+      ]
     }
   ]
 }

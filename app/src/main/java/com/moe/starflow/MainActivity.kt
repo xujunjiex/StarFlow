@@ -78,11 +78,20 @@ class MainActivity : BaseActivity() {
             notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
 
-        // Hy-MT2 后台预热：把模型加载挪到用户翻译前，避免首次翻译才等模型就绪
-        translationapi.hymt2translation.HyMT2SharedHolder.warmUp(
-            applicationContext,
-            com.moe.starflow.utils.CustomPreference.getInstance(this)
-        )
+        // 本地 GGUF 模型后台预热：把模型加载挪到用户翻译前，避免首次翻译才等模型就绪。
+        // 只在用户当前选的确实是 LlamaCpp 引擎时才预加载（否则纯属浪费几百 MB ~ 几 GB 内存）。
+        val prefs = com.moe.starflow.utils.CustomPreference.getInstance(this)
+        if (prefs.getInt("Text_API", com.moe.starflow.utils.Constants.TextApi.BING.id) ==
+            com.moe.starflow.utils.Constants.TextApi.AI.id &&
+            prefs.getInt("Text_AI", com.moe.starflow.utils.Constants.TextAI.NLLB.id) ==
+            com.moe.starflow.utils.Constants.TextAI.HYMT2.id
+        ) {
+            com.moe.starflow.llamacpp.LlamaCppModelStore.init(applicationContext)
+            com.moe.starflow.llamacpp.LlamaCppSharedHolder.warmUp(
+                applicationContext,
+                com.moe.starflow.llamacpp.LlamaCppModelStore.active(),
+            )
+        }
     }
 
 }

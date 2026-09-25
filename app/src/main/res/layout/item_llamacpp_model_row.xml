@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  单个 LlamaCpp 模型行（内置 Hy-MT2 与用户导入的 GGUF 共用）。
+
+  交互约定（2026-09 用户明确）：
+    - **点卡片 = 设为当前使用**（不需要单独的按钮）；选中态用左侧 RadioButton 显示，
+      列表里同一时刻只会有一个选中（Fragment 同时观察 activeId，切换后重绘）；
+    - 按钮**右对齐、按内容宽度**，不占满整行；最多 3 个，按状态显隐：
+        已就绪 ：[模型设置][删除]
+        未下载 ：[下载][模型设置]
+        下载中 ：[暂停][取消]
+        未完成 ：[继续][取消]
+    - 删除不用深红实心块：中性胶囊底 + @color/red 文字（浅色/夜间都清晰且不刺眼）；
+      文字颜色全部显式指定，不依赖系统默认 Button 样式（浅色卡片上会看不见）。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginBottom="12dp"
+    android:background="@drawable/dialog_background"
+    android:orientation="vertical"
+    android:paddingHorizontal="14dp"
+    android:paddingVertical="12dp">
+
+    <!-- 第一行：选中态 + 名称/元信息 + 角标 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <RadioButton
+            android:id="@+id/rowActive"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:buttonTint="@color/primary"
+            android:clickable="false"
+            android:focusable="false" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/rowName"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="middle"
+                android:singleLine="true"
+                android:textColor="@color/text_primary"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/rowMeta"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:textColor="@color/text_tertiary"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/rowBadge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:textColor="@color/success"
+            android:textSize="11sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <!-- 第二行：内置模型的下载状态 / 进度 -->
+    <TextView
+        android:id="@+id/rowStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:textColor="@color/text_tertiary"
+        android:textSize="12sp"
+        android:visibility="gone" />
+
+    <ProgressBar
+        android:id="@+id/rowProgress"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:max="100"
+        android:visibility="gone" />
+
+    <!-- 第三行：按钮右对齐，按内容宽度 -->
+    <LinearLayout
+        android:id="@+id/rowActions"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:gravity="end"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/rowDownload"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:background="@drawable/btn_download"
+            android:gravity="center"
+            android:maxLines="1"
+            android:minHeight="32dp"
+            android:paddingHorizontal="14dp"
+            android:text="@string/download"
+            android:textColor="@android:color/white"
+            android:textSize="12sp"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/rowResume"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:background="@drawable/btn_download"
+            android:gravity="center"
+            android:maxLines="1"
+            android:minHeight="32dp"
+            android:paddingHorizontal="14dp"
+            android:text="@string/resume"
+            android:textColor="@android:color/white"
+            android:textSize="12sp"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/rowPause"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:background="@drawable/btn_neutral"
+            android:gravity="center"
+            android:maxLines="1"
+            android:minHeight="32dp"
+            android:paddingHorizontal="14dp"
+            android:text="@string/pause"
+            android:textColor="@color/text_primary"
+            android:textSize="12sp"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/rowCancel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:background="@drawable/btn_neutral"
+            android:gravity="center"
+            android:maxLines="1"
+            android:minHeight="32dp"
+            android:paddingHorizontal="14dp"
+            android:text="@string/cancel"
+            android:textColor="@color/text_primary"
+            android:textSize="12sp"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/rowParams"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:background="@drawable/btn_neutral"
+            android:gravity="center"
+            android:maxLines="1"
+            android:minHeight="32dp"
+            android:paddingHorizontal="14dp"
+            android:text="@string/llamacpp_section_params"
+            android:textColor="@color/text_primary"
+            android:textSize="12sp"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/rowDelete"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:background="@drawable/btn_neutral"
+            android:gravity="center"
+            android:maxLines="1"
+            android:minHeight="32dp"
+            android:paddingHorizontal="14dp"
+            android:text="@string/delete"
+            android:textColor="@color/red"
+            android:textSize="12sp"
+            android:visibility="gone" />
+    </LinearLayout>
+</LinearLayout>
