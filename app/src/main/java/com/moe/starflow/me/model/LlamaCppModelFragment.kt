@@ -7,7 +7,6 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
-import android.widget.PopupMenu
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.moe.starflow.R
@@ -49,7 +48,6 @@ class LlamaCppModelFragment : Fragment() {
 
     private lateinit var repo: ModelDownloadRepository
     private lateinit var prefs: CustomPreference
-    private var importJob: Job? = null
 
     private val builtinKey = ModelKey.HY_MT2_GROUP
 
@@ -78,6 +76,12 @@ class LlamaCppModelFragment : Fragment() {
 
         binding.btnIntroLink.setOnClickListener { showIntro() }
         binding.btnAddModel.setOnClickListener { pickLocalModel() }
+        binding.btnCancelImport.setOnClickListener { LlamaCppImporter.cancel() }
+
+        // 导入进度来自应用级任务：离开页面再回来也能接着显示
+        viewLifecycleOwner.lifecycleScope.launch {
+            LlamaCppImporter.progress.collectLatest { renderImportProgress(it) }
+        }
 
         if (!prefs.getBoolean("Read_LlamaCpp_Introduce", false)) showIntro()
 
@@ -93,7 +97,8 @@ class LlamaCppModelFragment : Fragment() {
 
     override fun onDestroyView() {
         super.onDestroyView()
-        importJob?.cancel()
+        // ⚠️ 这里**不**取消导入：导入跑在 LlamaCppImporter 的应用级作用域里，
+        //    离开页面只是停止观察进度（1~3GB 的拷贝不该因为退个页面就白拷）
         _binding = null
     }
 
@@ -157,8 +162,13 @@ class LlamaCppModelFragment : Fragment() {
         row.root.setOnClickListener(activate)
         row.rowActive.setOnClickListener(activate)
 
-        // 次要操作收进 ⋮ 菜单，行内只留当前状态下的主操作按钮
-        row.rowMore.setOnClickListener { anchor -> showRowMenu(anchor, m) }
+        // 按钮直接铺在卡片上（等宽一行），不进溢出菜单
+        row.rowActivate.visibility = if (!missing && m.id != activeId) View.VISIBLE else View.GONE
+        row.rowActivate.setOnClickListener(activate)
+        row.rowParams.visibility = View.VISIBLE
+        row.rowParams.setOnClickListener { showParamsDialog(m) }
+        row.rowDelete.visibility = if (m.source == LlamaCppModelSource.BUILTIN && missing) View.GONE else View.VISIBLE
+        row.rowDelete.setOnClickListener { confirmDelete(m) }
 
         if (m.source == LlamaCppModelSource.BUILTIN) {
             // 内置模型：下载控制（状态来自下载流水线）
@@ -205,37 +215,6 @@ class LlamaCppModelFragment : Fragment() {
         return row.root
     }
 
-    /**
-     * 行内 ⋮ 菜单：设为当前使用 / 模型设置 / 删除。
-     * 放在菜单里而不是并排按钮，避免一行挤下四五颗按钮（用户反馈）。
-     */
-    private fun showRowMenu(anchor: View, m: LlamaCppModel) {
-        val missing = LlamaCppModelStore.fileMissing(m)
-        val isActive = m.id == LlamaCppModelStore.activeId.value
-        val popup = PopupMenu(requireContext(), anchor)
-        if (!isActive && !missing) {
-            popup.menu.add(0, MENU_ACTIVATE, 0, getString(R.string.llamacpp_set_active))
-        }
-        popup.menu.add(0, MENU_PARAMS, 1, getString(R.string.llamacpp_section_params))
-        // 内置模型且文件不在时没什么可删的（下载按钮已经顶上来）
-        if (!(m.source == LlamaCppModelSource.BUILTIN && missing)) {
-            popup.menu.add(0, MENU_DELETE, 2, getString(R.string.delete))
-        }
-        popup.setOnMenuItemClickListener { item ->
-            when (item.itemId) {
-                MENU_ACTIVATE -> {
-                    LlamaCppModelStore.setActive(m.id)
-                    UiUtils.showToast(requireContext(), getString(R.string.llamacpp_active_set, m.displayName), isShort = true)
-                    true
-                }
-                MENU_PARAMS -> { showParamsDialog(m); true }
-                MENU_DELETE -> { confirmDelete(m); true }
-                else -> false
-            }
-        }
-        popup.show()
-    }
-
     // ───────────────────────── 导入 ─────────────────────────
 
     private fun pickLocalModel() {
@@ -244,33 +223,28 @@ class LlamaCppModelFragment : Fragment() {
             .onFailure { UiUtils.showToast(requireContext(), getString(R.string.llamacpp_import_failed, it.message ?: "")) }
     }
 
+    /**
+     * 启动导入。**不在这里等结果**：导入跑在应用级作用域里（LlamaCppImporter），
+     * 离开页面不会中断；本页只是观察 [LlamaCppImporter.progress] 显示进度。
+     */
     private fun startImport(uri: Uri) {
-        val b = _binding ?: return
-        b.importProgressBox.visibility = View.VISIBLE
-        b.importProgress.progress = 0
-        b.importProgressText.text = getString(R.string.llamacpp_import_started)
-        b.btnAddModel.isEnabled = false
+        if (!LlamaCppImporter.start(requireContext(), uri)) {
+            UiUtils.showToast(requireContext(), getString(R.string.llamacpp_import_running), isShort = true)
+        }
+    }
 
-        importJob = viewLifecycleOwner.lifecycleScope.launch {
-            val result = LlamaCppImporter.import(requireContext(), uri) { pct ->
-                val bb = _binding ?: return@import
-                bb.importProgress.progress = pct
-                bb.importProgressText.text = getString(R.string.llamacpp_importing, pct)
-            }
-            val bb = _binding ?: return@launch
-            bb.importProgressBox.visibility = View.GONE
-            bb.btnAddModel.isEnabled = true
-            val ctx = context ?: return@launch
-            when (result) {
-                is LlamaCppImporter.ImportResult.Success -> {
-                    LogCollector.d(TAG, "导入成功：${result.model.displayName} retag=${result.retagged}")
-                    UiUtils.showToast(ctx, getString(R.string.llamacpp_import_completed, result.model.displayName))
-                }
-                is LlamaCppImporter.ImportResult.Duplicate ->
-                    UiUtils.showToast(ctx, getString(R.string.llamacpp_import_duplicate, result.existing.displayName))
-                is LlamaCppImporter.ImportResult.Failed ->
-                    UiUtils.showToast(ctx, getString(R.string.llamacpp_import_failed, result.reason))
-            }
+    /** 渲染导入进度（回到页面时如果后台仍在导入，会立刻接着显示）。 */
+    private fun renderImportProgress(p: LlamaCppImporter.ImportProgress?) {
+        val b = _binding ?: return
+        if (p == null) {
+            b.importProgressBox.visibility = View.GONE
+            b.btnAddModel.isEnabled = true
+        } else {
+            b.importProgressBox.visibility = View.VISIBLE
+            b.importProgress.progress = p.percent
+            b.importProgressText.text =
+                p.fileName + "\n" + getString(R.string.llamacpp_importing, p.percent)
+            b.btnAddModel.isEnabled = false
         }
     }
 
@@ -433,8 +407,5 @@ class LlamaCppModelFragment : Fragment() {
 
     companion object {
         private const val TAG = "LlamaCppModelFragment"
-        private const val MENU_ACTIVATE = 1
-        private const val MENU_PARAMS = 2
-        private const val MENU_DELETE = 3
     }
 }

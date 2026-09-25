@@ -1,8 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   单个 LlamaCpp 模型行（内置 Hy-MT2 与用户导入的 GGUF 共用）。
-  按钮只保留「当前状态下的主操作」（下载/暂停/继续/取消），其余次要操作
-  （设为当前使用 / 模型设置 / 删除）收进右侧 ⋮ 菜单 —— 避免一行挤四五个按钮。
+  按钮**直接铺在卡片上**：一行等宽（weight=1），按状态显隐，最多同时出现 3 个，
+  所以既不用「⋮ 菜单」也不会挤。
+    内置已下载：[模型设置] [删除]
+    内置未下载：[下载] [模型设置] [删除]
+    下载中：    [暂停] [取消]
+    暂停/未完成：[继续] [取消]
+    导入的模型：[设为当前] [模型设置] [删除]
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -80,32 +85,43 @@
         android:max="100"
         android:visibility="gone" />
 
-    <!-- 第三行：主操作（左）+ 更多菜单（右） -->
+    <!-- 第三行：等宽按钮，直接铺在卡片上 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:gravity="center_vertical"
+        android:layout_marginTop="8dp"
         android:orientation="horizontal">
 
         <Button
-            android:id="@+id/rowDownload"
+            android:id="@+id/rowActivate"
             style="?android:attr/borderlessButtonStyle"
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
+            android:layout_weight="1"
             android:minWidth="0dp"
-            android:paddingHorizontal="12dp"
+            android:paddingHorizontal="4dp"
+            android:text="@string/llamacpp_set_active"
+            android:textSize="13sp"
+            android:visibility="gone" />
+
+        <Button
+            android:id="@+id/rowDownload"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:minWidth="0dp"
+            android:paddingHorizontal="4dp"
             android:text="@string/download"
             android:textSize="13sp"
             android:visibility="gone" />
 
         <Button
             android:id="@+id/rowResume"
-            style="?android:attr/borderlessButtonStyle"
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
+            android:layout_weight="1"
             android:minWidth="0dp"
-            android:paddingHorizontal="12dp"
+            android:paddingHorizontal="4dp"
             android:text="@string/resume"
             android:textSize="13sp"
             android:visibility="gone" />
@@ -113,10 +129,11 @@
         <Button
             android:id="@+id/rowPause"
             style="?android:attr/borderlessButtonStyle"
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
+            android:layout_weight="1"
             android:minWidth="0dp"
-            android:paddingHorizontal="12dp"
+            android:paddingHorizontal="4dp"
             android:text="@string/pause"
             android:textSize="13sp"
             android:visibility="gone" />
@@ -124,30 +141,37 @@
         <Button
             android:id="@+id/rowCancel"
             style="?android:attr/borderlessButtonStyle"
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
+            android:layout_weight="1"
             android:minWidth="0dp"
-            android:paddingHorizontal="12dp"
+            android:paddingHorizontal="4dp"
             android:text="@string/cancel"
             android:textSize="13sp"
             android:visibility="gone" />
 
-        <View
+        <Button
+            android:id="@+id/rowParams"
+            style="?android:attr/borderlessButtonStyle"
             android:layout_width="0dp"
-            android:layout_height="1dp"
-            android:layout_weight="1" />
-
-        <!-- ⋮ 溢出菜单：设为当前使用 / 模型设置 / 删除 -->
-        <TextView
-            android:id="@+id/rowMore"
-            android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/llamacpp_more_actions"
-            android:paddingHorizontal="12dp"
-            android:paddingVertical="4dp"
-            android:text="⋮"
-            android:textSize="20sp"
-            android:textStyle="bold" />
+            android:layout_weight="1"
+            android:minWidth="0dp"
+            android:paddingHorizontal="4dp"
+            android:text="@string/llamacpp_section_params"
+            android:textSize="13sp"
+            android:visibility="gone" />
+
+        <Button
+            android:id="@+id/rowDelete"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:minWidth="0dp"
+            android:paddingHorizontal="4dp"
+            android:text="@string/delete"
+            android:textSize="13sp"
+            android:visibility="gone" />
     </LinearLayout>
 </LinearLayout>

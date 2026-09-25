@@ -1,64 +1,178 @@
 package com.moe.starflow.llamacpp
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
 import android.net.Uri
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.provider.OpenableColumns
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
+import com.moe.starflow.R
+import com.moe.starflow.download.ModelDownloadService
 import com.moe.starflow.utils.LogCollector
+import com.moe.starflow.utils.UiUtils
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
-import kotlin.coroutines.coroutineContext
+import java.security.MessageDigest
 
 /**
- * 用户导入本地 GGUF 文件。
+ * 用户导入本地 GGUF 文件（**应用级后台任务**）。
  *
- * 流程（每一步都先校验再落盘，避免"导入成功但用不了"）：
+ * ⚠️ 为什么不是页面级协程：1~3GB 的模型拷贝要几十秒到几分钟，用户完全可能中途离开页面
+ * （或旋转屏幕导致 Fragment 重建）。之前跑在 `viewLifecycleOwner.lifecycleScope` 里，
+ * 一离开就取消，等于白拷一遍。现在跑在应用级 [scope]，页面只是**观察者**：
+ *  - 进度通过 [progress]（StateFlow）暴露，回到页面能接着显示；
+ *  - 完成后写模型清单 + Toast + 通知；
+ *  - 只有用户显式 [cancel] 才会中止（并删掉 `.part`），离开页面不影响。
+ *
+ * 流程（每一步先校验再落盘）：
  *  1. 扩展名必须是 `.gguf`；
- *  2. 流式拷贝到 `<modelsDir>/<名字>.part`，同时算 MD5（拷贝期间可取消）；
- *  3. 校验 GGUF magic（防止把别的文件改名 .gguf 混进来）+ 剩余空间；
- *  4. 与清单里已有条目按 **MD5** 去重（同内容不重复占盘）；
- *  5. 重名时追加 ` (2)` 后缀，`.part` → 正式名 rename；
- *  6. 写入模型清单。
- *
- * 对比老方案（萌译只查扩展名、无去重、无空间检查）：这里多了 magic 校验 + MD5 去重 + 空间预检，
- * 且拷贝失败/取消会删掉 `.part`，不留半成品。
+ *  2. 流式拷贝到 `<modelsDir>/<名字>.part`，同时算 MD5；
+ *  3. 校验 GGUF magic + 剩余空间；
+ *  4. 与清单已有条目按 **MD5** 去重；
+ *  5. 重名追加 ` (2)`，`.part` → 正式名 rename；
+ *  6. 1.25-bit 类型重打标（如需）+ 写入模型清单。
  */
 object LlamaCppImporter {
 
     private const val TAG = "LlamaCppImporter"
     private const val PART_SUFFIX = ".part"
     private const val BUFFER = 64 * 1024
-
-    /** 留出 5% 余量，避免刚好把外置存储写满 */
     private const val FREE_SPACE_MARGIN = 1.05
-
-    /** 硬上限：超过这个大小直接拒绝（防止误选磁盘镜像之类把存储写爆） */
     private const val MAX_SIZE_BYTES = 12L * 1024 * 1024 * 1024
+    private const val NOTIF_ID = 8801
+
+    /** 应用级作用域：不随任何页面销毁而取消 */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    data class ImportProgress(val fileName: String, val percent: Int)
+
+    private val _progress = MutableStateFlow<ImportProgress?>(null)
+
+    /** 当前导入进度；null = 没有在导入 */
+    val progress: StateFlow<ImportProgress?> = _progress.asStateFlow()
+
+    @Volatile private var job: Job? = null
+
+    fun isRunning(): Boolean = job?.isActive == true
 
     sealed interface ImportResult {
-        /** 导入成功 */
         data class Success(val model: LlamaCppModel, val retagged: Boolean) : ImportResult
-        /** 同内容模型已在库中（按 MD5 命中） */
         data class Duplicate(val existing: LlamaCppModel) : ImportResult
-        /** 校验失败/写入失败/空间不足 */
         data class Failed(val reason: String) : ImportResult
     }
 
     /**
-     * @param onProgress 0..100（仅在能拿到源文件大小时回调）
+     * 启动导入（**非阻塞**，立刻返回）。
+     * @return true = 已开始；false = 已有任务在跑（调用方提示用户等待）
      */
-    suspend fun import(
+    fun start(context: Context, uri: Uri): Boolean {
+        if (isRunning()) {
+            LogCollector.d(TAG, "已有导入任务在跑，忽略本次请求")
+            return false
+        }
+        val app = context.applicationContext
+        job = scope.launch {
+            try {
+                val result = importInternal(app, uri) { name, pct ->
+                    _progress.value = ImportProgress(name, pct)
+                }
+                onFinished(app, result)
+            } catch (ce: CancellationException) {
+                // 用户主动取消：静默（.part 已在 importInternal 里删掉）
+                LogCollector.d(TAG, "导入被取消")
+                throw ce
+            } catch (t: Throwable) {
+                LogCollector.e(TAG, "导入异常：${t.message}", t)
+                notify(app, app.getString(R.string.llamacpp_import_failed, t.message ?: ""))
+                UiUtils.showToast(app, app.getString(R.string.llamacpp_import_failed, t.message ?: ""), isShort = false)
+            } finally {
+                _progress.value = null
+            }
+        }
+        return true
+    }
+
+    /** 用户主动取消导入（离开页面**不**应调用这个）。 */
+    fun cancel() {
+        job?.cancel()
+    }
+
+    private fun onFinished(context: Context, result: ImportResult) {
+        val msg = when (result) {
+            is ImportResult.Success -> context.getString(R.string.llamacpp_import_completed, result.model.displayName)
+            is ImportResult.Duplicate -> context.getString(R.string.llamacpp_import_duplicate, result.existing.displayName)
+            is ImportResult.Failed -> context.getString(R.string.llamacpp_import_failed, result.reason)
+        }
+        LogCollector.d(TAG, "导入结束：$msg")
+        UiUtils.showToast(context, msg, isShort = result is ImportResult.Success)
+        notify(context, msg)
+    }
+
+    /** 完成/失败都用通知兜底：用户此时可能已经离开页面（后台 Toast 在 Android 12+ 会被限制）。 */
+    private fun notify(context: Context, text: String) {
+        // Android 13+ 需要 POST_NOTIFICATIONS；没有权限就只留 Toast，不抛异常
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            LogCollector.d(TAG, "无通知权限，跳过导入完成通知")
+            return
+        }
+        runCatching {
+            ensureChannel(context)
+            val n = NotificationCompat.Builder(context, ModelDownloadService.CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_download)
+                .setContentTitle(context.getString(R.string.llamacpp_import_notification_title))
+                .setContentText(text)
+                .setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .build()
+            NotificationManagerCompat.from(context).notify(NOTIF_ID, n)
+        }.onFailure { LogCollector.w(TAG, "发送导入通知失败：${it.message}") }
+    }
+
+    private fun ensureChannel(context: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val nm = context.getSystemService(NotificationManager::class.java) ?: return
+        if (nm.getNotificationChannel(ModelDownloadService.CHANNEL_ID) == null) {
+            nm.createNotificationChannel(
+                NotificationChannel(
+                    ModelDownloadService.CHANNEL_ID,
+                    context.getString(R.string.llamacpp_import_notification_title),
+                    NotificationManager.IMPORTANCE_LOW,
+                )
+            )
+        }
+    }
+
+    // ───────────────────────── 实际导入 ─────────────────────────
+
+    private suspend fun importInternal(
         context: Context,
         uri: Uri,
-        onProgress: (Int) -> Unit = {},
-    ): ImportResult = withContext(Dispatchers.IO) {
-        LlamaCppModelStore.ensureLoaded()
+        onProgress: (name: String, pct: Int) -> Unit,
+    ): ImportResult {
+        LlamaCppModelStore.init(context)
+        LlamaCppModelStore.ensureLoadedSync()
         val resolver = context.contentResolver
 
-        // 1) 源文件元信息
         var displayName = "imported.gguf"
         var sizeHint = -1L
         runCatching {
@@ -73,17 +187,16 @@ object LlamaCppImporter {
         }.onFailure { LogCollector.w(TAG, "读取 SAF 元信息失败：${it.message}") }
 
         if (!displayName.endsWith(".gguf", ignoreCase = true)) {
-            return@withContext ImportResult.Failed("只支持 .gguf 文件")
+            return ImportResult.Failed(context.getString(R.string.llamacpp_not_gguf))
         }
         if (sizeHint > MAX_SIZE_BYTES) {
-            return@withContext ImportResult.Failed("文件超过 ${MAX_SIZE_BYTES / 1024 / 1024 / 1024}GB 上限")
+            return ImportResult.Failed("> ${MAX_SIZE_BYTES / 1024 / 1024 / 1024}GB")
         }
 
         val modelsDir = LlamaCppPaths.modelsDir()
-        // 2) 空间预检（拷贝要占一份等大的空间）
         if (sizeHint > 0 && modelsDir.usableSpace < (sizeHint * FREE_SPACE_MARGIN).toLong()) {
-            return@withContext ImportResult.Failed(
-                "存储空间不足：需要约 ${sizeHint / 1024 / 1024}MB，可用 ${modelsDir.usableSpace / 1024 / 1024}MB"
+            return ImportResult.Failed(
+                "need ${sizeHint / 1024 / 1024}MB, free ${modelsDir.usableSpace / 1024 / 1024}MB"
             )
         }
 
@@ -91,43 +204,38 @@ object LlamaCppImporter {
         val partFile = File(modelsDir, "$safeName$PART_SUFFIX")
         if (partFile.exists()) partFile.delete()
 
-        // 3) 流式拷贝 + MD5
-        val md5 = runCatching {
-            copyAndDigest(resolver.openInputStream(uri), partFile, sizeHint, onProgress)
-        }.getOrElse { e ->
+        val md5 = try {
+            copyAndDigest(context, uri, partFile, sizeHint, safeName, onProgress)
+        } catch (ce: CancellationException) {
+            partFile.delete()   // 用户取消：不留半成品
+            throw ce
+        } catch (e: Exception) {
             partFile.delete()
             LogCollector.e(TAG, "导入拷贝失败：${e.message}", e)
-            return@withContext ImportResult.Failed(e.message ?: "拷贝失败")
+            return ImportResult.Failed(e.message ?: "copy failed")
         }
 
-        // 4) GGUF magic 校验
         if (!GgufTypeRetag.looksLikeGguf(partFile)) {
             partFile.delete()
-            return@withContext ImportResult.Failed("文件不是有效的 GGUF（magic 校验失败）")
+            return ImportResult.Failed("invalid GGUF header")
         }
 
-        // 5) 按 MD5 去重
         LlamaCppModelStore.models.value.firstOrNull { it.md5 != null && it.md5.equals(md5, true) }?.let { dup ->
             partFile.delete()
-            LogCollector.d(TAG, "导入去重命中：${dup.displayName}")
-            return@withContext ImportResult.Duplicate(dup)
+            return ImportResult.Duplicate(dup)
         }
 
-        // 6) 重名处理 + 落地
         val finalName = collisionFreeName(modelsDir, safeName)
         val finalFile = File(modelsDir, finalName)
         if (!partFile.renameTo(finalFile)) {
-            // rename 失败（跨设备/占用）时退化为复制
             runCatching { partFile.copyTo(finalFile, overwrite = true); partFile.delete() }
                 .onFailure { e ->
                     partFile.delete()
-                    return@withContext ImportResult.Failed("写入模型目录失败：${e.message}")
+                    return ImportResult.Failed(e.message ?: "rename failed")
                 }
         }
 
-        // 7) 内置 1.25-bit 类型重打标（导入的若是同款 1.25-bit 文件，同样需要 42→43）
         val retagged = GgufTypeRetag.ensureRetagged(finalFile)
-
         val model = LlamaCppModel(
             id = "imported:$finalName",
             displayName = finalName,
@@ -137,12 +245,11 @@ object LlamaCppImporter {
             retaggedMd5 = GgufTypeRetag.retaggedMd5(finalFile),
             source = LlamaCppModelSource.IMPORTED,
             builtinModelKey = null,
-            hyProfile = false, // 实际通道在加载时由 nativeModelInfo 的 has_hy 决定
+            hyProfile = false, // 实际走哪条通道由加载时的 nativeModelInfo(has_hy) 决定
             params = LlamaCppParams.forSource(LlamaCppModelSource.IMPORTED),
         )
         LlamaCppModelStore.upsert(model)
-        LogCollector.d(TAG, "导入完成：$finalName（${finalFile.length() / 1024 / 1024}MB, retag=$retagged）")
-        ImportResult.Success(model, retagged)
+        return ImportResult.Success(model, retagged)
     }
 
     /** 同名文件已存在时追加 ` (2)`、` (3)`…（与下载流水线风格一致）。 */
@@ -160,20 +267,22 @@ object LlamaCppImporter {
     }
 
     private suspend fun copyAndDigest(
-        input: java.io.InputStream?,
+        context: Context,
+        uri: Uri,
         dst: File,
         sizeHint: Long,
-        onProgress: (Int) -> Unit,
+        displayName: String,
+        onProgress: (name: String, pct: Int) -> Unit,
     ): String {
-        if (input == null) throw IOException("无法读取所选文件")
-        val md = java.security.MessageDigest.getInstance("MD5")
+        val input = context.contentResolver.openInputStream(uri) ?: throw IOException("cannot open input stream")
+        val md = MessageDigest.getInstance("MD5")
         var copied = 0L
         var lastPct = -1
         input.use { ins ->
             FileOutputStream(dst).use { out ->
                 val buf = ByteArray(BUFFER)
                 while (true) {
-                    coroutineContext.ensureActive() // 取消时抛 CancellationException，由上层删 .part
+                    currentCoroutineContext().ensureActive()   // 取消点：用户 cancel() 时抛出
                     val read = ins.read(buf)
                     if (read <= 0) break
                     out.write(buf, 0, read)
@@ -183,7 +292,7 @@ object LlamaCppImporter {
                         val pct = ((copied * 100.0) / sizeHint).toInt().coerceIn(0, 100)
                         if (pct != lastPct) {
                             lastPct = pct
-                            withContext(Dispatchers.Main) { onProgress(pct) }
+                            onProgress(displayName, pct)
                         }
                     }
                 }

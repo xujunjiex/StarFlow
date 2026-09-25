@@ -1333,6 +1333,8 @@
     <string name="llamacpp_no_active_model">No LlamaCpp model selected. Open \"Manage LlamaCpp Models\" and pick or import one first.</string>
     <string name="llamacpp_manager_title">LlamaCpp Models</string>
     <string name="llamacpp_group_builtin">Built-in</string>
+    <string name="llamacpp_import_notification_title">Model import</string>
+    <string name="llamacpp_import_running">Another import is already running, please wait</string>
     <string name="llamacpp_group_imported">Imported</string>
     <string name="llamacpp_add_model">Add Model</string>
     <string name="llamacpp_add_local">Import local GGUF file</string>
@@ -1373,7 +1375,6 @@
     <string name="llamacpp_section_prompt">Prompt</string>
     <string name="llamacpp_section_sampling">Sampling</string>
     <string name="llamacpp_section_performance">Performance</string>
-    <string name="llamacpp_more_actions">More actions</string>
     <string name="llamacpp_view_intro">Feature guide</string>
 
 </resources>
