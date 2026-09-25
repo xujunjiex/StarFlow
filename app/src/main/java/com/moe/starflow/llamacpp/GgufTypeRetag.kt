@@ -53,7 +53,20 @@ object GgufTypeRetag {
         }
         val legacy = offsets.filter { it.second == TYPE_LEGACY_1_25BIT }
         if (legacy.isEmpty()) {
-            LogCollector.d(TAG, "ensureRetagged: 无 42 号张量（可能已是新文件），不打标")
+            // 已经没有 42 号了。这里要区分两种情况：
+            //  a) 普通 GGUF（本来就没有 42 号）→ 什么都不做；
+            //  b) **已经打过标但标记没写成**（改完瞬间进程被杀）→ 必须补写标记，
+            //     否则重新校验时会拿清单里的旧 MD5 比对，把这个正确的文件当损坏删掉。
+            val alreadyPatched = offsets.any { it.second == TYPE_STQ1_0 }
+            if (alreadyPatched) {
+                runCatching {
+                    val md5 = md5(gguf)
+                    marker.writeText(md5)
+                    LogCollector.d(TAG, "ensureRetagged: 已是 43 号但缺标记，补写 md5=$md5")
+                }.onFailure { LogCollector.e(TAG, "补写标记失败：${it.message}", it) }
+                return true
+            }
+            LogCollector.d(TAG, "ensureRetagged: 无 42 号张量（普通 GGUF），不打标")
             return false
         }
         LogCollector.d(TAG, "ensureRetagged: 需改写 ${legacy.size} 个张量类型 42→43（${gguf.name}）")

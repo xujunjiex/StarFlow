@@ -146,6 +146,21 @@ class GgufTypeRetagTest {
     }
 
     @Test
+    fun `已打标但缺标记文件时会补写标记`() {
+        // 模拟「改完瞬间进程被杀」：文件已是 43 号，但没有标记 → 必须补写，否则重新校验会误删
+        val f = tmp.newFile("e.gguf")
+        writeGguf(
+            f, kvCount = 1,
+            tensors = listOf(Triple("w", 1, GgufTypeRetag.TYPE_STQ1_0), Triple("n", 1, 0)),
+        )
+        assertFalse("缺标记时应补写标记", LlamaCppPaths.retagMarker(f).exists())
+        assertTrue(GgufTypeRetag.ensureRetagged(f))
+        val marker = LlamaCppPaths.retagMarker(f)
+        assertTrue("应补出标记文件", marker.isFile)
+        assertEquals(GgufTypeRetag.md5(f), marker.readText())
+    }
+
+    @Test
     fun `损坏的头部不会抛异常到调用方`() {
         val f = tmp.newFile("broken.gguf")
         RandomAccessFile(f, "rw").use { raf ->
