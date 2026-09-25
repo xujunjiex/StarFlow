@@ -61,7 +61,7 @@ Android 10 及以上、64 位 ARM 设备。PP-OCRv6 small 已内置在 APK 中�
 6. **缓存命中复用** — 以 256 位感知哈希匹配整页，命中后跳过 OCR 与翻译，未命中再复用已有译文。
 7. **内置阅读器** — 直接识别导入的原图，不受屏幕截图缩放与压缩影响；自动翻译机制按阅读进度翻译，并可提前处理后续页面。
 8. **底图译文分离** — 仅持久化译文文本与气泡坐标，不落盘译文位图；调整渲染参数后重新合成，无需重新翻译。
-9. **内置离线模型** — Hy-MT2 1.25-bit 量化约 440MB，本地推理无接口费用，文本不离开设备。
+9. **离线模型自选** — 预制 Hy-MT2 提供 1.25-bit（约 440MB）与 Q4_K_M（约 1.08GB）两档；也可导入任意 llama.cpp 兼容的 GGUF，按其自带对话模板推理。全程本地、无接口费用，文本不离开设备。
 10. **多种 OCR 组合** — 提供四组搭配：PP-OCRv6 / v5、RT-DETR-V2 + manga-ocr、ML Kit。
 
 ---
@@ -126,7 +126,7 @@ Android 10 及以上、64 位 ARM 设备。PP-OCRv6 small 已内置在 APK 中�
 | **RT-DETR-V2 + manga-ocr** | RT-DETR-V2 | manga-ocr | 日漫竖排文字精度最高 |
 | **ML Kit** | ML Kit（检测识别一体） | ML Kit | 无需下载模型，速度快，适合版式简单的页面 |
 
-**增量分批渲染**：气泡数超过 6 个时自动分批，第一批识别完成即开始翻译并显示，**第二批的识别与第一批的翻译并行执行**；批次间携带上下文以保持同一页的称呼与语气一致，完成后回滚。Hy-MT2 本地模型不分批，改为「一次翻译全部气泡 + 逐句流式显示」。
+**增量分批渲染**：气泡数超过 6 个时自动分批，第一批识别完成即开始翻译并显示，**第二批的识别与第一批的翻译并行执行**；批次间携带上下文以保持同一页的称呼与语气一致，完成后回滚。本地 LlamaCpp 模型（预制 Hy-MT2 与导入的 GGUF 都算）不走分批，改为「一次翻译全部气泡 + 逐句流式显示」——省掉多次重复读指令的开销。
 
 **浮窗交互**
 
@@ -167,7 +167,7 @@ Android 10 及以上、64 位 ARM 设备。PP-OCRv6 small 已内置在 APK 中�
 
 独立文本翻译页面：流式输出实时显示翻译进度，最近记录分页与快速复制，语言选择跨页面保留。源语言不受 OCR 引擎限制（30 种全部可选），目标语言按所选翻译模型过滤。
 
-页面内置**聊天模式**（Tab 切换）：基于端侧 Hy-MT2 或 OpenAI 兼容接口的对话式翻译，支持聊天模板与会话历史；使用端侧模型时对话可完全离线。
+页面内置**聊天模式**（Tab 切换）：基于端侧本地模型（任意已激活的 GGUF，含预制 Hy-MT2）或 OpenAI 兼容接口的对话式翻译，支持聊天模板与会话历史；使用端侧模型时对话可完全离线。
 
 ---
 
@@ -181,7 +181,7 @@ Android 10 及以上、64 位 ARM 设备。PP-OCRv6 small 已内置在 APK 中�
 
 | 引擎 | 说明 |
 |------|------|
-| **Hy-MT2** | 腾讯混元开源多语言翻译模型，**1.25-bit 量化版约 440MB**，由 llama.cpp 在设备端推理。支持流式输出（译文逐字显示）；进程内共享同一个已加载实例，游戏 / 漫画 / 文本 / 阅读器共用；读取原文与生成译文的线程数可分别配置 |
+| **LlamaCpp（本地 GGUF）** | 通用 llama.cpp 本地推理引擎。既能下载**预制模型**（腾讯混元 Hy-MT2 1.8B，两个量化档：1.25-bit 约 440MB / Q4_K_M 约 1.08GB），也能**导入任意 llama.cpp 兼容的 GGUF**（Qwen / Gemma / 混元等）——导入的模型由它**自带的对话模板**渲染提示词，原格式不被改写。每个模型单独保存提示词与采样参数；支持流式输出（译文逐字显示）；进程内共享同一个已加载实例，游戏 / 漫画 / 文本 / 阅读器 / 对话共用；读取原文与生成译文的线程数可分别配置 |
 | **NLLB** | 首次下载模型（约 950MB）后可离线使用；检测到设备内存小于 6GB 时会提示可能出现的推理问题 |
 
 **在线翻译 API**
@@ -309,7 +309,12 @@ Android 10 及以上、64 位 ARM 设备。PP-OCRv6 small 已内置在 APK 中�
    sdk.dir=/home/<username>/Android/Sdk
    ```
 2. 在 **SDK Manager** 中安装 `NDK 25.2.9519653` 与 `CMake 3.22.1`（版本不一致会直接构建失败）
-3. 验证：`./gradlew assembleDebug`
+3. **拉取 llama.cpp 源码**（submodule，源码不进本仓库，缺了 `:llamacpp` 编不出来）：在仓库根目录执行
+   ```powershell
+   pwsh -File llamacpp/setup-submodule.ps1
+   ```
+   详见「原生代码与模型」一节。
+4. 验证：`./gradlew assembleDebug`
 
 ## 常用命令
 
@@ -342,9 +347,16 @@ Robolectric 的 SDK 统一配置在 `app/src/test/resources/robolectric.properti
 
 ## 原生代码与模型
 
-- `app/src/main/cpp/`（约 49MB 源码）通过 CMake 编译：**llama.cpp**（Hy-MT2 设备端推理）与 ONNX / sentencepiece 桥接。首次构建较慢，之后为增量构建
-- **PP-OCRv6 small 已内置**在 `assets/`；PP-OCRv5 全系、v6 medium、RT-DETR-V2、manga-ocr、Hy-MT2 与 NLLB 均为运行时按需下载（模型管理页）
+原生代码分两个模块：
+
+- **`:llamacpp`** — llama.cpp 源码随 submodule 一起编译，产出 `libllamacpp.so`。**首次编译前必须在仓库根目录执行 `llamacpp/setup-submodule.ps1`**：llama.cpp 是**官方仓库**（pin 在 `1e411d8f`），源码不进本仓库；脚本会在 `llamacpp/src/main/cpp/llama.cpp` 放一份独立 clone，并配好 `core.longpaths` 与 sparse-checkout（排除 `tools/ examples/ docs/ tests/`，否则 Windows 下路径过长会 checkout 失败）。⚠️ 不要改用 `git submodule update --init`（同样会因长路径失败）；`git submodule status` 显示 `-<sha>` 是正常的，不影响构建。
+- **`:app`** — `app/src/main/cpp/` 走 CMake，保留 ONNX Runtime 与 sentencepiece 桥接。
+
+其余：
+
+- **PP-OCRv6 small 已内置**在 `assets/`；PP-OCRv5 全系、v6 medium、RT-DETR-V2、manga-ocr、预制 Hy-MT2 与 NLLB 均为运行时按需下载（模型管理页）
 - release 构建启用了 `minifyEnabled` 与 `shrinkResources`，JNI 回调接口由 `proguard-rules.pro` 的 `-keep` 规则保护 —— **修改 native 回调接口名时需同步修改 keep 规则**，否则会出现 debug 正常、release 崩溃
+- release 包只含 `libllamacpp.so` 与 `libc++_shared.so` 两个 native 库
 
 ## 发布
 
@@ -382,11 +394,13 @@ app/src/main/java/
 │   ├── download/         模型下载流水线（断点续传 / 状态机 / MD5 校验）
 │   ├── utils/            工具（Constants / CustomPreference / LogCollector / FontSync 等）
 │   └── launch/           首次启动引导
-└── translationapi/       各厂商翻译 API 实现（含 Hy-MT2 / NLLB 本地引擎）
+└── translationapi/       各厂商翻译 API 实现（含 LlamaCpp JNI 门面 / NLLB 本地引擎）
 ```
 
+除 `:app` 外还有一个 `:llamacpp` 模块（`llamacpp/src/main/cpp/` — llama.cpp 源码 + JNI 桥 + CMake）、一个 `patches/`（llama.cpp 本地补丁留档）。
+
 - `translationapi/` 是历史遗留的独立顶层包（不在 `com.moe.starflow` 下）：JNI 符号与 proguard keep 规则硬编码该包名，直接移动会导致 `UnsatisfiedLinkError`
-- 原生代码：`app/src/main/cpp/`（CMake 构建）
+- 原生代码：`:app` 的 `app/src/main/cpp/`（CMake，ONNX Runtime + sentencepiece）与 `:llamacpp` 模块（llama.cpp 源码 + JNI 桥）
 - 测试：`app/src/test/java/`（JUnit + Robolectric，与主源码同包名子目录）
 
 ---
