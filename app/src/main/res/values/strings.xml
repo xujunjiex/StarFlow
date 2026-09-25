@@ -197,7 +197,7 @@
     <string name="internet_error">Network Error, please check and try again</string>
     <string name="get_notification_error">Failed to get notification, maybe the network is not connected</string>
     <string name="translation_mode">Translation Settings</string>
-    <string name="api_configuration">API Configuration</string>
+    <string name="api_configuration">Translation Model Config</string>
     <string name="personalization_setting">Personalization</string>
     <string name="article_page">One Day · One Article</string>
     <string name="faq_title">FAQ</string>
@@ -219,7 +219,7 @@
     <string name="baiduapi_description">Baidu Translate\'s API, click \"Manage Baidu Translate API\" below to set up the API, and you can also view the API application tutorial (there is a free call quota of 1 million characters per month).</string>
     <string name="tencentapi_description">Tencent Cloud\'s translation API, click \"Manage Tencent Cloud API\" below to set up the API, and you can also view the API application tutorial (there is a free call quota of 5 million characters per month).</string>
     <string name="tencentapi_name">Tencent Cloud</string>
-    <string name="ai_title">Local Machine Translation</string>
+    <string name="ai_title">Local Translation</string>
     <string name="pre_api_title">Pre-Configured Cloud API</string>
     <string name="custom_api_text_title"><b><u>(Advanced settings)</u></b> Customize the Cloud Text Translation API</string>
     <string name="custom_api_text_1">Custom cloud <b><u>text</u></b> translation API1</string>
@@ -464,7 +464,7 @@
     <string name="faq_a1">This is due to the fact that after Huawei updated HarmonyOS (note that it is not HarmonyOS NEXT), its underlying Android API can no longer be visually visible to users. For <b><u>most newer</u></b> Huawei phones, HarmonyOS 2.0 supports Android 10 (API 29). HarmonyOS 3.0 is compatible with Android 12 (API 31). However, for some older Huawei models, although HarmonyOS 3.0 has been updated, the underlying Android API has not been updated, and the underlying Android version of some models is still Android 10. As a result, the <b><u>system still does not meet the requirements</u></b> of Android 11 (API 30) for this software. Here are some of the known models:\n\nEquipped with Kirin 980 and below models, such as mate20, P30, Nova 5, etc., HarmonyOS 3.0 corresponds to Android version 10 (API 29). The HarmonyOS 3.0 of these models is not really 3.0, and there are many missing features, but the main upgrades are: updating the version number, using the new theme of 3.0, and adding some small features that do not depend on Android 12.</string>
     <string name="faq_q2">Why do I have granted accessibility permissions, but the software still prompts that I have not obtained accessibility permissions?</string>
     <string name="faq_a2">This is due to <b><u>accessibility permissions being reclaimed by the system</u></b>; Accessibility is a very important permission in Android. Most Android-based systems will revoke accessibility privileges when you exit the software or shut down and restart it, also for security reasons (of course, this software is open source and does not collect any information from you).\n\nKnowing the reason, it is also very easy to solve. As long as the software homepage clicks on the \"? > find the step to grant accessibility permissions - > click \"Go to grant this permission\" - > find the software, then <b><u>turn off the accessibility permissions of the software, and re-grant</u></b> them.</string>
-    <string name="more_api">Adjust this option in the \"Translation Mode\" and \"API Configuration\" of the Settings page</string>
+    <string name="more_api">Adjust this option in the \"Translation Mode\" and \"Translation Model Config\" of the Settings page</string>
     <string name="faq_q3">Why did I click on the hoverball, but there was no translation result for a long time, and finally an error was reported?</string>
     <string name="faq_a3">This is most likely <b><u>due to poor internet connections</u></b>. Many waifu games need to use accelerators, but after using accelerators, it is relatively slow to access the domestic translation API. As a result, the translation will time out and errors will occur.\n\nAt this time, please <b><u>turn off your wifi, turn on the data data, and then speed up with the accelerator again</u></b>. At this point, you should be able to use the translation fluently. <b><u>There is no need to worry about data consumption</u></b>, generally speaking, when you use the translation mode of \"local OCR recognition + text translation\", the amount of traffic spent is minimal.</string>
     <string name="faq_q4">Why can\'t I download models, update the software, or see update announcements in the model management page?</string>
@@ -485,7 +485,7 @@
     <string name="faq_q11">Auto-translate stuck: pages don\'t change, manual translate always shows the same cached result?</string>
     <string name="faq_a11">This is caused by a <b><u>screen capture conflict</u></b> between the app\'s MediaProjection and the system or another app.\n\n<b>Symptoms:</b>\n• Auto-translate: page changes are never detected, the progress bar stays on "detecting", or a 30-second timeout dialog appears\n• Manual translate: every tap shows "⚡ Cache" (cache hit) with the same translation result — new pages show the same content\n\n<b>Cause:</b>\nSystem screen recording, screen mirroring/casting, or another app\'s recording feature is holding the MediaProjection channel exclusively, preventing this app\'s VirtualDisplay from capturing new frames. Every screenshot returns the last frame before the conflict started, so pHash never changes and translation results stay frozen.\n\n<b>Solutions:</b>\n• <b>Stop system screen recording</b>: Pull down the notification shade and turn off the built-in screen recorder\n• <b>Disconnect casting</b>: Turn off screen mirroring or casting to external displays\n• <b>Check other recording apps</b>: Close game boosters, live streaming assistants, or other apps that might be using the recording channel\n• <b>Restart the translation service</b>: After stopping all recording, restart manga translation from the app\n• <b>Switch to Accessibility screenshot</b>: In Settings → About → Screenshot Method, switch to Accessibility Service — it is not affected by MediaProjection conflicts\n\nThis is a platform-level limitation affecting all apps using MediaProjection, not a bug specific to this app.</string>
     <string name="faq_q12">How to connect to a translation model deployed on my LAN / PC?</string>
-    <string name="faq_a12">The app can connect to a <b><u>local model service deployed on a PC in the same LAN</u></b> (e.g. llama.cpp, LM Studio, Ollama) through an <b><u>OpenAI-compatible API</u></b> — no public API key required.\n\n<b><u>Step 1: Start the local model service on your PC</u></b>\nLoad a model and start the service with whatever tool you use, and note the port. <b>The key is to make the service listen on 0.0.0.0 (allow LAN access)</b>, otherwise the phone can\'t reach it. How to enable it per tool:\n• <b>llama-server</b>: --host 0.0.0.0\n• <b>LM Studio</b>: enable the LAN / remote access option in settings\n• <b>Ollama</b>: listens on 0.0.0.0 by default, nothing to do\n• <b>Others</b>: check the docs for an "allow remote / LAN access" option\n\n<b><u>Step 2: Find your PC LAN IP</u></b>\nRun ipconfig and note the IPv4 address (e.g. 192.168.1.100).\n\n<b><u>Step 3: Verify connectivity from the phone</u></b>\nOpen http://PC-IP:port in the phone browser — if it opens, the network is OK. If it doesn\'t, check in order:\n1. Are the phone and PC on the same LAN?\n2. Is the service listening on 0.0.0.0?\n3. Is the PC firewall allowing the port? (Only if it still can\'t connect)\n\n<b><u>Step 4: Configure in the app</u></b>\nSettings → API Config → Add Custom API: fill Base URL as http://PC-IP:port/v1, API Key and Model name any value, then run the connection test.\n\n<b><u>Other notes</u></b>\n• PC proxy does not affect phone connections (LAN is direct, no proxy)\n• For plain http addresses, make sure the app version allows cleartext traffic</string>
+    <string name="faq_a12">The app can connect to a <b><u>local model service deployed on a PC in the same LAN</u></b> (e.g. llama.cpp, LM Studio, Ollama) through an <b><u>OpenAI-compatible API</u></b> — no public API key required.\n\n<b><u>Step 1: Start the local model service on your PC</u></b>\nLoad a model and start the service with whatever tool you use, and note the port. <b>The key is to make the service listen on 0.0.0.0 (allow LAN access)</b>, otherwise the phone can\'t reach it. How to enable it per tool:\n• <b>llama-server</b>: --host 0.0.0.0\n• <b>LM Studio</b>: enable the LAN / remote access option in settings\n• <b>Ollama</b>: listens on 0.0.0.0 by default, nothing to do\n• <b>Others</b>: check the docs for an "allow remote / LAN access" option\n\n<b><u>Step 2: Find your PC LAN IP</u></b>\nRun ipconfig and note the IPv4 address (e.g. 192.168.1.100).\n\n<b><u>Step 3: Verify connectivity from the phone</u></b>\nOpen http://PC-IP:port in the phone browser — if it opens, the network is OK. If it doesn\'t, check in order:\n1. Are the phone and PC on the same LAN?\n2. Is the service listening on 0.0.0.0?\n3. Is the PC firewall allowing the port? (Only if it still can\'t connect)\n\n<b><u>Step 4: Configure in the app</u></b>\nSettings → Translation Model Config → Add Custom API: fill Base URL as http://PC-IP:port/v1, API Key and Model name any value, then run the connection test.\n\n<b><u>Other notes</u></b>\n• PC proxy does not affect phone connections (LAN is direct, no proxy)\n• For plain http addresses, make sure the app version allows cleartext traffic</string>
     <string name="github_repo_title">GitHub Repository</string>
     <string name="github_repo_content">This project uses the LGPL-3.0 license. You can visit the GitHub repository at any time, welcome to give the project a "Star".</string>
     <string name="have_look">Have a look</string>
@@ -983,7 +983,7 @@
     <string name="model_count_limit">At most %d custom models per provider</string>
 
     <!-- API 错误文案（OpenAI 兼容接口，服务端说明拼在后面） -->
-    <string name="api_model_not_selected">No model selected: add or fetch a model for this provider in API Config</string>
+    <string name="api_model_not_selected">No model selected: add or fetch a model for this provider in Translation Model Config</string>
     <string name="api_http_unauthorized">HTTP %1$d unauthorized (invalid API key): %2$s</string>
     <string name="api_http_error">HTTP %1$d: %2$s</string>
 
@@ -1328,7 +1328,7 @@
 
     <!-- LlamaCpp 引擎与模型管理页 -->
     <string name="llamacpp_name">LlamaCpp Local Model</string>
-    <string name="llamacpp_description">Run a GGUF model fully offline on-device (built-in Hy-MT2 or any llama.cpp-compatible model you import). <b><u>A device with 6GB+ RAM is recommended.</u></b> Tap \"Manage LlamaCpp Models\" below to pick, import or delete models.</string>
+    <string name="llamacpp_description">Run a GGUF model fully offline on-device (built-in Hy-MT2, or any llama.cpp-compatible model you import). <b><u>A device with 6GB+ RAM is recommended.</u></b> Tap &quot;Manage LlamaCpp Models&quot; below to pick, import or delete models.</string>
     <string name="manage_llamacpp_models">Manage LlamaCpp Models</string>
     <string name="llamacpp_no_active_model">No LlamaCpp model selected. Open \"Manage LlamaCpp Models\" and pick or import one first.</string>
     <string name="llamacpp_manager_title">LlamaCpp Models</string>
@@ -1369,6 +1369,11 @@
     <string name="llamacpp_params_help">Parameter help</string>
     <string name="llamacpp_reset_default">Reset to default</string>
     <string name="llamacpp_intro_title">LlamaCpp Local Inference</string>
-    <string name="llamacpp_intro_content">Runs GGUF models on-device with llama.cpp — no network needed after the model is in place.\n\n• <b>Built-in:</b> Hy-MT2 1.8B 1.25-bit (461MB), the default translation model.\n• <b>Imported:</b> any llama.cpp-compatible .gguf (Qwen, Gemma, Hunyuan, …). Imported models are rendered with their own chat template, so the model\'s own formatting is respected.\n• Each model keeps its own prompt template and sampling parameters.\n\n⚠️ Local inference is CPU-bound: the stronger the chip, the faster the translation.</string>
+    <string name="llamacpp_intro_content">Local inference powered by LlamaCpp.\n\n• Built-in: Hy-MT2 1.8B (1.25-bit, ~461MB), usable offline once installed.\n• Imported: any llama.cpp-compatible GGUF file (Qwen, Gemma, Hunyuan and others), rendered with the model\'s own chat template so its original format is preserved.\n• Each model stores its own prompt template and sampling parameters.\n\nNote: local inference occupies CPU and memory. A faster chip translates faster, and the device may become warm and consume more power while running.</string>
+    <string name="llamacpp_section_prompt">Prompt</string>
+    <string name="llamacpp_section_sampling">Sampling</string>
+    <string name="llamacpp_section_performance">Performance</string>
+    <string name="llamacpp_more_actions">More actions</string>
+    <string name="llamacpp_view_intro">Feature guide</string>
 
 </resources>

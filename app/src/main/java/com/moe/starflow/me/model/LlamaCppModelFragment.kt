@@ -7,6 +7,7 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
+import android.widget.PopupMenu
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import com.moe.starflow.R
@@ -75,7 +76,7 @@ class LlamaCppModelFragment : Fragment() {
         LlamaCppModelStore.init(requireContext())
         LlamaCppModelStore.ensureLoadedSync()
 
-        binding.introText.text = getString(R.string.llamacpp_intro_content)
+        binding.btnIntroLink.setOnClickListener { showIntro() }
         binding.btnAddModel.setOnClickListener { pickLocalModel() }
 
         if (!prefs.getBoolean("Read_LlamaCpp_Introduce", false)) showIntro()
@@ -156,8 +157,8 @@ class LlamaCppModelFragment : Fragment() {
         row.root.setOnClickListener(activate)
         row.rowActive.setOnClickListener(activate)
 
-        row.rowParams.setOnClickListener { showParamsDialog(m) }
-        row.rowDelete.setOnClickListener { confirmDelete(m) }
+        // 次要操作收进 ⋮ 菜单，行内只留当前状态下的主操作按钮
+        row.rowMore.setOnClickListener { anchor -> showRowMenu(anchor, m) }
 
         if (m.source == LlamaCppModelSource.BUILTIN) {
             // 内置模型：下载控制（状态来自下载流水线）
@@ -166,8 +167,8 @@ class LlamaCppModelFragment : Fragment() {
             row.rowProgress.visibility = if (state is DownloadState.Running || state is DownloadState.Paused) View.VISIBLE else View.GONE
             when (state) {
                 DownloadState.Idle, DownloadState.Done -> {
+                    // 已下载时行内不再放「删除」——删除在 ⋮ 菜单里（避免按钮拥挤）
                     row.rowDownload.visibility = if (missing) View.VISIBLE else View.GONE
-                    row.rowDelete.visibility = if (!missing) View.VISIBLE else View.GONE
                     row.rowStatus.text = getString(
                         if (missing) R.string.model_status_idle else R.string.model_status_done
                     )
@@ -202,6 +203,37 @@ class LlamaCppModelFragment : Fragment() {
             row.rowProgress.visibility = View.GONE
         }
         return row.root
+    }
+
+    /**
+     * 行内 ⋮ 菜单：设为当前使用 / 模型设置 / 删除。
+     * 放在菜单里而不是并排按钮，避免一行挤下四五颗按钮（用户反馈）。
+     */
+    private fun showRowMenu(anchor: View, m: LlamaCppModel) {
+        val missing = LlamaCppModelStore.fileMissing(m)
+        val isActive = m.id == LlamaCppModelStore.activeId.value
+        val popup = PopupMenu(requireContext(), anchor)
+        if (!isActive && !missing) {
+            popup.menu.add(0, MENU_ACTIVATE, 0, getString(R.string.llamacpp_set_active))
+        }
+        popup.menu.add(0, MENU_PARAMS, 1, getString(R.string.llamacpp_section_params))
+        // 内置模型且文件不在时没什么可删的（下载按钮已经顶上来）
+        if (!(m.source == LlamaCppModelSource.BUILTIN && missing)) {
+            popup.menu.add(0, MENU_DELETE, 2, getString(R.string.delete))
+        }
+        popup.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                MENU_ACTIVATE -> {
+                    LlamaCppModelStore.setActive(m.id)
+                    UiUtils.showToast(requireContext(), getString(R.string.llamacpp_active_set, m.displayName), isShort = true)
+                    true
+                }
+                MENU_PARAMS -> { showParamsDialog(m); true }
+                MENU_DELETE -> { confirmDelete(m); true }
+                else -> false
+            }
+        }
+        popup.show()
     }
 
     // ───────────────────────── 导入 ─────────────────────────
@@ -401,5 +433,8 @@ class LlamaCppModelFragment : Fragment() {
 
     companion object {
         private const val TAG = "LlamaCppModelFragment"
+        private const val MENU_ACTIVATE = 1
+        private const val MENU_PARAMS = 2
+        private const val MENU_DELETE = 3
     }
 }

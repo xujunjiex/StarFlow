@@ -134,7 +134,7 @@
     <string name="internet_error">网络出现问题，请检查后重试</string>
     <string name="get_notification_error">获取通知失败，可能是网络未连接</string>
     <string name="translation_mode">翻译设置</string>
-    <string name="api_configuration">API配置</string>
+    <string name="api_configuration">翻译模型配置</string>
     <string name="personalization_setting">个性化设置</string>
     <string name="article_page">壹日 · 壹篇</string>
     <string name="faq_title">常见问题</string>
@@ -155,7 +155,7 @@
     <string name="baiduapi_description">百度翻译的API，点击下方的"管理百度翻译API"即可设置API，还可以在其中查看API的申请教程（每月有100万字符的免费调用额度）。</string>
     <string name="tencentapi_name">腾讯云</string>
     <string name="tencentapi_description">腾讯云的翻译API，点击下方的"管理腾讯云API"即可设置API，还可以在其中查看API的申请教程（每月有500万字符的免费调用额度）。</string>
-    <string name="ai_title">本地机器翻译</string>
+    <string name="ai_title">本地翻译</string>
     <string name="pre_api_title">云端机器翻译API</string>
     <string name="custom_api_text_title"><b><u>（高级设置）</u></b>自定义云端文本翻译API</string>
     <string name="custom_api_text_1">自定义云端<b><u>文本</u></b>翻译API1</string>
@@ -400,7 +400,7 @@
     <string name="faq_a1">这是由于华为更新HarmonyOS后（注意并不是HarmonyOS NEXT），其底层的Android API不再能被用户直观地看出。对于<b><u>大部分较新款</u></b>的华为手机，HarmonyOS 2.0对应Android 10 (API 29)；HarmonyOS 3.0对应Android 12 (API 31)。但对于部分较旧的华为机型，虽然更新了HarmonyOS 3.0，但实际上并未更新底层的Android API，一些机型底层的Android版本仍为Android 10。因此<b><u>系统仍没有达到本软件要求</u></b>的Android 11 (API 30)。下面是一些已知的型号：\n\n搭载麒麟980及以下的机型，如mate20，P30，Nova5等机型，HarmonyOS 3.0对应的Android版本是10 (API 29)。这些机型的HarmonyOS 3.0其实并不是真正的3.0，功能缺失比较多，主要升级是：更新了版本号，使用了3.0的新主题，增加了一些不依赖Android 12的小功能。</string>
     <string name="faq_q2">为什么我已经授予了无障碍权限，但软件依旧提示没有获取到无障碍权限？</string>
     <string name="faq_a2">这是由于<b><u>无障碍权限被系统回收</u></b>导致的；在安卓系统中，无障碍是一个非常重要的权限。大部分基于安卓的系统在您退出软件或者关机重启时就会将无障碍权限回收，这也是出于安全考虑（当然，本软件是开源的，不会收集您的任何信息）。\n\n明白了原因，解决起来也非常方便。只要软件首页点击右上角的"？"->找到授予无障碍权限的那一步->点击"去授予该权限"->找到本软件，然后<b><u>关闭软件的无障碍权限，重新授予</u></b>即可。</string>
-    <string name="more_api">在【设置】页面的"翻译设置"和"API配置"中调整该选项</string>
+    <string name="more_api">在【设置】页面的"翻译设置"和"翻译模型配置"中调整该选项</string>
     <string name="faq_q3">为什么点击了悬浮球，长时间没有翻译结果，最后报错？</string>
     <string name="faq_a3">这大概率是<b><u>由于网络不畅导致的</u></b>。很多外服游戏需要使用加速器，但使用加速器后，再访问国内的翻译API就比较慢了。所以就会导致翻译超时，出现错误。\n\n这时请<b><u>关闭您的wifi，打开数据流量，然后重新用加速器加速</u></b>。这时应该就能流畅使用翻译了。<b><u>无需担心流量消耗</u></b>，一般来说，当您使用"本地OCR识别+文本翻译"的翻译模式时，花费的流量是微乎其微的。</string>
     <string name="faq_q4">为什么模型管理页面无法下载模型、无法更新软件、看不到更新公告？</string>
@@ -421,7 +421,7 @@
     <string name="faq_q11">录屏模式自动翻译卡死，翻页无变化，手动翻译始终显示同一页的缓存结果？</string>
     <string name="faq_a11">这是<b><u>录屏服务与系统录屏功能冲突</u></b>导致的截图通道失效。\n\n<b>症状表现：</b>\n• 自动翻译：翻页后始终检测不到页面变化，进度条一直显示"自动检测中"，或 30 秒后弹出超时提示\n• 手动翻译：每次点击翻译都提示"⚡ 缓存"（缓存命中），显示的始终是同一页的翻译结果，翻页后翻译内容不更新\n\n<b>原因：</b>\n系统录屏、投屏、或某些应用的屏幕录制功能会独占 MediaProjection 通道，导致本应用的 VirtualDisplay 无法获取新的屏幕画面。截图拿到的永远是卡死前最后一帧画面，所以 pHash 检测不到变化，翻译结果也始终不变。\n\n<b>解决方法：</b>\n• <b>关闭系统录屏</b>：下拉通知栏，关闭系统自带的屏幕录制\n• <b>关闭投屏</b>：断开手机投屏/镜像连接\n• <b>检查其他录屏应用</b>：关闭游戏助手、直播助手等可能占用录屏通道的应用\n• <b>重启翻译服务</b>：关闭所有可能的录屏后，重新开启漫画翻译\n• <b>切换到无障碍截图模式</b>：在「设置 → 关于 → 截图方式」中切换为无障碍服务，不受录屏冲突影响\n\n该问题在所有使用 MediaProjection 的应用中都存在，不是本应用独有的 bug。</string>
     <string name="faq_q12">如何连接本地局域网/电脑上部署的翻译模型？</string>
-    <string name="faq_a12">软件支持通过<b><u>OpenAI 兼容接口</u></b>连接<b><u>同一局域网内电脑上部署的本地模型服务</u></b>（如 llama.cpp、LM Studio、Ollama 等），无需公网 API 密钥。\n\n<b><u>第一步：在电脑上启动本地模型服务</u></b>\n用你常用的工具加载模型并启动服务，记下端口号。<b>关键是让服务监听 0.0.0.0（允许局域网访问）</b>，否则手机连不上。各工具开启方式：\n• <b>llama-server</b>：--host 0.0.0.0\n• <b>LM Studio</b>：设置里开启「局域网/远程访问」\n• <b>Ollama</b>：默认监听 0.0.0.0，无需设置\n• <b>其他</b>：查文档「允许远程/局域网访问」\n\n<b><u>第二步：查询电脑局域网 IP</u></b>\n运行 ipconfig，记下 IPv4 地址（如 192.168.1.100）。\n\n<b><u>第三步：手机验证连通</u></b>\n手机浏览器打开 http://电脑IP:端口，能打开即网络通畅。打不开按顺序排查：\n1. 手机和电脑是否同一局域网\n2. 服务是否监听 0.0.0.0\n3. 电脑防火墙是否放行该端口（只有连不上才处理）\n\n<b><u>第四步：在软件中配置</u></b>\n设置 → API 配置 → 添加自定义 API：Base URL 填 http://电脑IP:端口/v1，API Key 和模型名任意填，测试连接通过即可使用。\n\n<b><u>其他注意</u></b>\n• 电脑的代理不影响手机直连（局域网直连不走代理）\n• 用明文 http 地址时，需软件版本已放行明文流量</string>
+    <string name="faq_a12">软件支持通过<b><u>OpenAI 兼容接口</u></b>连接<b><u>同一局域网内电脑上部署的本地模型服务</u></b>（如 llama.cpp、LM Studio、Ollama 等），无需公网 API 密钥。\n\n<b><u>第一步：在电脑上启动本地模型服务</u></b>\n用你常用的工具加载模型并启动服务，记下端口号。<b>关键是让服务监听 0.0.0.0（允许局域网访问）</b>，否则手机连不上。各工具开启方式：\n• <b>llama-server</b>：--host 0.0.0.0\n• <b>LM Studio</b>：设置里开启「局域网/远程访问」\n• <b>Ollama</b>：默认监听 0.0.0.0，无需设置\n• <b>其他</b>：查文档「允许远程/局域网访问」\n\n<b><u>第二步：查询电脑局域网 IP</u></b>\n运行 ipconfig，记下 IPv4 地址（如 192.168.1.100）。\n\n<b><u>第三步：手机验证连通</u></b>\n手机浏览器打开 http://电脑IP:端口，能打开即网络通畅。打不开按顺序排查：\n1. 手机和电脑是否同一局域网\n2. 服务是否监听 0.0.0.0\n3. 电脑防火墙是否放行该端口（只有连不上才处理）\n\n<b><u>第四步：在软件中配置</u></b>\n设置 → 翻译模型配置 → 添加自定义 API：Base URL 填 http://电脑IP:端口/v1，API Key 和模型名任意填，测试连接通过即可使用。\n\n<b><u>其他注意</u></b>\n• 电脑的代理不影响手机直连（局域网直连不走代理）\n• 用明文 http 地址时，需软件版本已放行明文流量</string>
     <string name="github_repo_title">GitHub仓库</string>
     <string name="github_repo_content">本项目使用LGPL-3.0协议开源，您可以随时访问GitHub仓库，欢迎给项目点一个"Star🌟"。</string>
     <string name="have_look">去看看</string>
@@ -917,7 +917,7 @@
     <string name="model_count_limit">每个 provider 最多添加 %d 个自定义模型</string>
 
     <!-- API 错误文案（OpenAI 兼容接口，服务端说明拼在后面） -->
-    <string name="api_model_not_selected">未选择模型：请到「API 配置」中为该厂商添加模型或点「获取模型列表」</string>
+    <string name="api_model_not_selected">未选择模型：请到「翻译模型配置」中为该厂商添加模型或点「获取模型列表」</string>
     <string name="api_http_unauthorized">HTTP %1$d 未授权（API Key 无效）：%2$s</string>
     <string name="api_http_error">HTTP %1$d：%2$s</string>
 
@@ -1333,7 +1333,7 @@
 
     <!-- LlamaCpp 引擎与模型管理页 -->
     <string name="llamacpp_name">LlamaCpp 本地模型</string>
-    <string name="llamacpp_description">在本机离线运行 GGUF 模型（内置 Hy-MT2，或导入任意 llama.cpp 兼容模型）。<b><u>建议设备 6GB 以上内存。</u></b>点击下方「管理 LlamaCpp 模型」可选择、导入或删除模型。</string>
+    <string name="llamacpp_description">在本机离线运行 GGUF 模型（内置 Hy-MT2，也可导入任意 llama.cpp 兼容模型）。<b><u>建议设备内存 6GB 以上。</u></b>点击下方「管理 LlamaCpp 模型」可选择、导入或删除模型。</string>
     <string name="manage_llamacpp_models">管理 LlamaCpp 模型</string>
     <string name="llamacpp_no_active_model">尚未选择 LlamaCpp 模型。请先打开「管理 LlamaCpp 模型」选择或导入一个。</string>
     <string name="llamacpp_manager_title">LlamaCpp 模型</string>
@@ -1374,6 +1374,11 @@
     <string name="llamacpp_params_help">参数说明</string>
     <string name="llamacpp_reset_default">恢复默认</string>
     <string name="llamacpp_intro_title">LlamaCpp 本地推理</string>
-    <string name="llamacpp_intro_content">用 llama.cpp 在本机运行 GGUF 模型，模型就位后无需联网。\n\n• <b>内置：</b>Hy-MT2 1.8B 1.25-bit（461MB），默认翻译模型。\n• <b>导入：</b>任意 llama.cpp 兼容的 .gguf（Qwen / Gemma / 混元 等）。导入模型用其自带的对话模板渲染，尊重模型自己的格式。\n• 每个模型各自保存提示词模板与采样参数。\n\n⚠️ 本地推理吃 CPU：芯片越强翻译越快。</string>
+    <string name="llamacpp_intro_content">LlamaCpp 本地推理\n\n• 内置模型：Hy-MT2 1.8B（1.25-bit 量化，约 461MB），安装完成后即可离线使用。\n• 导入模型：支持任意 llama.cpp 兼容的 GGUF 文件（Qwen、Gemma、混元 等），按模型自带的对话模板渲染，保持模型原始格式。\n• 每个模型独立保存提示词模板与采样参数。\n\n提示：本地推理占用 CPU 与内存，芯片性能越好翻译越快；推理期间设备会发热并增加耗电。</string>
+    <string name="llamacpp_section_prompt">提示词</string>
+    <string name="llamacpp_section_sampling">采样参数</string>
+    <string name="llamacpp_section_performance">性能</string>
+    <string name="llamacpp_more_actions">更多操作</string>
+    <string name="llamacpp_view_intro">功能说明</string>
 
 </resources>

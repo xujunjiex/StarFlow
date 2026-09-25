@@ -1,10 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   单个 LlamaCpp 模型行（内置 Hy-MT2 与用户导入的 GGUF 共用）。
-  同时容纳两类控件：
-    - 内置模型：下载状态 + 下载/暂停/继续/取消/删除（走既有下载流水线）
-    - 导入模型：齿轮（参数）+ 删除
-  由 LlamaCppModelFragment 按模型来源与状态切换显隐。
+  按钮只保留「当前状态下的主操作」（下载/暂停/继续/取消），其余次要操作
+  （设为当前使用 / 模型设置 / 删除）收进右侧 ⋮ 菜单 —— 避免一行挤四五个按钮。
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -12,9 +10,10 @@
     android:layout_marginBottom="10dp"
     android:background="@drawable/dialog_background"
     android:orientation="vertical"
-    android:padding="12dp">
+    android:paddingHorizontal="14dp"
+    android:paddingVertical="12dp">
 
-    <!-- 第一行：选中态 + 名称 + 角标 -->
+    <!-- 第一行：选中态 + 名称/元信息 + 角标 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -56,18 +55,18 @@
             android:id="@+id/rowBadge"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginStart="6dp"
+            android:layout_marginStart="8dp"
             android:textSize="11sp"
             android:textStyle="bold"
             android:visibility="gone" />
     </LinearLayout>
 
-    <!-- 第二行：内置模型的下载状态 -->
+    <!-- 第二行：内置模型的下载状态 / 进度 -->
     <TextView
         android:id="@+id/rowStatus"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
+        android:layout_marginTop="8dp"
         android:textColor="@color/text_tertiary"
         android:textSize="12sp"
         android:visibility="gone" />
@@ -77,68 +76,78 @@
         style="?android:attr/progressBarStyleHorizontal"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="4dp"
+        android:layout_marginTop="6dp"
         android:max="100"
         android:visibility="gone" />
 
-    <!-- 第三行：按钮组 -->
+    <!-- 第三行：主操作（左）+ 更多菜单（右） -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="6dp"
-        android:gravity="end"
+        android:gravity="center_vertical"
         android:orientation="horizontal">
 
         <Button
             android:id="@+id/rowDownload"
+            style="?android:attr/borderlessButtonStyle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:minWidth="0dp"
+            android:paddingHorizontal="12dp"
             android:text="@string/download"
-            android:textSize="12sp"
-            android:visibility="gone" />
-
-        <Button
-            android:id="@+id/rowPause"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:minWidth="0dp"
-            android:text="@string/pause"
-            android:textSize="12sp"
+            android:textSize="13sp"
             android:visibility="gone" />
 
         <Button
             android:id="@+id/rowResume"
+            style="?android:attr/borderlessButtonStyle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:minWidth="0dp"
+            android:paddingHorizontal="12dp"
             android:text="@string/resume"
-            android:textSize="12sp"
+            android:textSize="13sp"
+            android:visibility="gone" />
+
+        <Button
+            android:id="@+id/rowPause"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minWidth="0dp"
+            android:paddingHorizontal="12dp"
+            android:text="@string/pause"
+            android:textSize="13sp"
             android:visibility="gone" />
 
         <Button
             android:id="@+id/rowCancel"
+            style="?android:attr/borderlessButtonStyle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:minWidth="0dp"
+            android:paddingHorizontal="12dp"
             android:text="@string/cancel"
-            android:textSize="12sp"
+            android:textSize="13sp"
             android:visibility="gone" />
 
-        <Button
-            android:id="@+id/rowParams"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:minWidth="0dp"
-            android:text="@string/llamacpp_section_params"
-            android:textSize="12sp" />
+        <View
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
 
-        <Button
-            android:id="@+id/rowDelete"
+        <!-- ⋮ 溢出菜单：设为当前使用 / 模型设置 / 删除 -->
+        <TextView
+            android:id="@+id/rowMore"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:minWidth="0dp"
-            android:text="@string/delete"
-            android:textSize="12sp" />
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/llamacpp_more_actions"
+            android:paddingHorizontal="12dp"
+            android:paddingVertical="4dp"
+            android:text="⋮"
+            android:textSize="20sp"
+            android:textStyle="bold" />
     </LinearLayout>
 </LinearLayout>

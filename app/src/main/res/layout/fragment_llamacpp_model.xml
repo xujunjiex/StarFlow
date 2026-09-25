@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  LlamaCpp 模型管理页：
-    内置模型（Hy-MT2，走既有下载流水线）+ 导入的模型（本地 GGUF）
-    「添加模型」= 直接 SAF 选择本地 .gguf（本项目不做预设列表下载）
+  LlamaCpp 模型管理页。
+  这里**不再重复**功能说明（首次进入有弹窗、底部留一个「功能说明」入口可随时再看），
+  页面只放：内置模型卡片组 + 导入模型列表 + 添加模型。
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -13,32 +13,15 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="16dp">
-
-        <!-- ========== 说明 ========== -->
-        <TextView
-            android:id="@+id/introTitle"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:paddingVertical="6dp"
-            android:text="@string/llamacpp_intro_title"
-            android:textSize="14sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:id="@+id/introText"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:lineSpacingExtra="3dp"
-            android:textColor="@color/text_tertiary"
-            android:textSize="13sp" />
+        android:paddingHorizontal="16dp"
+        android:paddingTop="12dp"
+        android:paddingBottom="20dp">
 
         <!-- ========== 内置模型 ========== -->
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
-            android:paddingVertical="6dp"
+            android:paddingBottom="8dp"
             android:text="@string/llamacpp_group_builtin"
             android:textSize="14sp"
             android:textStyle="bold" />
@@ -53,8 +36,8 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
-            android:paddingVertical="6dp"
+            android:layout_marginTop="18dp"
+            android:paddingBottom="8dp"
             android:text="@string/llamacpp_group_imported"
             android:textSize="14sp"
             android:textStyle="bold" />
@@ -63,6 +46,7 @@
             android:id="@+id/importedEmpty"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginBottom="4dp"
             android:text="@string/llamacpp_empty_imported"
             android:textColor="@color/text_tertiary"
             android:textSize="13sp" />
@@ -78,15 +62,30 @@
             android:id="@+id/btnAddModel"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
+            android:layout_marginTop="18dp"
             android:text="@string/llamacpp_add_model" />
 
         <TextView
             android:id="@+id/addHint"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
+            android:layout_marginTop="8dp"
+            android:lineSpacingExtra="2dp"
             android:text="@string/llamacpp_import_hint"
+            android:textColor="@color/text_tertiary"
+            android:textSize="12sp" />
+
+        <!-- 功能说明入口（正文只在弹窗里，避免页面重复） -->
+        <TextView
+            android:id="@+id/btnIntroLink"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end"
+            android:layout_marginTop="6dp"
+            android:background="?android:attr/selectableItemBackground"
+            android:paddingHorizontal="6dp"
+            android:paddingVertical="4dp"
+            android:text="@string/llamacpp_view_intro"
             android:textColor="@color/text_tertiary"
             android:textSize="12sp" />
 
@@ -95,7 +94,7 @@
             android:id="@+id/importProgressBox"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
+            android:layout_marginTop="14dp"
             android:orientation="vertical"
             android:visibility="gone">
 
@@ -111,6 +110,7 @@
                 style="?android:attr/progressBarStyleHorizontal"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
                 android:max="100" />
         </LinearLayout>
     </LinearLayout>
