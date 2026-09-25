@@ -100,6 +100,34 @@ object NovelTranslationBatch {
         return out
     }
 
+    /**
+     * 容错解析：先按编号对应；模型**完全丢掉编号**时按位置兜底。
+     *
+     * 位置兜底**必须条数完全一致**才接受：模型少回/多回/合并了段落时条数就对不上，
+     * 此时宁可返回空让上层标记失败重试，也不能猜着对应 —— 猜错就是把 A 段译文写到 B 段，
+     * 用户看到的只是「某几段翻了但不对」，比整章未翻译难查得多。
+     *
+     * （漫画链路同样有这层兜底，见 `TranslateUtils.parseNumberedTranslations` 的降级分支。）
+     */
+    fun parseTolerant(reply: String, paraIndices: List<Int>): Map<Int, String> {
+        parse(reply, paraIndices).let { if (it.isNotEmpty()) return it }
+        if (paraIndices.isEmpty()) return emptyMap()
+        for (chunks in listOf(splitByBlankLine(reply), splitByLine(reply))) {
+            if (chunks.size == paraIndices.size) {
+                return paraIndices.zip(chunks).toMap()
+            }
+        }
+        return emptyMap()
+    }
+
+    private fun splitByBlankLine(reply: String): List<String> =
+        reply.split(Regex("""\n\s*\n"""))
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+
+    private fun splitByLine(reply: String): List<String> =
+        reply.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
+
     /** `[12] 译文`，跨行捕获（模型可能把一条译文写成多行）。 */
     private val NUMBERED = Regex("""\[(\d+)]\s*([\s\S]*?)(?=\n\s*\[\d+]|\s*$)""")
 }
