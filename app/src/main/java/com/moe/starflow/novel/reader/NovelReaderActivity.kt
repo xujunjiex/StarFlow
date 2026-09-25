@@ -28,8 +28,10 @@ import com.moe.starflow.data.TranslationHistoryDatabase
 import com.moe.starflow.databinding.ActivityNovelReaderBinding
 import com.moe.starflow.manga.OcrLock
 import com.moe.starflow.mangaimport.reader.CoverTransformer
+import com.moe.starflow.mangaimport.reader.CurlPageView
 import com.moe.starflow.mangaimport.reader.NoneTransformer
 import com.moe.starflow.mangaimport.reader.ReaderAnimationState
+import com.moe.starflow.mangaimport.reader.SimulationTransformer
 import com.moe.starflow.me.settings.SettingPageActivity
 import com.moe.starflow.novel.data.ImportedNovel
 import com.moe.starflow.novel.data.NovelStore
@@ -98,6 +100,9 @@ class NovelReaderActivity : AppCompatActivity() {
     private var translations: Map<Int, String> = emptyMap()
     private var chapterStats: Map<Int, NovelChapterStat> = emptyMap()
     private var translationJob: Job? = null
+
+    /** 滚动模式的「已翻译段」（进度条绿条），在 [loadChapter] 里随内容与译文一起重算。 */
+    private var scrollTranslated: Set<Int> = emptySet()
 
     /** 上下 UI（顶部三个浮层 + 底部胶囊 + 右下翻译浮层组）是否隐藏。 */
     private var chromeHidden = false
@@ -171,7 +176,7 @@ class NovelReaderActivity : AppCompatActivity() {
         chapterCount = loaded.chapterCount
 
         repository = NovelChapterRepository()
-        pageAdapter = NovelPageAdapter().also { it.tapDetector = tapDetector }
+        pageAdapter = NovelPageAdapter()
         scrollAdapter = NovelScrollAdapter()
         binding.novelPager.adapter = pageAdapter
         binding.novelScroll.layoutManager = LinearLayoutManager(this)
@@ -182,7 +187,6 @@ class NovelReaderActivity : AppCompatActivity() {
 
         if (savedInstanceState != null) {
             returnedFromSettings = savedInstanceState.getBoolean(STATE_FROM_SETTINGS, false)
-            pendingParaIndex = 0
             chapterIndex = savedInstanceState.getInt(STATE_CURRENT_CHAPTER, chapterIndex)
         }
 
@@ -190,6 +194,11 @@ class NovelReaderActivity : AppCompatActivity() {
         applyBackground()
         updateRotateMode(rotateMode, persist = false)
         applyReaderMode()
+
+        // ⚠️ **先渲染正文**：首次进入绝不能只有「译文读回来」那一条链才会加载内容 ——
+        // 那条链在「本章一句译文都没有」时会判定「没变化」直接返回，结果第一次进阅读器
+        // 一片空白，必须切一次章才显示（用户实测反馈）。
+        loadChapter(chapterIndex, keepPara = pendingParaIndex)
 
         lifecycleScope.launch {
             // 清理上次异常退出留下的「翻译中」标记（进程被杀时退出清理不会执行）
@@ -319,10 +328,35 @@ class NovelReaderActivity : AppCompatActivity() {
         binding.novelScroll.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) = updateFromScroll()
         })
-        binding.novelScroll.setOnTouchListener { _, e ->
-            tapDetector.onTouchEvent(e)
-            false // 不消费，交给 RecyclerView 正常滚动
+        // 手势：⚠️ 挂到 ViewPager2 **内部那个真正消费触摸的 RecyclerView** 上。
+        // 挂在页 View 上收不到 UP（页 View 不消费 DOWN → 不会成为 touch target），
+        // 挂在 ViewPager2 自身上也收不到（子 View 消费后父的 onTouchEvent 就不再被调用）。
+        // 详见 NovelPageAdapter 的类注释。返回 false 不消费，滑动翻页照常。
+        installPagerTouch()
+        binding.novelScroll.setOnTouchListener { _, e -> onReaderTouch(e); false }
+    }
+
+    /** 装手势到 ViewPager2 的内部 RecyclerView（它才是触摸的实际消费者）。 */
+    private fun installPagerTouch() {
+        val rv = binding.novelPager.getChildAt(0) as? RecyclerView ?: return
+        rv.setOnTouchListener { _, e -> onReaderTouch(e); false }
+    }
+
+    /**
+     * 触摸总入口：仿真动画先记录折线触点，再交给单击探测器。
+     *
+     * **永远返回 false**：消费掉事件会让 ViewPager2 / 滚动列表收不到拖拽，翻页与滚动就没了。
+     */
+    private fun onReaderTouch(e: MotionEvent): Boolean {
+        if (animationMode == NovelPanelStyle.ANIM_SIMULATION && !isScrollMode()) {
+            val size = (if (isVerticalMode()) binding.novelPager.height else binding.novelPager.width).toFloat()
+            if (size > 0f) {
+                animState.foldStartFraction =
+                    ((if (isVerticalMode()) e.x else e.y) / size).coerceIn(0f, 1f)
+            }
         }
+        tapDetector.onTouchEvent(e)
+        return false
     }
 
     private val pageChangeCallback = object : ViewPager2.OnPageChangeCallback() {
@@ -415,11 +449,14 @@ class NovelReaderActivity : AppCompatActivity() {
         val h = target.height.toFloat()
         if (w <= 0f || h <= 0f) return
         if (consumeChromeOrMenuTap(x, y, w, h)) return
-        if (isScrollMode()) {
-            scrollByParagraph(if (y >= h / 2f) 1 else -1)
-            return
+        when {
+            // 连续滚动：点上下半屏 = 上一段 / 下一段
+            isScrollMode() -> scrollByParagraph(if (y >= h / 2f) 1 else -1)
+            // 上下翻页：点下半屏 = 下一页（与漫画竖排模式同一套判定）
+            isVerticalMode() -> turnPage(if (y >= h / 2f) 1 else -1)
+            // 左右翻页：点右半屏 = 下一页
+            else -> turnPage(if (x >= w / 2f) 1 else -1)
         }
-        turnPage(if (x >= w / 2f) 1 else -1)
     }
 
     /** 右上角 22%×28% → 菜单；正中间一格 → 显隐上下 UI。返回 true 表示已消费。 */
@@ -440,12 +477,11 @@ class NovelReaderActivity : AppCompatActivity() {
     private fun isScrollMode(): Boolean =
         NovelPanelStyle.readerMode(prefs) == NovelPanelStyle.READER_SCROLL
 
+    private fun isVerticalMode(): Boolean =
+        NovelPanelStyle.readerMode(prefs) == NovelPanelStyle.READER_VERTICAL
+
     private fun currentPage(): Int =
-        if (isScrollMode()) {
-            (binding.novelScroll.layoutManager as? LinearLayoutManager)?.findFirstVisibleItemPosition() ?: 0
-        } else {
-            binding.novelPager.currentItem
-        }
+        if (isScrollMode()) firstVisibleScrollItem() else binding.novelPager.currentItem
 
     /** 翻页；越界则切章（本章末页往后 → 下一章首页，反之上一章末页）。 */
     private fun turnPage(delta: Int) {
@@ -515,13 +551,20 @@ class NovelReaderActivity : AppCompatActivity() {
     // ===== 模式 / 背景 / 动画 =====
 
     private fun applyReaderMode() {
-        val scroll = isScrollMode()
+        val mode = NovelPanelStyle.readerMode(prefs)
+        val scroll = mode == NovelPanelStyle.READER_SCROLL
         binding.novelPager.visibility = if (scroll) View.GONE else View.VISIBLE
         binding.novelScroll.visibility = if (scroll) View.VISIBLE else View.GONE
-        binding.novelProgress.visibility = if (scroll) View.GONE else View.VISIBLE
+        // 进度条两种模式都用：翻页模式是「章内页进度」，连续滚动是「章内段进度」
+        binding.novelProgress.visibility = View.VISIBLE
         if (scroll) {
             binding.novelScroll.itemAnimator = null
         } else {
+            // 上下翻页 = 竖向 ViewPager2，与漫画的竖排模式同一套（预绑定邻页、关 item 动画都在下面）
+            binding.novelPager.orientation =
+                if (mode == NovelPanelStyle.READER_VERTICAL) ViewPager2.ORIENTATION_VERTICAL
+                else ViewPager2.ORIENTATION_HORIZONTAL
+            binding.novelPager.offscreenPageLimit = 1
             applyDirection()
             applyAnimation()
         }
@@ -534,17 +577,25 @@ class NovelReaderActivity : AppCompatActivity() {
         (binding.novelPager.getChildAt(0) as? RecyclerView)?.layoutDirection = View.LAYOUT_DIRECTION_LTR
     }
 
-    /** 翻页动画：0 无 / 1 滑动（ViewPager2 默认）/ 2 覆盖（复用漫画的 CoverTransformer）。 */
+    /**
+     * 翻页动画：0 无 / 1 滑动（ViewPager2 默认）/ 2 覆盖 / 3 仿真（折页）。
+     * **四项直接复用漫画那套 transformer**（`NoneTransformer` / `CoverTransformer` /
+     * `SimulationTransformer`），文字页与位图页用的是同一份动画代码。
+     */
     private fun applyAnimation() {
         if (isScrollMode()) return
+        val vertical = isVerticalMode()
+        // 先清掉旧 transformer 残留的 alpha/缩放/位移/折叠，否则切动画时旧效果粘在页面上
         resetPageTransforms()
         animState.anchorPage = currentPage()
         animState.navigationProgress = 0f
         animState.isBackward = false
+        animState.foldStartFraction = 0.85f
         binding.novelPager.setPageTransformer(
             when (animationMode) {
-                NovelPanelStyle.ANIM_NONE -> NoneTransformer(isVertical = false, animState)
-                NovelPanelStyle.ANIM_COVER -> CoverTransformer(isVertical = false, isReversed = false, animState)
+                NovelPanelStyle.ANIM_NONE -> NoneTransformer(isVertical = vertical, animState)
+                NovelPanelStyle.ANIM_COVER -> CoverTransformer(isVertical = vertical, isReversed = false, animState)
+                NovelPanelStyle.ANIM_SIMULATION -> SimulationTransformer(isVertical = vertical, isReversed = false, animState)
                 else -> null
             }
         )
@@ -565,6 +616,7 @@ class NovelReaderActivity : AppCompatActivity() {
             page.pivotX = page.width / 2f
             page.pivotY = page.height / 2f
             page.translationZ = 0f
+            (page as? CurlPageView)?.clearFold()
         }
     }
 
@@ -580,9 +632,11 @@ class NovelReaderActivity : AppCompatActivity() {
         binding.novelStatus.setTextColor(
             if (NovelPanelStyle.isDarkBackground(bgMode)) 0xFFECECEC.toInt() else 0xFF222222.toInt()
         )
+        // 文字色与**每页的底色**一起下发：底色必须画在页自己身上，
+        // 否则「覆盖」动画里页面透明 → 看起来只有文字在动、背景不动
         val textColor = NovelPanelStyle.textColor(bgMode)
-        pageAdapter.setTextColor(textColor)
-        scrollAdapter.setTextColor(textColor)
+        pageAdapter.setColors(textColor, bg)
+        scrollAdapter.setColors(textColor, bg)
     }
 
     // ===== 加载 =====
@@ -604,11 +658,13 @@ class NovelReaderActivity : AppCompatActivity() {
             val loaded = repository.load(b, index, translations, NovelPanelStyle.displayMode(prefs), style, w, h)
             chapterIndex = index
             content = loaded
+            scrollTranslated = computeScrollTranslated(loaded)
             showStatus(if (loaded.isEmpty) getString(R.string.novel_empty_chapter) else null)
 
             val textColor = NovelPanelStyle.textColor(bgMode)
+            val bgColor = NovelPanelStyle.backgroundColor(bgMode)
             if (isScrollMode()) {
-                scrollAdapter.submit(loaded, style, textColor)
+                scrollAdapter.submit(loaded, style, textColor, bgColor)
                 val pos = if (keepPara == Int.MAX_VALUE) {
                     (scrollAdapter.itemCount - 1).coerceAtLeast(0)
                 } else {
@@ -616,7 +672,7 @@ class NovelReaderActivity : AppCompatActivity() {
                 }
                 binding.novelScroll.scrollToPosition(pos)
             } else {
-                pageAdapter.submit(loaded, style, textColor)
+                pageAdapter.submit(loaded, style, textColor, bgColor)
                 val page = if (keepPara == Int.MAX_VALUE) {
                     loaded.pages.lastIndex.coerceAtLeast(0)
                 } else if (atLastPage) {
@@ -716,7 +772,10 @@ class NovelReaderActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val map = runCatching { translator().loadTranslations(b, chapterIndex) }
                 .getOrDefault(emptyMap())
-            if (map == translations) {
+            // ⚠️ `content == null` 时必须照样往下走：首次进入本章一句译文都没有时
+            // `map == translations`（都是空表）成立，早退就会让正文永远不加载 ——
+            // 表现是「第一次进阅读器一片空白，切一次章才显示」。踩过。
+            if (map == translations && content != null) {
                 refreshTranslationChrome()
                 return@launch
             }
@@ -740,25 +799,38 @@ class NovelReaderActivity : AppCompatActivity() {
     }
 
     private fun updateChapterTocLabel() {
-        // 顶部胶囊：章名 + 章内页码。章是小说最主要的定位单位，必须常显
-        val pages = content?.pages
+        // 顶部胶囊：章名 + 章内进度。章是小说最主要的定位单位，必须常显
         val label = chapterTitle(chapterIndex)
-        binding.tvPageIndicator.text = if (pages.isNullOrEmpty()) {
-            getString(R.string.novel_page_indicator, label, 0, 0)
+        val text = if (isScrollMode()) {
+            val total = scrollAdapter.itemCount
+            getString(R.string.novel_page_indicator, label, (firstVisibleScrollItem() + 1).coerceAtMost(total), total)
         } else {
-            getString(R.string.novel_page_indicator, label, currentPage() + 1, pages.size)
+            val pages = content?.pages
+            if (pages.isNullOrEmpty()) getString(R.string.novel_page_indicator, label, 0, 0)
+            else getString(R.string.novel_page_indicator, label, currentPage() + 1, pages.size)
         }
+        binding.tvPageIndicator.text = text
     }
 
     private fun refreshOverlay() {
-        val pages = content?.pages ?: return
-        binding.novelProgress.setPage(
-            if (isScrollMode()) 0 else currentPage(),
-            if (isScrollMode()) 0 else pages.size,
-        )
-        binding.novelProgress.setTranslatedPages(translatedPagesOf(pages))
+        if (isScrollMode()) {
+            // 滚动模式的进度按**段**算（那边没有「页」）。不更新的话底部那条永远是死的 ——
+            // 用户反馈「滚动模式下底部进度条不动」。
+            binding.novelProgress.setPage(firstVisibleScrollItem(), scrollAdapter.itemCount)
+            binding.novelProgress.setTranslatedPages(scrollTranslated)
+        } else {
+            val pages = content?.pages ?: return
+            binding.novelProgress.setPage(currentPage(), pages.size)
+            binding.novelProgress.setTranslatedPages(translatedPagesOf(pages))
+        }
         updateChapterTocLabel()
     }
+
+    /** 滚动列表第一个可见 item 的下标（拿不到时给 0）。 */
+    private fun firstVisibleScrollItem(): Int =
+        (binding.novelScroll.layoutManager as? LinearLayoutManager)
+            ?.findFirstVisibleItemPosition()
+            ?.takeIf { it != RecyclerView.NO_POSITION } ?: 0
 
     /**
      * 本章「整页都已翻」的页集合（进度条上的绿色区间）。
@@ -770,6 +842,19 @@ class NovelReaderActivity : AppCompatActivity() {
         return pages.indices.filterTo(mutableSetOf()) { i ->
             pages[i].segments.isNotEmpty() && pages[i].segments.all { translations.containsKey(it.paraIndex) }
         }
+    }
+
+    /**
+     * 滚动模式下的「已翻译段」集合（进度条上的绿色区间），值与 [loadChapter] 同步刷新。
+     *
+     * ⚠️ 不能每次滚动都现算：滚动回调是每帧一次的，几百段遍历会白烧 CPU。
+     */
+    private fun computeScrollTranslated(c: ChapterContent): Set<Int> {
+        if (translations.isEmpty()) return emptySet()
+        val visible = NovelScrollMapping.visibleParagraphs(c)
+        val out = mutableSetOf<Int>()
+        for (i in visible.indices) if (translations.containsKey(visible[i].index)) out += i
+        return out
     }
 
     private fun showStatus(message: String?) {
@@ -965,7 +1050,7 @@ class NovelReaderActivity : AppCompatActivity() {
         if (isFinishing || isDestroyed) return
         val sheet = NovelPanelSheet(
             NovelPanelState(
-                scrollMode = isScrollMode(),
+                readerMode = NovelPanelStyle.readerMode(prefs),
                 animation = animationMode,
                 bg = bgMode,
                 displayMode = NovelPanelStyle.displayMode(prefs),
@@ -987,11 +1072,10 @@ class NovelReaderActivity : AppCompatActivity() {
                 chapterStats = stats,
             ),
             NovelPanelCallbacks(
-                onReaderMode = { scroll ->
-                    NovelPanelStyle.setReaderMode(
-                        prefs,
-                        if (scroll) NovelPanelStyle.READER_SCROLL else NovelPanelStyle.READER_PAGED,
-                    )
+                onReaderMode = { mode ->
+                    NovelPanelStyle.setReaderMode(prefs, mode)
+                    // ⚠️ 上下翻页 ↔ 左右翻页 用的是同一个分页表（尺寸没变），但仍要重走一遍
+                    // loadChapter：滚动模式与翻页模式之间条目结构不同，必须重新提交
                     applyReaderMode()
                     loadChapter(chapterIndex, keepPara = pendingParaIndex)
                     updateAutoTurn()

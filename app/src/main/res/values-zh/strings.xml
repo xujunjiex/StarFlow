@@ -1371,8 +1371,9 @@
     <string name="novel_style_paragraph_spacing">段间距</string>
     <string name="novel_style_padding">左右边距</string>
     <string name="novel_style_reader_mode">阅读模式</string>
-    <string name="novel_reader_mode_paged">翻页</string>
-    <string name="novel_reader_mode_scroll">滚动</string>
+    <string name="novel_reader_mode_paged">左右翻页</string>
+    <string name="novel_reader_mode_vertical">上下翻页</string>
+    <string name="novel_reader_mode_scroll">连续滚动</string>
     <string name="novel_display_translated">译文</string>
     <string name="novel_display_original">原文</string>
     <string name="novel_display_bilingual">双语</string>
@@ -1400,7 +1401,6 @@
     <string name="novel_back">返回</string>
     <string name="novel_prev_chapter">上一章</string>
     <string name="novel_next_chapter">下一章</string>
-    <string name="novel_anim_cover">覆盖</string>
     <string name="novel_translate_batch">每批段数</string>
     <string name="novel_translate_summary">%1$d 章 · %2$d 完成 · %3$d 进行中 · %4$d 失败</string>
     <string name="novel_display_label">显示内容</string>

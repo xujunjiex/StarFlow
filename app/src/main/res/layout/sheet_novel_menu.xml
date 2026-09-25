@@ -103,7 +103,12 @@
                     <FrameLayout android:id="@+id/seg_mode_paged" android:layout_width="0dp" android:layout_height="48dp" android:layout_weight="1"
                         android:gravity="center" android:clickable="true">
                         <ImageView android:id="@+id/sel_seg_mode_paged" android:layout_width="40dp" android:layout_height="40dp" android:layout_gravity="center" android:src="@drawable/ic_sel_circle" android:visibility="gone"/>
-                        <ImageView android:layout_width="24dp" android:layout_height="24dp" android:layout_gravity="center" android:src="@drawable/ic_reader_paging" android:contentDescription="@string/novel_reader_mode_paged"/>
+                        <ImageView android:layout_width="24dp" android:layout_height="24dp" android:layout_gravity="center" android:src="@drawable/ic_reader_ltr" android:contentDescription="@string/novel_reader_mode_paged"/>
+                    </FrameLayout>
+                    <FrameLayout android:id="@+id/seg_mode_vertical" android:layout_width="0dp" android:layout_height="48dp" android:layout_weight="1"
+                        android:gravity="center" android:clickable="true">
+                        <ImageView android:id="@+id/sel_seg_mode_vertical" android:layout_width="40dp" android:layout_height="40dp" android:layout_gravity="center" android:src="@drawable/ic_sel_circle" android:visibility="gone"/>
+                        <ImageView android:layout_width="24dp" android:layout_height="24dp" android:layout_gravity="center" android:src="@drawable/ic_reader_vertical" android:contentDescription="@string/novel_reader_mode_vertical"/>
                     </FrameLayout>
                     <FrameLayout android:id="@+id/seg_mode_scroll" android:layout_width="0dp" android:layout_height="48dp" android:layout_weight="1"
                         android:gravity="center" android:clickable="true">
@@ -131,7 +136,12 @@
                     <FrameLayout android:id="@+id/seg_anim_advanced" android:layout_width="0dp" android:layout_height="48dp" android:layout_weight="1"
                         android:gravity="center" android:clickable="true">
                         <ImageView android:id="@+id/sel_seg_anim_advanced" android:layout_width="40dp" android:layout_height="40dp" android:layout_gravity="center" android:src="@drawable/ic_sel_circle" android:visibility="gone"/>
-                        <ImageView android:layout_width="24dp" android:layout_height="24dp" android:layout_gravity="center" android:src="@drawable/ic_anim_advanced" android:contentDescription="@string/novel_anim_cover"/>
+                        <ImageView android:layout_width="24dp" android:layout_height="24dp" android:layout_gravity="center" android:src="@drawable/ic_anim_advanced" android:contentDescription="@string/reader_anim_advanced"/>
+                    </FrameLayout>
+                    <FrameLayout android:id="@+id/seg_anim_simulation" android:layout_width="0dp" android:layout_height="48dp" android:layout_weight="1"
+                        android:gravity="center" android:clickable="true">
+                        <ImageView android:id="@+id/sel_seg_anim_simulation" android:layout_width="40dp" android:layout_height="40dp" android:layout_gravity="center" android:src="@drawable/ic_sel_circle" android:visibility="gone"/>
+                        <ImageView android:layout_width="24dp" android:layout_height="24dp" android:layout_gravity="center" android:src="@drawable/ic_anim_simulation" android:contentDescription="@string/reader_anim_simulation"/>
                     </FrameLayout>
                 </LinearLayout>
 

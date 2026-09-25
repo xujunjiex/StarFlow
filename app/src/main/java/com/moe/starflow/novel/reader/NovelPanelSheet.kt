@@ -38,7 +38,8 @@ import translationapi.hymt2translation.HyMt2Languages
  * 把「颜色矫正」换成「排版」。
  */
 class NovelPanelState(
-    val scrollMode: Boolean = false,
+    /** 阅读模式：0 左右翻页 / 1 上下翻页 / 2 连续滚动。 */
+    val readerMode: Int = NovelPanelStyle.READER_PAGED,
     val animation: Int = NovelPanelStyle.ANIM_SLIDE,
     val bg: Int = 0,
     val displayMode: NovelDisplayMode = NovelDisplayMode.TRANSLATED,
@@ -62,7 +63,7 @@ class NovelPanelState(
 
 /** 小说阅读器底部工具栏回调。 */
 class NovelPanelCallbacks(
-    val onReaderMode: (Boolean) -> Unit,
+    val onReaderMode: (Int) -> Unit,
     val onAnimation: (Int) -> Unit,
     val onBackground: (Int) -> Unit,
     val onDisplayMode: (NovelDisplayMode) -> Unit,
@@ -194,19 +195,30 @@ class NovelPanelSheet(
 
         // ---- 翻页：阅读模式 / 翻页动画 / 背景 ----
         setupSeg(view, R.id.seg_mode, listOf(
-            R.id.seg_mode_paged to !state.scrollMode,
-            R.id.seg_mode_scroll to state.scrollMode,
-        )) { id -> cb.onReaderMode(id == R.id.seg_mode_scroll) }
+            R.id.seg_mode_paged to (state.readerMode == NovelPanelStyle.READER_PAGED),
+            R.id.seg_mode_vertical to (state.readerMode == NovelPanelStyle.READER_VERTICAL),
+            R.id.seg_mode_scroll to (state.readerMode == NovelPanelStyle.READER_SCROLL),
+        )) { id ->
+            cb.onReaderMode(
+                when (id) {
+                    R.id.seg_mode_vertical -> NovelPanelStyle.READER_VERTICAL
+                    R.id.seg_mode_scroll -> NovelPanelStyle.READER_SCROLL
+                    else -> NovelPanelStyle.READER_PAGED
+                }
+            )
+        }
 
         setupSeg(view, R.id.seg_animation, listOf(
             R.id.seg_anim_none to (state.animation == NovelPanelStyle.ANIM_NONE),
             R.id.seg_anim_default to (state.animation == NovelPanelStyle.ANIM_SLIDE),
             R.id.seg_anim_advanced to (state.animation == NovelPanelStyle.ANIM_COVER),
+            R.id.seg_anim_simulation to (state.animation == NovelPanelStyle.ANIM_SIMULATION),
         )) { id ->
             cb.onAnimation(
                 when (id) {
                     R.id.seg_anim_none -> NovelPanelStyle.ANIM_NONE
                     R.id.seg_anim_advanced -> NovelPanelStyle.ANIM_COVER
+                    R.id.seg_anim_simulation -> NovelPanelStyle.ANIM_SIMULATION
                     else -> NovelPanelStyle.ANIM_SLIDE
                 }
             )
@@ -275,8 +287,7 @@ class NovelPanelSheet(
         val rbAuto = view.findViewById<RadioButton>(R.id.translate_mode_auto)
         val rbAhead = view.findViewById<RadioButton>(R.id.translate_mode_incremental)
         translateMode = state.translateMode
-        when (translateMode) {
-            NovelPanelStyle.MODE_AUTO_CHAPTER -> rbAuto.isChecked = true
+        when (translateMode) {            NovelPanelStyle.MODE_AUTO_CHAPTER -> rbAuto.isChecked = true
             NovelPanelStyle.MODE_AUTO_AHEAD -> rbAhead.isChecked = true
             else -> rbManual.isChecked = true
         }
@@ -381,8 +392,8 @@ class NovelPanelSheet(
         view.findViewById<View>(R.id.btn_toc).setOnClickListener { dismiss(); cb.onOpenToc() }
         view.findViewById<View>(R.id.btn_settings).setOnClickListener { dismiss(); cb.onSettings() }
 
-        // 滚动模式下没有「翻页动画」这个概念（滚动即翻页）：置灰
-        applyModeDependence(view, state.scrollMode)
+        // 连续滚动下没有「翻页动画」这个概念（滚动即翻页）：置灰
+        applyModeDependence(view, state.readerMode)
 
         return view
     }
@@ -394,9 +405,9 @@ class NovelPanelSheet(
         else -> NovelDisplayMode.TRANSLATED
     }
 
-    /** 滚动(连续滑动)下翻页动画不生效：即时置灰。 */
-    private fun applyModeDependence(view: View, scrollMode: Boolean) {
-        setSegEnabled(view.findViewById<ViewGroup>(R.id.seg_animation), !scrollMode)
+    /** 连续滚动下翻页动画不生效：即时置灰。 */
+    private fun applyModeDependence(view: View, readerMode: Int) {
+        setSegEnabled(view.findViewById<ViewGroup>(R.id.seg_animation), readerMode != NovelPanelStyle.READER_SCROLL)
     }
 
     /** 向后翻译章数滑块只在「增量」模式显示（与漫画面板的 row_ahead_pages 同义）。 */

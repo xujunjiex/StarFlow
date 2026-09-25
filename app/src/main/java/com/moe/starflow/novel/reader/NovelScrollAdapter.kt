@@ -24,13 +24,15 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
     private var content: ChapterContent? = null
     private var style: NovelTextStyle = NovelPageView.DEFAULT_STYLE
     private var textColor: Int = NovelPageAdapter.DEFAULT_TEXT_COLOR
+    private var backgroundColor: Int = android.graphics.Color.WHITE
 
     class VH(val view: ParagraphView) : RecyclerView.ViewHolder(view)
 
-    fun submit(content: ChapterContent, style: NovelTextStyle, textColor: Int) {
+    fun submit(content: ChapterContent, style: NovelTextStyle, textColor: Int, backgroundColor: Int) {
         this.content = content
         this.style = style
         this.textColor = textColor
+        this.backgroundColor = backgroundColor
         notifyDataSetChanged()
     }
 
@@ -40,9 +42,10 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
     }
 
     /** 只换配色（切阅读背景）时的轻量刷新。 */
-    fun setTextColor(color: Int) {
-        if (textColor == color) return
-        textColor = color
+    fun setColors(textColor: Int, backgroundColor: Int) {
+        if (this.textColor == textColor && this.backgroundColor == backgroundColor) return
+        this.textColor = textColor
+        this.backgroundColor = backgroundColor
         notifyItemRangeChanged(0, itemCount)
     }
 
@@ -59,7 +62,7 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
     override fun onBindViewHolder(holder: VH, position: Int) {
         val c = content ?: return
         val para = NovelScrollMapping.visibleParagraphs(c).getOrNull(position) ?: return
-        holder.view.bind(c.displayOf(para.index), style, textColor)
+        holder.view.bind(c.displayOf(para.index), style, textColor, backgroundColor)
     }
 
     /** 一段的自绘 View。 */
@@ -68,12 +71,19 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
         private var text: String = ""
         private var style: NovelTextStyle = NovelPageView.DEFAULT_STYLE
         private var textColor: Int = NovelPageAdapter.DEFAULT_TEXT_COLOR
+        private var backgroundColor: Int = android.graphics.Color.WHITE
 
-        fun bind(text: String, style: NovelTextStyle, textColor: Int) {
-            if (this.text == text && this.style == style && this.textColor == textColor) return
+        fun bind(text: String, style: NovelTextStyle, textColor: Int, backgroundColor: Int) {
+            if (this.text == text && this.style == style &&
+                this.textColor == textColor && this.backgroundColor == backgroundColor
+            ) {
+                return
+            }
             this.text = text
             this.style = style
             this.textColor = textColor
+            // 底色画在每段自己身上：滚动/回弹时不会露出容器底色（与分页模式同一约定）
+            setBackgroundColor(backgroundColor)
             requestLayout()
             invalidate()
         }

@@ -25,15 +25,16 @@ object NovelPanelStyle {
     private const val KEY_BG = "reader_background"
     private const val KEY_ANIM = "reader_animation"
 
-    /** 翻页动画：0 无 / 1 滑动 / 2 覆盖。 */
+    /** 翻页动画：0 无 / 1 滑动 / 2 覆盖 / 3 仿真（折页）。**四项与漫画一一对应**。 */
     const val ANIM_NONE = 0
     const val ANIM_SLIDE = 1
     const val ANIM_COVER = 2
+    const val ANIM_SIMULATION = 3
 
-    fun animation(prefs: SharedPreferences): Int = prefs.getInt(KEY_ANIM, ANIM_SLIDE).coerceIn(0, 2)
+    fun animation(prefs: SharedPreferences): Int = prefs.getInt(KEY_ANIM, ANIM_SLIDE).coerceIn(0, 3)
 
     fun setAnimation(prefs: SharedPreferences, v: Int) =
-        prefs.edit().putInt(KEY_ANIM, v.coerceIn(0, 2)).apply()
+        prefs.edit().putInt(KEY_ANIM, v.coerceIn(0, 3)).apply()
 
     /**
      * 阅读背景：0 默认 / 1 浅 / 2 深 / 3 白 / 4 黑 / 5 自动。
@@ -85,8 +86,10 @@ object NovelPanelStyle {
     private const val KEY_READER_MODE = "novel_reader_mode"
     private const val KEY_DISPLAY_MODE = "novel_display_mode"
 
+    /** 阅读模式：0 左右翻页 / 1 上下翻页 / 2 连续滚动。 */
     const val READER_PAGED = 0
-    const val READER_SCROLL = 1
+    const val READER_VERTICAL = 1
+    const val READER_SCROLL = 2
 
     fun lineSpacingStep(prefs: SharedPreferences): Int =
         prefs.getInt(KEY_LINE_SPACING, 15).coerceIn(LINE_SPACING_MIN, LINE_SPACING_MAX)
@@ -109,10 +112,10 @@ object NovelPanelStyle {
         prefs.edit().putInt(KEY_PADDING, v.coerceIn(PADDING_MIN, PADDING_MAX)).apply()
 
     fun readerMode(prefs: SharedPreferences): Int =
-        prefs.getInt(KEY_READER_MODE, READER_PAGED).coerceIn(0, 1)
+        prefs.getInt(KEY_READER_MODE, READER_PAGED).coerceIn(0, 2)
 
     fun setReaderMode(prefs: SharedPreferences, v: Int) =
-        prefs.edit().putInt(KEY_READER_MODE, v.coerceIn(0, 1)).apply()
+        prefs.edit().putInt(KEY_READER_MODE, v.coerceIn(0, 2)).apply()
 
     fun displayMode(prefs: SharedPreferences): NovelDisplayMode =
         NovelDisplayModeCodec.fromPref(prefs.getString(KEY_DISPLAY_MODE, null))

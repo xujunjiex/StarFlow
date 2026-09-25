@@ -2,17 +2,14 @@ package com.moe.starflow.novel.reader
 
 import android.app.AlertDialog
 import android.content.Context
-import android.graphics.Color
-import android.graphics.drawable.ColorDrawable
-import android.view.Gravity
-import android.view.View
+import android.view.LayoutInflater
 import android.view.ViewGroup
-import android.widget.BaseAdapter
-import android.widget.LinearLayout
-import android.widget.ListView
-import android.widget.TextView
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.moe.starflow.R
 import com.moe.starflow.data.NovelChapterStat
+import com.moe.starflow.databinding.DialogNovelTocBinding
+import com.moe.starflow.databinding.ItemNovelTocRowBinding
 import com.moe.starflow.novel.model.NovelChapterMeta
 
 /**
@@ -21,10 +18,25 @@ import com.moe.starflow.novel.model.NovelChapterMeta
  * 全书进度由这个面板承载 —— 底部进度条只表示**章内**位置。全书几千页时一像素代表好几页，
  * 拖动毫无精度，那个信息在这里用「哪些章已翻」表达更准。
  *
- * ⚠️ 配色**跟随阅读背景深浅**而不是全局主题（与阅读器面板同一约定）：深色背景读小说时
- * 弹出一个白底目录会刺眼。`dark` 由宿主按 `reader_background` 算好传进来。
+ * ### 尺寸
+ * 高度按「行高 × `min(章数, MAX_ROWS)`」算出来钉到列表上：
+ * - `wrap_content` 会让上千章的书把面板撑满整屏
+ * - 固定百分比又会让 6 章的小书留一大片空白（用户反馈「初始大小太大」就是这个）
+ *
+ * 列表撑满剩余空间 → 底部「取消」**永远贴在右下角**。
+ *
+ * ### 配色
+ * **跟随阅读背景深浅**，不随全局主题：深色背景读小说时弹出一个白底目录很刺眼。
  */
 object NovelTocDialog {
+
+    /** 列表最多显示多少行（再多就滚动）。 */
+    private const val MAX_ROWS = 6
+
+    /** 与 `item_novel_toc_row.xml` 的上下 padding + 14sp 文字算出的行高（dp）。 */
+    private const val ROW_HEIGHT_DP = 44
+
+    private const val ACCENT = 0xFF55AEEA.toInt()
 
     fun show(
         context: Context,
@@ -34,94 +46,105 @@ object NovelTocDialog {
         dark: Boolean = false,
         onPick: (Int) -> Unit,
     ) {
+        val binding = DialogNovelTocBinding.inflate(LayoutInflater.from(context))
         val density = context.resources.displayMetrics.density
         val labelColor = if (dark) 0xFFE2E2E4.toInt() else 0xFF333333.toInt()
+        val subColor = if (dark) 0xFF9A9A9F.toInt() else 0xFF888888.toInt()
+        val divider = if (dark) 0x1AFFFFFF else 0x11000000
 
-        val list = ListView(context)
-        list.divider = ColorDrawable(if (dark) 0x1AFFFFFF else 0x11000000)
-        list.dividerHeight = (1 * density).toInt().coerceAtLeast(1)
-        list.adapter = object : BaseAdapter() {
-            override fun getCount() = chapters.size
-            override fun getItem(position: Int) = chapters[position]
-            override fun getItemId(position: Int) = position.toLong()
+        binding.tvTocTitle.setTextColor(labelColor)
+        binding.tvTocCount.setTextColor(subColor)
+        binding.tvTocCount.text = context.getString(R.string.novel_chapter_count, chapters.size)
+        binding.btnTocCancel.setTextColor(ACCENT)
+        binding.tocDividerTop.setBackgroundColor(divider)
+        binding.tocDividerBottom.setBackgroundColor(divider)
 
-            override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-                val row = (convertView as? LinearLayout) ?: LinearLayout(context).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    val pad = (12 * density).toInt()
-                    setPadding(pad, pad, pad, pad)
+        // 高度 = 行高 × min(章数, 上限)：小书贴内容、大书封顶滚动
+        binding.rvToc.layoutParams = binding.rvToc.layoutParams.apply {
+            height = ((ROW_HEIGHT_DP * density).toInt() * chapters.size.coerceAtMost(MAX_ROWS))
+                .coerceAtLeast((ROW_HEIGHT_DP * density).toInt())
+        }
+        val adapter = RowAdapter(chapters, stats, currentChapter, dark) { position ->
+            onPick(position)
+        }
+        binding.rvToc.layoutManager = LinearLayoutManager(context)
+        binding.rvToc.adapter = adapter
+        // 打开就定位到当前章（几百章时否则要自己滚很久）
+        binding.rvToc.scrollToPosition(currentChapter.coerceIn(0, (chapters.size - 1).coerceAtLeast(0)))
+        // 行高先按常量估（避免首帧闪一下整屏高），首帧布局完再用**真实行高**校正一次 ——
+        // 系统字号放大时行会变高，照常量算会在面板底部留一条空白
+        binding.rvToc.post {
+            val real = binding.rvToc.getChildAt(0)?.height ?: 0
+            if (real > 0) {
+                binding.rvToc.layoutParams = binding.rvToc.layoutParams.apply {
+                    height = real * chapters.size.coerceAtMost(MAX_ROWS)
                 }
-                row.removeAllViews()
-                row.setBackgroundColor(
-                    if (position == currentChapter) {
-                        if (dark) 0x3355AEEA else 0x22007AFF
-                    } else {
-                        Color.TRANSPARENT
-                    }
-                )
-
-                val meta = chapters[position]
-                val title = TextView(context).apply {
-                    text = context.getString(R.string.novel_chapter_label, position + 1) +
-                        if (meta.title.isNotBlank()) "　${meta.title}" else ""
-                    textSize = 14f
-                    setTextColor(if (position == currentChapter) 0xFF55AEEA.toInt() else labelColor)
-                    maxLines = 1
-                    ellipsize = android.text.TextUtils.TruncateAt.END
-                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-                }
-
-                val st = stats[position]
-                val badgeText = when {
-                    st == null || st.total == 0 || st.success == 0 -> context.getString(R.string.novel_chapter_unread)
-                    st.success >= st.total -> context.getString(R.string.novel_chapter_done)
-                    else -> context.getString(R.string.novel_chapter_partial, st.success, st.total)
-                }
-                val badge = TextView(context).apply {
-                    text = badgeText
-                    textSize = 12f
-                    setPadding((6 * density).toInt(), 0, 0, 0)
-                    setTextColor(
-                        when {
-                            st == null || st.total == 0 || st.success == 0 -> Color.GRAY
-                            st.success >= st.total -> 0xFF34C759.toInt()
-                            else -> 0xFFFF9F0A.toInt()
-                        }
-                    )
-                }
-
-                row.addView(title)
-                row.addView(badge)
-                return row
             }
         }
 
         val dialog = AlertDialog.Builder(context)
-            .setTitle(R.string.novel_toc)
-            .setView(list)
-            .setNegativeButton(R.string.cancel, null)
+            .setView(binding.root)
             .create()
-        list.setOnItemClickListener { _, _, position, _ ->
-            onPick(position)
-            dialog.dismiss()
-        }
+        binding.btnTocCancel.setOnClickListener { dialog.dismiss() }
+
         dialog.show()
         dialog.window?.setBackgroundDrawableResource(if (dark) R.drawable.bg_dialog_dark else R.drawable.bg_dialog_white)
-        if (dark) {
-            // 标题栏（系统 TextView）在深色底上是深字，这里统一重着色
-            recolor(dialog.window?.decorView, labelColor, list)
-        }
-        // ⚠️ ListView 在 AlertDialog 里会撑满窗口，必须显式限高。
-        // 不能用 android:maxHeight（那不是 View 的属性，写在 XML 上静默失效）
+        // ⚠️ 宽度也要显式限：AlertDialog 的自定义 View 默认按内容撑，宽屏上会贴满整屏
         val dm = context.resources.displayMetrics
-        dialog.window?.setLayout((dm.widthPixels * 0.88).toInt(), (dm.heightPixels * 0.7).toInt())
+        dialog.window?.setLayout((dm.widthPixels * 0.88).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT)
     }
 
-    /** 深色底下的重着色；跳过 [skip] 子树（列表行自己按深浅上过色了）。 */
-    private fun recolor(v: View?, color: Int, skip: View?) {
-        if (v == null || v === skip) return
-        if (v is TextView) v.setTextColor(color)
-        if (v is ViewGroup) for (i in 0 until v.childCount) recolor(v.getChildAt(i), color, skip)
+    /** 一章一行：标题 + 状态徽章；当前章高亮。 */
+    private class RowAdapter(
+        private val chapters: List<NovelChapterMeta>,
+        private val stats: Map<Int, NovelChapterStat>,
+        private val currentChapter: Int,
+        private val dark: Boolean,
+        private val onPick: (Int) -> Unit,
+    ) : RecyclerView.Adapter<RowAdapter.VH>() {
+
+        private val labelColor = if (dark) 0xFFE2E2E4.toInt() else 0xFF333333.toInt()
+
+        class VH(val binding: ItemNovelTocRowBinding) : RecyclerView.ViewHolder(binding.root)
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH =
+            VH(ItemNovelTocRowBinding.inflate(LayoutInflater.from(parent.context), parent, false))
+
+        override fun getItemCount(): Int = chapters.size
+
+        override fun onBindViewHolder(holder: VH, position: Int) {
+            val ctx = holder.itemView.context
+            val meta = chapters[position]
+            val isCurrent = position == currentChapter
+
+            holder.itemView.setBackgroundColor(
+                when {
+                    isCurrent && dark -> 0x3355AEEA
+                    isCurrent -> 0x22007AFF
+                    else -> android.graphics.Color.TRANSPARENT
+                }
+            )
+            holder.binding.tvChapterTitle.text =
+                ctx.getString(R.string.novel_chapter_label, position + 1) +
+                    if (meta.title.isNotBlank()) "　${meta.title}" else ""
+            holder.binding.tvChapterTitle.setTextColor(if (isCurrent) ACCENT else labelColor)
+
+            val st = stats[position]
+            val done = st != null && st.total > 0 && st.success >= st.total
+            val started = st != null && st.success > 0
+            holder.binding.tvChapterBadge.text = when {
+                done -> ctx.getString(R.string.novel_chapter_done)
+                started -> ctx.getString(R.string.novel_chapter_partial, st!!.success, st.total)
+                else -> ctx.getString(R.string.novel_chapter_unread)
+            }
+            holder.binding.tvChapterBadge.setTextColor(
+                when {
+                    done -> 0xFF34C759.toInt()
+                    started -> 0xFFFF9F0A.toInt()
+                    else -> if (dark) 0xFF6E6E73.toInt() else android.graphics.Color.GRAY
+                }
+            )
+            holder.itemView.setOnClickListener { onPick(position) }
+        }
     }
 }
