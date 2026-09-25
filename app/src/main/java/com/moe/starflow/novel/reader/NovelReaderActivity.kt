@@ -137,6 +137,9 @@ class NovelReaderActivity : AppCompatActivity() {
     /** 仿真/覆盖动画共享状态（与漫画同一份实现）。 */
     private val animState = ReaderAnimationState()
 
+    /** pager 最近一次的滚动状态。跳页（无滚动）与落定要区分开，见 [normalizePageTransforms]。 */
+    private var pagerScrollState = ViewPager2.SCROLL_STATE_IDLE
+
     private val tapDetector by lazy {
         GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
@@ -372,8 +375,20 @@ class NovelReaderActivity : AppCompatActivity() {
 
         override fun onPageSelected(position: Int) {
             if (animationMode == NovelPanelStyle.ANIM_NONE) animState.anchorPage = position
+            // 跳页（setCurrentItem(_, false)，无动画模式与点击翻页都走它）不会产生滚动，
+            // 于是**不会有任何一次 transformPage 去把新页从"动画中途态"复位**。
+            // 必须在落定时自己归一化，否则页面停在 alpha=0/错位：进度条在走、画面不变。
+            if (pagerScrollState == ViewPager2.SCROLL_STATE_IDLE) normalizePageTransforms()
             onPaged(position)
             persistProgress()
+        }
+
+        override fun onPageScrollStateChanged(state: Int) {
+            pagerScrollState = state
+            // 滚动/吸附结束：把三个 transformer 留在页面上的 alpha/位移/折叠全部复位。
+            // 漫画是靠 onPageSelected → notifyItemChanged → onBindViewHolder 里的
+            // resetItemTransform 达到同样效果的；这里直接复位，省一次重绑。
+            if (state == ViewPager2.SCROLL_STATE_IDLE) normalizePageTransforms()
         }
     }
 
@@ -618,6 +633,22 @@ class NovelReaderActivity : AppCompatActivity() {
             page.translationZ = 0f
             (page as? CurlPageView)?.clearFold()
         }
+    }
+
+    /**
+     * 把当前挂在 pager 上的所有页归一化到「落定态」。
+     *
+     * ⚠️ 三个 transformer（无/覆盖/仿真）都会在**转场中途**给页面写 alpha/位移/折叠，
+     * 而 ViewPager2 **不保证**转场结束时再调一次 `transformPage` 把它们复位：
+     * - 无动画：非锚点页被写成 `alpha = 0`，且锚点页被 `pinToViewCenter` 加了位移
+     * - 跳页（`setCurrentItem(_, false)`）：压根不产生滚动，一次 `transformPage` 都没有
+     *
+     * 不复位的后果就是「**进度条在走 / 页码在变，画面却停在上一页**」——
+     * 因为被翻译回屏幕中央的旧页 alpha 还是 1，而新页 alpha 还是 0。
+     */
+    private fun normalizePageTransforms() {
+        if (isScrollMode()) return
+        resetPageTransforms()
     }
 
     private fun applyBackground() {

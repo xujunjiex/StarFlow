@@ -82,8 +82,12 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
             this.text = text
             this.style = style
             this.textColor = textColor
-            // 底色画在每段自己身上：滚动/回弹时不会露出容器底色（与分页模式同一约定）
-            setBackgroundColor(backgroundColor)
+            // ⚠️ 底色变了才调 setBackgroundColor：它内部会 requestLayout，
+            // 而 bind 是在布局过程中被调的 —— 每次都调会触发"布局中再次请求布局"的第二遍布局
+            if (this.backgroundColor != backgroundColor) {
+                this.backgroundColor = backgroundColor
+                setBackgroundColor(backgroundColor)
+            }
             requestLayout()
             invalidate()
         }

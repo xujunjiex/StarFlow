@@ -194,6 +194,28 @@ class CurlPageView @JvmOverloads constructor(
 
     fun clearFold() = setFold(0f, 0.85f, isVertical, isReversed)
 
+    /**
+     * 把这一页的动画残留全部复位（alpha / 位移 / 缩放 / 旋转 / 层级 / 折叠）。
+     *
+     * ⚠️ **重绑时必须调**：VH 会被复用，上一个位置的页面可能正带着 `alpha = 0` 或偏移
+     * （无动画与覆盖动画在转场中途都会写这两个），不复位就会「新绑出来的页是隐形的」。
+     * 与 `MangaReaderActivity` 的 `resetItemTransform` 是同一件事，只是落在 View 自己身上。
+     */
+    fun resetTransform() {
+        alpha = 1f
+        translationX = 0f
+        translationY = 0f
+        scaleX = 1f
+        scaleY = 1f
+        rotationX = 0f
+        rotationY = 0f
+        rotation = 0f
+        pivotX = width / 2f
+        pivotY = height / 2f
+        translationZ = 0f
+        clearFold()
+    }
+
     override fun dispatchDraw(canvas: Canvas) {
         if (foldProgress <= 0f) {
             super.dispatchDraw(canvas)

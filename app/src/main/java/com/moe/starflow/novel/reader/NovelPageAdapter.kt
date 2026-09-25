@@ -81,12 +81,12 @@ class NovelPageAdapter : RecyclerView.Adapter<NovelPageAdapter.VH>() {
     override fun getItemCount(): Int = content?.pages?.size ?: 0
 
     override fun onBindViewHolder(holder: VH, position: Int) {
-        // ⚠️ `tag` 是翻页动画的页号来源：`NoneTransformer` / `CoverTransformer` / `SimulationTransformer`
-        // （与漫画共用同一份实现）靠 `page.tag as? Int` 认出「哪一页是锚点」。不打这个 tag，
-        // 动画模式下所有页都会被判成"非锚点页"而隐藏 → 画面全空。
+        // ⚠️ 先复位动画残留（与漫画 `resetItemTransform` 同一用意）：VH 会被复用，
+        // 上一个位置的页面可能正带着 alpha=0 / 位移（无动画与覆盖动画都会写这两个），
+        // 不复位就会「重绑出来的新页是隐形的」。
+        holder.curl.resetTransform()
         holder.itemView.tag = position
         holder.curl.setBackgroundColor(backgroundColor)
-        holder.curl.clearFold()
         val c = content ?: return
         val page = c.pages.getOrNull(position) ?: return
         holder.page.bind(c, page, style, textColor)

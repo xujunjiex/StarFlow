@@ -84,6 +84,10 @@ object NovelPanelStyle {
     private const val KEY_PARA_SPACING = "novel_paragraph_spacing"
     private const val KEY_PADDING = "novel_reader_padding"
     private const val KEY_READER_MODE = "novel_reader_mode"
+
+    /** 阅读模式取值版本的标记键。见 [migrateReaderMode]。 */
+    private const val KEY_READER_MODE_VERSION = "novel_reader_mode_version"
+    private const val READER_MODE_VERSION = 1
     private const val KEY_DISPLAY_MODE = "novel_display_mode"
 
     /** 阅读模式：0 左右翻页 / 1 上下翻页 / 2 连续滚动。 */
@@ -111,11 +115,38 @@ object NovelPanelStyle {
     fun setPaddingDp(prefs: SharedPreferences, v: Int) =
         prefs.edit().putInt(KEY_PADDING, v.coerceIn(PADDING_MIN, PADDING_MAX)).apply()
 
-    fun readerMode(prefs: SharedPreferences): Int =
-        prefs.getInt(KEY_READER_MODE, READER_PAGED).coerceIn(0, 2)
+    fun readerMode(prefs: SharedPreferences): Int {
+        migrateReaderMode(prefs)
+        return prefs.getInt(KEY_READER_MODE, READER_PAGED).coerceIn(0, 2)
+    }
 
-    fun setReaderMode(prefs: SharedPreferences, v: Int) =
-        prefs.edit().putInt(KEY_READER_MODE, v.coerceIn(0, 2)).apply()
+    fun setReaderMode(prefs: SharedPreferences, v: Int) {
+        prefs.edit()
+            .putInt(KEY_READER_MODE, v.coerceIn(0, 2))
+            .putInt(KEY_READER_MODE_VERSION, READER_MODE_VERSION)
+            .apply()
+    }
+
+    /**
+     * 阅读模式取值的一次性迁移。
+     *
+     * 引入「上下翻页」之前只有 `0 分页 / 1 滚动`；现在 1 变成了「上下翻页」、滚动挪到 2。
+     * 不迁移的话，用户原来选的「滚动」会**静默变成「上下翻页」**（而且是在他完全不知情的
+     * 情况下换了模式，只会觉得"滚动模式坏了"）。
+     */
+    private fun migrateReaderMode(prefs: SharedPreferences) {
+        if (prefs.getInt(KEY_READER_MODE_VERSION, 0) >= READER_MODE_VERSION) return
+        val old = prefs.getInt(KEY_READER_MODE, READER_PAGED)
+        val migrated = when (old) {
+            1 -> READER_SCROLL   // 旧值 1 = 滚动
+            2 -> READER_VERTICAL // 理论上取不到，防御性保留
+            else -> READER_PAGED
+        }
+        prefs.edit()
+            .putInt(KEY_READER_MODE, migrated)
+            .putInt(KEY_READER_MODE_VERSION, READER_MODE_VERSION)
+            .apply()
+    }
 
     fun displayMode(prefs: SharedPreferences): NovelDisplayMode =
         NovelDisplayModeCodec.fromPref(prefs.getString(KEY_DISPLAY_MODE, null))
