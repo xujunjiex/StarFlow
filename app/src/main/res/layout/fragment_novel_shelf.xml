@@ -47,39 +47,53 @@
                 android:textStyle="bold"
                 android:visibility="gone"/>
 
-            <ImageView
+            <!-- 全选 / 退出多选：与漫画同规格（40dp 可点区 + 22dp 图标 + 同色 tint） -->
+            <FrameLayout
                 android:id="@+id/novel_iv_select_all"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:padding="8dp"
-                android:src="@drawable/ic_select_all"
-                android:contentDescription="@string/select_all"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:gravity="center"
                 android:clickable="true"
-                android:visibility="gone"/>
+                android:contentDescription="@string/select_all"
+                android:visibility="gone">
+
+                <ImageView
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_select_all"
+                    android:tint="@color/text_primary"
+                    android:contentDescription="@string/select_all"/>
+            </FrameLayout>
 
             <TextView
                 android:id="@+id/novel_tv_settings"
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:padding="8dp"
+                android:layout_height="40dp"
+                android:gravity="center"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
                 android:textSize="14sp"
                 android:clickable="true"
                 android:text="@string/display_options"/>
 
-            <TextView
+            <FrameLayout
                 android:id="@+id/novel_tv_close_selection"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingStart="12dp"
-                android:paddingTop="4dp"
-                android:paddingEnd="8dp"
-                android:paddingBottom="4dp"
-                android:textSize="14sp"
-                android:textColor="@color/text_secondary"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:gravity="center"
                 android:clickable="true"
-                android:text="×"
                 android:contentDescription="@string/import_close_selection"
-                android:visibility="gone"/>
+                android:visibility="gone">
+
+                <ImageView
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_close"
+                    android:tint="@color/text_primary"
+                    android:contentDescription="@string/import_close_selection"/>
+            </FrameLayout>
 
         </LinearLayout>
 
@@ -164,13 +178,45 @@
                 android:background="@color/divider"
                 android:visibility="gone"/>
 
-            <!-- 第二行：重命名（仅单选显示） -->
+            <!-- 第二行：换封面 / 写简介 / 重命名（仅单选显示，与漫画逐项一致） -->
             <LinearLayout
                 android:id="@+id/novel_selection_actions_single"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
                 android:visibility="gone">
+
+                <LinearLayout
+                    android:id="@+id/novel_action_cover"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:orientation="vertical"
+                    android:padding="4dp"
+                    android:clickable="true">
+                    <ImageView android:layout_width="20dp" android:layout_height="20dp" android:src="@drawable/ic_action_cover"/>
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp" android:text="@string/import_change_cover"
+                        android:textSize="11sp" android:textColor="@color/text_primary"
+                        android:maxLines="1" android:singleLine="true"/>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/novel_action_desc"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:orientation="vertical"
+                    android:padding="4dp"
+                    android:clickable="true">
+                    <ImageView android:layout_width="20dp" android:layout_height="20dp" android:src="@drawable/ic_action_desc"/>
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp" android:text="@string/import_edit_desc"
+                        android:textSize="11sp" android:textColor="@color/text_primary"
+                        android:maxLines="1" android:singleLine="true"/>
+                </LinearLayout>
 
                 <LinearLayout
                     android:id="@+id/novel_action_rename"

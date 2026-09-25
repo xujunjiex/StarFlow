@@ -9,6 +9,7 @@ import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
@@ -81,6 +82,12 @@ class NovelShelfFragment : Fragment() {
         if (uri != null) context?.let { NovelImportManager.importDirectory(it, uri) }
     }
 
+    // 换封面（单选时）：photo picker 选图 → 复制进 covers/ 并替换 coverPath
+    private val pickCoverLauncher =
+        registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+            if (uri != null) changeCover(uri)
+        }
+
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
         _binding = FragmentNovelShelfBinding.inflate(inflater, container, false)
         return binding.root
@@ -120,6 +127,10 @@ class NovelShelfFragment : Fragment() {
         binding.novelActionUnread.setOnClickListener { markSelected(read = false) }
         binding.novelActionDelete.setOnClickListener { deleteSelected() }
         binding.novelActionRename.setOnClickListener { renameSelected() }
+        binding.novelActionCover.setOnClickListener {
+            pickCoverLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+        }
+        binding.novelActionDesc.setOnClickListener { editDesc() }
         showSelectionUi(false, 0)
 
         observeImportTasks()
@@ -308,6 +319,8 @@ class NovelShelfFragment : Fragment() {
         val single = mode && count == 1
         binding.novelSelectionActionsSingle.visibility = if (single) View.VISIBLE else View.GONE
         binding.novelActionDivider.visibility = if (single) View.VISIBLE else View.GONE
+        binding.novelActionCover.visibility = if (single) View.VISIBLE else View.GONE
+        binding.novelActionDesc.visibility = if (single) View.VISIBLE else View.GONE
         binding.novelActionRename.visibility = if (single) View.VISIBLE else View.GONE
         if (mode) binding.novelTvSelectionCount.text = getString(R.string.import_selected_count, count)
     }
@@ -403,6 +416,60 @@ class NovelShelfFragment : Fragment() {
             }
             .setNegativeButton(R.string.cancel, null)
             .show()
+    }
+
+    /** 更换封面（单选）：photo picker 选图 → 缩放存进 covers/ 并替换 coverPath。 */
+    private fun changeCover(uri: android.net.Uri) {
+        val novel = selectedNovels().firstOrNull() ?: return
+        adapter.exitSelection()
+        viewLifecycleOwner.lifecycleScope.launch {
+            val newCover = withContext(Dispatchers.IO) {
+                runCatching { NovelImporter.replaceCover(requireContext(), novel.id, uri) }
+                    .onFailure { LogCollector.w(TAG, "更换封面失败 id=${novel.id}", it) }
+                    .getOrNull()
+            }
+            if (newCover != null) {
+                NovelStore.update(requireContext(), novel.copy(coverPath = newCover))
+            } else {
+                UiUtils.showToast(requireContext(), getString(R.string.novel_cover_failed), true)
+            }
+            refresh()
+        }
+    }
+
+    /** 编辑简介（单选）：弹多行输入框设置 description（详情列表里显示）。 */
+    private fun editDesc() {
+        val novel = selectedNovels().firstOrNull() ?: return
+
+        val editText = EditText(requireContext()).apply {
+            hint = getString(R.string.import_desc_hint)
+            setText(novel.description)
+            setSelection(novel.description.length)
+            gravity = android.view.Gravity.TOP or android.view.Gravity.START
+            minLines = 3
+        }
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        val container = android.widget.FrameLayout(requireContext()).apply {
+            setPadding(pad, pad / 2, pad, 0)
+            addView(editText)
+        }
+        val dialog = AlertDialog.Builder(requireContext())
+            .setTitle(R.string.import_desc_title)
+            .setView(container)
+            .setPositiveButton(R.string.confirm, null) // 在 show 后再绑定，避免自动关闭
+            .setNegativeButton(R.string.cancel, null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                NovelStore.update(requireContext(), novel.copy(description = editText.text.toString().trim()))
+                dialog.dismiss()
+                refresh()
+            }
+        }
+        dialog.show()
+        dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
+
+        adapter.exitSelection()
     }
 
     override fun onDestroyView() {

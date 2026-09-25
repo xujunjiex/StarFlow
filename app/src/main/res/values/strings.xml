@@ -1413,6 +1413,7 @@
     <string name="novel_translate_filter_pending">Untranslated</string>
     <string name="novel_read_progress">Reading chapter %1$d of %2$d</string>
     <string name="novel_delete_confirm_multi">Delete %1$d novels? Their local files and translations will be removed.</string>
+    <string name="novel_cover_failed">Could not use that image as the cover.</string>
 
     <!-- ===== 小说书架管理 ===== -->
     <string name="novel_shelf_empty">No novels yet. Tap “Import files” to add some.</string>

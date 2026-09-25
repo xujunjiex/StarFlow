@@ -1412,6 +1412,7 @@
     <string name="novel_translate_filter_pending">未翻完</string>
     <string name="novel_read_progress">读到第 %1$d 章 / 共 %2$d 章</string>
     <string name="novel_delete_confirm_multi">删除 %1$d 本小说？本地文件与译文记录都会一并清除。</string>
+    <string name="novel_cover_failed">这张图没法用作封面</string>
 
     <!-- ===== 小说书架管理 ===== -->
     <string name="novel_shelf_empty">还没有小说，点右上角「导入文件」添加</string>

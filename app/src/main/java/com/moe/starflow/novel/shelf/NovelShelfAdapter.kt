@@ -198,9 +198,13 @@ class NovelShelfAdapter(
             h.binding.tvProgress.visibility = View.GONE
         }
 
-        // 小说没有可编辑的简介（内容来自文件本身）：这一行恒不显示。
-        // 布局仍与漫画那份共用，位置与字号天然对齐
-        h.binding.tvDescription.visibility = View.GONE
+        // 简介（非空显示）：与漫画书架同一行、同一位置，由「写简介」写入
+        if (!item.importing && item.description.isNotBlank()) {
+            h.binding.tvDescription.visibility = View.VISIBLE
+            h.binding.tvDescription.text = item.description
+        } else {
+            h.binding.tvDescription.visibility = View.GONE
+        }
 
         bindCover(
             coverView = h.binding.ivCover,
