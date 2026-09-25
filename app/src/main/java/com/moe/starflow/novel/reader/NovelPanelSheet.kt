@@ -118,7 +118,28 @@ class NovelPanelSheet(
 
     private var appPrefsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
 
-    /** 各分段容器当前选中项（容器Id → 选中 segmentId），供主题切换后重画。 */
+    // ===== 面板内的「工作状态」=====
+    //
+    // ⚠️ **派生 UI 必须只有一个重算出口**（[refreshDerivedUi]）。这类 bug 反复出现过：
+    //   · 开启自动排版后，间距滑块该立刻置灰，但面板没刷
+    //   · 从「连续滚动」切到「左右/上下翻页」后，翻页动画该立刻解除置灰，但面板没刷
+    // 根因都一样 —— 派生关系（A 决定 B 能不能用）只在 `onCreateView` 里算了一次，
+    // 之后再改 A 就没人重算了。所以：**任何控件改完都更新这里的字段，然后统一调
+    // [refreshDerivedUi]**，不给「顺手在某处再补一句」留口子。
+
+    /** 当前阅读模式（0 左右 / 1 上下 / 2 滚动）。 */
+    private var curReaderMode = NovelPanelStyle.READER_PAGED
+
+    /** 当前自动排版开关。 */
+    private var curAutoLayout = true
+
+    private var curFontSp = NovelPanelStyle.FONT_SIZE_DEFAULT
+    private var curLineStep = NovelPanelStyle.LINE_SPACING_DEFAULT
+
+    /** 正在由 [refreshDerivedUi] 程序化改控件（避免回调回环）。 */
+    private var syncing = false
+
+    /** 各分段容器当前选中项（容器Id → 选中segmentId），供主题切换后重画。 */
     private val selection = mutableMapOf<Int, Int>()
 
     /** 背景 glyph 分段（不 tint 图标，只用选中容器高亮）——行为与漫画面板一致。 */
@@ -208,13 +229,14 @@ class NovelPanelSheet(
             R.id.seg_mode_vertical to (state.readerMode == NovelPanelStyle.READER_VERTICAL),
             R.id.seg_mode_scroll to (state.readerMode == NovelPanelStyle.READER_SCROLL),
         )) { id ->
-            cb.onReaderMode(
-                when (id) {
-                    R.id.seg_mode_vertical -> NovelPanelStyle.READER_VERTICAL
-                    R.id.seg_mode_scroll -> NovelPanelStyle.READER_SCROLL
-                    else -> NovelPanelStyle.READER_PAGED
-                }
-            )
+            curReaderMode = when (id) {
+                R.id.seg_mode_vertical -> NovelPanelStyle.READER_VERTICAL
+                R.id.seg_mode_scroll -> NovelPanelStyle.READER_SCROLL
+                else -> NovelPanelStyle.READER_PAGED
+            }
+            // 切到「连续滚动」要立刻置灰翻页动画、切回来立刻解除 —— 见 refreshDerivedUi
+            refreshDerivedUi(view)
+            cb.onReaderMode(curReaderMode)
         }
 
         setupSeg(view, R.id.seg_animation, listOf(
@@ -283,32 +305,10 @@ class NovelPanelSheet(
         val sbBottom = view.findViewById<SeekBar>(R.id.sb_bottom_padding)
         val tvBottomValue = view.findViewById<TextView>(R.id.tv_bottom_padding_value)
 
-        var autoLayout = state.autoLayout
-        var lineStep = state.lineSpacingStep
-
-        /** 段距的下限**跟着字号与行距走**：段距必须始终大于行距，否则分不出段。 */
-        fun refreshParaMin() {
-            val min = NovelPanelStyle.minParagraphSpacingDp(state.fontSizeSp, lineStep)
-            val max = NovelPanelStyle.maxParagraphSpacingDp(state.fontSizeSp, lineStep)
-            sbPara.min = min
-            // 上限也要跟着抬：字号/行距很大时 min 会顶到 48 以上，SeekBar 的 max 必须 >= min
-            sbPara.max = max.coerceAtLeast(min + 1)
-            if (sbPara.progress < min) sbPara.progress = min
-            tvPara.text = "${sbPara.progress} dp"
-        }
-
-        /** 自动排版开着时把间距滑块置灰（**保留数值**：用户要看得见自动替他选了什么）。 */
-        fun refreshLayoutEnabled() {
-            swAutoLayout.isChecked = autoLayout
-            for (v in listOf<View>(sbLine, sbPara, sbPad, sbTop, sbBottom)) {
-                v.isEnabled = !autoLayout
-                v.alpha = if (autoLayout) 0.45f else 1f
-            }
-        }
-
         swAutoLayout.setOnCheckedChangeListener { _, checked ->
-            autoLayout = checked
-            refreshLayoutEnabled()
+            if (syncing) return@setOnCheckedChangeListener
+            curAutoLayout = checked
+            refreshDerivedUi(view)
             cb.onAutoLayout(checked)
         }
         view.findViewById<View>(R.id.btn_reset_typography).setOnClickListener { cb.onResetTypography() }
@@ -316,22 +316,26 @@ class NovelPanelSheet(
         sbFont.progress = state.fontSizeSp.toInt()
             .coerceIn(NovelPanelStyle.FONT_SIZE_MIN.toInt(), NovelPanelStyle.FONT_SIZE_MAX.toInt())
         tvFontValue.text = "${sbFont.progress} sp"
-        sbFont.setOnSeekBarChangeListener(sliderLabel({ tvFontValue.text = "$it sp" }) { cb.onFontSize(it.toFloat()) })
+        sbFont.setOnSeekBarChangeListener(sliderLabel({ tvFontValue.text = "$it sp" }) {
+            curFontSp = it.toFloat()
+            cb.onFontSize(curFontSp)
+            // 字号变了 → 段距的区间跟着变
+            refreshDerivedUi(view)
+        })
 
         sbLine.progress = state.lineSpacingStep
         tvLine.text = NovelPanelStyle.lineSpacingLabel(state.lineSpacingStep)
         sbLine.setOnSeekBarChangeListener(sliderLabel(
             onLabel = { tvLine.text = NovelPanelStyle.lineSpacingLabel(it) },
             onSettle = { v ->
-                lineStep = v
+                curLineStep = v
                 cb.onLineSpacing(v)
-                // 行距一变，段距的下限跟着变：这里立刻把它抬上去，避免出现"段距小于行距"
-                refreshParaMin()
+                // 行距一变，段距的区间跟着变 → 统一在 refreshDerivedUi 里重算
+                refreshDerivedUi(view)
             },
         ))
 
         sbPara.progress = state.paragraphSpacingDp
-        refreshParaMin()
         sbPara.setOnSeekBarChangeListener(sliderLabel({ tvPara.text = "$it dp" }) { cb.onParagraphSpacing(it) })
 
         sbPad.progress = state.paddingDp
@@ -345,7 +349,11 @@ class NovelPanelSheet(
         sbTop.setOnSeekBarChangeListener(sliderLabel({ tvTopValue.text = "$it dp" }) { cb.onTopPadding(it) })
         sbBottom.setOnSeekBarChangeListener(sliderLabel({ tvBottomValue.text = "$it dp" }) { cb.onBottomPadding(it) })
 
-        refreshLayoutEnabled()
+        curReaderMode = state.readerMode
+        curAutoLayout = state.autoLayout
+        curFontSp = state.fontSizeSp
+        curLineStep = state.lineSpacingStep
+        refreshDerivedUi(view)
 
         // ---- 翻译：模式 / 防抖 / 向后章数 / 每批段数 / 模型 / 字号 / 语言 / 章节列表 ----
         val rbManual = view.findViewById<RadioButton>(R.id.translate_mode_manual)
@@ -469,6 +477,46 @@ class NovelPanelSheet(
     private fun applyAheadRowVisibility(view: View, mode: Int) {
         view.findViewById<View>(R.id.row_ahead_chapters).visibility =
             if (mode == NovelPanelStyle.MODE_AUTO_AHEAD) View.VISIBLE else View.GONE
+    }
+
+    /**
+     * **重算全部派生 UI**（唯一出口，理由见 [curReaderMode] 上面的说明）。
+     *
+     * 只读 [curReaderMode] / [curAutoLayout] / [curFontSp] / [curLineStep] 这几个工作状态，
+     * 所以任何控件改完调它一次就能收敛 —— 不需要（也不允许）在别处再补一句。
+     */
+    private fun refreshDerivedUi(view: View) {
+        syncing = true
+        try {
+            // ① 阅读模式 → 连续滚动下没有「翻页动画」这个概念：立刻置灰；切回翻页立刻解除
+            setSegEnabled(
+                view.findViewById(R.id.seg_animation),
+                curReaderMode != NovelPanelStyle.READER_SCROLL,
+            )
+
+            // ② 自动排版 → 间距全部由字号推出来：滑块置灰（**保留数值**，用户要看得见自动选了什么）
+            for (id in listOf(
+                R.id.sb_line_spacing, R.id.sb_para_spacing, R.id.sb_padding,
+                R.id.sb_top_padding, R.id.sb_bottom_padding,
+            )) {
+                val v = view.findViewById<View>(id)
+                v.isEnabled = !curAutoLayout
+                v.alpha = if (curAutoLayout) 0.45f else 1f
+            }
+            view.findViewById<Switch>(R.id.sw_auto_layout).isChecked = curAutoLayout
+
+            // ③ 段距的区间跟着**字号 + 行距**走：段距必须始终大于行距
+            val sbPara = view.findViewById<SeekBar>(R.id.sb_para_spacing)
+            val min = NovelPanelStyle.minParagraphSpacingDp(curFontSp, curLineStep)
+            val max = NovelPanelStyle.maxParagraphSpacingDp(curFontSp, curLineStep)
+            sbPara.min = min
+            // 上限也要跟着抬：字号/行距很大时 min 会顶到 48 以上，SeekBar 的 max 必须 >= min
+            sbPara.max = max.coerceAtLeast(min + 1)
+            if (sbPara.progress < min) sbPara.progress = min
+            view.findViewById<TextView>(R.id.tv_para_spacing_value).text = "${sbPara.progress} dp"
+        } finally {
+            syncing = false
+        }
     }
 
     // ===== 主题（与 ReaderMenuSheet.applyPanelTheme 同一套取值） =====
@@ -664,7 +712,12 @@ class NovelPanelSheet(
             getString(R.string.novel_translate_summary, total, done, partial, failed)
     }
 
-    /** 外部刷新入口（翻译任务开始/完成后调用）。 */
+    /**
+     * 外部刷新入口：翻译任务开始/完成后由宿主调用。
+     *
+     * ⚠️ 面板是**打开那一刻的快照**，宿主不推就没有第二条路能刷新它 ——
+     * 之前这个方法根本没被调用过，于是「面板开着时译文在涨，列表和汇总却一直停在打开时那一版」。
+     */
     fun notifyTranslateChanged(stats: Map<Int, NovelChapterStat>) {
         chapterAdapter.stats = stats
         updateSummary()

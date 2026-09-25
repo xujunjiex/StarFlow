@@ -911,7 +911,15 @@ class NovelReaderActivity : AppCompatActivity() {
         lifecycleScope.launch {
             chapterStats = runCatching { translator().chapterStats(b) }.getOrDefault(emptyMap())
             updateChapterTocLabel()
+            // 面板开着就必须把它一起刷新：面板是打开那一刻的快照，宿主不推它就永远停在旧状态
+            pushStatsToOpenPanel()
         }
+    }
+
+    /** 把最新的章翻译状态推给正在显示的面板（没开就什么都不做）。 */
+    private fun pushStatsToOpenPanel() {
+        (supportFragmentManager.findFragmentByTag(NovelPanelSheet.TAG) as? NovelPanelSheet)
+            ?.notifyTranslateChanged(chapterStats)
     }
 
     private fun chapterTitle(index: Int): String {
@@ -1049,6 +1057,7 @@ class NovelReaderActivity : AppCompatActivity() {
                     }
                 }
                 refreshChapterStats()
+                pushStatsToOpenPanel()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
