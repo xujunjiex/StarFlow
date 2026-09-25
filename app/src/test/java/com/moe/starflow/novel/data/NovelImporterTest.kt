@@ -153,87 +153,21 @@ class NovelImporterTest {
         )
     }
 
-    // ===== 目录导入 =====
+    // ===== 文件夹子（整个夹 = 一部小说）=====
     //
-    // ⚠️ 这几条测的是 NovelImporter.importCandidates —— `DocumentFile.fromTreeUri` 需要真实
-    // DocumentsProvider，Robolectric 里给不出可用的 tree uri。所以「列目录」那一段（candidateDocs）
-    // 由下面的纯函数测试覆盖，「每个文件一部书」这条规则在这里覆盖。
-
-    /** 小说侧「夹内每个文本文件 = 一部书」（与漫画的「整个夹 = 一部」不同）。 */
-    @Test
-    fun `目录导入时每个文本文件一部书`() = runBlocking {
-        val candidates = listOf(
-            "1.txt" to fileUri("1.txt", "第一章 A\n\n正文"),
-            "2.txt" to fileUri("2.txt", "第一章 B\n\n正文"),
-        )
-        var next = 10L
-        val list = NovelImporter.importCandidates(ctx, candidates, nextId = { next++ })
-
-        assertEquals(2, list.size)
-        assertEquals(listOf(10L, 11L), list.map { it.id })
-        assertEquals(listOf("1", "2"), list.map { it.title })
-    }
-
-    /** 目录导入的 id 由调用方分配：夹内文件数扫描后才知道，自己递增会与并发导入撞号。 */
-    @Test
-    fun `目录导入使用调用方给的 id 分配器`() = runBlocking {
-        val given = mutableListOf<Long>()
-        val list = NovelImporter.importCandidates(
-            ctx,
-            listOf(
-                "a.txt" to fileUri("a.txt", "第一章\n\n正文"),
-                "b.txt" to fileUri("b.txt", "第一章\n\n正文"),
-            ),
-            nextId = { (100L + given.size).also { given += it } },
-        )
-        assertEquals(listOf(100L, 101L), list.map { it.id })
-        assertEquals(listOf(100L, 101L), given)
-    }
+    // ⚠️ importDirectory 走 SAF 的 `DocumentFile.fromTreeUri`，需要真实 DocumentsProvider，
+    // Robolectric 里给不出可用的 tree uri。所以这里只钉「格式判定把目录认成小说子」，
+    // 夹内分章的语义由 `FolderNovelParserTest` 用真目录覆盖。
 
     @Test
-    fun `目录里没有文本文件时返回空表`() = runBlocking {
-        val list = NovelImporter.importCandidates(ctx, emptyList(), nextId = { 1L })
-        assertTrue(list.isEmpty())
-    }
-
-    /** 单个文件坏掉不能拖垮整夹：跳过它，其余照常导入。 */
-    @Test
-    fun `目录内单个文件失败时跳过其余照常导入`() = runBlocking {
-        val candidates = listOf(
-            "ok1.txt" to fileUri("ok1.txt", "第一章\n\n正文"),
-            "bad.pdf" to uriOf("bad.pdf", byteArrayOf(0x25, 0x50, 0x44, 0x46)),
-            "ok2.txt" to fileUri("ok2.txt", "第一章\n\n正文"),
-        )
-        var next = 1L
-        val list = NovelImporter.importCandidates(ctx, candidates, nextId = { next++ })
-        assertEquals(listOf("ok1", "ok2"), list.map { it.title })
-    }
-
-    /** 扩展名过滤 + 自然序（字典序会把 10.txt 排到 2.txt 前面）。 */
-    @Test
-    fun `可导入文件名按自然序排列且非文本被滤掉`() {
-        val names = listOf("2.txt", "cover.jpg", "10.txt", "1.txt", "notes.pdf", "b.epub", "a.HTML")
+    fun `目录被判成文件夹子而不是不支持`() {
+        val d = File(ctx.cacheDir, "folder_${System.nanoTime()}").apply { mkdirs() }
+        File(d, "01.txt").writeText("正文")
         assertEquals(
-            listOf("1.txt", "2.txt", "10.txt", "a.HTML", "b.epub"),
-            NovelImporter.sortImportableNames(names),
+            "整个夹 = 一部小说，不能被判成「不是小说」",
+            NovelFormat.FOLDER,
+            com.moe.starflow.novel.parser.NovelFormatDetector.detect(d),
         )
-    }
-
-    @Test
-    fun `可导入判定只认文本类扩展名`() {
-        for (n in listOf("a.txt", "b.epub", "c.html", "d.xhtml", "e.htm", "f.zip", "g.TXT")) {
-            assertTrue(n, NovelImporter.isImportableFileName(n))
-        }
-        for (n in listOf("a.jpg", "b.pdf", "c.mobi", "noext")) {
-            assertFalse(n, NovelImporter.isImportableFileName(n))
-        }
-    }
-
-    /** 名字里带路径/反斜杠时不能被当成目标文件名（Windows file:// 会给出整条路径）。 */
-    @Test
-    fun `从 uri 兜底取文件名只取最后一段`() = runBlocking {
-        val novel = NovelImporter.importFile(ctx, fileUri("plain.txt", "第一章\n\n正文"), id = 20)
-        assertEquals("plain", novel.title)
     }
 
     // ===== 指纹单调 =====

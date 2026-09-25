@@ -15,5 +15,6 @@ object NovelParsers {
         NovelFormat.EPUB -> EpubParser
         NovelFormat.ZIP_HTML -> ZipHtmlParser
         NovelFormat.HTML -> HtmlParser
+        NovelFormat.FOLDER -> FolderNovelParser
     }
 }

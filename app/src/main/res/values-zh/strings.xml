@@ -1408,4 +1408,12 @@
     <string name="novel_delete_confirm">删除「%1$s」？本地文件与译文会一并删除。</string>
     <string name="import_already_done">这次导入已经完成了</string>
 
+    <!-- ===== 导入弹窗的选项说明（措辞与 koto 统一；只保留「文件」「文件夹(单部)」，不含多部入口）===== -->
+    <string name="import_desc_files_manga">选择一个或多个 CBZ 或 ZIP 文件，每个文件将识别为一本漫画。</string>
+    <string name="import_desc_dir_manga">选择一个包含单部漫画的文件夹，子文件夹将被识别为章节。</string>
+    <string name="import_desc_files_novel">选择一个或多个 EPUB 或 TXT 文件，每个文件导入为一部小说。</string>
+    <string name="import_desc_dir_novel">选择一个包含单部小说的文件夹。内部 TXT 文件会作为章节导入；每个 EPUB 文件会作为一个分卷导入，并保留其内部章节。</string>
+    <string name="import_option_dir_manga_single">导入文件夹（单部漫画）</string>
+    <string name="import_option_dir_novel_single">导入文件夹（单部小说）</string>
+
 </resources>

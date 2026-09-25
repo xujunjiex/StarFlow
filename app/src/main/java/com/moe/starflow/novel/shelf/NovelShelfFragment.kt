@@ -89,9 +89,14 @@ class NovelShelfFragment : Fragment() {
     private fun showImportDialog() {
         val view = LayoutInflater.from(requireContext())
             .inflate(R.layout.dialog_import_manga, null, false)
+        // 与漫画共用同一份布局，各自填自己的选项文案（措辞对齐 koto）
+        view.findViewById<TextView>(R.id.btn_import_file).setText(R.string.import_manga_option_files)
+        view.findViewById<TextView>(R.id.btn_import_single_dir)
+            .setText(R.string.import_option_dir_novel_single)
+        view.findViewById<TextView>(R.id.tv_import_file_desc).setText(R.string.import_desc_files_novel)
+        view.findViewById<TextView>(R.id.tv_import_dir_desc).setText(R.string.import_desc_dir_novel)
         view.findViewById<TextView>(R.id.tv_storage_hint).text =
-            getString(R.string.import_storage_hint, NovelStorageDir.root(requireContext()).absolutePath) +
-                "\n" + getString(R.string.novel_import_dir_hint)
+            getString(R.string.import_storage_hint, NovelStorageDir.root(requireContext()).absolutePath)
 
         val dialog = AlertDialog.Builder(requireContext())
             .setTitle(R.string.novel_shelf_title)

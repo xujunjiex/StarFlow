@@ -52,15 +52,6 @@
                 android:text="@string/cancel"
                 android:visibility="gone" />
 
-            <TextView
-                android:id="@+id/novel_shelf_import"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:padding="8dp"
-                android:textSize="14sp"
-                android:textColor="@color/text_primary"
-                android:clickable="true"
-                android:text="@string/novel_import_file" />
         </LinearLayout>
 
         <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
@@ -77,6 +68,16 @@
                 android:padding="6dp" />
         </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
     </LinearLayout>
+
+    <!-- 导入按钮：右下角 FAB，与漫画书架一致 -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/novel_shelf_import"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_margin="16dp"
+        android:src="@drawable/ic_add"
+        android:contentDescription="@string/novel_shelf_title"
+        android:layout_gravity="bottom|end"/>
 
     <!-- 空书架提示（首次进入 / 全删光时给个引导，不然是一片空白） -->
     <TextView

@@ -68,34 +68,35 @@ object NovelImportManager {
         uris.forEach { uri -> launchFileTask(app, uri) }
     }
 
-    /** 导入一个文件夹：**夹内每个文本文件 = 一部书**（与漫画的「整个夹 = 一部」不同）。 */
+    /**
+     * 导入一个文件夹：**整个夹 = 一部小说**，夹内每个 txt 是一章（与漫画的「整个夹 = 一部」同一套心智）。
+     */
     fun importDirectory(context: Context, treeUri: Uri) {
         val app = context.applicationContext
         scope.launch {
-            val firstId = reserveId(app)
+            val id = reserveId(app)
             // ⚠️ 名字查询走 ContentResolver（SAF provider）：权限被撤销 / URI 失效 / 存储卸载
             // 都会抛。必须在 try 外也兜住（冒泡 = 未捕获异常 = 崩溃），退化成默认标题。
             val title = runCatching { DocumentFile.fromTreeUri(app, treeUri)?.name }.getOrNull()
-                ?: "folder_$firstId"
-            registerTask(firstId, title, ImportPhase.SCANNING, coroutineContext[Job])
+                ?.takeIf { it.isNotBlank() }
+                ?: "folder_$id"
+            registerTask(id, title, ImportPhase.SCANNING, coroutineContext[Job])
             try {
-                val list = NovelImporter.importDirectory(app, treeUri, nextId = { reserveId(app) }) { p ->
-                    updateProgress(firstId, p)
-                }
+                val novel = NovelImporter.importDirectory(app, treeUri, id) { p -> updateProgress(id, p) }
                 ensureActive()
-                list.forEach { NovelStore.add(app, it) }
-                LogCollector.i(TAG, "目录导入完成: ${list.size} 部")
-                if (list.isEmpty()) {
-                    emit(NovelImportEvent.Failed(title, NovelImportFailureReason.NO_TEXT_CHAPTER))
-                }
+                NovelStore.add(app, novel)
+                LogCollector.i(TAG, "文件夹导入完成: ${novel.title} (${novel.chapterCount} 章)")
+                if (novel.chapterCount == 0) emit(NovelImportEvent.NoChapters(novel.title))
             } catch (e: CancellationException) {
+                cleanup(app, id)
                 throw e
             } catch (e: Exception) {
-                LogCollector.e(TAG, "目录导入失败: $treeUri", e)
+                cleanup(app, id)
+                LogCollector.e(TAG, "文件夹导入失败: $treeUri", e)
                 emit(NovelImportEvent.Failed(title, classify(e)))
             } finally {
-                unregisterTask(firstId)
-                releaseId(firstId)
+                unregisterTask(id)
+                releaseId(id)
             }
         }
     }

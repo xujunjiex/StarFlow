@@ -13,6 +13,7 @@ import com.moe.starflow.mangaimport.data.ImportPhase
 import com.moe.starflow.mangaimport.data.ImportProgress
 import com.moe.starflow.novel.model.NovelFormat
 import com.moe.starflow.novel.parser.NovelFormatDetector
+import com.moe.starflow.novel.parser.FolderNovelParser
 import com.moe.starflow.novel.parser.NovelParsers
 import com.moe.starflow.utils.LogCollector
 import kotlinx.coroutines.Dispatchers
@@ -41,8 +42,14 @@ object NovelImporter {
     private const val COPY_BUFFER = 64 * 1024
     private const val REPORT_INTERVAL_MS = 80L
 
-    /** 目录导入时认可的文件扩展名（先按扩展名粗筛，避免对每个文件都去试解压）。 */
-    private val DIR_IMPORT_EXTS = setOf("txt", "epub", "html", "htm", "xhtml", "zip")
+    /**
+     * 文件夹子认可的扩展名。
+     *
+     * 只认 txt 与 epub —— 与 koto 的小说文件夹导入一致（「内部 TXT 文件会作为章节导入；
+     * 每个 EPUB 文件会作为一个分卷导入」）。夹里的 html/zip 不读，避免把「随手丢在同一个夹里」
+     * 的无关文件当成章节。
+     */
+    private val DIR_IMPORT_EXTS = setOf("txt", "epub")
 
     fun nextId(context: Context): Long =
         (NovelStore.load(context).maxOfOrNull { it.id } ?: 0L) + 1L
@@ -94,85 +101,66 @@ object NovelImporter {
             ?.takeIf { it.isNotBlank() }
 
     /**
-     * 导入一个文件夹：**夹内每个文本文件 = 一部书**（与漫画的「整个夹 = 一部」不同）。
+     * 导入一个文件夹：**整个夹 = 一部小说**，夹内每个 txt 是一章（见 `FolderNovelParser`）。
      *
-     * 只取**直接子文件**，不递归、不认子目录 —— 一堆子目录里各放一本的情况交给用户逐个导入，
-     * 递归会让「夹里放了一堆杂七杂八」的目录产生一堆莫名其妙的书。
+     * 与漫画侧同一套心智（整个夹 = 一部作品）—— 上一版按「每个文件一部书」实现，
+     * 那种语义在「一本小说被拆成 300 个 txt」时会长出 300 本书。
      *
-     * 非文本文件（图片等）静默跳过；一个都没有时返回空表，由调用方发
-     * `Failed(NO_TEXT_CHAPTER)` 提示，不静默。
-     *
-     * @param nextId **由调用方提供的 id 分配器**（[NovelImportManager] 传自己的 `reserveIds`）。
-     *   不在这里自己递增 id：夹内文件数要扫描后才知道，先从一个起始值硬数会让并发导入
-     *   撞进同一段 id 区间。让上层统一分配，唯一性由它保证。
+     * 只复制会读的两种扩展名（txt / epub）：夹里的图片、说明文件一概不拷，
+     * 既省空间也避免被格式判定误认成漫画包。
      */
     suspend fun importDirectory(
         context: Context,
         treeUri: Uri,
-        nextId: () -> Long,
+        id: Long = nextId(context),
         onProgress: (ImportProgress) -> Unit = {},
-    ): List<ImportedNovel> = withContext(Dispatchers.IO) {
+    ): ImportedNovel = withContext(Dispatchers.IO) {
         val rootDoc = DocumentFile.fromTreeUri(context, treeUri)
             ?: throw IllegalStateException("无法读取目录: $treeUri")
-        importCandidates(context, candidateDocs(rootDoc), nextId, onProgress)
-    }
+        val fallbackTitle = rootDoc.name?.takeIf { it.isNotBlank() } ?: "book_$id"
+        val destDir = NovelStorageDir.bookDir(context, id).apply { mkdirs() }
 
-    /**
-     * 目录里可导入的文本文件（按自然序）。
-     *
-     * 只调一次 `listFiles()`：它是逐层 IPC，SAF 上很贵；在循环里为每个名字再捞一遍
-     * 会变成 O(n²) 次 IPC，几百个文件的目录直接卡死。
-     */
-    internal fun candidateDocs(rootDoc: DocumentFile): List<Pair<String, Uri>> {
-        val docs = rootDoc.listFiles().filter { it.isFile }
-        val byName = docs.groupBy { it.name }
-        return sortImportableNames(docs.mapNotNull { it.name }).mapNotNull { name ->
-            byName[name]?.firstOrNull()?.let { name to it.uri }
-        }
-    }
-
-    /** 文件名是否是本次目录导入认的文本类型。 */
-    internal fun isImportableFileName(name: String): Boolean =
-        name.substringAfterLast('.', "").lowercase(Locale.ROOT) in DIR_IMPORT_EXTS
-
-    /** 过滤掉非文本文件并按**自然序**排列（字典序会把 `10.txt` 排到 `2.txt` 前面）。 */
-    internal fun sortImportableNames(names: List<String>): List<String> =
-        ArchivedMangaReader.sortNaturally(names.filter { isImportableFileName(it) })
-
-    /**
-     * 逐个导入：**每个候选文件 = 一部书**，id 由 [nextId] 分配。
-     *
-     * 拆成独立函数是为了能脱离 SAF 单测「每个文件一部书 / id 由调用方分配 / 坏文件跳过」
-     * 这几条规则 —— `DocumentFile.fromTreeUri` 需要真实 DocumentsProvider，单测里给不出。
-     */
-    internal suspend fun importCandidates(
-        context: Context,
-        candidates: List<Pair<String, Uri>>,
-        nextId: () -> Long,
-        onProgress: (ImportProgress) -> Unit = {},
-    ): List<ImportedNovel> {
-        val out = mutableListOf<ImportedNovel>()
         try {
-            for ((name, uri) in candidates) {
-                coroutineContext.ensureActive()
-                val id = nextId()
-                val title = name.substringBeforeLast('.', name).ifBlank { "book_$id" }
-                try {
-                    out.add(importOne(context, uri, id, name, title, onProgress))
-                } catch (e: kotlinx.coroutines.CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    // 单个文件坏了不该让整夹导入失败：跳过它，其余照常导入
-                    LogCollector.w(TAG, "目录内文件导入失败，跳过: $name", e)
-                }
+            val children = rootDoc.listFiles().filter { it.isFile }
+            val wanted = children.filter {
+                it.name?.substringAfterLast('.', "")?.lowercase(Locale.ROOT) in DIR_IMPORT_EXTS
             }
+            if (wanted.isEmpty()) throw IllegalStateException(ERROR_NO_TEXT_CHAPTER)
+
+            onProgress(ImportProgress(ImportPhase.COPYING, 0, wanted.size))
+            var done = 0
+            for (doc in wanted) {
+                coroutineContext.ensureActive()
+                val name = doc.name ?: continue
+                val target = File(destDir, name)
+                context.contentResolver.openInputStream(doc.uri)?.use { input ->
+                    FileOutputStream(target).use { output -> copyStream(input, output) {} }
+                }
+                done++
+                onProgress(ImportProgress(ImportPhase.COPYING, done, wanted.size))
+            }
+            coroutineContext.ensureActive()
+
+            onProgress(ImportProgress(ImportPhase.SCANNING))
+            val book = FolderNovelParser.parse(destDir)
+
+            ImportedNovel(
+                id = id,
+                title = book.title.ifBlank { fallbackTitle },
+                author = null,
+                localRoot = destDir.absolutePath,
+                format = NovelFormat.FOLDER,
+                coverPath = placeholderCover(context, id, book.title.ifBlank { fallbackTitle }),
+                chapterCount = book.chapters.size,
+                addedAt = freshAddedAt(context),
+                sizeBytes = destDir.walkTopDown().filter { it.isFile }.sumOf { it.length() },
+            )
         } catch (e: Exception) {
-            // ⚠️ 中途取消/失败时，**已经导入成功但还没入库**的那几本会变成孤儿目录：
-            // 调用方是在本函数返回后才逐条 NovelStore.add 的。必须在这里把它们删掉。
-            out.forEach { deleteBookFiles(context, it.id) }
+            // 半成品必须清掉：留着的话下次导入复用同一个 id，残件与新文件混在同一目录
+            deleteBookFiles(context, id)
+            LogCollector.e(TAG, "文件夹导入失败，已清理 $destDir: ${e.message}", e)
             throw e
         }
-        return out
     }
 
     private suspend fun importOne(

@@ -1409,4 +1409,12 @@
     <string name="novel_delete_confirm">Delete “%1$s”? Its local files and translations will be removed.</string>
     <string name="import_already_done">That import already finished</string>
 
+    <!-- ===== 导入弹窗的选项说明（措辞与 koto 统一；只保留「文件」「文件夹(单部)」，不含多部入口）===== -->
+    <string name="import_desc_files_manga">Pick one or more CBZ or ZIP files. Each file is imported as one manga.</string>
+    <string name="import_desc_dir_manga">Pick a folder holding a single manga. Subfolders are treated as chapters.</string>
+    <string name="import_desc_files_novel">Pick one or more EPUB or TXT files. Each file is imported as one novel.</string>
+    <string name="import_desc_dir_novel">Pick a folder holding a single novel. TXT files inside become chapters; each EPUB becomes a volume and keeps its own chapters.</string>
+    <string name="import_option_dir_manga_single">Import folder (single manga)</string>
+    <string name="import_option_dir_novel_single">Import folder (single novel)</string>
+
 </resources>

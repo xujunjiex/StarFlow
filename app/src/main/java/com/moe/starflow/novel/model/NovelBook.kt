@@ -1,7 +1,12 @@
 package com.moe.starflow.novel.model
 
-/** 小说文件格式。 */
-enum class NovelFormat { TXT, EPUB, ZIP_HTML, HTML }
+/**
+ * 小说文件格式。
+ *
+ * [FOLDER] 是**文件夹子**：整个夹 = 一部小说，夹内每个 txt = 一章（与漫画「整个夹 = 一部漫画、
+ * 子文件夹 = 章节」同一套心智）。夹内出现 epub 时，那本 epub 当作**一卷**，其内部章节原样保留。
+ */
+enum class NovelFormat { TXT, EPUB, ZIP_HTML, HTML, FOLDER }
 
 /**
  * 章节目录项（**不含正文**）。

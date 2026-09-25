@@ -22,8 +22,11 @@ interface NovelParser {
     /**
      * 读取一章的纯文本。
      *
-     * [locator] 语义：EPUB / ZIP = zip entry 名；TXT = `"<起始字节>,<结束字节>"`；
-     * 单 HTML = 空串（整篇即一章）。
+     * [locator] 语义：
+     * - EPUB / ZIP = zip entry 名
+     * - TXT = `"<起始字符>,<结束字符>"`
+     * - 单 HTML = 空串（整篇即一章）
+     * - FOLDER = `"<夹内相对路径>"`；夹内 epub 的某一章是 `"<相对路径>|<epub 内 locator>"`
      */
     suspend fun loadChapter(file: File, locator: String): String
 }
@@ -40,6 +43,8 @@ object NovelFormatDetector {
 
     /** null = 不是受支持的文本格式（可能是漫画包，或完全不支持的文件）。 */
     fun detect(file: File): NovelFormat? {
+        // 目录：文件夹子（整个夹 = 一部小说）
+        if (file.isDirectory) return NovelFormat.FOLDER
         zipKind(file)?.let { return it }
         val ext = file.extension.lowercase(Locale.ROOT)
         return when {
