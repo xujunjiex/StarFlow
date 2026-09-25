@@ -14,25 +14,35 @@ import androidx.recyclerview.widget.RecyclerView
  *
  * ⚠️ 行高必须按内容自量（`wrap_content` + `onMeasure`）：不同段落长度差几十倍，
  * 固定行高会让长段被裁、短段留白。
+ *
+ * ⚠️ **item 上不挂点击**：整套手势（中间格显隐 chrome / 右上角菜单 / 上下半屏翻段）由宿主
+ * 挂在 RecyclerView 上的同一个手势探测器统一判定 —— 与漫画的 Webtoon 模式完全一致。
+ * item 各自 `setOnClickListener` 会先吃掉事件，手势判定就永远拿不到"点在哪一格"。
  */
 class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
 
     private var content: ChapterContent? = null
     private var style: NovelTextStyle = NovelPageView.DEFAULT_STYLE
-
-    /** 点击某段：手动模式下补翻这一段。 */
-    var onParagraphClick: ((Int) -> Unit)? = null
+    private var textColor: Int = NovelPageAdapter.DEFAULT_TEXT_COLOR
 
     class VH(val view: ParagraphView) : RecyclerView.ViewHolder(view)
 
-    fun submit(content: ChapterContent, style: NovelTextStyle) {
+    fun submit(content: ChapterContent, style: NovelTextStyle, textColor: Int) {
         this.content = content
         this.style = style
+        this.textColor = textColor
         notifyDataSetChanged()
     }
 
     /** 译文到达/切显示模式：条数不变时用轻量刷新，避免重置滚动位置。 */
     fun refresh() {
+        notifyItemRangeChanged(0, itemCount)
+    }
+
+    /** 只换配色（切阅读背景）时的轻量刷新。 */
+    fun setTextColor(color: Int) {
+        if (textColor == color) return
+        textColor = color
         notifyItemRangeChanged(0, itemCount)
     }
 
@@ -49,8 +59,7 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
     override fun onBindViewHolder(holder: VH, position: Int) {
         val c = content ?: return
         val para = NovelScrollMapping.visibleParagraphs(c).getOrNull(position) ?: return
-        holder.view.bind(c.displayOf(para.index), style)
-        holder.view.setOnClickListener { onParagraphClick?.invoke(para.index) }
+        holder.view.bind(c.displayOf(para.index), style, textColor)
     }
 
     /** 一段的自绘 View。 */
@@ -58,11 +67,13 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
 
         private var text: String = ""
         private var style: NovelTextStyle = NovelPageView.DEFAULT_STYLE
+        private var textColor: Int = NovelPageAdapter.DEFAULT_TEXT_COLOR
 
-        fun bind(text: String, style: NovelTextStyle) {
-            if (this.text == text && this.style == style) return
+        fun bind(text: String, style: NovelTextStyle, textColor: Int) {
+            if (this.text == text && this.style == style && this.textColor == textColor) return
             this.text = text
             this.style = style
+            this.textColor = textColor
             requestLayout()
             invalidate()
         }
@@ -86,6 +97,7 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
                 contentWidth = (width - 2 * style.paddingPx).toInt().coerceAtLeast(1),
                 x = style.paddingPx,
                 y = style.paddingPx,
+                color = textColor,
             )
         }
     }

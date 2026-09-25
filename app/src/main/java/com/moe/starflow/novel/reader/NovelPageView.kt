@@ -16,11 +16,13 @@ class NovelPageView(context: Context) : View(context) {
     private var content: ChapterContent? = null
     private var page: NovelPage? = null
     private var style: NovelTextStyle = DEFAULT_STYLE
+    private var textColor: Int = NovelPageAdapter.DEFAULT_TEXT_COLOR
 
-    fun bind(content: ChapterContent, page: NovelPage, style: NovelTextStyle) {
+    fun bind(content: ChapterContent, page: NovelPage, style: NovelTextStyle, textColor: Int) {
         this.content = content
         this.page = page
         this.style = style
+        this.textColor = textColor
         invalidate()
     }
 
@@ -44,6 +46,7 @@ class NovelPageView(context: Context) : View(context) {
                 contentWidth = width,
                 x = style.paddingPx,
                 y = y,
+                color = textColor,
             )
             y += style.paragraphSpacingPx
         }

@@ -1399,6 +1399,20 @@
     <string name="novel_first_chapter">Already at the first chapter</string>
     <string name="novel_last_chapter">Already at the last chapter</string>
     <string name="novel_back">Back</string>
+    <string name="novel_prev_chapter">Previous chapter</string>
+    <string name="novel_next_chapter">Next chapter</string>
+    <string name="novel_anim_cover">Cover</string>
+    <string name="novel_translate_batch">Paragraphs per batch</string>
+    <string name="novel_translate_summary">%1$d chapters · %2$d done · %3$d ongoing · %4$d failed</string>
+    <string name="novel_display_label">Show</string>
+    <string name="novel_style_hint">Layout is rebuilt immediately</string>
+    <string name="novel_page_indicator">%1$s · %2$d/%3$d</string>
+    <string name="novel_queue_translating">Translating chapter %1$d…</string>
+    <string name="novel_translate_failed_chapter_hint">Chapter %1$d: %2$s</string>
+    <string name="novel_chapter_progress">%1$d/%2$d paragraphs</string>
+    <string name="novel_translate_filter_pending">Untranslated</string>
+    <string name="novel_read_progress">Reading chapter %1$d of %2$d</string>
+    <string name="novel_delete_confirm_multi">Delete %1$d novels? Their local files and translations will be removed.</string>
 
     <!-- ===== 小说书架管理 ===== -->
     <string name="novel_shelf_empty">No novels yet. Tap “Import files” to add some.</string>

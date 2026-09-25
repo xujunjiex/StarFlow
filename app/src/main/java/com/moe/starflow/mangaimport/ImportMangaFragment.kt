@@ -268,9 +268,13 @@ class ImportMangaFragment : Fragment() {
 
     private fun switchImportTab(tab: ImportTab) {
         if (tab == currentTab) return
-        // 漫画侧还在多选就先把多选退掉：否则切回来时顶部栏停在多选态、操作栏却对应不上
+        // 两侧的多选都要先退掉：否则切回来时顶部栏停在多选态、操作栏却对应不上。
+        // ⚠️ 小说书架常驻（不 replace），它的多选态不会自己消失，必须显式退。
         if (currentTab == ImportTab.MANGA && adapter.isSelectionMode) {
             adapter.exitSelection()
+        }
+        if (currentTab == ImportTab.NOVEL) {
+            (novelShelf as? NovelShelfFragment)?.exitSelection()
         }
         currentTab = tab
         com.moe.starflow.utils.CustomPreference.getInstance(requireContext())

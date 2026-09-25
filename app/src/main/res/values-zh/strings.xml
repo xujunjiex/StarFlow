@@ -1398,6 +1398,20 @@
     <string name="novel_first_chapter">已经是第一章</string>
     <string name="novel_last_chapter">已经是最后一章</string>
     <string name="novel_back">返回</string>
+    <string name="novel_prev_chapter">上一章</string>
+    <string name="novel_next_chapter">下一章</string>
+    <string name="novel_anim_cover">覆盖</string>
+    <string name="novel_translate_batch">每批段数</string>
+    <string name="novel_translate_summary">%1$d 章 · %2$d 完成 · %3$d 进行中 · %4$d 失败</string>
+    <string name="novel_display_label">显示内容</string>
+    <string name="novel_style_hint">改动会立即重新排版</string>
+    <string name="novel_page_indicator">%1$s · %2$d/%3$d</string>
+    <string name="novel_queue_translating">正在翻译第 %1$d 章…</string>
+    <string name="novel_translate_failed_chapter_hint">第 %1$d 章：%2$s</string>
+    <string name="novel_chapter_progress">%1$d/%2$d 段</string>
+    <string name="novel_translate_filter_pending">未翻完</string>
+    <string name="novel_read_progress">读到第 %1$d 章 / 共 %2$d 章</string>
+    <string name="novel_delete_confirm_multi">删除 %1$d 本小说？本地文件与译文记录都会一并清除。</string>
 
     <!-- ===== 小说书架管理 ===== -->
     <string name="novel_shelf_empty">还没有小说，点右上角「导入文件」添加</string>

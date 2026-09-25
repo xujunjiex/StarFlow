@@ -16,13 +16,18 @@ import android.text.TextPaint
  */
 object NovelTextRenderer {
 
-    /** 正文色。 */
+    /**
+     * 正文色（浅色背景）。
+     *
+     * ⚠️ 颜色**不参与排版**，所以 [build] 给它一个默认值，分页器（[NovelPaginator]）不必关心；
+     * 只有真正画的时候才由宿主按阅读背景灌进来。
+     */
     const val COLOR_MAIN = 0xFF111111.toInt()
 
-    fun build(text: String, style: NovelTextStyle, contentWidth: Int): StaticLayout {
+    fun build(text: String, style: NovelTextStyle, contentWidth: Int, color: Int = COLOR_MAIN): StaticLayout {
         val paint = TextPaint(TextPaint.ANTI_ALIAS_FLAG).apply {
             textSize = style.fontSizePx
-            color = COLOR_MAIN
+            this.color = color
         }
         return StaticLayout.Builder
             .obtain(text, 0, text.length, paint, contentWidth.coerceAtLeast(1))
@@ -39,9 +44,10 @@ object NovelTextRenderer {
         contentWidth: Int,
         x: Float,
         y: Float,
+        color: Int = COLOR_MAIN,
     ): Float {
         if (text.isEmpty()) return 0f
-        val layout = build(text, style, contentWidth)
+        val layout = build(text, style, contentWidth, color)
         canvas.save()
         canvas.translate(x, y)
         layout.draw(canvas)
