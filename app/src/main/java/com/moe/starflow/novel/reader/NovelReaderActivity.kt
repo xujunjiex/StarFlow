@@ -21,6 +21,7 @@ import com.moe.starflow.novel.data.NovelStore
 import com.moe.starflow.novel.translate.NovelChapterTranslator
 import com.moe.starflow.novel.translate.NovelTranslationEngine
 import com.moe.starflow.novel.translate.NovelParagraphSplitter
+import com.moe.starflow.novel.translate.NovelTranslationQueue
 import com.moe.starflow.novel.translate.TranslationTextApiAdapter
 import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.LogCollector
@@ -65,6 +66,9 @@ class NovelReaderActivity : AppCompatActivity() {
 
     private var prefs: CustomPreference? = null
     private var chromeVisible = true
+
+    /** 自动翻译队列（手动模式下不起）。惰性创建：它要用到翻译引擎。 */
+    private var queue: NovelTranslationQueue? = null
 
     /** 段落号 → 页码的请求：改排版/译文到达后重新分页时用它把位置找回来。 */
     private var pendingParaIndex = 0
@@ -265,7 +269,48 @@ class NovelReaderActivity : AppCompatActivity() {
             }
             updateTitle()
             persistProgress()
+            restartQueueIfNeeded()
         }
+    }
+
+    /**
+     * 按当前模式启动（或重启）自动翻译队列。
+     *
+     * ⚠️ 每次加载章后都调：模式可能刚从手动切成自动，窗口也随当前章变化。
+     * 队列内部会先 cancel 旧 job，重复调用是安全的。
+     */
+    private fun restartQueueIfNeeded() {
+        val b = book ?: return
+        val p = prefs ?: return
+        val mode = NovelPanelStyle.translateMode(p)
+        if (mode == NovelPanelStyle.MODE_MANUAL) {
+            queue?.stop()
+            return
+        }
+        val translator = runCatching { translator() }.getOrNull()
+        if (translator == null) {
+            toast(R.string.novel_translate_need_config)
+            return
+        }
+        val q = queue ?: NovelTranslationQueue(
+            scope = lifecycleScope,
+            translator = translator,
+            paragraphsOf = { book2, ch -> repository.paragraphsOf(book2, ch) },
+            sourceLang = { prefs!!.getString("Manga_Source_Lang", "auto") },
+            targetLang = { prefs!!.getString("Manga_Target_Lang", "zh") },
+            translatorName = { "novel" },
+            batchSize = { NovelPanelStyle.batchSize(prefs!!) },
+        ).also { queue = it }
+
+        q.start(
+            book = b,
+            mode = mode,
+            aheadCount = NovelPanelStyle.aheadChapters(p),
+            debounceMs = NovelPanelStyle.debounceMs(p),
+            // 每轮重新求值：切章不重启队列，窗口自动跟上
+            currentChapter = { chapterIndex },
+            onChapterTranslated = { ch -> if (ch == chapterIndex) refreshTranslations() },
+        )
     }
 
     private fun onPaged(position: Int) {
@@ -357,6 +402,8 @@ class NovelReaderActivity : AppCompatActivity() {
     }
 
     private fun showTranslatePanel() {
+        // 面板打开即暂停队列：用户多半是要改设置，继续按旧设置翻既费额度也可能翻错
+        queue?.setPanelOpen(true)
         NovelPanelSheet.showTranslate(
             context = this,
             prefs = prefs!!,
@@ -371,6 +418,10 @@ class NovelReaderActivity : AppCompatActivity() {
                 }
             },
             onChanged = { loadChapter(chapterIndex, keepPara = pendingParaIndex) },
+            onDismiss = {
+                queue?.setPanelOpen(false)
+                restartQueueIfNeeded()
+            },
         )
     }
 
@@ -408,6 +459,7 @@ class NovelReaderActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        queue?.stop()
         translationJob?.cancel()
         if (::repository.isInitialized) repository.evictAll()
         super.onDestroy()

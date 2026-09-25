@@ -21,6 +21,7 @@ import com.moe.starflow.data.TranslationHistoryDatabase
 import com.moe.starflow.mangaimport.data.ImportEvent
 import com.moe.starflow.mangaimport.data.ImportFailureReason
 import com.moe.starflow.mangaimport.data.ImportManager
+import com.moe.starflow.mangaimport.data.ImportTab
 import com.moe.starflow.mangaimport.data.ImportedManga
 import com.moe.starflow.mangaimport.data.ImportedMangaStore
 import com.moe.starflow.mangaimport.data.MangaImporter
@@ -31,6 +32,7 @@ import com.moe.starflow.mangaimport.ui.DisplayMode
 import com.moe.starflow.mangaimport.ui.DisplayOptionsSheet
 import com.moe.starflow.mangaimport.ui.ImportDialog
 import com.moe.starflow.mangaimport.ui.MangaGridAdapter
+import com.moe.starflow.novel.shelf.NovelShelfFragment
 import com.moe.starflow.utils.LogCollector
 import com.moe.starflow.utils.UiUtils
 import kotlinx.coroutines.Dispatchers
@@ -51,6 +53,9 @@ class ImportMangaFragment : Fragment() {
     private companion object {
         /** 旋转/回收时带着「还没弹完的导入结果」（见 onSaveInstanceState）。 */
         private const val STATE_DIALOG_QUEUE = "import_dialog_queue"
+
+        /** 小说书架子 Fragment 的 tag（childFragmentManager 里查重用）。 */
+        private const val NOVEL_SHELF_TAG = "novel_shelf"
     }
 
     private var _binding: FragmentImportMangaBinding? = null
@@ -70,6 +75,12 @@ class ImportMangaFragment : Fragment() {
 
     /** 正在展示的那条（旋转时放回队列，避免提示永久丢失）。 */
     private var resultDialogContent: Pair<String, String>? = null
+
+    /** 「导入」tab 内的当前书架。**持久化**，下次进来停在原处。 */
+    private var currentTab = ImportTab.MANGA
+
+    /** 小说书架子 Fragment：首次切到小说才创建，之后常驻（切回漫画不销毁）。 */
+    private var novelShelf: Fragment? = null
 
     // refresh() 的「文件丢失」推导缓存：进度回调高频调 refresh 时复用，避免反复 stat 磁盘
     private var cachedStored: List<ImportedManga> = emptyList()
@@ -118,6 +129,8 @@ class ImportMangaFragment : Fragment() {
             onCancelImport = { id -> confirmCancelImport(id) }
         )
         binding.recyclerView.adapter = adapter
+
+        setupImportTabs()
 
         binding.fabImport.setOnClickListener {
             ImportDialog.show(
@@ -235,6 +248,60 @@ class ImportMangaFragment : Fragment() {
                 )
             } catch (ignored: Exception) {
             }
+        }
+    }
+
+    // ===== 「漫画 | 小说」切换 =====
+
+    /**
+     * 顶部切换的初始化。
+     *
+     * 小说并入本 tab 而不是新增底部 tab 的原因见 [ImportTab]（底部导航硬限 5 个 item）。
+     */
+    private fun setupImportTabs() {
+        val prefs = com.moe.starflow.utils.CustomPreference.getInstance(requireContext())
+        currentTab = ImportTab.fromPref(prefs.getString(ImportTab.KEY, ImportTab.MANGA.prefValue))
+        binding.importTabManga.setOnClickListener { switchImportTab(ImportTab.MANGA) }
+        binding.importTabNovel.setOnClickListener { switchImportTab(ImportTab.NOVEL) }
+        applyImportTab()
+    }
+
+    private fun switchImportTab(tab: ImportTab) {
+        if (tab == currentTab) return
+        // 漫画侧还在多选就先把多选退掉：否则切回来时顶部栏停在多选态、操作栏却对应不上
+        if (currentTab == ImportTab.MANGA && adapter.isSelectionMode) {
+            adapter.exitSelection()
+        }
+        currentTab = tab
+        com.moe.starflow.utils.CustomPreference.getInstance(requireContext())
+            .setString(ImportTab.KEY, tab.prefValue)
+        applyImportTab()
+    }
+
+    /**
+     * 应用当前 tab。
+     *
+     * ⚠️ 小说书架用 `childFragmentManager` **懒加载 + 常驻**（不 replace）：replace 会销毁
+     * 小说书架的 View，用户切回漫画再切回来发现滚动位置、导入占位全没了。
+     */
+    private fun applyImportTab() {
+        val novel = currentTab == ImportTab.NOVEL
+        binding.importTabManga.alpha = if (novel) 0.55f else 1f
+        binding.importTabNovel.alpha = if (novel) 1f else 0.55f
+
+        val mangaVis = if (novel) View.GONE else View.VISIBLE
+        binding.topBar.visibility = mangaVis
+        binding.mangaContent.visibility = mangaVis
+        binding.fabImport.visibility = mangaVis
+        if (novel) binding.selectionActions.visibility = View.GONE
+
+        binding.novelShelfContainer.visibility = if (novel) View.VISIBLE else View.GONE
+
+        if (novel && novelShelf == null) {
+            novelShelf = NovelShelfFragment()
+            childFragmentManager.beginTransaction()
+                .replace(R.id.novel_shelf_container, novelShelf!!, NOVEL_SHELF_TAG)
+                .commitNow()
         }
     }
 

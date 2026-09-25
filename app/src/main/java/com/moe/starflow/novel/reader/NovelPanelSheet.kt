@@ -112,6 +112,7 @@ object NovelPanelSheet {
         onTranslateNow: () -> Unit,
         onClearBook: () -> Unit,
         onChanged: () -> Unit,
+        onDismiss: () -> Unit,
     ) {
         val dark = isDark(context, prefs)
         val root = container(context, dark)
@@ -162,7 +163,10 @@ object NovelPanelSheet {
         root.addView(action(context, dark, context.getString(R.string.novel_translate_action), onTranslateNow))
         root.addView(action(context, dark, context.getString(R.string.novel_translate_clear), onClearBook))
 
-        dialog(context, prefs, root).show()
+        val d = dialog(context, prefs, root)
+        // 关闭面板要恢复队列 —— 否则「打开面板暂停队列」会变成永久暂停
+        d.setOnDismissListener { onDismiss() }
+        d.show()
     }
 
     fun showMore(context: Context, prefs: CustomPreference, onChanged: () -> Unit) {

@@ -1400,4 +1400,13 @@
     <string name="novel_last_chapter">Already at the last chapter</string>
     <string name="novel_back">Back</string>
 
+    <!-- ===== 小说书架管理 ===== -->
+    <string name="novel_shelf_empty">No novels yet. Tap “Import files” to add some.</string>
+    <string name="novel_manage_rename">Rename</string>
+    <string name="novel_manage_mark_read">Mark as read</string>
+    <string name="novel_manage_mark_unread">Mark as unread</string>
+    <string name="novel_manage_delete">Delete</string>
+    <string name="novel_delete_confirm">Delete “%1$s”? Its local files and translations will be removed.</string>
+    <string name="import_already_done">That import already finished</string>
+
 </resources>

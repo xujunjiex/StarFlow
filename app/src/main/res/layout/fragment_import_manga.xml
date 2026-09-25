@@ -10,6 +10,26 @@
         android:layout_height="match_parent"
         android:orientation="vertical">
 
+
+        <!-- 「漫画 | 小说」切换：底部导航硬限 5 个 item（正好已满），小说不占新 tab -->
+        <LinearLayout
+            android:id="@+id/import_tab_bar"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:orientation="horizontal"
+            android:background="@color/surface">
+
+            <TextView
+                android:id="@+id/import_tab_manga"
+                style="@style/ImportTabSegment"
+                android:text="@string/import_manga_page" />
+
+            <TextView
+                android:id="@+id/import_tab_novel"
+                style="@style/ImportTabSegment"
+                android:text="@string/novel_shelf_title" />
+        </LinearLayout>
+
         <!-- 顶部栏：正常模式（标题 + 显示选项）/ 多选模式（已选数 + 关闭） -->
         <LinearLayout
             android:id="@+id/topBar"
@@ -277,6 +297,7 @@
 
         <!-- 书架网格 + 下拉刷新 -->
         <FrameLayout
+            android:id="@+id/manga_content"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1">
@@ -303,6 +324,14 @@
                 android:layout_gravity="center"/>
 
         </FrameLayout>
+
+        <!-- 小说书架容器：切到小说时显示，漫画侧整块隐藏 -->
+        <FrameLayout
+            android:id="@+id/novel_shelf_container"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:visibility="gone" />
 
     </LinearLayout>
 
