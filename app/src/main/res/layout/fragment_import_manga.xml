@@ -22,7 +22,7 @@
             <TextView
                 android:id="@+id/import_tab_manga"
                 style="@style/ImportTabSegment"
-                android:text="@string/import_manga_page" />
+                android:text="@string/import_tab_manga" />
 
             <TextView
                 android:id="@+id/import_tab_novel"
@@ -46,9 +46,9 @@
                 android:layout_weight="1"
                 android:textSize="14sp"
                 android:textStyle="bold"
-                android:text="@string/import_manga_page"/>
+                android:text="@string/import_tab_manga"/>
 
-            <TextView android:ellipsize="end" android:maxLines="1" 
+            <TextView android:ellipsize="end" android:maxLines="1"
                 android:id="@+id/tv_selection_count"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"

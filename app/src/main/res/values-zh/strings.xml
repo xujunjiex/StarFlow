@@ -8,6 +8,10 @@
     <string name="history_page">历史</string>
     <string name="me_page">设置</string>
     <string name="import_manga_page">导入</string>
+    <!-- 导入页内的「漫画 | 小说」分段，以及漫画书架自身的标题。
+         ⚠️ 不要复用 import_manga_page（那是底部导航的「导入」）—— 分段里第一格必须写「漫画」，
+         否则会出现「导入 | 小说」这种一边是动作、一边是品类的错位。 -->
+    <string name="import_tab_manga">漫画</string>
     <string name="display_options">显示选项</string>
     <string name="import_manga_empty_hint">点击右下角 + 导入漫画</string>
     <string name="import_manga_deleted">已删除</string>
@@ -1415,7 +1419,7 @@
     <string name="novel_cover_failed">这张图没法用作封面</string>
 
     <!-- ===== 小说书架管理 ===== -->
-    <string name="novel_shelf_empty">还没有小说，点右上角「导入文件」添加</string>
+    <string name="novel_shelf_empty">还没有小说，点右下角 + 导入</string>
     <string name="novel_manage_rename">重命名</string>
     <string name="novel_manage_mark_read">标为已读</string>
     <string name="novel_manage_mark_unread">标为未读</string>

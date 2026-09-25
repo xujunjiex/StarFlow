@@ -33,7 +33,7 @@ object ImportDialog {
         view.findViewById<TextView>(R.id.tv_storage_hint).text =
             context.getString(R.string.import_storage_hint, StorageDirStore.root(context).absolutePath)
         val dialog = AlertDialog.Builder(context)
-            .setTitle(R.string.import_manga_page)
+            .setTitle(R.string.import_tab_manga)
             .setView(view)
             .setNegativeButton(R.string.cancel, null)
             .create()
