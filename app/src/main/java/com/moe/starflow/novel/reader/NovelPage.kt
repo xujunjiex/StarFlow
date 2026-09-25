@@ -1,16 +1,30 @@
 package com.moe.starflow.novel.reader
 
 /**
- * 页内的一段：「某段落在本页显示的那部分字符」。
+ * 页内的一段：「某段落在本页显示的那部分」。
  *
  * ⚠️ 为什么整页存 segment 而不是拼成一个字符串：**跨页的段落**要在渲染时决定这半段显示
  * 原文还是译文。只有知道它属于哪个 `paraIndex`，段未翻译时才能继续显示原文、已翻译才能
  * 换上译文。把整页拼成一个串就丢掉了这个对应关系。
+ *
+ * ### 行区间是渲染的**唯一**几何来源
+ * [lineStart]/[lineEnd] 是段落自身 `StaticLayout` 里的**行号**区间（前闭后开）。绘制时按行区间
+ * 去画同一份 layout 的这几行，高度直接取 `getLineBottom(lineEnd-1) - getLineTop(lineStart)`
+ * —— 与分页记账用的是同一个数，**按定义不可能对不上**。
+ *
+ * 早期版本只存字符区间，绘制时把这一段 substring 出来**重新排版**：重新排版会重新断行，
+ * 行数与分页时算的不一定相同（尤其段被切开、或中英混排时），于是就成了「分页说放得下、
+ * 画出来却顶出框」——底部那行被裁掉一截。行区间法把「重新排版」这一步整个去掉了。
+ *
+ * [charStart]/[charEnd] 是同一区间的字符表示（翻译按段落号取），与行区间由同一份 layout
+ * 推出，两者必然一致。
  */
 data class PageSegment(
     val paraIndex: Int,
     val charStart: Int,
     val charEnd: Int,
+    val lineStart: Int,
+    val lineEnd: Int,
 )
 
 /** 一页 = 若干 segment（按显示顺序）。 */
@@ -24,7 +38,8 @@ data class NovelPage(val segments: List<PageSegment>)
  * @param topPaddingPx 上内边距（正文顶部与屏幕顶之间的距离）
  * @param bottomPaddingPx 下内边距（正文底部与屏幕底之间的距离）
  * @param keepParagraphsWhole **整段保护**：分页不在段落中间切断（放不下的段整段挪到下一页）。
- *   由「自动排版」开关决定 —— 见 `NovelPanelStyle.keepParagraphsWhole`。
+ *   ⚠️ 这是**固定行为**，不再挂自动排版开关：句子被分页从中间切断，翻译也只能按半句来，
+ *   读者看到的是半句话。代价是页面底部可能剩不到一段的空白 —— 这个取舍明确选「句子完整」。
  *
  * ⚠️ 上下内边距**不只是好看**：顶部三件浮层（返回/菜单/章节胶囊）与底部胶囊压在屏幕上下，
  * 不留出空间正文就会被压在 UI 底下。

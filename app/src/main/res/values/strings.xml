@@ -1378,8 +1378,6 @@
     <string name="novel_style_vertical_padding">Top/bottom space</string>
     <string name="novel_style_top_padding">Top space</string>
     <string name="novel_style_bottom_padding">Bottom space</string>
-    <string name="novel_style_auto_layout">Auto layout</string>
-    <string name="novel_style_auto_layout_hint">Sets line/paragraph spacing and margins from font size, keeps paragraphs unbroken, and keeps text clear of the top/bottom controls</string>
     <string name="novel_style_reset">Reset to defaults</string>
     <string name="novel_style_reader_mode">Reading mode</string>
     <string name="novel_reader_mode_paged">Horizontal</string>

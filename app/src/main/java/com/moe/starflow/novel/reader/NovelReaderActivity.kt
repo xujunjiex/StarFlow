@@ -178,11 +178,6 @@ class NovelReaderActivity : AppCompatActivity() {
 
         prefs = getSharedPreferences(NovelPanelStyle.PREFS_NAME, MODE_PRIVATE)
 
-        // ⚠️ 自动排版**每次进阅读器都要套用一次**（幂等，只写 prefs）：它原先只在开关翻转时
-        // 算过一次，用户之后改字号、或换了视口宽度（左右边距是按屏宽反推的），参数就不再一致 ——
-        // 面板上还显示着"已开启"，用户看到的却是"自动排版完全没用"。
-        if (NovelPanelStyle.isAutoLayout(prefs)) NovelPanelStyle.applyAutoLayout(this, prefs)
-
         bgMode = NovelPanelStyle.background(prefs)
         animationMode = NovelPanelStyle.animation(prefs)
         autoTurnEnabled = prefs.getBoolean(KEY_AUTO_TURN, false)
@@ -619,8 +614,6 @@ class NovelReaderActivity : AppCompatActivity() {
         repaginateJob?.cancel()
         repaginateJob = lifecycleScope.launch {
             delay(REPAGINATE_DEBOUNCE_MS)
-            // 左右边距是按屏宽反推的：视口一变自动排版必须跟着重算（否则字号没变但行宽不合适）
-            if (NovelPanelStyle.isAutoLayout(prefs)) NovelPanelStyle.applyAutoLayout(this@NovelReaderActivity, prefs)
             loadChapter(chapterIndex, keepPara = pendingParaIndex)
         }
     }
@@ -1198,7 +1191,6 @@ class NovelReaderActivity : AppCompatActivity() {
                 lineSpacingStep = NovelPanelStyle.lineSpacingStep(prefs),
                 paragraphSpacingDp = NovelPanelStyle.paragraphSpacingDp(prefs, fontSp),
                 paddingDp = NovelPanelStyle.paddingDp(prefs),
-                autoLayout = NovelPanelStyle.isAutoLayout(prefs),
                 topPaddingDp = NovelPanelStyle.topPaddingDp(prefs),
                 bottomPaddingDp = NovelPanelStyle.bottomPaddingDp(prefs),
                 autoTurn = autoTurnEnabled,
@@ -1229,10 +1221,6 @@ class NovelReaderActivity : AppCompatActivity() {
                 onDisplayMode = { m -> NovelPanelStyle.setDisplayMode(prefs, m); loadChapter(chapterIndex, keepPara = pendingParaIndex) },
                 onFontSize = { sp ->
                     NovelPanelStyle.setFontSizeSp(prefs, sp)
-                    // 自动排版是「跟着字号走」的：字号一变必须重算一组间距，否则排版与字号脱节
-                    if (NovelPanelStyle.isAutoLayout(prefs)) {
-                        NovelPanelStyle.applyAutoLayout(this@NovelReaderActivity, prefs)
-                    }
                     loadChapter(chapterIndex, keepPara = pendingParaIndex)
                 },
                 onLineSpacing = { v ->
@@ -1244,12 +1232,8 @@ class NovelReaderActivity : AppCompatActivity() {
                     loadChapter(chapterIndex, keepPara = pendingParaIndex)
                 },
                 onPadding = { v -> NovelPanelStyle.setPaddingDp(prefs, v); loadChapter(chapterIndex, keepPara = pendingParaIndex) },
-                onAutoLayout = { auto ->
-                    NovelPanelStyle.setAutoLayout(this@NovelReaderActivity, prefs, auto)
-                    loadChapter(chapterIndex, keepPara = pendingParaIndex)
-                },
                 onResetTypography = {
-                    NovelPanelStyle.resetTypography(this@NovelReaderActivity, prefs)
+                    NovelPanelStyle.resetTypography(prefs)
                     loadChapter(chapterIndex, keepPara = pendingParaIndex)
                 },
                 onTopPadding = { v -> NovelPanelStyle.setTopPaddingDp(prefs, v); loadChapter(chapterIndex, keepPara = pendingParaIndex) },

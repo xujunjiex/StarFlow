@@ -72,8 +72,6 @@ class NovelPanelStyleTest {
 
     // ===== 排版约束 =====
 
-    private val ctx: Context get() = RuntimeEnvironment.getApplication()
-
     /**
      * **段距必须始终大于行距**（用户明确要求）。
      *
@@ -129,63 +127,40 @@ class NovelPanelStyleTest {
         assertTrue("上限必须被抬到下限之上", NovelPanelStyle.maxParagraphSpacingDp(font, step) > NovelPanelStyle.minParagraphSpacingDp(font, step))
     }
 
-    /** 自动排版：上下间距必须**相等**（用户明确要求），且各间距都落在合法区间内。 */
-    @Test
-    fun `自动排版保证上下间距相等且各值合法`() {
-        NovelPanelStyle.setFontSizeSp(prefs, 24f)
-        NovelPanelStyle.setAutoLayout(ctx, prefs, true)
-
-        assertEquals(
-            "自动排版下上下间距必须相等",
-            NovelPanelStyle.topPaddingDp(prefs), NovelPanelStyle.bottomPaddingDp(prefs),
-        )
-        val font = NovelPanelStyle.fontSizeSp(prefs)
-        val step = NovelPanelStyle.lineSpacingStep(prefs)
-        assertTrue(NovelPanelStyle.paragraphSpacingDp(prefs, font) >= NovelPanelStyle.minParagraphSpacingDp(font, step))
-        assertTrue(NovelPanelStyle.paddingDp(prefs) in NovelPanelStyle.SIDE_PADDING_MIN..NovelPanelStyle.SIDE_PADDING_MAX)
-        assertTrue(NovelPanelStyle.topPaddingDp(prefs) in NovelPanelStyle.VERTICAL_PADDING_MIN..NovelPanelStyle.VERTICAL_PADDING_MAX)
-    }
-
     /**
-     * 字号变大 → 左右边距必须随之**变小**（一行目标字数固定，字号大了行就占满了）。
+     * 上下间距的**默认值必须相等**（用户明确要求），且要够避开上下浮层。
      *
-     * ⚠️ 这条要在**宽屏**下测：手机竖屏（~411dp）在 20sp 时一行本就只放得下 ~19 个汉字，
-     * 边距早就顶到下限 16dp 了，字号再变也看不出差别 —— 那是**正确行为**（不该为了制造
-     * 差异而白白浪费屏宽），只是没法在窄屏上验证这条关系。
+     * ⚠️ 不相等的话，同一段文字在「上一页末尾 / 下一页开头」看起来会偏，用户第一眼就发现。
      */
     @Test
-    @Config(sdk = [34], qualifiers = "w800dp-h1280dp-xhdpi")
-    fun `自动排版下字号越大左右边距越小`() {
-        NovelPanelStyle.setFontSizeSp(prefs, 14f)
-        NovelPanelStyle.applyAutoLayout(ctx, prefs)
-        val small = NovelPanelStyle.paddingDp(prefs)
-
-        NovelPanelStyle.setFontSizeSp(prefs, 32f)
-        NovelPanelStyle.applyAutoLayout(ctx, prefs)
-        val big = NovelPanelStyle.paddingDp(prefs)
-
-        assertTrue("字号 14sp 边距 $small 应当大于字号 32sp 的边距 $big", small > big)
+    fun `上下间距默认值相等且落在合法区间`() {
+        val v = NovelPanelStyle.verticalPaddingDefaultDp()
+        assertTrue(v in NovelPanelStyle.VERTICAL_PADDING_MIN..NovelPanelStyle.VERTICAL_PADDING_MAX)
+        prefs.edit().clear().commit()
+        assertEquals(
+            "上下间距的默认值必须相等",
+            NovelPanelStyle.topPaddingDp(prefs), NovelPanelStyle.bottomPaddingDp(prefs),
+        )
     }
 
-    /** 自动排版关掉就不做整段保护（用户要求：不自动就不管段落完整）。 */
+    /** 恢复默认：字号与**全部间距**一起复位（少复位一个，用户就会觉得"恢复默认没用"）。 */
     @Test
-    fun `关掉自动排版后不再做整段保护`() {
-        NovelPanelStyle.setAutoLayout(ctx, prefs, true)
-        assertTrue(NovelPanelStyle.keepParagraphsWhole(prefs))
-        NovelPanelStyle.setAutoLayout(ctx, prefs, false)
-        assertTrue("关掉自动排版后必须按行填满", !NovelPanelStyle.keepParagraphsWhole(prefs))
-    }
+    fun `恢复默认会把字号与全部间距一起复位`() {
+        NovelPanelStyle.setFontSizeSp(prefs, NovelPanelStyle.FONT_SIZE_MAX)
+        NovelPanelStyle.setLineSpacingStep(prefs, NovelPanelStyle.LINE_SPACING_MAX, NovelPanelStyle.FONT_SIZE_MAX)
+        NovelPanelStyle.setPaddingDp(prefs, NovelPanelStyle.SIDE_PADDING_MAX)
+        NovelPanelStyle.setTopPaddingDp(prefs, NovelPanelStyle.VERTICAL_PADDING_MAX)
+        NovelPanelStyle.setBottomPaddingDp(prefs, NovelPanelStyle.VERTICAL_PADDING_MIN)
 
-    /** 恢复默认：字号回默认值，并重新打开自动排版。 */
-    @Test
-    fun `恢复默认会重置字号并打开自动排版`() {
-        NovelPanelStyle.setFontSizeSp(prefs, 32f)
-        NovelPanelStyle.setAutoLayout(ctx, prefs, false)
-
-        NovelPanelStyle.resetTypography(ctx, prefs)
+        NovelPanelStyle.resetTypography(prefs)
 
         assertEquals(NovelPanelStyle.FONT_SIZE_DEFAULT, NovelPanelStyle.fontSizeSp(prefs), 0.001f)
-        assertTrue(NovelPanelStyle.isAutoLayout(prefs))
-        assertTrue(NovelPanelStyle.keepParagraphsWhole(prefs))
+        assertEquals(NovelPanelStyle.LINE_SPACING_DEFAULT, NovelPanelStyle.lineSpacingStep(prefs))
+        assertEquals(NovelPanelStyle.SIDE_PADDING_DEFAULT, NovelPanelStyle.paddingDp(prefs))
+        assertEquals(NovelPanelStyle.verticalPaddingDefaultDp(), NovelPanelStyle.topPaddingDp(prefs))
+        assertEquals(
+            "恢复默认后上下间距必须仍然相等",
+            NovelPanelStyle.topPaddingDp(prefs), NovelPanelStyle.bottomPaddingDp(prefs),
+        )
     }
 }

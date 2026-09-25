@@ -149,13 +149,15 @@ class NovelPaginationRealismTest {
     /**
      * **每页渲染出来的高度不得超过正文框** —— 守「文字被画到页面外面」。
      *
-     * 用 [NovelPaginator.measureLineHeight] 量出的行高回算渲染高度，与页表逐页核对。
+     * 这里**照抄渲染的算法**：`NovelPageView` 是按 segment 的行区间去量段落自身 layout 的
+     * `getLineTop/getLineBottom` 并累加，所以这条测试量的就是真正会被画出来的高度。
+     * 逐 segment 的 `[lineStart, lineEnd)` 必须落在该段 layout 的行数内（越界会被兜底截断，
+     * 那样「分页记账」与「实际绘制」就对不上了），累加结果也不得越过正文框。
      *
-     * ⚠️ **这条证明不了字体度量那一半**：Robolectric 的文本引擎是桩，
-     * `StaticLayout` 量出来的行高恰好等于 `字号 × 行距倍率`，所以「按字号估行高」这种写法
-     * 在这里**也是绿的**（实测过：把 `paginate` 退回旧估法，本测试照样通过）。
-     * 它守的是**分页侧的记账**（段间距只算在段与段之间、容量不超框）；
-     * 「字体真实行高 ≈ 字号 × 1.15」这一半只能在**真机**上确认。
+     * ⚠️ **这条证明不了字体度量那一半**：Robolectric 的文本引擎是桩（不换行、行高恒为
+     * `字号 × 行距倍率`），所以「真机行高是字号的 ~1.15~1.5 倍」这件事在这里量不出来。
+     * 它守的是**记账与几何的一致性**（行区间合法、段间距只补在段间、总量不超框）；
+     * 真机上的字体行高对不对，只能看现场 —— 越界时 `NovelPageView` 会打一条 `PAGE_OVERFLOW`。
      */
     @Test
     fun `每页渲染高度不得超过正文框`() {
@@ -176,19 +178,26 @@ class NovelPaginationRealismTest {
         val pages = NovelPaginator.paginate(paras, style, 1000, 2000)
         assertTrue("至少要分出多页", pages.size > 1)
 
-        val paint = android.text.TextPaint().apply { textSize = style.fontSizePx }
-        val lineH = NovelPaginator.measureLineHeight(paint, style.lineSpacingMultiplier, style.contentWidthPx(1000))
+        val byIndex = paras.associateBy { it.index }
         val box = style.contentHeightPx(2000)
 
         for ((i, page) in pages.withIndex()) {
             var rendered = 0f
-            page.segments.forEachIndexed { idx, _ ->
-                rendered += lineH
+            for ((idx, seg) in page.segments.withIndex()) {
+                val text = byIndex.getValue(seg.paraIndex).originalText
+                val layout = NovelTextRenderer.build(text, style, style.contentWidthPx(1000))
+                assertTrue(
+                    "第 ${i + 1} 页 segment 行区间越界：lineEnd=${seg.lineEnd} > 行数 ${layout.lineCount}",
+                    seg.lineStart in 0..layout.lineCount && seg.lineEnd in seg.lineStart..layout.lineCount,
+                )
+                if (seg.lineEnd > seg.lineStart) {
+                    rendered += layout.getLineBottom(seg.lineEnd - 1) - layout.getLineTop(seg.lineStart)
+                }
                 // 与渲染一致：段间距只补在段与段之间
                 if (idx != page.segments.lastIndex) rendered += style.paragraphSpacingPx
             }
             assertTrue(
-                "第 ${i + 1} 页渲染高度 $rendered 超出正文框 $box（行高 $lineH）—— 会被画到页面外面",
+                "第 ${i + 1} 页渲染高度 $rendered 超出正文框 $box —— 会被画到页面外面",
                 rendered <= box + 0.5f,
             )
         }

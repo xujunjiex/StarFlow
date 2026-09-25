@@ -358,22 +358,7 @@
                 </LinearLayout>
                 <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000"/>
 
-                <!-- 自动排版：只跟字号走，其余间距由它推出来（行距 → 左右边距 → 段距 → 上下间距）。
-                     打开时还会做「整段保护」（分页不切在段落中间），关掉就按行填满 -->
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:padding="12dp" android:gravity="center_vertical">
-                    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:orientation="vertical">
-                        <TextView android:id="@+id/tv_auto_layout_label" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                            android:text="@string/novel_style_auto_layout" android:textSize="14sp" android:textColor="#333333"/>
-                        <TextView android:id="@+id/tv_auto_layout_value" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                            android:layout_marginTop="1dp" android:text="@string/novel_style_auto_layout_hint" android:textSize="11sp" android:textColor="#888888"/>
-                    </LinearLayout>
-                    <Switch android:id="@+id/sw_auto_layout" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
-                </LinearLayout>
-                <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000"/>
-
-                <!-- 恢复默认：字号 + 全部间距回到默认，并重新打开自动排版 -->
+                <!-- 恢复默认：字号 + 全部间距回到默认 -->
                 <LinearLayout android:id="@+id/btn_reset_typography" android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:orientation="horizontal" android:padding="12dp" android:gravity="center_vertical" android:clickable="true">
                     <TextView android:id="@+id/tv_reset_typography" android:layout_width="0dp" android:layout_height="wrap_content"

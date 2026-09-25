@@ -143,9 +143,9 @@ class NovelDisplayModeTest {
     fun `段落号定位到包含它的页`() {
         val repo = NovelChapterRepository()
         val pages = listOf(
-            NovelPage(listOf(PageSegment(0, 0, 5), PageSegment(2, 0, 3))),
-            NovelPage(listOf(PageSegment(2, 3, 6))),
-            NovelPage(listOf(PageSegment(9, 0, 4))),
+            NovelPage(listOf(PageSegment(0, 0, 5, 0, 1), PageSegment(2, 0, 3, 0, 1))),
+            NovelPage(listOf(PageSegment(2, 3, 6, 1, 2))),
+            NovelPage(listOf(PageSegment(9, 0, 4, 0, 1))),
         )
         assertEquals(0, repo.pageOfParagraph(pages, 0))
         assertEquals(0, repo.pageOfParagraph(pages, 2))

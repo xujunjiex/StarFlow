@@ -5,19 +5,52 @@ import com.moe.starflow.novel.translate.NovelParagraphType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import kotlin.math.floor
 
 class NovelPaginatorTest {
 
     private fun textPara(index: Int, text: String) =
         NovelParagraph(index, NovelParagraphType.TEXT, text)
 
-    /** 合成「每段行起点」：每 [charsPerLine] 字一行。 */
-    private fun lineStarts(paragraphs: List<NovelParagraph>, charsPerLine: Int): List<IntArray> =
-        paragraphs.map { p ->
+    /**
+     * 合成度量：`lineStarts[i]` / `lineHeights[i]` 是第 i 个**可见段**每行的起点与高度。
+     *
+     * 真机上这两个数组由 `StaticLayout` 量出来（见 `NovelPaginator.paginate`）；
+     * Robolectric 的文本引擎是桩，所以测试自己合成 —— 分页逻辑与文本引擎解耦，正是为了这个。
+     */
+    private class Measured(val starts: List<IntArray>, val heights: List<FloatArray>)
+
+    /** 每 [charsPerLine] 字一行、每行 [lineHeightPx] 高（均匀行高）。 */
+    private fun measured(
+        paragraphs: List<NovelParagraph>,
+        charsPerLine: Int,
+        lineHeightPx: Float = 50f,
+    ): Measured {
+        val visible = paragraphs.filter { it.type != NovelParagraphType.SKIP }
+        val starts = visible.map { p ->
             val n = ((p.originalText.length + charsPerLine - 1) / charsPerLine).coerceAtLeast(1)
             IntArray(n) { i -> i * charsPerLine }
         }
+        return Measured(starts, starts.map { a -> FloatArray(a.size) { lineHeightPx } })
+    }
+
+    /** 直接给每段的**逐行**高度（测「某一行更高」这类非均匀行高）。 */
+    private fun measuredByLines(
+        paragraphs: List<NovelParagraph>,
+        charsPerLine: Int,
+        vararg lineHeights: Float,
+    ): Measured {
+        val visible = paragraphs.filter { it.type != NovelParagraphType.SKIP }
+        val starts = visible.map { p ->
+            val n = ((p.originalText.length + charsPerLine - 1) / charsPerLine).coerceAtLeast(1)
+            IntArray(n) { i -> i * charsPerLine }
+        }
+        return Measured(
+            starts,
+            starts.map { a ->
+                FloatArray(a.size) { i -> lineHeights.getOrElse(i) { lineHeights.last() } }
+            },
+        )
+    }
 
     private val visible = { ps: List<NovelParagraph> -> ps.filter { it.type != NovelParagraphType.SKIP } }
 
@@ -49,23 +82,54 @@ class NovelPaginatorTest {
         }
     }
 
-    /** 每页占用的行数不得超过容量。 */
-    private fun assertPageCapacity(
-        paragraphs: List<NovelParagraph>,
-        lineStarts: List<IntArray>,
+    /**
+     * 行区间必须**首尾相接**地覆盖整段 —— 行区间是渲染的唯一几何来源，
+     * 这里断了的话画出来就少一行或多一行。
+     */
+    private fun assertLineCoverage(pages: List<NovelPage>) {
+        val byPara = linkedMapOf<Int, MutableList<PageSegment>>()
+        for (seg in pages.flatMap { it.segments }) {
+            byPara.getOrPut(seg.paraIndex) { mutableListOf() }.add(seg)
+        }
+        for ((paraIndex, segs) in byPara) {
+            var cursor = 0
+            for (s in segs) {
+                assertEquals("段 $paraIndex 的行区间不连续", cursor, s.lineStart)
+                assertTrue("段 $paraIndex 出现空行区间", s.lineEnd > s.lineStart)
+                cursor = s.lineEnd
+            }
+        }
+    }
+
+    /** 每页占用的高度（按**逐行真实高度**累加）不得超过容量。 */
+    private fun assertPageHeight(
+        measured: Measured,
         pages: List<NovelPage>,
-        lineHeightPx: Float,
+        paragraphSpacingPx: Float,
         pageHeightPx: Float,
     ) {
-        val capacity = floor(pageHeightPx / lineHeightPx + 0.01f).toInt().coerceAtLeast(1)
-        val startByIndex = visible(paragraphs).mapIndexed { i, p -> p.index to lineStarts[i] }.toMap()
+        val indexOf = visibleIndex(measured)
+        // 兜底：一整行比整页还高时只能硬放一行（否则死循环），这一行必然"超框"，
+        // 那不是记账错误。所以容量在这种极端配置下放宽到「一行的高度」。
+        val tallestLine = measured.heights.maxOf { it.maxOrNull() ?: 0f }
+        val limit = maxOf(pageHeightPx, tallestLine)
         for ((pi, page) in pages.withIndex()) {
-            val lines = page.segments.sumOf { seg ->
-                val starts = startByIndex.getValue(seg.paraIndex)
-                starts.count { it >= seg.charStart && it < seg.charEnd }
+            var used = 0f
+            for ((i, seg) in page.segments.withIndex()) {
+                val heights = indexOf(seg.paraIndex)
+                for (line in seg.lineStart until seg.lineEnd) used += heights[line]
+                if (i != page.segments.lastIndex) used += paragraphSpacingPx
             }
-            assertTrue("第 $pi 页占了 $lines 行，超过容量 $capacity", lines <= capacity)
+            assertTrue(
+                "第 ${pi + 1} 页占了 $used px，超过容量 $limit",
+                used <= limit + 0.01f,
+            )
         }
+    }
+
+    /** 段落号 → 该段的逐行高度（测试里段落号与可见下标一一对应）。 */
+    private fun visibleIndex(measured: Measured): (Int) -> FloatArray = { paraIndex ->
+        measured.heights[paraIndex]
     }
 
     @Test
@@ -75,20 +139,17 @@ class NovelPaginatorTest {
             textPara(1, "甲乙丙丁戊"),
             textPara(2, "ABCDEFGHIJKLMNOP"),
         )
-        val pages = NovelPaginator.paginateByLines(
-            paras, lineStarts(paras, charsPerLine = 5),
-            lineHeightPx = 50f, paragraphSpacingPx = 20f, pageHeightPx = 160f,
-        )
+        val m = measured(paras, charsPerLine = 5)
+        val pages = NovelPaginator.paginateByLines(paras, m.starts, m.heights, 20f, 160f)
         assertFullCoverage(paras, pages)
+        assertLineCoverage(pages)
     }
 
     @Test
     fun `短文本一页放下时每段恰好一个 segment`() {
         val paras = listOf(textPara(0, "一二三四五"), textPara(1, "六七八九十"))
-        val pages = NovelPaginator.paginateByLines(
-            paras, lineStarts(paras, charsPerLine = 5),
-            lineHeightPx = 50f, paragraphSpacingPx = 0f, pageHeightPx = 200f,
-        )
+        val m = measured(paras, charsPerLine = 5)
+        val pages = NovelPaginator.paginateByLines(paras, m.starts, m.heights, 0f, 200f)
         assertEquals(1, pages.size)
         assertEquals(listOf(0, 1), pages[0].segments.map { it.paraIndex })
         assertFullCoverage(paras, pages)
@@ -97,12 +158,11 @@ class NovelPaginatorTest {
     @Test
     fun `超长段被拆成多个 segment 且区间连续`() {
         val paras = listOf(textPara(0, "字".repeat(100)))   // 20 行 @5字/行
-        val pages = NovelPaginator.paginateByLines(
-            paras, lineStarts(paras, charsPerLine = 5),
-            lineHeightPx = 50f, paragraphSpacingPx = 0f, pageHeightPx = 200f,   // 4 行/页
-        )
+        val m = measured(paras, charsPerLine = 5)           // 行高 50 → 每页 4 行
+        val pages = NovelPaginator.paginateByLines(paras, m.starts, m.heights, 0f, 200f)
         assertTrue("应切出多页，实际 ${pages.size}", pages.size >= 5)
         assertFullCoverage(paras, pages)
+        assertLineCoverage(pages)
         assertEquals(0, pages.first().segments.first().charStart)
         assertEquals(100, pages.last().segments.last().charEnd)
     }
@@ -110,10 +170,8 @@ class NovelPaginatorTest {
     @Test
     fun `页高不足一行时仍放一行不死循环`() {
         val paras = listOf(textPara(0, "一二三"), textPara(1, "四五六"))
-        val pages = NovelPaginator.paginateByLines(
-            paras, lineStarts(paras, charsPerLine = 3),
-            lineHeightPx = 500f, paragraphSpacingPx = 100f, pageHeightPx = 50f,
-        )
+        val m = measured(paras, charsPerLine = 3, lineHeightPx = 500f)
+        val pages = NovelPaginator.paginateByLines(paras, m.starts, m.heights, 100f, 50f)
         assertEquals(2, pages.size)
         assertTrue(pages.all { it.segments.isNotEmpty() })
         assertFullCoverage(paras, pages)
@@ -126,31 +184,28 @@ class NovelPaginatorTest {
             NovelParagraph(1, NovelParagraphType.SKIP, "……"),
             textPara(2, "正文二"),
         )
-        val pages = NovelPaginator.paginateByLines(
-            paras, lineStarts(paras, charsPerLine = 5),
-            lineHeightPx = 50f, paragraphSpacingPx = 0f, pageHeightPx = 500f,
-        )
+        val m = measured(paras, charsPerLine = 5)
+        val pages = NovelPaginator.paginateByLines(paras, m.starts, m.heights, 0f, 500f)
         assertEquals(listOf(0, 2), pages.single().segments.map { it.paraIndex })
         assertFullCoverage(paras, pages)
     }
 
     @Test
     fun `空段落列表得到空页表`() {
-        assertTrue(NovelPaginator.paginateByLines(emptyList(), emptyList(), 50f, 0f, 200f).isEmpty())
+        assertTrue(NovelPaginator.paginateByLines(emptyList(), emptyList(), emptyList(), 50f, 200f).isEmpty())
         // 全是 SKIP 也等于没有可显示内容
         val onlySkip = listOf(NovelParagraph(0, NovelParagraphType.SKIP, "……"))
         assertTrue(
-            NovelPaginator.paginateByLines(onlySkip, listOf(intArrayOf(0)), 50f, 0f, 200f).isEmpty()
+            NovelPaginator.paginateByLines(onlySkip, listOf(intArrayOf(0)), listOf(floatArrayOf(50f)), 0f, 200f)
+                .isEmpty()
         )
     }
 
     @Test
     fun `页高足够时不无谓地多切页`() {
         val paras = (0 until 3).map { textPara(it, "字".repeat(10)) }   // 每段 2 行
-        val pages = NovelPaginator.paginateByLines(
-            paras, lineStarts(paras, charsPerLine = 5),
-            lineHeightPx = 50f, paragraphSpacingPx = 0f, pageHeightPx = 500f,   // 10 行容量
-        )
+        val m = measured(paras, charsPerLine = 5)                      // 共 6 行 = 300px
+        val pages = NovelPaginator.paginateByLines(paras, m.starts, m.heights, 0f, 500f)
         assertEquals("6 行应放得进一页", 1, pages.size)
         assertFullCoverage(paras, pages)
     }
@@ -158,12 +213,11 @@ class NovelPaginatorTest {
     @Test
     fun `每页不超过容量`() {
         val paras = (0 until 10).map { textPara(it, "字".repeat(30)) }   // 每段 3 行
-        val starts = lineStarts(paras, charsPerLine = 10)
-        val pages = NovelPaginator.paginateByLines(
-            paras, starts, lineHeightPx = 50f, paragraphSpacingPx = 20f, pageHeightPx = 260f,
-        )
+        val m = measured(paras, charsPerLine = 10)
+        val pages = NovelPaginator.paginateByLines(paras, m.starts, m.heights, 20f, 260f)
         assertFullCoverage(paras, pages)
-        assertPageCapacity(paras, starts, pages, lineHeightPx = 50f, pageHeightPx = 260f)
+        assertLineCoverage(pages)
+        assertPageHeight(m, pages, 20f, 260f)
         assertTrue("10 段共 30 行，应切出多页，实际 ${pages.size}", pages.size >= 6)
     }
 
@@ -171,8 +225,8 @@ class NovelPaginatorTest {
     fun `行起点缺失时按整段一行处理而不是丢段`() {
         val paras = listOf(textPara(0, "内容一"), textPara(1, "内容二"))
         val pages = NovelPaginator.paginateByLines(
-            paras, listOf(intArrayOf(0), intArrayOf(0)),
-            lineHeightPx = 50f, paragraphSpacingPx = 0f, pageHeightPx = 60f,   // 1 行/页
+            paras, listOf(intArrayOf(0), intArrayOf(0)), listOf(floatArrayOf(50f), floatArrayOf(50f)),
+            0f, 60f,
         )
         assertEquals(2, pages.size)
         assertFullCoverage(paras, pages)
@@ -190,12 +244,11 @@ class NovelPaginatorTest {
         for (charsPerLine in listOf(3, 7, 20)) {
             for (pageHeight in listOf(40f, 120f, 300f, 1000f)) {
                 for (spacing in listOf(0f, 10f, 60f)) {
-                    val pages = NovelPaginator.paginateByLines(
-                        paras, lineStarts(paras, charsPerLine),
-                        lineHeightPx = 50f, paragraphSpacingPx = spacing, pageHeightPx = pageHeight,
-                    )
+                    val m = measured(paras, charsPerLine)
+                    val pages = NovelPaginator.paginateByLines(paras, m.starts, m.heights, spacing, pageHeight)
                     assertFullCoverage(paras, pages)
-                    assertPageCapacity(paras, lineStarts(paras, charsPerLine), pages, 50f, pageHeight)
+                    assertLineCoverage(pages)
+                    assertPageHeight(m, pages, spacing, pageHeight)
                 }
             }
         }
@@ -217,10 +270,8 @@ class NovelPaginatorTest {
             textPara(2, "c".repeat(40)),
         )
         // 每段 4 行（40 字 / 每行 10 字），每页 10 行
-        val pages = NovelPaginator.paginateByLines(
-            paras, lineStarts(paras, 10),
-            lineHeightPx = 10f, paragraphSpacingPx = 0f, pageHeightPx = 100f,
-        )
+        val m = measured(paras, charsPerLine = 10, lineHeightPx = 10f)
+        val pages = NovelPaginator.paginateByLines(paras, m.starts, m.heights, 0f, 100f)
         assertEquals("页1 放 p0+p1（8 行），p2 放不下 → 整段进页2", 2, pages.size)
         assertEquals(listOf(0, 1), pages[0].segments.map { it.paraIndex })
         assertEquals(listOf(2), pages[1].segments.map { it.paraIndex })
@@ -228,6 +279,7 @@ class NovelPaginatorTest {
             for (seg in page.segments) {
                 assertEquals("段落被切开了（起点不是 0）", 0, seg.charStart)
                 assertEquals("段落被切开了（终点不是段长）", 40, seg.charEnd)
+                assertEquals("段落被切开了（起点不是第 0 行）", 0, seg.lineStart)
             }
         }
         assertFullCoverage(paras, pages)
@@ -237,13 +289,12 @@ class NovelPaginatorTest {
     @Test
     fun `超过一整页的段落仍会被按行切分且不丢字`() {
         val paras = listOf(textPara(0, "a".repeat(250)))
-        val pages = NovelPaginator.paginateByLines(
-            paras, lineStarts(paras, 10),
-            lineHeightPx = 10f, paragraphSpacingPx = 0f, pageHeightPx = 100f,
-        )
+        val m = measured(paras, charsPerLine = 10, lineHeightPx = 10f)
+        val pages = NovelPaginator.paginateByLines(paras, m.starts, m.heights, 0f, 100f)
         assertEquals("25 行 / 每页 10 行 = 3 页", 3, pages.size)
         assertTrue("必须被切成多段", pages.all { it.segments.size == 1 })
         assertFullCoverage(paras, pages)
+        assertLineCoverage(pages)
     }
 
     /** 关掉整段优先时行为与老实现一致（按行填满，段可以被切开）。 */
@@ -255,13 +306,13 @@ class NovelPaginatorTest {
             textPara(1, "b".repeat(60)),
             textPara(2, "c".repeat(60)),
         )
-        val starts = lineStarts(paras, 10)
+        val m = measured(paras, charsPerLine = 10, lineHeightPx = 10f)
 
-        val whole = NovelPaginator.paginateByLines(paras, starts, 10f, 0f, 100f)
+        val whole = NovelPaginator.paginateByLines(paras, m.starts, m.heights, 0f, 100f)
         assertEquals("整段优先：每段独占一页", 3, whole.size)
         assertTrue("整段优先下不允许有任何段被切开", whole.all { it.segments.all { s -> s.charStart == 0 } })
 
-        val filled = NovelPaginator.paginateByLines(paras, starts, 10f, 0f, 100f, keepParagraphsWhole = false)
+        val filled = NovelPaginator.paginateByLines(paras, m.starts, m.heights, 0f, 100f, keepParagraphsWhole = false)
         assertEquals("按行填满：12 行装进 10 行的页 → 2 页", 2, filled.size)
         assertTrue(
             "按行填满应当出现被切开的段",
@@ -270,26 +321,57 @@ class NovelPaginatorTest {
         assertFullCoverage(paras, filled)
     }
 
-    // ===== 高度口径：px 精确累加，不把段间距量化成「整行」 =====
+    // ===== 高度口径：只认量出来的行高，不做任何估算 =====
 
     /**
-     * **段间距不能被量化成整行** —— 这是「底部无脑留白」的根源。
+     * **逐行真实高度必须被逐行使用** —— 这是「底部被裁切」的根治点。
      *
-     * 旧实现把段间距折算成整行（`round(段间距/行高)`，不足一行还兜成一行）：行高 100px、
-     * 段间距 30px 时，每段凭空多占 70px，一页因此少放内容、底部留一大片空白。
-     * 容量本来就是用 px 算的，只有段间距被换了量纲 —— 混着算就必然错。
+     * 早期实现拿一个探针量出**单一**行高再乘行数：只要某一行比探针高（换了字体/表情/
+     * 全角标点落在另的字体上），那一页就被多塞一行、底部的字被画到框外。
+     * 现在高度直接来自 `StaticLayout.getLineBottom(i) - getLineTop(i)`，逐行累加。
      *
-     * 判据：**每页剩下的空间必须放不下「再一段」**（否则就是白留了）。
+     * 判据：中间那行更高时，本页必须**放不下**它 —— 而不是按其它行的高度把它算进来。
      */
+    @Test
+    fun `逐行真实高度：某一行更高时不得按其它行的高度记账`() {
+        val paras = listOf(textPara(0, "字".repeat(30)))   // 3 行 @10 字/行
+        val m = measuredByLines(paras, charsPerLine = 10, 100f, 100f, 200f)
+        val pageHeight = 300f
+
+        val pages = NovelPaginator.paginateByLines(paras, m.starts, m.heights, 0f, pageHeight)
+
+        // 100 + 100 = 200 放得下；再加 200 就是 400 > 300 → 第 3 行必须进下一页
+        assertEquals("第 3 行（高 200）必须被挤到下一页", 2, pages.size)
+        assertEquals(listOf(0 to 2), pages[0].segments.map { it.lineStart to it.lineEnd })
+        assertEquals(listOf(2 to 3), pages[1].segments.map { it.lineStart to it.lineEnd })
+        assertPageHeight(m, pages, 0f, pageHeight)
+        assertLineCoverage(pages)
+    }
+
+    /** 段高也用整段的**真实总高**（各行之和），不是「行数 × 某个估算行高」。 */
+    @Test
+    fun `整段高度按真实逐行高度求和`() {
+        // 2 行：100 + 400 = 500 > 页高 400 → 整段优先不成立，必须被切开
+        val paras = listOf(textPara(0, "ab"))
+        val m = measuredByLines(paras, charsPerLine = 1, 100f, 400f)
+        val pages = NovelPaginator.paginateByLines(paras, m.starts, m.heights, 0f, 400f)
+        assertEquals("整段 500px 放不进 400px 的页 → 切成两页", 2, pages.size)
+        assertFullCoverage(paras, pages)
+        assertPageHeight(m, pages, 0f, 400f)
+    }
+
+    /** 段间距不能被量化成整行（旧实现把它折算成整整一行，每段凭空多占几十 px）。 */
     @Test
     fun `段间距不按整行量化：每页剩余空间放不下再多一段`() {
         val lineHeight = 100f
         val spacing = 30f      // 不足一行 —— 旧实现会把它兜成整整一行 100px
         val pageHeight = 1000f
         val paras = (0 until 40).map { textPara(it, "字".repeat(10)) }
-        val pages = NovelPaginator.paginateByLines(paras, lineStarts(paras, 10), lineHeight, spacing, pageHeight)
+        val m = measured(paras, charsPerLine = 10, lineHeightPx = lineHeight)
+        val pages = NovelPaginator.paginateByLines(paras, m.starts, m.heights, spacing, pageHeight)
 
-        val paraCost = { n: Int -> n * (lineHeight + 1f) + (n - 1) * spacing }   // +1px 取整余量
+        // 每段 1 行 100px；一段的成本 = 行高 + 段间距（首段无段间距）
+        val paraCost = { n: Int -> n * lineHeight + (n - 1) * spacing }
         val perPage = pages.first().segments.size
         println("PXRULE 每页 $perPage 段，一页用 ${paraCost(perPage)} px / 共 $pageHeight px，剩余 ${pageHeight - paraCost(perPage)} px")
 

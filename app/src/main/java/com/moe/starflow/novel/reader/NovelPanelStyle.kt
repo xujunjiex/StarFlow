@@ -21,7 +21,7 @@ object NovelPanelStyle {
     /** 与 `MangaReaderActivity` 同一个 prefs 文件。 */
     const val PREFS_NAME = "manga_reader"
 
-    // ===== 手机上方/下方浮层需要避开的尺寸（自动排版用） =====
+    // ===== 上下浮层需要避开的尺寸 =====
 
     /**
      * 上下浮层占掉的纵向空间（摸清后写死，供默认值参考）：
@@ -128,15 +128,11 @@ object NovelPanelStyle {
     const val VERTICAL_PADDING_MIN = 16
     const val VERTICAL_PADDING_MAX = 160
 
-    /** 自动排版时一行大约放多少个汉字 —— 行宽跟着字号走就靠它。 */
-    private const val AUTO_CJK_PER_LINE = 26f
-
     private const val KEY_LINE_SPACING = "novel_line_spacing"
     private const val KEY_PARA_SPACING = "novel_paragraph_spacing"
     private const val KEY_PADDING = "novel_reader_padding"
     private const val KEY_TOP_PADDING = "novel_reader_top_padding"
     private const val KEY_BOTTOM_PADDING = "novel_reader_bottom_padding"
-    private const val KEY_AUTO_LAYOUT = "novel_auto_layout"
     private const val KEY_READER_MODE_VERSION = "novel_reader_mode_version"
     private const val KEY_READER_MODE = "novel_reader_mode"
     private const val READER_MODE_VERSION = 1
@@ -228,68 +224,28 @@ object NovelPanelStyle {
     fun verticalPaddingDefaultDp(): Int =
         maxOf(CHROME_TOP_DP, CHROME_BOTTOM_DP).coerceIn(VERTICAL_PADDING_MIN, VERTICAL_PADDING_MAX)
 
-    // ===== 自动排版 =====
-
     /**
-     * 自动排版：**只跟字号走**，其余间距由它推出来。
+     * **整段保护**：分页不在段落中间切断（放不下的段整段挪到下一页）。
      *
-     * 调整顺序（后一步依赖前一步）：
-     * 1. **行距**：正文经典 1.5×。它本身就是相对字号的比例，字号一变行间空隙同步变
-     * 2. **左右边距**：按「一行约 [AUTO_CJK_PER_LINE] 个汉字」反推 —— 字号越大边距越小，
-     *    保证每行字数大体稳定（行太长会看错行）
-     * 3. **段落间距**：从「必须大于行距」的下限往上取一档（[PARA_OVER_LINE_RATIO] 的 1.5 倍）
-     * 4. **上下间距**：**上下必须取相等的值**；大小要够避开上下浮层
-     *
-     * 打开自动排版时还会做**整段保护**（分页不在段落中间切），见 [keepParagraphsWhole]。
+     * ⚠️ 这是**固定行为**，不再挂开关。曾经把它绑在「自动排版」上（关了按行填满），
+     * 现在自动排版已删除，取舍重新明确一次：句子被从中间切断，翻译也只能按半句来，
+     * 读者看到的是半句话 —— 宁可页面底部剩不到一段的空白，也不切句子。
      */
-    fun applyAutoLayout(context: Context, prefs: SharedPreferences) {
-        val fontSp = fontSizeSp(prefs)
-        val dm = context.resources.displayMetrics
-
-        val lineStep = LINE_SPACING_DEFAULT
-
-        // 一行目标宽度（px）→ 反推左右边距
-        val targetWidth = AUTO_CJK_PER_LINE * fontSp * dm.scaledDensity
-        val side = (((dm.widthPixels - targetWidth) / 2f) / dm.density).toInt()
-            .coerceIn(SIDE_PADDING_MIN, SIDE_PADDING_MAX)
-
-        val paraMin = minParagraphSpacingDp(fontSp, lineStep)
-        val para = (paraMin * 1.5f).toInt().coerceIn(paraMin, maxParagraphSpacingDp(fontSp, lineStep))
-
-        val vertical = verticalPaddingDefaultDp()
-
-        prefs.edit()
-            .putInt(KEY_LINE_SPACING, lineStep)
-            .putInt(KEY_PARA_SPACING, para)
-            .putInt(KEY_PADDING, side)
-            .putInt(KEY_TOP_PADDING, vertical)
-            .putInt(KEY_BOTTOM_PADDING, vertical)
-            .apply()
-    }
-
-    fun isAutoLayout(prefs: SharedPreferences): Boolean = prefs.getBoolean(KEY_AUTO_LAYOUT, true)
-
-    /** 自动排版开关。打开时立刻按当前字号重算一组间距。 */
-    fun setAutoLayout(context: Context, prefs: SharedPreferences, auto: Boolean) {
-        prefs.edit().putBoolean(KEY_AUTO_LAYOUT, auto).apply()
-        if (auto) applyAutoLayout(context, prefs)
-    }
-
-    /**
-     * **关掉自动排版就不做整段保护**：用户自己接管排版时，按行填满才能把页面用满；
-     * 整段保护会让页面留出大片空白（那是「每页翻译完整」的代价，只在自动模式下付）。
-     */
-    fun keepParagraphsWhole(prefs: SharedPreferences): Boolean = isAutoLayout(prefs)
+    const val KEEP_PARAGRAPHS_WHOLE = true
 
     // ===== 恢复默认 =====
 
-    /** 恢复默认：字号回 [FONT_SIZE_DEFAULT]，并重新打开自动排版（间距随之全部重算）。 */
-    fun resetTypography(context: Context, prefs: SharedPreferences) {
+    /** 恢复默认：字号与全部间距回到默认值。 */
+    fun resetTypography(prefs: SharedPreferences) {
+        val vertical = verticalPaddingDefaultDp()
         prefs.edit()
             .putFloat(KEY_FONT_SIZE, FONT_SIZE_DEFAULT)
-            .putBoolean(KEY_AUTO_LAYOUT, true)
+            .putInt(KEY_LINE_SPACING, LINE_SPACING_DEFAULT)
+            .putInt(KEY_PARA_SPACING, PARA_SPACING_DEFAULT)
+            .putInt(KEY_PADDING, SIDE_PADDING_DEFAULT)
+            .putInt(KEY_TOP_PADDING, vertical)
+            .putInt(KEY_BOTTOM_PADDING, vertical)
             .apply()
-        applyAutoLayout(context, prefs)
     }
 
     // ===== 阅读模式 =====
@@ -353,7 +309,7 @@ object NovelPanelStyle {
             paddingPx = paddingDp(prefs) * densityDpi,
             topPaddingPx = topPaddingDp(prefs) * densityDpi,
             bottomPaddingPx = bottomPaddingDp(prefs) * densityDpi,
-            keepParagraphsWhole = keepParagraphsWhole(prefs),
+            keepParagraphsWhole = KEEP_PARAGRAPHS_WHOLE,
         )
     }
 

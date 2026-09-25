@@ -46,8 +46,6 @@ class NovelPanelState(
     val lineSpacingStep: Int = NovelPanelStyle.LINE_SPACING_DEFAULT,
     val paragraphSpacingDp: Int = NovelPanelStyle.PARA_SPACING_DEFAULT,
     val paddingDp: Int = NovelPanelStyle.SIDE_PADDING_DEFAULT,
-    /** 自动排版：只跟字号走，其余间距由它推出来。关掉后间距全手动、且不做整段保护。 */
-    val autoLayout: Boolean = true,
     val topPaddingDp: Int = NovelPanelStyle.VERTICAL_PADDING_MIN,
     val bottomPaddingDp: Int = NovelPanelStyle.VERTICAL_PADDING_MIN,
     val autoTurn: Boolean = false,
@@ -75,7 +73,6 @@ class NovelPanelCallbacks(
     val onLineSpacing: (Int) -> Unit,
     val onParagraphSpacing: (Int) -> Unit,
     val onPadding: (Int) -> Unit,
-    val onAutoLayout: (Boolean) -> Unit = {},
     val onResetTypography: () -> Unit = {},
     val onTopPadding: (Int) -> Unit = {},
     val onBottomPadding: (Int) -> Unit = {},
@@ -121,7 +118,6 @@ class NovelPanelSheet(
     // ===== 面板内的「工作状态」=====
     //
     // ⚠️ **派生 UI 必须只有一个重算出口**（[refreshDerivedUi]）。这类 bug 反复出现过：
-    //   · 开启自动排版后，间距滑块该立刻置灰，但面板没刷
     //   · 从「连续滚动」切到「左右/上下翻页」后，翻页动画该立刻解除置灰，但面板没刷
     // 根因都一样 —— 派生关系（A 决定 B 能不能用）只在 `onCreateView` 里算了一次，
     // 之后再改 A 就没人重算了。所以：**任何控件改完都更新这里的字段，然后统一调
@@ -129,9 +125,6 @@ class NovelPanelSheet(
 
     /** 当前阅读模式（0 左右 / 1 上下 / 2 滚动）。 */
     private var curReaderMode = NovelPanelStyle.READER_PAGED
-
-    /** 当前自动排版开关。 */
-    private var curAutoLayout = true
 
     private var curFontSp = NovelPanelStyle.FONT_SIZE_DEFAULT
     private var curLineStep = NovelPanelStyle.LINE_SPACING_DEFAULT
@@ -286,13 +279,12 @@ class NovelPanelSheet(
             cb.onDisplayMode(next)
         }
 
-        // ---- 排版：自动排版 / 恢复默认 / 字号 / 行距 / 段距 / 左右边距 / 上下间距 ----
+        // ---- 排版：恢复默认 / 字号 / 行距 / 段距 / 左右边距 / 上下间距 ----
         //
-        // ⚠️ 自动排版**只跟字号走**：行距 → 左右边距 → 段距 → 上下间距，顺序有依赖
-        // （见 `NovelPanelStyle.applyAutoLayout` 的说明）。开着时这些间距全部由它算好写盘，
-        // 所以滑块置灰；关掉才由用户自己拖，且**不再做整段保护**。
-        val swAutoLayout = view.findViewById<Switch>(R.id.sw_auto_layout)
+        // ⚠️ 每个滑块松手就回调一次，阅读器立刻重排并重画 —— 参数是**直接生效**的，
+        // 没有「自动排版」在中间改写用户设的值（那个功能已删除）。
         val sbFont = view.findViewById<SeekBar>(R.id.sb_font_size)
+
         val tvFontValue = view.findViewById<TextView>(R.id.tv_font_size_value)
         val sbLine = view.findViewById<SeekBar>(R.id.sb_line_spacing)
         val tvLine = view.findViewById<TextView>(R.id.tv_line_spacing_value)
@@ -305,12 +297,6 @@ class NovelPanelSheet(
         val sbBottom = view.findViewById<SeekBar>(R.id.sb_bottom_padding)
         val tvBottomValue = view.findViewById<TextView>(R.id.tv_bottom_padding_value)
 
-        swAutoLayout.setOnCheckedChangeListener { _, checked ->
-            if (syncing) return@setOnCheckedChangeListener
-            curAutoLayout = checked
-            refreshDerivedUi(view)
-            cb.onAutoLayout(checked)
-        }
         view.findViewById<View>(R.id.btn_reset_typography).setOnClickListener { cb.onResetTypography() }
 
         sbFont.progress = state.fontSizeSp.toInt()
@@ -350,7 +336,6 @@ class NovelPanelSheet(
         sbBottom.setOnSeekBarChangeListener(sliderLabel({ tvBottomValue.text = "$it dp" }) { cb.onBottomPadding(it) })
 
         curReaderMode = state.readerMode
-        curAutoLayout = state.autoLayout
         curFontSp = state.fontSizeSp
         curLineStep = state.lineSpacingStep
         refreshDerivedUi(view)
@@ -482,7 +467,7 @@ class NovelPanelSheet(
     /**
      * **重算全部派生 UI**（唯一出口，理由见 [curReaderMode] 上面的说明）。
      *
-     * 只读 [curReaderMode] / [curAutoLayout] / [curFontSp] / [curLineStep] 这几个工作状态，
+     * 只读 [curReaderMode] / [curFontSp] / [curLineStep] 这几个工作状态，
      * 所以任何控件改完调它一次就能收敛 —— 不需要（也不允许）在别处再补一句。
      */
     private fun refreshDerivedUi(view: View) {
@@ -494,18 +479,7 @@ class NovelPanelSheet(
                 curReaderMode != NovelPanelStyle.READER_SCROLL,
             )
 
-            // ② 自动排版 → 间距全部由字号推出来：滑块置灰（**保留数值**，用户要看得见自动选了什么）
-            for (id in listOf(
-                R.id.sb_line_spacing, R.id.sb_para_spacing, R.id.sb_padding,
-                R.id.sb_top_padding, R.id.sb_bottom_padding,
-            )) {
-                val v = view.findViewById<View>(id)
-                v.isEnabled = !curAutoLayout
-                v.alpha = if (curAutoLayout) 0.45f else 1f
-            }
-            view.findViewById<Switch>(R.id.sw_auto_layout).isChecked = curAutoLayout
-
-            // ③ 段距的区间跟着**字号 + 行距**走：段距必须始终大于行距
+            // ② 段距的区间跟着**字号 + 行距**走：段距必须始终大于行距
             val sbPara = view.findViewById<SeekBar>(R.id.sb_para_spacing)
             val min = NovelPanelStyle.minParagraphSpacingDp(curFontSp, curLineStep)
             val max = NovelPanelStyle.maxParagraphSpacingDp(curFontSp, curLineStep)
@@ -533,7 +507,6 @@ class NovelPanelSheet(
             R.id.tv_translator_model_row,
             R.id.tv_source_lang_value, R.id.tv_target_lang_value,
             R.id.tv_debounce_label, R.id.tv_ahead_label, R.id.tv_batch_label,
-            R.id.tv_auto_layout_label,
             R.id.tv_display_label, R.id.tv_font_size_label,
             R.id.tv_line_spacing_label, R.id.tv_para_spacing_label,
             R.id.tv_padding_label, R.id.tv_vertical_padding_label,
@@ -546,7 +519,6 @@ class NovelPanelSheet(
             R.id.tv_display_value, R.id.tv_font_size_value,
             R.id.tv_line_spacing_value, R.id.tv_para_spacing_value,
             R.id.tv_padding_value,
-            R.id.tv_auto_layout_value,
             R.id.tv_top_padding_value, R.id.tv_bottom_padding_value,
             R.id.tv_style_hint,
         ).forEach { view.findViewById<TextView>(it).setTextColor(subColor) }
@@ -554,7 +526,7 @@ class NovelPanelSheet(
         chapterAdapter.dark = darkPanel
         // Switch 配色（避免与面板背景重叠/看不清）
         val swTrack = if (dark) 0xFF3A4046.toInt() else 0xFFCFD8DC.toInt()
-        listOf(R.id.sw_auto_turn, R.id.sw_auto_layout).forEach { id ->
+        listOf(R.id.sw_auto_turn).forEach { id ->
             view.findViewById<Switch>(id).let {
                 it.thumbTintList = ColorStateList.valueOf(0xFF55AEEA.toInt())
                 it.trackTintList = ColorStateList.valueOf(swTrack)
