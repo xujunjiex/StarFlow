@@ -1324,6 +1324,7 @@
     <string name="llamacpp_model_file_missing">Model file for \"%1$s\" not found — please re-download or re-import it</string>
     <string name="llamacpp_init_failed">Failed to load the local model</string>
     <string name="llamacpp_error_text_too_long">Input text too long (exceeds model context)</string>
+    <string name="llamacpp_error_unsupported_quant">This model uses a quantization the current engine cannot read (usually a Tencent-proprietary format such as 2-bit). Please use a standard quantization such as Q4_K_M, or a model this engine supports.</string>
     <string name="llamacpp_empty_result">The model returned an empty result</string>
 
     <!-- LlamaCpp 引擎与模型管理页 -->

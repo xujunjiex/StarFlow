@@ -1329,6 +1329,7 @@
     <string name="llamacpp_model_file_missing">找不到模型文件「%1$s」，请重新下载或重新导入</string>
     <string name="llamacpp_init_failed">本地模型加载失败</string>
     <string name="llamacpp_error_text_too_long">输入文本过长（超过模型上下文）</string>
+    <string name="llamacpp_error_unsupported_quant">该模型的量化类型当前引擎无法识别（多为腾讯专有量化，例如 2-bit）。请改用 Q4_K_M 等标准量化，或本引擎支持的模型。</string>
     <string name="llamacpp_empty_result">模型返回了空结果</string>
 
     <!-- LlamaCpp 引擎与模型管理页 -->

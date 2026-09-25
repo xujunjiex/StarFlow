@@ -220,6 +220,17 @@ object LlamaCppImporter {
             return ImportResult.Failed("invalid GGUF header")
         }
 
+        // 量化兼容性校验：读不了的量化（如腾讯 2-bit 私有格式）在**导入时**就拦下并说明原因，
+        // 而不是等用户切过去、加载到一半再报错
+        when (GgufQuantCheck.check(partFile)) {
+            GgufQuantCheck.Compat.UNSUPPORTED -> {
+                partFile.delete()
+                LogCollector.w(TAG, "导入被拒：量化类型不被当前引擎支持（${safeName}）")
+                return ImportResult.Failed(context.getString(R.string.llamacpp_error_unsupported_quant))
+            }
+            else -> Unit
+        }
+
         LlamaCppModelStore.models.value.firstOrNull { it.md5 != null && it.md5.equals(md5, true) }?.let { dup ->
             partFile.delete()
             return ImportResult.Duplicate(dup)

@@ -189,6 +189,7 @@ object LlamaCppModelStore {
 
         val list = fromDisk.toMutableList()
         seedBuiltinIfMissing(c, list)
+        migrateLegacyDefaultPrompt(list)
         _models.value = list
         persist(list)
 
@@ -234,6 +235,36 @@ object LlamaCppModelStore {
         migrateLegacyParams(list)
         LogCollector.d(TAG, "补种内置模型：$fileName")
     }
+
+    /**
+     * 默认提示词升级：新默认值自带完整要求（原来只有内置 Hy-MT2 的 system 段里有要求，
+     * 导入模型和隐藏了 system 输入框的内置模型都拿不到）。只改**仍是旧默认值**的条目 ——
+     * 用户自己改过的提示词一律尊重，不动。
+     */
+    private fun migrateLegacyDefaultPrompt(list: MutableList<LlamaCppModel>) {
+        var changed = 0
+        for (i in list.indices) {
+            val p = list[i].params
+            if (p.promptTemplate == LlamaCppParams.LEGACY_DEFAULT_PROMPT) {
+                list[i] = list[i].copy(params = p.copy(promptTemplate = LlamaCppParams.DEFAULT_PROMPT))
+                changed++
+            }
+            // 旧的通用默认 system 提示词（长规则版）也一并收敛成短角色句，避免与新模板重复
+            if (list[i].params.systemPrompt == LEGACY_LONG_SYSTEM_PROMPT) {
+                list[i] = list[i].copy(params = list[i].params.copy(systemPrompt = LlamaCppParams.DEFAULT_SYSTEM_PROMPT))
+                changed++
+            }
+        }
+        if (changed > 0) LogCollector.d(TAG, "默认提示词已升级：$changed 项")
+    }
+
+    /** 旧的通用默认 system 提示词（把完整规则写在 system 段里那版） */
+    private const val LEGACY_LONG_SYSTEM_PROMPT =
+        "你是一名专业翻译。你的任务是准确、自然地翻译给定的文本。\n" +
+            "具体规则如下：\n1、根据用户的要求，将文本翻译成指定的目标语言；\n" +
+            "2、保持原意和语气；\n3、尽可能保持格式和结构；\n" +
+            "4、直接返回翻译后的文本，不要有任何解释或附加内容；\n" +
+            "5、如果文本已经是目标语言，请按原样返回。"
 
     /** 把老的全局 Hy-MT2 参数（hymt2_* prefs）迁移成内置模型的初始参数。 */
     private fun migrateLegacyParams(list: MutableList<LlamaCppModel>) {

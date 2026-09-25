@@ -66,16 +66,32 @@ data class LlamaCppParams(
     val enableThinking: Boolean,
 ) {
     companion object {
+        /**
+         * 默认翻译指令模板（**自带完整要求，不依赖 system 段**）。
+         *
+         * 为什么要把要求写全：内置 Hy-MT2 走的是专用对话格式（指令放 system 段、且它的
+         * system/思考开关在 UI 里是隐藏的），如果要求只写在 system 提示词里，它就丢了；
+         * 把要求写进模板后，内置与导入模型、两条 prompt 通道都吃同一套要求。
+         * `{source_text}` 之前的部分会作为前缀 KV 缓存的 key（见 LlamaCppPrompt.buildHyPrefix）。
+         */
         const val DEFAULT_PROMPT =
+            "你是一名专业翻译。请把下面的文本翻译成 {target_lang}。\n" +
+                "要求：\n" +
+                "1、准确、自然，保持原意与语气；\n" +
+                "2、尽可能保持原有格式与分段；\n" +
+                "3、只输出译文，不要添加解释、标注或引号；\n" +
+                "4、如果原文已经是 {target_lang}，请按原样返回。\n\n" +
+                "{source_text}"
+
+        /** 旧版默认模板：加载清单时用它判断用户是否改过提示词，改过的尊重用户设置 */
+        const val LEGACY_DEFAULT_PROMPT =
             "将以下文本翻译为 {target_lang}，注意只需要输出翻译后的结果，不要额外解释：\n\n{source_text}"
 
-        /** 通用模型的 system 提示词（与聚合 AI 翻译的默认系统提示词风格一致） */
-        const val DEFAULT_SYSTEM_PROMPT =
-            "你是一名专业翻译。你的任务是准确、自然地翻译给定的文本。\n" +
-                "具体规则如下：\n1、根据用户的要求，将文本翻译成指定的目标语言；\n" +
-                "2、保持原意和语气；\n3、尽可能保持格式和结构；\n" +
-                "4、直接返回翻译后的文本，不要有任何解释或附加内容；\n" +
-                "5、如果文本已经是目标语言，请按原样返回。"
+        /**
+         * 通用模型的 system 提示词：只留一句角色设定。
+         * 详细规则已经在 [DEFAULT_PROMPT] 里（两条通道共用），这里再写一遍会重复。
+         */
+        const val DEFAULT_SYSTEM_PROMPT = "你是一名专业翻译。"
 
         /**
          * 默认生成线程数：按设备核心数适配。
