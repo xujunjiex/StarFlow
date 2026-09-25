@@ -24,12 +24,12 @@ object NovelPanelStyle {
     // ===== 手机上方/下方浮层需要避开的尺寸（自动排版用） =====
 
     /**
-     * 上下浮层占掉的纵向空间。
-     * 顶部：返回/菜单圆形钮在 34dp 处、直径 40dp；章节胶囊在 38dp 处。
-     * 底部：胶囊 10+48dp，右下翻译浮层组 62+52dp。
+     * 上下浮层占掉的纵向空间（摸清后写死，供默认值参考）：
+     * 顶部：返回/菜单圆形钮 34~74dp，章节胶囊 38~64dp → 留 80dp 就够。
+     * 底部：胶囊 10~58dp → 80dp 也够；右下翻译浮层组在 62~114dp，只压住**最右一行的末端**。
      */
     private const val CHROME_TOP_DP = 80
-    private const val CHROME_BOTTOM_DP = 120
+    private const val CHROME_BOTTOM_DP = 80
 
     // ===== 字号（小说独立一份） =====
 
@@ -224,8 +224,9 @@ object NovelPanelStyle {
     fun setBottomPaddingDp(prefs: SharedPreferences, v: Int) = prefs.edit()
         .putInt(KEY_BOTTOM_PADDING, v.coerceIn(VERTICAL_PADDING_MIN, VERTICAL_PADDING_MAX)).apply()
 
-    /** 上下间距的默认值：**上下取同一个数**，且要够避开上下浮层。 */
-    fun verticalPaddingDefaultDp(): Int = CHROME_BOTTOM_DP.coerceIn(VERTICAL_PADDING_MIN, VERTICAL_PADDING_MAX)
+    /** 上下间距的默认值：**上下取同一个数**（用户明确要求），且要够避开上下浮层。 */
+    fun verticalPaddingDefaultDp(): Int =
+        maxOf(CHROME_TOP_DP, CHROME_BOTTOM_DP).coerceIn(VERTICAL_PADDING_MIN, VERTICAL_PADDING_MAX)
 
     // ===== 自动排版 =====
 

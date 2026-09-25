@@ -33,9 +33,21 @@ class NovelPageView(context: Context) : View(context) {
         val width = style.contentWidthPx(getWidth())
 
         // 正文从**上内边距**之下开始画：顶部三件浮层（返回/菜单/章节胶囊）压在屏幕上方，
-        // 不偏移的话第一行会被压在浮层底下
+        // 不偏移的话第一行会被压在浮层底下。
+        //
+        // ⚠️ 同时把画布裁到「正文框」内。分页已经保证了内容放得下，但排版模型一旦有偏差
+        // （字号/行距/字体度量任何一处对不上），越界的几行就会被画到页面外面 ——
+        // 裁剪是最外层的兜底：**宁可少画一行，也不能画到框外**。
+        canvas.save()
+        canvas.clipRect(
+            style.paddingPx,
+            style.topPaddingPx,
+            getWidth() - style.paddingPx,
+            getHeight() - style.bottomPaddingPx,
+        )
+
         var y = style.topPaddingPx
-        for (seg in p.segments) {
+        for ((i, seg) in p.segments.withIndex()) {
             val full = c.displayOf(seg.paraIndex)
             if (full.isEmpty()) continue
             val from = seg.charStart.coerceIn(0, full.length)
@@ -50,8 +62,11 @@ class NovelPageView(context: Context) : View(context) {
                 y = y,
                 color = textColor,
             )
-            y += style.paragraphSpacingPx
+            // 段间距只补在段与段**之间**：页内最后一段之后不该再补 —— 分页的容量模型正是
+            // 「按段间距分隔」，多补一份会让最后一行的下沿顶出正文框
+            if (i != p.segments.lastIndex) y += style.paragraphSpacingPx
         }
+        canvas.restore()
     }
 
     companion object {

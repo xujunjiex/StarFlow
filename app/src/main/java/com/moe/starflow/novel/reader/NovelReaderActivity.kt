@@ -177,6 +177,12 @@ class NovelReaderActivity : AppCompatActivity() {
         enterImmersive()
 
         prefs = getSharedPreferences(NovelPanelStyle.PREFS_NAME, MODE_PRIVATE)
+
+        // ⚠️ 自动排版**每次进阅读器都要套用一次**（幂等，只写 prefs）：它原先只在开关翻转时
+        // 算过一次，用户之后改字号、或换了视口宽度（左右边距是按屏宽反推的），参数就不再一致 ——
+        // 面板上还显示着"已开启"，用户看到的却是"自动排版完全没用"。
+        if (NovelPanelStyle.isAutoLayout(prefs)) NovelPanelStyle.applyAutoLayout(this, prefs)
+
         bgMode = NovelPanelStyle.background(prefs)
         animationMode = NovelPanelStyle.animation(prefs)
         autoTurnEnabled = prefs.getBoolean(KEY_AUTO_TURN, false)
@@ -613,6 +619,8 @@ class NovelReaderActivity : AppCompatActivity() {
         repaginateJob?.cancel()
         repaginateJob = lifecycleScope.launch {
             delay(REPAGINATE_DEBOUNCE_MS)
+            // 左右边距是按屏宽反推的：视口一变自动排版必须跟着重算（否则字号没变但行宽不合适）
+            if (NovelPanelStyle.isAutoLayout(prefs)) NovelPanelStyle.applyAutoLayout(this@NovelReaderActivity, prefs)
             loadChapter(chapterIndex, keepPara = pendingParaIndex)
         }
     }

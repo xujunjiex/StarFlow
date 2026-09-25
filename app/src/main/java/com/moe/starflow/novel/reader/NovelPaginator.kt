@@ -119,6 +119,23 @@ object NovelPaginator {
     }
 
     /**
+     * 量一行**真实**占多高（px）。
+     *
+     * ⚠️ 不能用 `fontSizePx × 行距倍率` 估：`StaticLayout` 的行高来自字体的
+     * `ascent..descent`（常见中文字体 ≈ 字号的 1.15 倍），按字号估会**少算约 15%**
+     * —— 每页于是多塞进几行，最后几行被画到正文框外面（用户看到的「超出页面显示范围」）。
+     * 这里直接量一个单字布局的高度：和渲染走的是同一套 paint 与行距参数，量出来就是真值。
+     */
+    internal fun measureLineHeight(paint: TextPaint, multiplier: Float, contentWidth: Int): Float {
+        val probe = StaticLayout.Builder
+            .obtain("字", 0, 1, paint, contentWidth.coerceAtLeast(1))
+            .setLineSpacing(0f, multiplier)
+            .setIncludePad(false)
+            .build()
+        return (probe.height.toFloat() / probe.lineCount.coerceAtLeast(1)).coerceAtLeast(1f)
+    }
+
+    /**
      * 生产入口：用 `StaticLayout` 求出每段的行起点，再交给纯核心切页。
      *
      * 宽高都要扣掉内边距（渲染时文字就是画在这个内框里的）：左右扣 `paddingPx`，
@@ -137,7 +154,7 @@ object NovelPaginator {
         val paint = TextPaint(TextPaint.ANTI_ALIAS_FLAG).apply { textSize = style.fontSizePx }
         val contentWidth = style.contentWidthPx(widthPx)
         val contentHeight = style.contentHeightPx(heightPx)
-        val lineHeight = style.fontSizePx * style.lineSpacingMultiplier
+        val lineHeight = measureLineHeight(paint, style.lineSpacingMultiplier, contentWidth)
 
         val lineStarts = visible.map { p ->
             val layout = StaticLayout.Builder

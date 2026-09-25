@@ -145,4 +145,52 @@ class NovelPaginationRealismTest {
             c.paragraphs.sumOf { it.originalText.length } > 5_000,
         )
     }
+
+    /**
+     * **每页渲染出来的高度不得超过正文框** —— 守「文字被画到页面外面」。
+     *
+     * 用 [NovelPaginator.measureLineHeight] 量出的行高回算渲染高度，与页表逐页核对。
+     *
+     * ⚠️ **这条证明不了字体度量那一半**：Robolectric 的文本引擎是桩，
+     * `StaticLayout` 量出来的行高恰好等于 `字号 × 行距倍率`，所以「按字号估行高」这种写法
+     * 在这里**也是绿的**（实测过：把 `paginate` 退回旧估法，本测试照样通过）。
+     * 它守的是**分页侧的记账**（段间距只算在段与段之间、容量不超框）；
+     * 「字体真实行高 ≈ 字号 × 1.15」这一半只能在**真机**上确认。
+     */
+    @Test
+    fun `每页渲染高度不得超过正文框`() {
+        val style = NovelTextStyle(
+            fontSizePx = 40f,
+            lineSpacingMultiplier = 1.5f,
+            paragraphSpacingPx = 24f,
+            paddingPx = 20f,
+            topPaddingPx = 100f,
+            bottomPaddingPx = 120f,
+            keepParagraphsWhole = true,
+        )
+        val paras = (0 until 80).map { i ->
+            com.moe.starflow.novel.translate.NovelParagraph(
+                i, com.moe.starflow.novel.translate.NovelParagraphType.TEXT, "字".repeat(12),
+            )
+        }
+        val pages = NovelPaginator.paginate(paras, style, 1000, 2000)
+        assertTrue("至少要分出多页", pages.size > 1)
+
+        val paint = android.text.TextPaint().apply { textSize = style.fontSizePx }
+        val lineH = NovelPaginator.measureLineHeight(paint, style.lineSpacingMultiplier, style.contentWidthPx(1000))
+        val box = style.contentHeightPx(2000)
+
+        for ((i, page) in pages.withIndex()) {
+            var rendered = 0f
+            page.segments.forEachIndexed { idx, _ ->
+                rendered += lineH
+                // 与渲染一致：段间距只补在段与段之间
+                if (idx != page.segments.lastIndex) rendered += style.paragraphSpacingPx
+            }
+            assertTrue(
+                "第 ${i + 1} 页渲染高度 $rendered 超出正文框 $box（行高 $lineH）—— 会被画到页面外面",
+                rendered <= box + 0.5f,
+            )
+        }
+    }
 }

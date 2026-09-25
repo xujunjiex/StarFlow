@@ -1378,7 +1378,7 @@
     <string name="novel_style_top_padding">上间距</string>
     <string name="novel_style_bottom_padding">下间距</string>
     <string name="novel_style_auto_layout">自动排版</string>
-    <string name="novel_style_auto_layout_hint">行距/段距/边距按字号自动配</string>
+    <string name="novel_style_auto_layout_hint">按字号自动配行距、段距与边距；保证段落不被分页切断、正文不被上下控件遮挡</string>
     <string name="novel_style_reset">恢复默认</string>
     <string name="novel_style_reader_mode">阅读模式</string>
     <string name="novel_reader_mode_paged">左右翻页</string>
