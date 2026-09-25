@@ -1,0 +1,154 @@
+package com.moe.starflow.data
+
+import androidx.room.Dao
+import androidx.room.Entity
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
+
+/**
+ * 小说段落译文（主键 = 书 + 身份指纹 + 章 + 段）。
+ *
+ * ### 三条不能动的约束
+ *
+ * 1. **`paraIndex` 是唯一权威，绝不用 `sourceText` 反查译文**。
+ *    参考实现 (Kototoro) 存了 `Map<Int, String>` 却在渲染时改用原文文本做 key，
+ *    于是同章里重复的段落（`"……"`、短对白）会共用同一条译文。
+ *
+ * 2. **`novelKey` 是身份指纹（= `addedAt`）**。书籍 id = 书架最大 id + 1，删书后重导会
+ *    复用同一 id；不带指纹就会把上一本书的译文串到新书上。删除也必须按 (id, key) **成对**删。
+ *
+ * 3. **`splitVersion`**：段落切分规则一改，旧 `paraIndex` 整体错位、且**看不出错**
+ *    （译文还在，只是对错了段）。切分规则变更时递增 `NovelParagraphSplitter.SPLIT_VERSION`，
+ *    旧行自动失效。
+ */
+@Entity(
+    tableName = "novel_paragraph_translation",
+    primaryKeys = ["novelId", "novelKey", "chapterIndex", "paraIndex"]
+)
+data class NovelParagraphTranslation(
+    val novelId: Long,
+    val novelKey: String,
+    val chapterIndex: Int,
+    val paraIndex: Int,
+    val sourceText: String,
+    val translatedText: String = "",
+    val state: Int = STATE_IDLE,
+    val failCode: String? = null,
+    val translatorName: String? = null,
+    val sourceLang: String? = null,
+    val targetLang: String? = null,
+    val splitVersion: Int = 0,
+    val updatedAt: Long = 0L,
+) {
+    companion object {
+        const val STATE_IDLE = 0          // 未翻译
+        const val STATE_TRANSLATING = 1   // 翻译中
+        const val STATE_SUCCESS = 2       // 成功
+        const val STATE_FAILED = 3        // 失败（**不写空译文**，可重挑）
+    }
+}
+
+/** 章级聚合，目录面板的状态徽章用。 */
+data class NovelChapterStat(
+    val chapterIndex: Int,
+    val total: Int,
+    val success: Int,
+)
+
+@Dao
+interface NovelParagraphTranslationDao {
+
+    /**
+     * 读某章全部记录。
+     * ⚠️ `splitVersion` 必须传（见 Entity 注释第 3 条）—— 不传默认值：默认值会让
+     * 「忘了按版本过滤」变成一行看不出来的静默错误。
+     */
+    @Query(
+        "SELECT * FROM novel_paragraph_translation " +
+            "WHERE novelId = :novelId AND novelKey = :novelKey AND chapterIndex = :chapterIndex " +
+            "AND splitVersion = :splitVersion ORDER BY paraIndex"
+    )
+    suspend fun forChapter(
+        novelId: Long,
+        novelKey: String,
+        chapterIndex: Int,
+        splitVersion: Int,
+    ): List<NovelParagraphTranslation>
+
+    @Query(
+        "SELECT * FROM novel_paragraph_translation " +
+            "WHERE novelId = :novelId AND novelKey = :novelKey " +
+            "AND chapterIndex = :chapterIndex AND paraIndex = :paraIndex"
+    )
+    suspend fun get(
+        novelId: Long,
+        novelKey: String,
+        chapterIndex: Int,
+        paraIndex: Int,
+    ): NovelParagraphTranslation?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(row: NovelParagraphTranslation)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAll(rows: List<NovelParagraphTranslation>)
+
+    /**
+     * 全部章的 (总数, 成功数)。**只统计本指纹 + 本 splitVersion**：否则旧版本的行会把
+     * 「已翻译比例」算虚高，而渲染时那些行其实会被过滤掉。
+     *
+     * state 字面量 2 = [NovelParagraphTranslation.STATE_SUCCESS]（@Query 里引不到 Kotlin 常量）。
+     */
+    @Query(
+        "SELECT chapterIndex AS chapterIndex, COUNT(*) AS total, " +
+            "SUM(CASE WHEN state = 2 THEN 1 ELSE 0 END) AS success " +
+            "FROM novel_paragraph_translation " +
+            "WHERE novelId = :novelId AND novelKey = :novelKey AND splitVersion = :splitVersion " +
+            "GROUP BY chapterIndex"
+    )
+    suspend fun chapterStats(novelId: Long, novelKey: String, splitVersion: Int): List<NovelChapterStat>
+
+    @Query(
+        "SELECT COUNT(*) FROM novel_paragraph_translation " +
+            "WHERE novelId = :novelId AND novelKey = :novelKey"
+    )
+    suspend fun countFor(novelId: Long, novelKey: String): Int
+
+    /**
+     * 把残留的「翻译中」重置为「未翻译」。
+     *
+     * ⚠️ 必要性：`STATE_TRANSLATING` 是在翻译**开始时**写库的，只有跑完才改成 SUCCESS。
+     * 期间退出阅读器 / 进程被杀 / 崩溃会让该章**永久停在「翻译中」** —— 既不显示译文，
+     * 翻译按钮也只会说「正在翻译中」而再也翻不了。
+     *
+     * 放在**进入阅读器时**清理（而不是退出时）：进程被杀/崩溃时「退出时」的清理根本不会执行。
+     */
+    @Query(
+        "UPDATE novel_paragraph_translation SET state = 0 " +
+            "WHERE novelId = :novelId AND novelKey = :novelKey AND state = 1"
+    )
+    suspend fun resetTranslating(novelId: Long, novelKey: String)
+
+    @Query(
+        "DELETE FROM novel_paragraph_translation " +
+            "WHERE novelId = :novelId AND novelKey = :novelKey AND chapterIndex = :chapterIndex"
+    )
+    suspend fun deleteChapter(novelId: Long, novelKey: String, chapterIndex: Int)
+
+    /**
+     * 删除「某 id + 某指纹」的全部记录（顺带清同 id 下 key 为 NULL 的升级前残留）。
+     *
+     * ⚠️ **必须带 key**：书籍 id 会被复用，而删除是异步的 —— 只按 id 删的话，用户完全可能
+     * 在它落地前就导入了一本复用同 id 的新书并翻了几章 → 把这本**新书**的译文删掉。
+     */
+    @Query(
+        "DELETE FROM novel_paragraph_translation " +
+            "WHERE novelId = :novelId AND (novelKey = :novelKey OR novelKey IS NULL)"
+    )
+    suspend fun deleteForNovelScoped(novelId: Long, novelKey: String)
+
+    /** 全部出现过的 novelId（去重），供书架清理孤儿行。 */
+    @Query("SELECT DISTINCT novelId FROM novel_paragraph_translation")
+    suspend fun allNovelIds(): List<Long>
+}
