@@ -130,7 +130,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:minWidth="0dp"
-            android:text="@string/hymt2_section_params"
+            android:text="@string/llamacpp_section_params"
             android:textSize="12sp" />
 
         <Button

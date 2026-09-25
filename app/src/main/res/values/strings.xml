@@ -107,43 +107,25 @@
     <string name="nllb_not_download_content">It looks like you have selected NLLB as the translation model, but it seems that the NLLB model file has not been downloaded yet, so translation is not possible. Click Go to Download to enter the download page; of course, you can also choose other translation APIs to use the translation function.</string>
     <string name="go_to_download">Go to Download</string>
     <string name="nllb_not_download_title">NLLB model file not downloaded</string>
-    <string name="hymt2_not_download_translate">Hy-MT2 model is not downloaded; cannot translate. Please download the model files first.</string>
-    <string name="hymt2_model_loading">Loading Hy-MT2 model…</string>
-    <string name="hymt2_loaded">Hy-MT2 model loaded</string>
-    <string name="hymt2_init_failed">Hy-MT2 model load failed</string>
-    <string name="hymt2_released_translate">Translation engine released. Please restart the translation service.</string>
-    <string name="hymt2_section_download">Model Download</string>
-    <string name="hymt2_section_params">Translation Parameters</string>
-    <string name="hymt2_section_intro">About the Model</string>
-    <string name="hymt2_intro">Tencent Hy-MT2 (1.25-bit quantized, ~440MB) multilingual translation model, fully local offline inference — text never leaves the device, works without network.
-
-★ Streaming output: the translation appears token by token, no need to wait for completion.
-★ Two stages: “read source” (batch prefill) then “generate translation” (token-by-token output). Stage thread counts are adjustable below.
-
-──────────────
-⚠️ Local inference is CPU-intensive: faster chips translate faster (e.g. flagship/upper-midrange); low-end chips are noticeably slower.</string>
-    <string name="hymt2_download_help">Manual download (model ~440MB; must be downloaded manually, not automatic)</string>
-    <string name="hymt2_prompt_label">Prompt Template</string>
-    <string name="hymt2_threads_label">Generation Threads</string>
-    <string name="hymt2_batch_threads_label">Batch Threads</string>
-    <string name="hymt2_context_label">Context Length</string>
-    <string name="hymt2_temp_label">temperature</string>
-    <string name="hymt2_top_p_label">top_p</string>
-    <string name="hymt2_top_k_label">top_k</string>
-    <string name="hymt2_rep_penalty_label">repetition_penalty</string>
-    <string name="hymt2_max_tokens_label">max_tokens</string>
-    <string name="hymt2_save_params">Save Parameters</string>
-    <string name="hymt2_params_saved">Parameters saved</string>
-    <string name="hymt2_sample_subtitle">Sampling Parameters</string>
-    <string name="hymt2_help_prompt">Official default translation prompt. During translation {target_lang} is replaced by the full target language name (e.g. “Japanese”) and {source_text} by the text to translate.</string>
-    <string name="hymt2_help_threads">CPU threads for the generation stage (llama.cpp n_threads). Defaults to a value based on device core count (never exceeding it). Too few threads underutilize compute; more than the core count causes contention and slowdowns. Adjust to taste.</string>
-    <string name="hymt2_help_batch_threads">CPU threads for the read-source (prefill/batch) stage (llama.cpp n_threads_batch). Defaults to all device cores. Independent of generation threads and adjustable separately; must not exceed the core count.</string>
-    <string name="hymt2_help_context">Maximum context length. 1024≈500–700 Chinese characters, 2048≈1000–1400, 4096≈2000–2800.</string>
-    <string name="hymt2_help_temperature">Randomness temperature. Controls creativity and diversity. For translation, 0.1 (strict literal, highly stable) to 0.7 (better for paraphrase, more natural) is recommended.</string>
-    <string name="hymt2_help_top_p" formatted="false">Nucleus sampling threshold: only candidates whose cumulative probability reaches 60% are considered. A lower top_p (e.g. 0.6) filters low-probability words for more rigorous translations.</string>
-    <string name="hymt2_help_top_k">Top-k: each generation draws only from the top 20 most probable candidates, preventing off-topic or wrong-word translations.</string>
-    <string name="hymt2_help_rep_penalty">Repetition penalty. Mildly penalizes already-generated tokens. 1.05 avoids endless repetition without breaking legitimate repeats (layout, punctuation).</string>
-    <string name="hymt2_help_max_tokens">Maximum output tokens per single request. Caps the output length of one translation; not the model context (-c).</string>
+    <string name="llamacpp_section_params">Model settings</string>
+    <string name="llamacpp_prompt_label">Prompt Template</string>
+    <string name="llamacpp_threads_label">Generation Threads</string>
+    <string name="llamacpp_batch_threads_label">Batch Threads</string>
+    <string name="llamacpp_context_label">Context Length</string>
+    <string name="llamacpp_temp_label">temperature</string>
+    <string name="llamacpp_top_p_label">top_p</string>
+    <string name="llamacpp_top_k_label">top_k</string>
+    <string name="llamacpp_rep_penalty_label">repetition_penalty</string>
+    <string name="llamacpp_max_tokens_label">max_tokens</string>
+    <string name="llamacpp_help_prompt">Official default translation prompt. During translation {target_lang} is replaced by the full target language name (e.g. “Japanese”) and {source_text} by the text to translate.</string>
+    <string name="llamacpp_help_threads">CPU threads for the generation stage (llama.cpp n_threads). Defaults to a value based on device core count (never exceeding it). Too few threads underutilize compute; more than the core count causes contention and slowdowns. Adjust to taste.</string>
+    <string name="llamacpp_help_batch_threads">CPU threads for the read-source (prefill/batch) stage (llama.cpp n_threads_batch). Defaults to all device cores. Independent of generation threads and adjustable separately; must not exceed the core count.</string>
+    <string name="llamacpp_help_context">Maximum context length. 1024≈500–700 Chinese characters, 2048≈1000–1400, 4096≈2000–2800.</string>
+    <string name="llamacpp_help_temperature">Randomness temperature. Controls creativity and diversity. For translation, 0.1 (strict literal, highly stable) to 0.7 (better for paraphrase, more natural) is recommended.</string>
+    <string name="llamacpp_help_top_p" formatted="false">Nucleus sampling threshold: only candidates whose cumulative probability reaches 60% are considered. A lower top_p (e.g. 0.6) filters low-probability words for more rigorous translations.</string>
+    <string name="llamacpp_help_top_k">Top-k: each generation draws only from the top 20 most probable candidates, preventing off-topic or wrong-word translations.</string>
+    <string name="llamacpp_help_rep_penalty">Repetition penalty. Mildly penalizes already-generated tokens. 1.05 avoids endless repetition without breaking legitimate repeats (layout, punctuation).</string>
+    <string name="llamacpp_help_max_tokens">Maximum output tokens per single request. Caps the output length of one translation; not the model context (-c).</string>
     <string name="text_translate_tab">Text</string>
     <string name="text_translate_engine_loading">Loading translation engine…</string>
     <string name="text_translate_engine_init_failed">Translation engine init failed. Check the engine settings.</string>
@@ -232,11 +214,7 @@
     <string name="mlkit_name">ML Kit</string>
     <string name="nllb_description">NLLB is a built-in machine translation model by the MoeTranslate author. It supports multiple languages with good translation quality. The model needs to be downloaded before use: about 1GB on first use, and the device needs at least 6GB of RAM. After the download is complete, it works offline. Click "Manage NLLB Model Files" below to download or delete the model files.</string>
     <string name="manage_nllb_models">Manage NLLB Model Files</string>
-    <string name="hymt2_name">Hy-MT2 Local Translation Model</string>
-    <string name="hymt2_description">Hy-MT2 is Tencent HunYuan’s open-source next-generation multilingual translation model, translating between 33 languages. A 1.25-bit build (~440MB) runs fully offline on-device. Download the model files first via “Manage Hy-MT2 model files” below.</string>
     <string name="manage_hymt2_models">Manage Hy-MT2 model files</string>
-    <string name="hymt2_not_download_title">Hy-MT2 model files not downloaded</string>
-    <string name="hymt2_not_download_content">You selected Hy-MT2 as the translation model, but the model files are not downloaded, so translation cannot run. Tap “Go to download” or choose another translation API.</string>
     <string name="baiduapi_name">Baidu Translate</string>
     <string name="baiduapi_description">Baidu Translate\'s API, click \"Manage Baidu Translate API\" below to set up the API, and you can also view the API application tutorial (there is a free call quota of 1 million characters per month).</string>
     <string name="tencentapi_description">Tencent Cloud\'s translation API, click \"Manage Tencent Cloud API\" below to set up the API, and you can also view the API application tutorial (there is a free call quota of 5 million characters per month).</string>
@@ -1388,6 +1366,7 @@
     <string name="llamacpp_system_prompt_hint">Used only for imported models (Hy-MT2 has its own chat format)</string>
     <string name="llamacpp_enable_thinking_label">Enable thinking (reasoning)</string>
     <string name="llamacpp_enable_thinking_hint">Off = faster translation. Only affects models that support reasoning (e.g. Qwen3).</string>
+    <string name="llamacpp_params_help">Parameter help</string>
     <string name="llamacpp_reset_default">Reset to default</string>
     <string name="llamacpp_intro_title">LlamaCpp Local Inference</string>
     <string name="llamacpp_intro_content">Runs GGUF models on-device with llama.cpp — no network needed after the model is in place.\n\n• <b>Built-in:</b> Hy-MT2 1.8B 1.25-bit (461MB), the default translation model.\n• <b>Imported:</b> any llama.cpp-compatible .gguf (Qwen, Gemma, Hunyuan, …). Imported models are rendered with their own chat template, so the model\'s own formatting is respected.\n• Each model keeps its own prompt template and sampling parameters.\n\n⚠️ Local inference is CPU-bound: the stronger the chip, the faster the translation.</string>

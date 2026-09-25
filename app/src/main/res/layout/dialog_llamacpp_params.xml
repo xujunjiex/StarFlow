@@ -23,7 +23,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="10dp"
-            android:text="@string/hymt2_prompt_label"
+            android:text="@string/llamacpp_prompt_label"
             android:textSize="13sp"
             android:textStyle="bold" />
 
@@ -82,7 +82,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/hymt2_temp_label"
+                    android:text="@string/llamacpp_temp_label"
                     android:textSize="12sp" />
 
                 <EditText
@@ -102,7 +102,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/hymt2_top_p_label"
+                    android:text="@string/llamacpp_top_p_label"
                     android:textSize="12sp" />
 
                 <EditText
@@ -128,7 +128,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/hymt2_top_k_label"
+                    android:text="@string/llamacpp_top_k_label"
                     android:textSize="12sp" />
 
                 <EditText
@@ -148,7 +148,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/hymt2_rep_penalty_label"
+                    android:text="@string/llamacpp_rep_penalty_label"
                     android:textSize="12sp" />
 
                 <EditText
@@ -174,7 +174,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/hymt2_max_tokens_label"
+                    android:text="@string/llamacpp_max_tokens_label"
                     android:textSize="12sp" />
 
                 <EditText
@@ -194,7 +194,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/hymt2_context_label"
+                    android:text="@string/llamacpp_context_label"
                     android:textSize="12sp" />
 
                 <com.google.android.material.textfield.MaterialAutoCompleteTextView
@@ -219,7 +219,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/hymt2_threads_label"
+                    android:text="@string/llamacpp_threads_label"
                     android:textSize="12sp" />
 
                 <EditText
@@ -239,7 +239,7 @@
                 <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/hymt2_batch_threads_label"
+                    android:text="@string/llamacpp_batch_threads_label"
                     android:textSize="12sp" />
 
                 <EditText
@@ -286,6 +286,13 @@
             android:layout_marginTop="12dp"
             android:gravity="end"
             android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btnHelp"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/llamacpp_params_help"
+                android:textSize="12sp" />
 
             <Button
                 android:id="@+id/btnReset"

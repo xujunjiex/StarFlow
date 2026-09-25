@@ -312,6 +312,7 @@ class LlamaCppModelFragment : Fragment() {
             .setCancelable(true)
             .create()
 
+        b.btnHelp.setOnClickListener { showParamsHelp() }
         b.btnReset.setOnClickListener {
             val d = LlamaCppParams.forSource(m.source)
             b.promptEdit.setText(d.promptTemplate)
@@ -348,6 +349,32 @@ class LlamaCppModelFragment : Fragment() {
             UiUtils.showToast(requireContext(), getString(R.string.llamacpp_params_saved), isShort = true)
         }
 
+        dialog.show()
+        dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
+    }
+
+    /** 参数说明：把原来老详情页里每个参数右侧问号弹出的说明合并成一个弹窗（新页面用按钮入口）。 */
+    private fun showParamsHelp() {
+        val items = listOf(
+            R.string.llamacpp_prompt_label to R.string.llamacpp_help_prompt,
+            R.string.llamacpp_threads_label to R.string.llamacpp_help_threads,
+            R.string.llamacpp_batch_threads_label to R.string.llamacpp_help_batch_threads,
+            R.string.llamacpp_context_label to R.string.llamacpp_help_context,
+            R.string.llamacpp_temp_label to R.string.llamacpp_help_temperature,
+            R.string.llamacpp_top_p_label to R.string.llamacpp_help_top_p,
+            R.string.llamacpp_top_k_label to R.string.llamacpp_help_top_k,
+            R.string.llamacpp_rep_penalty_label to R.string.llamacpp_help_rep_penalty,
+            R.string.llamacpp_max_tokens_label to R.string.llamacpp_help_max_tokens,
+        )
+        // 标签 + 说明成对列出，中间空行分隔；不带任何 CJK 标点，中英文都适用
+        val message = items.joinToString("\n\n") { (label, help) ->
+            getString(label) + "\n" + getString(help)
+        }
+        val dialog = AlertDialog.Builder(requireContext())
+            .setTitle(R.string.llamacpp_params_help)
+            .setMessage(message)
+            .setPositiveButton(R.string.user_known, null)
+            .create()
         dialog.show()
         dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
     }
