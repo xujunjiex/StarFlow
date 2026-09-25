@@ -30,7 +30,11 @@ class LlamaCppLanguagesTest {
         // 40 个代码 = 官方 38 种目标语言 + 两个别名（zh-Hant 同 zh-TW、tl 同 fil）
         assertEquals(40, LlamaCppLanguages.hyMt2SupportedCodes.size)
         // 不同的语言名只有 38 个：繁体中文被 zh-TW/zh-Hant 共用、菲律宾语被 fil/tl 共用
-        assertEquals(38, LlamaCppLanguages.supportedNames.toSet().size)
+        // （别名只能靠「名字去重后变少」来体现，所以这里就地推导，不给生产代码留一个只给测试用的属性）
+        val distinctNames = LlamaCppLanguages.hyMt2SupportedCodes
+            .map { LlamaCppLanguages.getTargetName(it) }
+            .toSet()
+        assertEquals(38, distinctNames.size)
     }
 
     @Test

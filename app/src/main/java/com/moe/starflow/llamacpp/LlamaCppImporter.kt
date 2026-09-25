@@ -5,8 +5,6 @@ import android.app.NotificationManager
 import android.content.Context
 import android.net.Uri
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
 import android.provider.OpenableColumns
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -81,7 +79,13 @@ object LlamaCppImporter {
     /**
      * 启动导入（**非阻塞**，立刻返回）。
      * @return true = 已开始；false = 已有任务在跑（调用方提示用户等待）
+     *
+     * ⚠️ 必须 `@Synchronized`：`job = scope.launch{}` 的赋值发生在 `launch` 返回**之后**，
+     * 「查 isRunning → 再赋值」不是原子操作 —— 同一瞬间的两次调用都可能通过检查，随后两个任务
+     * 共用同一个 `<name>.part` 路径互相覆盖。UI 侧虽然用按钮禁用串行化了调用，但那是 UI 的自觉，
+     * 不该当成这里的前提。
      */
+    @Synchronized
     fun start(context: Context, uri: Uri): Boolean {
         if (isRunning()) {
             LogCollector.d(TAG, "已有导入任务在跑，忽略本次请求")
@@ -109,7 +113,8 @@ object LlamaCppImporter {
         return true
     }
 
-    /** 用户主动取消导入（离开页面**不**应调用这个）。 */
+    /** 用户主动取消导入（离开页面**不**应调用这个）。与 [start] 同锁，保证「取消 → 立刻重选」串行。 */
+    @Synchronized
     fun cancel() {
         job?.cancel()
     }
@@ -190,13 +195,19 @@ object LlamaCppImporter {
             return ImportResult.Failed(context.getString(R.string.llamacpp_not_gguf))
         }
         if (sizeHint > MAX_SIZE_BYTES) {
-            return ImportResult.Failed("> ${MAX_SIZE_BYTES / 1024 / 1024 / 1024}GB")
+            return ImportResult.Failed(
+                context.getString(R.string.llamacpp_import_too_large, MAX_SIZE_BYTES / 1024 / 1024 / 1024)
+            )
         }
 
         val modelsDir = LlamaCppPaths.modelsDir()
         if (sizeHint > 0 && modelsDir.usableSpace < (sizeHint * FREE_SPACE_MARGIN).toLong()) {
             return ImportResult.Failed(
-                "need ${sizeHint / 1024 / 1024}MB, free ${modelsDir.usableSpace / 1024 / 1024}MB"
+                context.getString(
+                    R.string.llamacpp_import_no_space,
+                    sizeHint / 1024 / 1024,
+                    modelsDir.usableSpace / 1024 / 1024,
+                )
             )
         }
 
@@ -212,12 +223,12 @@ object LlamaCppImporter {
         } catch (e: Exception) {
             partFile.delete()
             LogCollector.e(TAG, "导入拷贝失败：${e.message}", e)
-            return ImportResult.Failed(e.message ?: "copy failed")
+            return ImportResult.Failed(e.message ?: context.getString(R.string.llamacpp_import_error_copy))
         }
 
         if (!GgufTypeRetag.looksLikeGguf(partFile)) {
             partFile.delete()
-            return ImportResult.Failed("invalid GGUF header")
+            return ImportResult.Failed(context.getString(R.string.llamacpp_import_bad_header))
         }
 
         // 量化兼容性校验：读不了的量化（如腾讯 2-bit 私有格式）在**导入时**就拦下并说明原因，
@@ -242,7 +253,7 @@ object LlamaCppImporter {
             runCatching { partFile.copyTo(finalFile, overwrite = true); partFile.delete() }
                 .onFailure { e ->
                     partFile.delete()
-                    return ImportResult.Failed(e.message ?: "rename failed")
+                    return ImportResult.Failed(e.message ?: context.getString(R.string.llamacpp_import_error_rename))
                 }
         }
 

@@ -195,6 +195,40 @@ class GgufTypeRetagTest {
     }
 
     @Test
+    fun `标记残留但文件被换成未重打标的原件时必须重新改写`() {
+        // 复现线上路径：在模型管理页删掉预设 1.25-bit 再重新下载。下载侧只删 gguf 与 .part，
+        // `<file>.retagged` 留在磁盘上，而 gguf 是**未重打标的官方原件** ——
+        // 若把「标记在不在」当判据就会跳过改写，42 号文件被当成本引擎可读（加载失败或垃圾输出）。
+        val f = tmp.newFile("stale.gguf")
+        writeGguf(f, listOf(Tensor("w", 42)), dataTraits = traits + (42 to (256 to 42)))
+        val marker = LlamaCppPaths.retagMarker(f)
+        marker.writeText("00000000000000000000000000000000")   // 上一次重打标留下的旧 MD5
+
+        assertTrue("残留标记不能阻止重新改写", GgufTypeRetag.ensureRetagged(f))
+        assertEquals(
+            "文件必须真的被改成 43 号",
+            listOf(GgufTypeRetag.TYPE_STQ1_0),
+            GgufTypeRetag.findTypeFieldOffsets(f).map { it.second },
+        )
+        assertEquals("标记必须刷新成当前文件的 MD5", GgufTypeRetag.md5(f), marker.readText())
+    }
+
+    @Test
+    fun `上游 Q2_0 上的残留标记会被清掉`() {
+        // 同名文件被换成另一种量化（Q2_0 也是 42 号，但布局 72 字节/256 → 不该改）。
+        // 旧标记描述的是另一个文件，留着会让下载侧拿它的 MD5 把当前文件判成损坏并删掉
+        // （删完重下 → 死循环），所以必须清掉。
+        val f = tmp.newFile("q2_0-stale.gguf")
+        writeGguf(f, listOf(Tensor("w1", 42), Tensor("w2", 42)), dataTraits = traits)
+        val marker = LlamaCppPaths.retagMarker(f)
+        marker.writeText("00000000000000000000000000000000")
+
+        assertFalse(GgufTypeRetag.ensureRetagged(f))
+        assertFalse("与文件不符的残留标记必须清掉", marker.exists())
+        assertEquals("Q2_0 一个字节都不该动", listOf(42, 42), GgufTypeRetag.findTypeFieldOffsets(f).map { it.second })
+    }
+
+    @Test
     fun `没有 42 号张量的普通 GGUF 不打标`() {
         val f = tmp.newFile("d.gguf")
         writeGguf(f, listOf(Tensor("w", 12), Tensor("n", 0)))

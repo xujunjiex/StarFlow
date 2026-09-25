@@ -424,12 +424,16 @@ class ModelDownloadService : LifecycleService() {
             file.delete()
             return VerifyResult.DAMAGED
         }
-        // ⚠️ 本地 GGUF 会被「1.25-bit 类型重打标」改写（张量类型 42→43，见 patches/README.md），
-        //    文件 MD5 随之改变：有 <file>.retagged 标记时按标记里的 MD5 校验，
-        //    否则会把已经改好的模型误判成 DAMAGED 并删掉（然后重复下载 → 死循环）。
-        val retaggedMd5 = com.moe.starflow.llamacpp.GgufTypeRetag.retaggedMd5(file)
-        val expected = retaggedMd5 ?: fileInfo.checksum
-        if (expected.isNotEmpty() && !ChecksumHelper.verifyChecksum(file, expected)) {
+        // ⚠️ 本地 GGUF 有两种**都算正确**的形态：官方原件（未重打标）与重打标后
+        //    （张量类型 42→43，MD5 随之改变，见 patches/README.md）。两个 MD5 都必须接受：
+        //    只认官方 → 已重打标的文件被当损坏删掉、然后重复下载；
+        //    只认标记 → 会被**过期的** `<file>.retagged` 骗到（删掉模型重新下载时该标记还在，
+        //    它描述的是上一个文件）。所以一次 MD5、对多个候选比对，避免 GB 级文件算两遍。
+        val candidates = buildList {
+            if (fileInfo.checksum.isNotEmpty()) add(fileInfo.checksum)
+            com.moe.starflow.llamacpp.GgufTypeRetag.retaggedMd5(file)?.let { add(it) }
+        }
+        if (!ChecksumHelper.verifyChecksum(file, candidates)) {
             file.delete()
             return VerifyResult.DAMAGED
         }

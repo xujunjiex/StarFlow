@@ -103,6 +103,8 @@ object LlamaCppNative {
     external fun nativeModelInfo(handle: Long): String
 
     /** 模型自带的 chat_template 原文（可能很长、含换行）；模型没有模板时返回空串。 */
+    // ⚠️ 目前 Kotlin 侧无调用者（渲染走 nativeFormatChat）。C++ 侧同名导出保留着做诊断，
+    //    两边必须成对存在；删一个就只剩半边。
     external fun nativeChatTemplate(handle: Long): String
 
     /**

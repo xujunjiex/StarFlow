@@ -277,16 +277,19 @@ class LlamaCppTranslation(
                 statusOverlay.showError(ctx.getString(R.string.llamacpp_model_file_missing, model.displayName))
                 return 0L
             }
-            // 先做量化兼容性校验：不支持的量化（如腾讯 2-bit 私有格式）直接给明确提示，
-            // 不喂给 native —— 喂了只会得到一个看不懂的加载失败，或更糟：按错类型解出垃圾
-            if (GgufQuantCheck.check(file) == GgufQuantCheck.Compat.UNSUPPORTED) {
+            // 一次头部扫描同时拿到「兼容性结论」与「张量布局」：原先是 check 与 ensureRetagged
+            // 各自解析一遍同一个文件（头部要读整段元数据，含 12 万个 vocab token），没必要读两遍。
+            val analysis = GgufQuantCheck.analyze(file)
+            // 不支持的量化（如腾讯 2-bit 私有格式）直接给明确提示，不喂给 native ——
+            // 喂了只会得到一个看不懂的加载失败，或更糟：按错类型解出垃圾
+            if (analysis.compat == GgufQuantCheck.Compat.UNSUPPORTED) {
                 LogCollector.e(TAG, "$modelName 量化类型不被当前引擎支持：${file.name}")
                 statusOverlay.showError(ctx.getString(R.string.llamacpp_error_unsupported_quant))
                 return 0L
             }
             // 内置 1.25-bit（以及用户导入的同款文件）：设备端把张量类型 42 改写成 43。
-            // 幂等 + 有标记文件，见 GgufTypeRetag / patches/README.md。
-            val retagged = GgufTypeRetag.ensureRetagged(file)
+            // 幂等；判定看**文件内容**而不是标记文件，见 GgufTypeRetag / patches/README.md。
+            val retagged = GgufTypeRetag.ensureRetagged(file, analysis)
             if (retagged) {
                 GgufTypeRetag.retaggedMd5(file)?.let { md5 ->
                     Thread { runCatching { LlamaCppModelStore.markRetagged(model.id, md5) } }.start()

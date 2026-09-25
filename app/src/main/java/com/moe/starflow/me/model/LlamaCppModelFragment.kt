@@ -24,10 +24,9 @@ import com.moe.starflow.llamacpp.LlamaCppModelSource
 import com.moe.starflow.llamacpp.LlamaCppModelStore
 import com.moe.starflow.llamacpp.LlamaCppParams
 import com.moe.starflow.utils.CustomPreference
-import com.moe.starflow.utils.LogCollector
 import com.moe.starflow.utils.UiUtils
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 
 /**
@@ -78,7 +77,9 @@ class LlamaCppModelFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
         repo = ModelDownloadRepository.getInstance(requireContext())
         LlamaCppModelStore.init(requireContext())
-        LlamaCppModelStore.ensureLoadedSync()
+        // 清单读取 + 补种内置条目 + 可能的写回都是文件 I/O，走 IO 线程别占主线程。
+        // 不阻塞渲染：models / activeId 是 StateFlow，载入完成后下面的 combine 会自动补一次渲染。
+        viewLifecycleOwner.lifecycleScope.launch { LlamaCppModelStore.ensureLoaded() }
 
         binding.btnIntroLink.setOnClickListener { showIntro() }
         binding.btnAddModel.setOnClickListener { pickLocalModel() }
@@ -91,23 +92,18 @@ class LlamaCppModelFragment : Fragment() {
 
         if (!prefs.getBoolean("Read_LlamaCpp_Introduce", false)) showIntro()
 
-        viewLifecycleOwner.lifecycleScope.launch {
-            // 清单一变就重绘；同时把内置模型的磁盘状态刷新一遍（可能被外部删除）
-            LlamaCppModelStore.models.collectLatest {
-                // 型号列表可能被删/加，activeId 也可能一起变
-                renderAll(it, LlamaCppModelStore.activeId.value)
-            }
-        }
-        viewLifecycleOwner.lifecycleScope.launch {
-            // ⚠️ 必须单独观察 activeId：切换模型只改它，不重绘的话 RadioButton 会出现「多个都选中」
-            LlamaCppModelStore.activeId.collectLatest { activeId ->
-                renderAll(LlamaCppModelStore.models.value, activeId)
-            }
-        }
+        // ⚠️ 三个状态源用 combine 合成**一次**渲染。分开收集（各自 collectLatest）时，同一次
+        //    状态变化会触发 2~3 次全量重绘；而下载期间 `repo.observe()` 每个进度回调都发射一次
+        //    （`updateProgress` → `emitSnapshot`），列表会按进度刷新率反复重建 → 抖动 + 掉帧。
         viewLifecycleOwner.lifecycleScope.launch {
             // 内置模型可能被外部删除（或刚下载完）→ 把**每个**内置条目对应的下载 key 都刷新一遍
             LlamaCppModelStore.builtinModelKeys().forEach { repo.refreshFromDisk(it) }
-            repo.observe().collectLatest { renderAll(LlamaCppModelStore.models.value, LlamaCppModelStore.activeId.value) }
+            combine(
+                LlamaCppModelStore.models,
+                LlamaCppModelStore.activeId,
+                repo.observe(),
+            ) { models, activeId, _ -> models to activeId }
+                .collectLatest { (models, activeId) -> renderAll(models, activeId) }
         }
     }
 
@@ -124,34 +120,52 @@ class LlamaCppModelFragment : Fragment() {
         val b = _binding ?: return
 
         val builtins = models.filter { it.source == LlamaCppModelSource.BUILTIN }
-        fillRows(b.builtinContainer, builtins) { buildRow(it, activeId, b.builtinContainer) }
+        syncRows(b.builtinContainer, builtins, activeId)
 
         val imported = models.filter { it.source == LlamaCppModelSource.IMPORTED }
         b.importedEmpty.visibility = if (imported.isEmpty()) View.VISIBLE else View.GONE
-        fillRows(b.importedContainer, imported) { buildRow(it, activeId, b.importedContainer) }
+        syncRows(b.importedContainer, imported, activeId)
     }
 
+    /** 行根 View 的标签：记住它属于哪个模型 + 行模板自带的卡片间距。 */
+    private class RowTag(val id: String, val bottomMargin: Int)
+
     /**
-     * 往容器里铺卡片：**最后一张不留 `layout_marginBottom`**（区块间距由下一段标题的 marginTop 负责），
-     * 卡片之间的间距取自行模板 XML 里的 `layout_marginBottom`（必须经 [inflateModelRow] 带父容器 inflate 才拿得到）。
+     * 把 [models] 铺进 [container]。
+     *
+     * ⚠️ 只在「行的 id 序列」变化时重新 inflate，其余情况复用已有 View、只做重绑 ——
+     * 下载进度每个回调都会走一次渲染，每 tick 重建全部卡片会抖。重绑走
+     * [ItemLlamacppModelRowBinding.bind]（只按 id 查子 View，不解析 XML）。
+     *
+     * 卡片间距取自行模板 XML 里的 `layout_marginBottom`（必须经 [inflateModelRow] 带父容器
+     * inflate 才拿得到），**最后一张置 0**（区块间距由下一段标题的 marginTop 负责）。
      */
-    private fun fillRows(
-        container: LinearLayout,
-        models: List<LlamaCppModel>,
-        build: (LlamaCppModel) -> View,
-    ) {
-        container.removeAllViews()
-        models.forEachIndexed { index, m ->
-            val v = build(m)
-            if (index == models.lastIndex) {
-                (v.layoutParams as? ViewGroup.MarginLayoutParams)?.bottomMargin = 0
+    private fun syncRows(container: LinearLayout, models: List<LlamaCppModel>, activeId: String?) {
+        // 直接比 id 列表，不要拼分隔符字符串：导入模型的名字里可能有空格，拼串会误判相等
+        val wanted = models.map { it.id }
+        val present = (0 until container.childCount).map { i ->
+            (container.getChildAt(i).tag as? RowTag)?.id.orEmpty()
+        }
+        if (wanted != present) {
+            container.removeAllViews()
+            models.forEach { m ->
+                val row = inflateModelRow(layoutInflater, container)
+                val margin = (row.root.layoutParams as? ViewGroup.MarginLayoutParams)?.bottomMargin ?: 0
+                row.root.tag = RowTag(m.id, margin)
+                container.addView(row.root)
             }
-            container.addView(v)
+        }
+        models.forEachIndexed { index, m ->
+            val v = container.getChildAt(index)
+            val tag = v.tag as? RowTag
+            (v.layoutParams as? ViewGroup.MarginLayoutParams)?.bottomMargin =
+                if (index == models.lastIndex) 0 else (tag?.bottomMargin ?: 0)
+            bindRow(v, m, activeId)
         }
     }
 
-    private fun buildRow(m: LlamaCppModel, activeId: String?, parent: ViewGroup): View {
-        val row = inflateModelRow(layoutInflater, parent)
+    private fun bindRow(root: View, m: LlamaCppModel, activeId: String?) {
+        val row = ItemLlamacppModelRowBinding.bind(root)
         val ctx = requireContext()
 
         row.rowName.text = m.displayName
@@ -201,31 +215,34 @@ class LlamaCppModelFragment : Fragment() {
         // 内置模型可以有多个（1.25-bit / Q4_K_M）：每行用**自己的**下载 key
         val key = builtinKeyOf(m)
         val state = key?.let { repo.getState(it) }
+        // ⚠️ 行视图现在是**复用**的（见 syncRows），不再每次渲染重新 inflate，所以四个按钮必须
+        //    **每个状态都显式赋值**，不能只写「要显示的那个」—— 否则上一轮的可见性会留下来，
+        //    典型症状是下载完成后 [暂停][取消] 还挂在卡片上。判定收在 [rowButtonsFor] 里并被单测覆盖。
+        val btns = if (key != null && state != null) rowButtonsFor(state, missing) else RowButtons()
+        row.rowDownload.visibility = if (btns.download) View.VISIBLE else View.GONE
+        row.rowPause.visibility = if (btns.pause) View.VISIBLE else View.GONE
+        row.rowResume.visibility = if (btns.resume) View.VISIBLE else View.GONE
+        row.rowCancel.visibility = if (btns.cancel) View.VISIBLE else View.GONE
+
         if (key != null && state != null) {
             // 内置模型：下载控制（状态来自下载流水线）
             row.rowStatus.visibility = View.VISIBLE
             row.rowProgress.visibility = if (state is DownloadState.Running || state is DownloadState.Paused) View.VISIBLE else View.GONE
             when (state) {
                 DownloadState.Idle, DownloadState.Done -> {
-                    row.rowDownload.visibility = if (missing) View.VISIBLE else View.GONE
                     row.rowStatus.text = getString(
                         if (missing) R.string.model_status_idle else R.string.model_status_done
                     )
                     row.rowProgress.progress = if (missing) 0 else 100
                 }
                 is DownloadState.Running -> {
-                    row.rowPause.visibility = View.VISIBLE
-                    row.rowCancel.visibility = View.VISIBLE
                     row.rowProgress.progress = state.currentFileProgress
                     row.rowStatus.text = getString(R.string.model_status_running_single, state.currentFileProgress)
                 }
                 is DownloadState.Paused -> {
-                    row.rowResume.visibility = View.VISIBLE
-                    row.rowCancel.visibility = View.VISIBLE
                     row.rowStatus.text = getString(R.string.model_status_paused, formatBytes(state.bytesDownloaded), formatBytes(state.totalBytes))
                 }
                 is DownloadState.Partial -> {
-                    row.rowResume.visibility = View.VISIBLE
                     row.rowStatus.text = getString(R.string.model_status_partial, formatBytes(state.bytesDownloaded), formatBytes(state.totalBytes))
                 }
             }
@@ -246,7 +263,6 @@ class LlamaCppModelFragment : Fragment() {
         val busy = state is DownloadState.Running || state is DownloadState.Paused || state is DownloadState.Partial
         row.rowParams.visibility = if (busy) View.GONE else View.VISIBLE
         row.rowParams.setOnClickListener { showParamsDialog(m) }
-        return row.root
     }
 
     /** 内置模型对应的下载 key（`builtinModelKey` 是枚举名，防止清单被改坏时崩）。 */
@@ -443,10 +459,6 @@ class LlamaCppModelFragment : Fragment() {
         val mb = bytes / (1024.0 * 1024.0)
         return if (mb >= 1024) String.format("%.2f GB", mb / 1024.0) else String.format("%.1f MB", mb)
     }
-
-    companion object {
-        private const val TAG = "LlamaCppModelFragment"
-    }
 }
 
 /**
@@ -462,3 +474,32 @@ internal fun inflateModelRow(
     inflater: LayoutInflater,
     parent: ViewGroup,
 ): ItemLlamacppModelRowBinding = ItemLlamacppModelRowBinding.inflate(inflater, parent, false)
+
+/** 一行里四个下载控制按钮的可见性（`false` 一律表示 `GONE`）。 */
+internal data class RowButtons(
+    val download: Boolean = false,
+    val pause: Boolean = false,
+    val resume: Boolean = false,
+    val cancel: Boolean = false,
+)
+
+/**
+ * 某个下载状态下行内该显示哪些按钮（纯函数，[LlamaCppRowButtonsTest] 覆盖）。
+ *
+ * ⚠️ 存在的理由：行视图是**复用**的（见 `syncRows`），不再每次渲染重新 inflate，所以调用方
+ * 必须对四个按钮**每个状态都显式赋值**，不能只写「要显示的那个」—— 否则上一轮的可见性会留下来，
+ * 典型症状是下载完成后 [暂停][取消] 仍挂在卡片上（重新 inflate 的实现天然不会暴露这个问题）。
+ * 把判定收在这里，就不存在「某个分支漏写」的空间。
+ *
+ * @param missing 文件是否缺失（决定「已下载」那一档显示 [下载] 还是什么都不显示）
+ */
+internal fun rowButtonsFor(state: DownloadState, missing: Boolean): RowButtons = when (state) {
+    // 未下载 / 已下载：只有缺文件时才给「下载」按钮
+    DownloadState.Idle, DownloadState.Done -> RowButtons(download = missing)
+    // 下载中：暂停 + 取消
+    is DownloadState.Running -> RowButtons(pause = true, cancel = true)
+    // 已暂停：继续 + 取消
+    is DownloadState.Paused -> RowButtons(resume = true, cancel = true)
+    // 半成品（有 .part）：继续；取消不提供
+    is DownloadState.Partial -> RowButtons(resume = true)
+}

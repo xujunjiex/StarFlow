@@ -1353,6 +1353,11 @@
     <string name="llamacpp_import_duplicate">This model is already in the library (\"%1$s\")</string>
     <string name="llamacpp_import_cancelled">Import cancelled</string>
     <string name="llamacpp_not_gguf">Only .gguf files are supported</string>
+    <string name="llamacpp_import_too_large">File is larger than %1$d GB</string>
+    <string name="llamacpp_import_no_space">Not enough free space: need %1$d MB, free %2$d MB</string>
+    <string name="llamacpp_import_bad_header">Not a valid GGUF file (bad header)</string>
+    <string name="llamacpp_import_error_copy">Could not copy the file</string>
+    <string name="llamacpp_import_error_rename">Could not save the imported file</string>
     <string name="llamacpp_delete_title">Delete model</string>
     <string name="llamacpp_delete_message">Delete \"%1$s\"? The model file will be removed from the device.</string>
     <string name="llamacpp_delete_done">Deleted</string>

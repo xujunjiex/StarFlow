@@ -43,11 +43,9 @@ object LlamaCppSharedHolder {
         val key = keyOf(model)
         val cur = instance
         if (cur != null && !cur.released && key == instanceKey) return cur
-        // 模型/参数变了，或实例已释放 → 先彻底释放旧实例（临时关掉 keepAlive）
-        cur?.let {
-            it.keepAlive = false
-            it.release()
-        }
+        // 模型/参数变了，或实例已释放 → 换出旧实例（后台释放，理由见 detachAndRelease）
+        if (cur != null) LogCollector.d(TAG, "实例指纹变化：旧实例交后台释放（$instanceKey → $key）")
+        detachAndRelease(cur)
         val created = LlamaCppTranslation(context.applicationContext, model).also { it.keepAlive = true }
         instance = created
         instanceKey = key
@@ -66,11 +64,31 @@ object LlamaCppSharedHolder {
         val wantKey = model?.let { keyOf(it) }
         if (wantKey == instanceKey) return
         LogCollector.d(TAG, "引擎切换：释放旧实例（$instanceKey → ${wantKey ?: "无"}）")
+        detachAndRelease(cur)
+    }
+
+    /**
+     * 摘掉实例并**在后台线程**释放，绝不阻塞调用线程。
+     *
+     * ⚠️ 不能在调用线程上同步 `release()`：它会 `join` 在途推理（最长 3s）、再轮询 `inFlight`
+     * 等 native 调用退出（最长 3s），最后 `nativeRelease` 还要抢 native 的 `g_mutex` ——
+     * 而 `nativeInit` **整个加载期**都持着那把锁（含首次解码预热，实测 15s 量级）。
+     * `get()` / `releaseIfNotCurrent()` 的调用方包含 `TranslatorFactory.create()` 与
+     * `MainActivity` 的启动预热，都在主线程，同步做就是 ANR。
+     *
+     * 代价是换模型期间旧、新两个模型会短暂同时驻留内存（几百 MB ~ 几 GB），
+     * 这是与「主线程不卡」权衡后的选择。
+     */
+    private fun detachAndRelease(cur: LlamaCppTranslation?) {
+        cur ?: return
         instance = null
         instanceKey = null
         cur.keepAlive = false
         // 后台完整释放（join + nativeRelease + 状态浮层），不阻塞调用线程
-        Thread { cur.release() }.start()
+        Thread { cur.release() }.apply {
+            name = "LlamaCpp-Release"
+            isDaemon = true
+        }.start()
     }
 
     /** 后台预加载（把加载耗时挪到用户第一次翻译之前）。 */
@@ -78,7 +96,4 @@ object LlamaCppSharedHolder {
         if (model == null) return
         get(context, model).warmUp()
     }
-
-    /** 当前是否有活着的实例（诊断/测试用）。 */
-    fun hasInstance(): Boolean = instance?.released == false
 }

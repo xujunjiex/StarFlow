@@ -1358,6 +1358,11 @@
     <string name="llamacpp_import_duplicate">该模型已在库中（「%1$s」），无需重复导入</string>
     <string name="llamacpp_import_cancelled">已取消导入</string>
     <string name="llamacpp_not_gguf">只支持 .gguf 文件</string>
+    <string name="llamacpp_import_too_large">文件超过 %1$dGB</string>
+    <string name="llamacpp_import_no_space">存储空间不足：需要 %1$dMB，可用 %2$dMB</string>
+    <string name="llamacpp_import_bad_header">不是有效的 GGUF 文件（文件头校验失败）</string>
+    <string name="llamacpp_import_error_copy">文件复制失败</string>
+    <string name="llamacpp_import_error_rename">导入的文件保存失败</string>
     <string name="llamacpp_delete_title">删除模型</string>
     <string name="llamacpp_delete_message">确认删除「%1$s」？模型文件会一并从设备删除。</string>
     <string name="llamacpp_delete_done">已删除</string>

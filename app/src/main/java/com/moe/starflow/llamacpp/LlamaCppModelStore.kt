@@ -117,13 +117,18 @@ object LlamaCppModelStore {
     /**
      * 只有 prefs 的调用点的等价判断：引擎是 LlamaCpp 且激活模型是内置 Hy-MT2。
      * 读的是 [PREF_ACTIVE_IS_BUILTIN] 镜像（由本 store 在切换/载入时写）。
+     *
+     * ⚠️ 镜像缺失时默认 **false**（= 当成通用模型，不套 Hy-MT2 的 38 种白名单）。方向是刻意选的：
+     * 镜像在 `loadInternal` 里写，而 `TranslateTools.getLanguagesList` 会据此**换掉整个目标语言列表**
+     * （38 种 vs 68 种）—— 若默认 true，某个在 store 载入前先问语言的路径会把通用模型的 30 种语言
+     * 直接藏掉；默认 false 的代价只是「白名单短暂不生效」，用户仍能自己选。
      */
     fun isHyMt2ActiveFromPrefs(prefs: CustomPreference): Boolean {
         val api = prefs.getInt("Text_API", com.moe.starflow.utils.Constants.TextApi.BING.id)
         val ai = prefs.getInt("Text_AI", com.moe.starflow.utils.Constants.TextAI.NLLB.id)
         return api == com.moe.starflow.utils.Constants.TextApi.AI.id &&
             ai == com.moe.starflow.utils.Constants.TextAI.HYMT2.id &&
-            prefs.getBoolean(PREF_ACTIVE_IS_BUILTIN, true)
+            prefs.getBoolean(PREF_ACTIVE_IS_BUILTIN, false)
     }
 
     // ───────────────────────── 写入 ─────────────────────────
@@ -179,7 +184,14 @@ object LlamaCppModelStore {
         }
     }
 
-    /** 清理磁盘上已无对应条目的模型文件（外部删除后的对账）。 */
+    /**
+     * 清理磁盘上已无对应条目的模型文件（外部删除后的对账）。
+     *
+     * ⚠️ 目前**没有调用者**（保留的预留接口）。谁要接上它，先想清楚两件事：
+     *  1. 它会 `delete()` 用户的模型文件 —— 只能清理 [LlamaCppPaths.modelsDir] 下的 `.gguf`
+     *     （内置模型在下载流水线的 `models/` 里，不在这个目录），别把范围放大；
+     *  2. 判据是「文件名不在清单里」，而清单是异步载入的 —— 载入完成前调用会把所有文件当孤儿删光。
+     */
     @Synchronized
     fun pruneOrphanFiles(): Int {
         ensureLoadedSync()
@@ -207,8 +219,13 @@ object LlamaCppModelStore {
         val list = fromDisk.toMutableList()
         seedBuiltinIfMissing(c, list)
         migrateLegacyDefaultPrompt(list)
-        _models.value = list
-        persist(list)
+        // 清单与磁盘逐字一致（最常见：老用户没改过任何参数）就不重写 ——
+        // ensureLoadedSync 是从 active() 同步调进来的（调用点含主线程），每次启动白写一遍没有意义。
+        if (list != fromDisk) {
+            persist(list)
+        } else {
+            _models.value = list
+        }
 
         val stored = prefs?.getString(PREF_ACTIVE_ID, "").orEmpty()
         val legacy = prefs?.getString("Llama_Model_Name", "").orEmpty()

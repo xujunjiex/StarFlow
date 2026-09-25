@@ -87,29 +87,50 @@ internal object GgufQuantCheck {
         val dataBytes: Long get() = fileSize - dataStart
     }
 
+    /**
+     * 一次头部扫描的产物：兼容性结论 + 每个张量的类型字段偏移。
+     *
+     * @param compat 兼容性结论；解析失败时为 [Compat.UNKNOWN]（此时 [offsets] 为空列表）
+     * @param offsets 张量类型字段的文件偏移与实际类型值；**解析失败时为空**
+     */
+    data class Analysis(
+        val compat: Compat,
+        val offsets: List<Pair<Long, Int>>,
+    )
+
     // ───────────────────────── 对外 ─────────────────────────
 
-    fun check(file: File): Compat {
+    fun check(file: File): Compat = analyze(file).compat
+
+    /**
+     * 一次扫描同时给出兼容性与张量布局。
+     *
+     * 「校验 + 重打标」串起来用的调用方（`LlamaCppTranslation.ensureLoaded`、
+     * `GgufTypeRetag.ensureRetagged`）应该走这里 —— 头部扫描要把元数据整段读出来
+     * （含 12 万个 vocab token），同一文件解析两遍纯属浪费。
+     */
+    fun analyze(file: File): Analysis {
         val scan = runCatching { scan(file) }.getOrElse { e ->
             LogCollector.w(TAG, "解析 GGUF 头失败，放行交给引擎：${e.message}")
-            return Compat.UNKNOWN
+            return Analysis(Compat.UNKNOWN, emptyList())
         }
-        if (scan.tensors.isEmpty()) return Compat.UNKNOWN
+        val offsets = scan.tensors.map { it.typeFieldOffset to it.type }
+        if (scan.tensors.isEmpty()) return Analysis(Compat.UNKNOWN, offsets)
 
         // 用「张量数据偏移链」判定，而不是总字节数：GGUF 写入时每个张量按 alignment 对齐，
         // 偏移链能零容差地验证「类型号 → 块大小」这一解释对不对（总字节数法在小文件上需要容差，不可靠）。
         when (layoutConsistent(scan, retag = false)) {
-            Layout.OK -> return Compat.SUPPORTED
-            Layout.UNKNOWN_TYPE -> return Compat.UNKNOWN
+            Layout.OK -> return Analysis(Compat.SUPPORTED, offsets)
+            Layout.UNKNOWN_TYPE -> return Analysis(Compat.UNKNOWN, offsets)
             Layout.MISMATCH -> Unit
         }
         val has42 = scan.tensors.any { it.type == GgufTypeRetag.TYPE_LEGACY_1_25BIT }
         if (has42 && layoutConsistent(scan, retag = true) == Layout.OK) {
             LogCollector.d(TAG, "量化校验：判定为 1.25-bit 私有编号（需重打标 42→43）")
-            return Compat.NEEDS_RETAG
+            return Analysis(Compat.NEEDS_RETAG, offsets)
         }
         LogCollector.w(TAG, "量化校验：偏移链对不上任何已知解释 → 不支持的量化类型")
-        return Compat.UNSUPPORTED
+        return Analysis(Compat.UNSUPPORTED, offsets)
     }
 
     private enum class Layout { OK, MISMATCH, UNKNOWN_TYPE }

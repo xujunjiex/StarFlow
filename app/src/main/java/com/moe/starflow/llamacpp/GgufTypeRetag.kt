@@ -35,64 +35,98 @@ object GgufTypeRetag {
     const val TYPE_STQ1_0 = 43
 
     private const val GGUF_MAGIC = 0x46554747 // "GGUF" little-endian
-    private const val MAX_METADATA_HEADER = 64L * 1024 * 1024
 
     /**
-     * 确保 [gguf] 已完成重打标。
+     * 确保 [gguf] 已完成重打标（幂等）。判定看**文件内容**（还有没有 42 号张量），不看标记文件。
      *
-     * @return true = 文件已是（或刚被改成）本引擎可读的 43 号
+     * ⚠️ 返回值不是「这个文件能不能加载」，只是「这次是否经手/确认了 STQ1_0」：
+     * `false` 既可能是「普通量化（Q4_K_M 之类）本来就不需要」，也可能是「不支持」或解析失败。
+     * 调用方要判断可加载性请用 [GgufQuantCheck.check]。
+     *
+     * @return true = 文件是 43 号（刚改写完，或已改好且标记齐备）
      */
-    fun ensureRetagged(gguf: File): Boolean {
+    fun ensureRetagged(gguf: File): Boolean =
+        ensureRetagged(gguf, GgufQuantCheck.analyze(gguf))
+
+    /**
+     * 同上，但复用调用方已经做过的头部扫描 [analysis]。
+     *
+     * 加载路径「先 check 再重打标」本是两次解析同一文件（头部要读整段元数据，含 12 万个
+     * vocab token），所以那边改成 `analyze` + 本重载，一次搞定。
+     *
+     * `internal`：[GgufQuantCheck.Analysis] 本身是 internal，跨包调用方（下载流水线）走上面的
+     * 一参版即可。
+     */
+    internal fun ensureRetagged(gguf: File, analysis: GgufQuantCheck.Analysis): Boolean {
         if (!gguf.isFile) {
             LogCollector.w(TAG, "ensureRetagged: 文件不存在 ${gguf.absolutePath}")
             return false
         }
         val marker = LlamaCppPaths.retagMarker(gguf)
-        if (marker.isFile && marker.readText().isNotBlank()) {
-            LogCollector.d(TAG, "ensureRetagged: 已有标记，跳过（${marker.name}）")
-            return true
+        val marked = marker.isFile && marker.readText().isNotBlank()
+
+        // ⚠️ 判定依据必须是「文件里还有没有 42 号张量」，**不能**是「标记文件在不在」。
+        //    删掉预设模型再重新下载时，gguf 被换成未重打标的官方原件，而 `<file>.retagged`
+        //    仍留在磁盘上（下载侧只删 gguf 与 .part）→ 凭标记跳过会把 42 号文件当成本引擎可读，
+        //    加载出垃圾输出或直接失败。头部扫描顺带就有（调用方已算），所以不靠标记省这一步。
+        val offsets = analysis.offsets
+        val legacyOffsets = offsets.filter { it.second == TYPE_LEGACY_1_25BIT }
+        // 解析失败（文件正在写、被截断）时 offsets 为空，与「解析成功且没有 42 号」长得一模一样，
+        // 靠 compat==UNKNOWN 区分 —— 清残留标记只能在**确定结论**下做。
+        val parsedDefinitively = analysis.compat != GgufQuantCheck.Compat.UNKNOWN
+
+        /** 清掉「描述的是另一个文件」的残留标记，否则下载侧会拿它的 MD5 把当前文件判成损坏。 */
+        fun clearStaleMarker() {
+            if (!marked || !parsedDefinitively) return
+            if (runCatching { marker.delete() }.getOrDefault(false)) {
+                LogCollector.w(TAG, "ensureRetagged: 残留标记与文件不符，已清除（${marker.name}）")
+            }
         }
 
-        // 先校验布局，避免把上游 Q2_0（同样是 42 号）的文件改坏
-        val compat = GgufQuantCheck.check(gguf)
-        if (compat == GgufQuantCheck.Compat.UNSUPPORTED) {
-            LogCollector.w(TAG, "ensureRetagged: 量化类型不被当前引擎支持，不做改写")
+        // 补写标记：文件已是 43 号但 `<file>.retagged` 没写成（改完瞬间进程被杀）。
+        // 不补的话下载侧会拿官方 MD5 校验这个正确的文件、把它当损坏删掉。
+        fun writeMarkerOnly(): Boolean = runCatching {
+            val newMd5 = md5(gguf)
+            marker.writeText(newMd5)
+            LogCollector.d(TAG, "ensureRetagged: 已是 43 号但缺标记，补写 md5=$newMd5")
+            true
+        }.getOrElse { e ->
+            LogCollector.e(TAG, "补写标记失败：${e.message}", e)
+            false
+        }
+
+        if (legacyOffsets.isEmpty()) {
+            if (offsets.any { it.second == TYPE_STQ1_0 }) {
+                // 已是 43 号：标记齐备（说明上次改写完整落盘）就直接跳过，缺标记则补写
+                if (marked) {
+                    LogCollector.d(TAG, "ensureRetagged: 已是 43 号且标记齐备，跳过（${marker.name}）")
+                    return true
+                }
+                return writeMarkerOnly()
+            }
+            // 既没有 42 也没有 43：本来就不需要重打标（Q4_K_M 等标准量化）。
+            // 此时若还留着标记，它描述的是**另一个文件** → 清掉，否则下载侧会拿它的 MD5
+            // 把当前文件判成损坏并删掉（删完重下 → 死循环）
+            clearStaleMarker()
+            LogCollector.d(TAG, "ensureRetagged: 无需重打标（${gguf.name}）")
             return false
         }
 
-        val offsets = runCatching { findTypeFieldOffsets(gguf) }.getOrElse { e ->
-            LogCollector.e(TAG, "解析 GGUF 头失败：${e.message}", e)
-            return false
-        }
-        val legacy = offsets.filter { it.second == TYPE_LEGACY_1_25BIT }
-
-        // 补写标记的公共分支：文件已是 43 号但 `<file>.retagged` 没写成（改完瞬间进程被杀），
-        // 不补的话重新校验会拿清单里的旧 MD5 比对，把这个正确的文件当损坏删掉。
-        fun writeMarkerOnly(): Boolean {
-            runCatching {
-                val md5 = md5(gguf)
-                marker.writeText(md5)
-                LogCollector.d(TAG, "ensureRetagged: 已是 43 号但缺标记，补写 md5=$md5")
-            }.onFailure { LogCollector.e(TAG, "补写标记失败：${it.message}", it) }
-            return true
-        }
-
-        if (compat != GgufQuantCheck.Compat.NEEDS_RETAG) {
-            // 布局说明不需要重打标（普通 GGUF，或本就是 43 号）：只在「已是 43 号且缺标记」时补标记
-            if (legacy.isEmpty() && offsets.any { it.second == TYPE_STQ1_0 }) return writeMarkerOnly()
-            LogCollector.d(TAG, "ensureRetagged: 无需重打标（compat=$compat）")
+        // 有 42 号：先看布局，避免把上游 Q2_0（同样是 42 号，但 72 字节/256）改坏
+        if (analysis.compat != GgufQuantCheck.Compat.NEEDS_RETAG) {
+            if (analysis.compat == GgufQuantCheck.Compat.UNSUPPORTED) {
+                LogCollector.w(TAG, "ensureRetagged: 量化类型不被当前引擎支持，不做改写")
+            } else {
+                LogCollector.d(TAG, "ensureRetagged: 42 号不是 STQ1_0 布局（compat=${analysis.compat}），不改写")
+            }
+            clearStaleMarker()
             return false
         }
 
-        if (legacy.isEmpty()) {
-            // 极端情况：校验说需要重打标，但扫描不到 42 号（解析差异）→ 当作已改好补标记
-            return if (offsets.any { it.second == TYPE_STQ1_0 }) writeMarkerOnly() else false
-        }
-
-        LogCollector.d(TAG, "ensureRetagged: 需改写 ${legacy.size} 个张量类型 42→43（${gguf.name}）")
+        LogCollector.d(TAG, "ensureRetagged: 需改写 ${legacyOffsets.size} 个张量类型 42→43（${gguf.name}）")
         return runCatching {
             RandomAccessFile(gguf, "rw").use { raf ->
-                legacy.forEach { (off, _) ->
+                legacyOffsets.forEach { (off, _) ->
                     raf.seek(off)
                     raf.write(byteArrayOf(TYPE_STQ1_0.toByte(), 0, 0, 0)) // 小端 uint32
                 }

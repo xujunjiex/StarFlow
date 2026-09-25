@@ -278,6 +278,10 @@ class ModelDownloadRepository private constructor(private val context: Context) 
                 if (target.exists()) target.delete()
                 val part = File(targetFileFor(modelKey).parentFile, fileInfo.fileName + ".part")
                 if (part.exists()) part.delete()
+                // ⚠️ 必须一并删掉重打标标记 `<file>.retagged`：它记的是**重打标后**的 MD5，
+                //    留着的话下次下载完 verifyFile 会拿它校验刚下好的官方原件 → 判损坏 → 删 →
+                //    重下 → 死循环；即便侥幸过了，ensureRetagged 也会以为文件已改好而跳过改写。
+                com.moe.starflow.llamacpp.LlamaCppPaths.retagMarker(target).delete()
             }
             stateMap[modelKey] = DownloadState.Idle
             emitSnapshot()

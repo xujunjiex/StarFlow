@@ -94,4 +94,26 @@ class LlamaCppModelJsonTest {
         assertTrue(LlamaCppJson.decode("not json at all").isEmpty())
         assertTrue(LlamaCppJson.decode("{}").isEmpty())
     }
+
+    /**
+     * `systemPrompt` 键**缺失**时要回落默认值。
+     *
+     * 坑：`org.json` 的 `optString` 对缺失键返回空串（不是 null），所以 `?: defaults` 永远不兜底。
+     * 将来某版清单少了这个字段，通用模型的 system 段会被静默清空 —— 不是崩溃，是翻译质量悄悄变差。
+     */
+    @Test
+    fun decode_missingSystemPromptFallsBackToDefault() {
+        val json = """{"models":[{"id":"x","fileName":"x.gguf","source":"IMPORTED","params":{"temperature":0.6}}]}"""
+        val decoded = LlamaCppJson.decode(json)
+        assertEquals(1, decoded.size)
+        assertEquals(LlamaCppParams.DEFAULT_SYSTEM_PROMPT, decoded[0].params.systemPrompt)
+    }
+
+    /** 显式写空的 system 是**用户的意图**（不想要 system 段），不能被当成缺失而塞回默认值。 */
+    @Test
+    fun decode_explicitEmptySystemPromptIsKept() {
+        val json = """{"models":[{"id":"x","fileName":"x.gguf","source":"IMPORTED","params":{"systemPrompt":""}}]}"""
+        val decoded = LlamaCppJson.decode(json)
+        assertEquals("", decoded[0].params.systemPrompt)
+    }
 }

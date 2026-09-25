@@ -53,9 +53,6 @@ object LlamaCppLanguages {
         "yue" to "粤语",
     )
 
-    val supportedNames: Collection<String>
-        get() = TARGET_NAMES.values
-
     /**
      * Hy-MT2 官方支持的 38 种目标语言（官方 README「支持的语种」表，与 TARGET_NAMES 一一对应）。
      * 用于目标语言选择白名单：**内置 Hy-MT2** 下不在集合内的语言一律置灰（模型不支持，翻了也是垃圾）。

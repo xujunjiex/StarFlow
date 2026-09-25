@@ -20,14 +20,26 @@ object ChecksumHelper {
         return md.digest().joinToString("") { "%02x".format(it) }
     }
 
-    fun verifyChecksum(file: File, expectedMd5: String): Boolean {
-        return try {
-            // calculateMD5 返回小写；expectedMd5 统一转小写，与 ModelDownloadManager 的 .lowercase() 保持一致
-            calculateMD5(file) == expectedMd5.lowercase()
+    fun verifyChecksum(file: File, expectedMd5: String): Boolean =
+        verifyChecksum(file, listOf(expectedMd5))
+
+    /**
+     * 多候选校验：MD5 **只算一遍**，命中任意一个候选即算通过。
+     *
+     * 用于「同一个文件有多个合法 MD5」的场景 —— 本地 GGUF 既可能是官方原件、也可能是设备端
+     * 重打标后的版本（张量类型 42→43，见 patches/README.md），两者都不该被当成损坏。
+     * 空候选列表视为通过：调用方没有任何校验依据时不能删文件。
+     */
+    fun verifyChecksum(file: File, expectedMd5List: List<String>): Boolean {
+        val candidates = expectedMd5List.filter { it.isNotEmpty() }
+        if (candidates.isEmpty()) return true
+        val actual = try {
+            calculateMD5(file)
         } catch (e: Exception) {
             LogCollector.e(TAG, "MD5 verify failed: ${file.name}", e)
-            false
+            return false
         }
+        return candidates.any { it.equals(actual, ignoreCase = true) }
     }
 }
 

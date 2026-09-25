@@ -250,7 +250,10 @@ internal object LlamaCppJson {
                 hyProfile = o.optBoolean("hyProfile", false),
                 params = LlamaCppParams(
                     promptTemplate = p?.optString("promptTemplate")?.takeIf { it.isNotBlank() } ?: defaults.promptTemplate,
-                    systemPrompt = p?.optString("systemPrompt") ?: defaults.systemPrompt,
+                    // ⚠️ 用 has() 区分「键缺失」与「显式写空」：optString 对缺失键返回**空串**而不是
+                    //    null，直接写 `?: defaults` 永远不会兜底 —— 将来某版清单一旦少了
+                    //    systemPrompt 字段，通用模型的 system 段会被静默清空。显式空串则尊重用户。
+                    systemPrompt = if (p?.has("systemPrompt") == true) p.optString("systemPrompt") else defaults.systemPrompt,
                     temperature = p?.optDouble("temperature", defaults.temperature.toDouble())?.toFloat() ?: defaults.temperature,
                     topP = p?.optDouble("topP", defaults.topP.toDouble())?.toFloat() ?: defaults.topP,
                     topK = p?.optInt("topK", defaults.topK) ?: defaults.topK,
