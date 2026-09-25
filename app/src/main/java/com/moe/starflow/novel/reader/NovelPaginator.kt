@@ -18,6 +18,10 @@ import kotlin.math.roundToInt
  * `StaticLayout` 行数与真机不符 —— 依赖真实换行的断言在 Robolectric 下是**假绿**。
  * 所以换行信息由调用方/测试显式提供，分页逻辑本身与文本引擎解耦。
  *
+ * ### 高度口径：全程 px，不做任何「整行」量化
+ * 段间距与行高是两种量纲，混在一起按整行取整会**凭空多占**（段间距不足一行时被兜成一行），
+ * 表现为每页少放内容、底部留白。所以容量比较一律用 px 浮点累加。
+ *
  * ### 硬约束
  * 对**每一段**，它的全部 segment 的 `[charStart, charEnd)` 按顺序拼接必须完整覆盖
  * `[0, 文本长度)`、无重叠、无丢字。这是「用户不会丢字」的唯一保证，有守卫测试逐段验证。
@@ -45,39 +49,42 @@ object NovelPaginator {
         if (visible.isEmpty()) return emptyList()
 
         val lineHeight = lineHeightPx.coerceAtLeast(1f)
-        // 每页能放几行。页高不足一行时按 1 行算 —— 否则会切出空页/死循环
-        val capacity = floor(pageHeightPx / lineHeight + EPSILON).toInt().coerceAtLeast(1)
-        // 段间距折算成整行单位：行数是离散的，用浮点高度做累加会因精度在临界处多放/少放一行
-        val spacingUnits = if (paragraphSpacingPx > 0f) {
-            (paragraphSpacingPx / lineHeight).roundToInt().coerceAtLeast(1)
-        } else 0
+        val pageHeight = pageHeightPx.coerceAtLeast(1f)
 
         val pages = mutableListOf<NovelPage>()
         var current = mutableListOf<PageSegment>()
-        var used = 0
+        var usedPx = 0f
 
         fun flush() {
             if (current.isNotEmpty()) {
                 pages.add(NovelPage(current))
                 current = mutableListOf()
-                used = 0
+                usedPx = 0f
             }
         }
 
+        // ⚠️ **全程按 px 精确累加，绝不再把段间距量化成「整行」**。
+        // 曾经的做法是 `spacingUnits = round(段间距 / 行高)` 并按整行计数，后果：
+        // 段间距 49px、行高 96px 时算出来不足一行、又被兜成 1 行 → 每段**凭空多占一整行**，
+        // 一页因此少放一段、底部留出一大片空白（用户看到的「无脑增加底部间距」）。
+        // 行数是离散的，但**高度不是** —— 混在一起算就必然错。
         for ((vi, para) in visible.withIndex()) {
             val starts = lineStarts.getOrNull(vi)?.takeIf { it.isNotEmpty() } ?: intArrayOf(0)
             val textLen = para.originalText.length
             val lineCount = starts.size
+            // +1px 余量：StaticLayout 的 height 是 round 出来的，按 lineCount × 行高 估
+            // 可能比真值小 0.5px，多段累积就会把最后一行顶出正文框
+            val wholeHeight = lineCount * lineHeight + 1f
 
             // ── 整段优先：整段放不下就整段挪到下一页 ──
             // ⚠️ 不做这一步的话，段落会被从中间切开：同一段落在两页上各显示半截，
             // 翻译也只能按半段来（"句子中断"），读者看到的是半句话。
-            if (keepParagraphsWhole && lineCount <= capacity) {
-                val spacing = if (current.isNotEmpty()) spacingUnits else 0
-                if (used + spacing + lineCount > capacity) flush()
-                val sp = if (current.isNotEmpty()) spacingUnits else 0
+            if (keepParagraphsWhole && wholeHeight <= pageHeight) {
+                val gap = if (current.isNotEmpty()) paragraphSpacingPx else 0f
+                if (usedPx + gap + wholeHeight > pageHeight) flush()
+                val gapNow = if (current.isNotEmpty()) paragraphSpacingPx else 0f
                 current.add(PageSegment(para.index, 0, textLen))
-                used += sp + lineCount
+                usedPx += gapNow + wholeHeight
                 continue
             }
 
@@ -85,18 +92,19 @@ object NovelPaginator {
             var lineIdx = 0
             var firstChunkOfPara = true
             while (lineIdx < lineCount) {
-                // 段间距只在「段落的第一块 + 本页已有内容」时消耗
-                val spacing = if (firstChunkOfPara && current.isNotEmpty()) spacingUnits else 0
-                if (used + spacing + 1 > capacity) {
-                    // 连一行都放不下 → 换页后重来（新页为空，spacing 自然变 0，不会死循环）
+                val gap = if (firstChunkOfPara && current.isNotEmpty()) paragraphSpacingPx else 0f
+                // 本页扣掉段间距后还放得下几行
+                val roomPx = pageHeight - usedPx - gap
+                if (roomPx < lineHeight + 1f) {
+                    // 一行都放不下 → 换页后重来（新页为空，gap 自然变 0，不会死循环）
                     if (current.isNotEmpty()) {
                         flush()
                         continue
                     }
-                    // 空页仍放不下（capacity 至少为 1，理论不可达）：硬放一行，避免死循环
+                    // 空页仍放不下（页高不足一行）：硬放一行，避免死循环
                 }
-                used += spacing
-                val room = (capacity - used).coerceAtLeast(1)
+                val room = floor((pageHeight - usedPx - gap) / lineHeight + EPSILON)
+                    .toInt().coerceAtLeast(1)
                 val take = (lineCount - lineIdx).coerceAtMost(room)
                 val charStart = starts[lineIdx]
                 val lastIdx = lineIdx + take - 1
@@ -108,7 +116,7 @@ object NovelPaginator {
                         charEnd = charEnd.coerceIn(charStart.coerceIn(0, textLen), textLen),
                     )
                 )
-                used += take
+                usedPx += gap + take * lineHeight + 1f
                 lineIdx += take
                 firstChunkOfPara = false
                 if (lineIdx < lineCount) flush()

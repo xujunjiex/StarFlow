@@ -269,4 +269,41 @@ class NovelPaginatorTest {
         )
         assertFullCoverage(paras, filled)
     }
+
+    // ===== 高度口径：px 精确累加，不把段间距量化成「整行」 =====
+
+    /**
+     * **段间距不能被量化成整行** —— 这是「底部无脑留白」的根源。
+     *
+     * 旧实现把段间距折算成整行（`round(段间距/行高)`，不足一行还兜成一行）：行高 100px、
+     * 段间距 30px 时，每段凭空多占 70px，一页因此少放内容、底部留一大片空白。
+     * 容量本来就是用 px 算的，只有段间距被换了量纲 —— 混着算就必然错。
+     *
+     * 判据：**每页剩下的空间必须放不下「再一段」**（否则就是白留了）。
+     */
+    @Test
+    fun `段间距不按整行量化：每页剩余空间放不下再多一段`() {
+        val lineHeight = 100f
+        val spacing = 30f      // 不足一行 —— 旧实现会把它兜成整整一行 100px
+        val pageHeight = 1000f
+        val paras = (0 until 40).map { textPara(it, "字".repeat(10)) }
+        val pages = NovelPaginator.paginateByLines(paras, lineStarts(paras, 10), lineHeight, spacing, pageHeight)
+
+        val paraCost = { n: Int -> n * (lineHeight + 1f) + (n - 1) * spacing }   // +1px 取整余量
+        val perPage = pages.first().segments.size
+        println("PXRULE 每页 $perPage 段，一页用 ${paraCost(perPage)} px / 共 $pageHeight px，剩余 ${pageHeight - paraCost(perPage)} px")
+
+        for ((i, page) in pages.withIndex()) {
+            val n = page.segments.size
+            val used = paraCost(n)
+            assertTrue("第 ${i + 1} 页超出容量", used <= pageHeight + 0.5f)
+            // 只剩最后一页时不需要满足：末尾本来就会留白
+            if (i < pages.size - 1) {
+                assertTrue(
+                    "第 ${i + 1} 页剩余 ${pageHeight - used} px 还能再放一段（${paraCost(n + 1) - used} px）—— 白留了",
+                    pageHeight - used < paraCost(n + 1) - used,
+                )
+            }
+        }
+    }
 }
