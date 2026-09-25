@@ -26,7 +26,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import translationapi.hymt2translation.HyMT2Translation
+import com.moe.starflow.llamacpp.LlamaCppTranslation
 import translationapi.openaitranslation.OpenAITranslation
 import java.util.LinkedList
 import kotlin.coroutines.resume
@@ -107,9 +107,9 @@ object TranslateUtils {
         // Hy-MT2 走批量：输入 [N] 编号，模型按官方默认模板只输出译文并保持 [N] 编号，管线按编号解析
         val isAI = translator is OpenAITranslation
                 || translator.javaClass.simpleName.contains("Custom")
-                || translator is HyMT2Translation
+                || translator is LlamaCppTranslation
 
-        val translatedResults = if (isAI && (preparedBubbles.size > 1 || translator is HyMT2Translation)) {
+        val translatedResults = if (isAI && (preparedBubbles.size > 1 || translator is LlamaCppTranslation)) {
             // Hy-MT2 即使只有 1 个气泡也走批量编号+流式路径：统一享受「30s 无输出卡死检测」，避免 sequential 的 30s 总时限误杀
             translateBubblesBatch(translator, preparedBubbles, sourceLang, targetLang, prefs, contextHistory, forceContext, onPhase, onPartialBubbles, isCancelled)
         } else {
@@ -169,7 +169,7 @@ object TranslateUtils {
         // 等待翻译结果。超时策略：
         //  - 网络 API：请求发出起 API_TIMEOUT_MS 内必须返回（无响应即超时）
         //  - 本地引擎（Hy-MT2）：不设总时长（本地总会翻完），由看门狗按「30s 无新输出」判卡死——有输出就一直等
-        val isLocalEngine = translator is HyMT2Translation
+        val isLocalEngine = translator is LlamaCppTranslation
         val lastProgressAt = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
         val timedOut = java.util.concurrent.atomic.AtomicBoolean(false)
         val cancelledByUser = java.util.concurrent.atomic.AtomicBoolean(false)

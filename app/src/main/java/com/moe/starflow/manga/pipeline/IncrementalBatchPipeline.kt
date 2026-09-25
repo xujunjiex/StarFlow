@@ -30,7 +30,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.withContext
-import translationapi.hymt2translation.HyMT2Translation
+import com.moe.starflow.llamacpp.LlamaCppTranslation
 
 /**
  * 分批翻译管线（从 `MangaFloatingService` 抽出，行为保持不变）。
@@ -70,7 +70,7 @@ class IncrementalBatchPipeline(
      */
     suspend fun run(bitmap: Bitmap): BatchOutcome {
         // Hy-MT2 本地引擎：不走分批渲染（合并一次翻译 + 流式逐个显示，避免多次 prefill 拖慢）
-        if (host.translator is HyMT2Translation) {
+        if (host.translator is LlamaCppTranslation) {
             LogCollector.d(TAG, "run: Hy-MT2 禁用分批渲染，走普通一次翻译+流式")
             return BatchOutcome.NotApplicable
         }

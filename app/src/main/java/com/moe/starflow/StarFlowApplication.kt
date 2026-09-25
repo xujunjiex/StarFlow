@@ -13,7 +13,7 @@ import com.moe.starflow.utils.ThemeManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
-import translationapi.hymt2translation.HyMt2Native
+import translationapi.llamacpp.LlamaCppNative
 
 class StarFlowApplication : Application() {
     override fun onCreate() {
@@ -41,9 +41,12 @@ class StarFlowApplication : Application() {
             prevHandler?.uncaughtException(thread, throwable)
         }
 
-        // 尽早安装 native 崩溃处理器 + 打开统一日志文件：不等 Hy-MT2 初始化，
-        // 覆盖 PP-OCR/ONNX/RT-DETR/sentencepiece 等所有 native 库的崩溃（8 Elite 场景关键）
+        // 尽早安装 native 崩溃处理器 + 打开统一日志文件：不等本地模型初始化，
+        // 覆盖 PP-OCR/ONNX/RT-DETR/sentencepiece/llama.cpp 等所有 native 库的崩溃（8 Elite 场景关键）
         installNativeCrashHandler()
+
+        // LlamaCpp 模型清单/路径尽早就位：TranslatorFactory 是同步调用，需要立刻能读到激活模型
+        com.moe.starflow.llamacpp.LlamaCppModelStore.init(this)
 
         // 记录上次进程退出原因（Android 11+）：崩溃/ANR/被杀/内存不足一律写入日志
         logPreviousExitReasons()
@@ -61,12 +64,12 @@ class StarFlowApplication : Application() {
     }
 
     /**
-     * 安装 native 崩溃处理器（幂等）。调用 HyMt2Native.nativeSetLogFile 打开统一日志文件 +
-     * 安装 SIGSEGV/SIGABRT 等信号处理器。单测 JVM 无 libhymt2.so → UnsatisfiedLinkError，忽略。
+     * 安装 native 崩溃处理器（幂等）。调用 LlamaCppNative.nativeSetLogFile 打开统一日志文件 +
+     * 安装 SIGSEGV/SIGABRT 等信号处理器。单测 JVM 无 libllamacpp.so → UnsatisfiedLinkError，忽略。
      */
     private fun installNativeCrashHandler() {
         try {
-            LogCollector.logFilePath?.let { HyMt2Native.nativeSetLogFile(it) }
+            LogCollector.logFilePath?.let { LlamaCppNative.nativeSetLogFile(it) }
         } catch (_: Throwable) {
         }
     }

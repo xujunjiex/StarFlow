@@ -57,8 +57,9 @@ object TranslateTools {
                 Constants.TextApi.AI.id -> {
                     when (type){
                         1 -> R.raw.ocr_support_languages
-                        // Hy-MT2 用专用 38 种目标语言（含 zh-TW 中文台湾）；NLLB 用其 68 种
-                        else -> if (textAi == Constants.TextAI.HYMT2.id)
+                        // 内置 Hy-MT2 用专用 38 种目标语言（含 zh-TW 中文台湾）；
+                        // 本地导入的任意 GGUF 不做限制 → 用全量列表（NLLB 的 68 种）
+                        else -> if (com.moe.starflow.llamacpp.LlamaCppModelStore.isHyMt2ActiveFromPrefs(prefs))
                             R.raw.hy_mt2_text_support_languages
                         else
                             R.raw.nllb_text_support_languages
@@ -165,13 +166,11 @@ object TranslateTools {
 
     /**
      * 当前翻译模型不支持的目标语言集合（30 种池内）。
-     * Hy-MT2 仅 38 种，30 种池内缺 sv/da/no/fi/hu/ro/ne/ca/af；NLLB 与各 API 视为全支持。
+     * 只有**内置 Hy-MT2** 有 38 种限制（30 种池内缺 sv/da/no/fi/hu/ro/ne/ca/af）；
+     * 导入的任意 GGUF 与各 API 视为全支持。
      */
     fun getDisabledTargetLangs(prefs: com.moe.starflow.utils.CustomPreference): Set<String> {
-        val api = prefs.getInt("Text_API", Constants.TextApi.BING.id)
-        return if (api == Constants.TextApi.AI.id &&
-            prefs.getInt("Text_AI", Constants.TextAI.NLLB.id) == Constants.TextAI.HYMT2.id
-        ) {
+        return if (com.moe.starflow.llamacpp.LlamaCppModelStore.isHyMt2ActiveFromPrefs(prefs)) {
             setOf("sv", "da", "no", "fi", "hu", "ro", "ne", "ca", "af")
         } else {
             emptySet()

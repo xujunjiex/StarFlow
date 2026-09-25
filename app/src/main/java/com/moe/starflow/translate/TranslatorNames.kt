@@ -9,11 +9,15 @@ import com.moe.starflow.utils.CustomPreference
 /** 翻译模型显示名单一来源（主页状态栏 / 阅读器翻译面板共用）。 */
 object TranslatorNames {
 
-    /** 当前翻译模型名（NLLB/Hy-MT2/各 API），从 Text_API/Text_AI 判断。 */
+    /** 当前翻译模型名（NLLB / 本地 GGUF 模型 / 各 API），从 Text_API/Text_AI + 激活模型判断。 */
     fun of(context: Context, prefs: CustomPreference): String =
         when (prefs.getInt("Text_API", Constants.TextApi.BING.id)) {
             Constants.TextApi.AI.id ->
-                if (prefs.getInt("Text_AI", Constants.TextAI.NLLB.id) == Constants.TextAI.HYMT2.id) "Hy-MT2" else "NLLB"
+                if (prefs.getInt("Text_AI", Constants.TextAI.NLLB.id) == Constants.TextAI.HYMT2.id) {
+                    com.moe.starflow.llamacpp.LlamaCppModelStore.init(context)
+                    com.moe.starflow.llamacpp.LlamaCppModelStore.active()?.displayName
+                        ?: context.getString(R.string.llamacpp_name)
+                } else "NLLB"
             Constants.TextApi.BING.id -> context.getString(R.string.bingapi_name)
             Constants.TextApi.NIUTRANS.id -> context.getString(R.string.niuapi_name)
             Constants.TextApi.OPENAI.id -> {

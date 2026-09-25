@@ -71,10 +71,10 @@ class TextTranslateFragment : Fragment() {
     }
 
     override fun onDestroyView() {
-        // Hy-MT2 走进程级共享实例（HyMT2SharedHolder）：跨页面切换保留模型，避免每次重载 440MB。
+        // 本地 GGUF 走进程级共享实例（LlamaCppSharedHolder）：跨页面切换保留模型，避免每次重载整个模型。
         // 共享实例页面销毁不调 release()（keepAlive 模型常驻）→ 不在 Main 线程 join/nativeRelease 阻塞、
         // 也不清掉游戏/漫画服务正在显示的共享状态浮层。
-        if (translator != null && translator !is translationapi.hymt2translation.HyMT2Translation) {
+        if (translator != null && translator !is com.moe.starflow.llamacpp.LlamaCppTranslation) {
             translator?.release()
         }
         translator = null
@@ -118,12 +118,16 @@ class TextTranslateFragment : Fragment() {
 
     private fun showLanguageDialog(type: Int) {
         val list = TranslateTools.getLanguagesList(requireContext(), type) ?: return
-        // 目标语言(type=2)：Hy-MT2 只支持官方 38 种，白名单置灰其余（此前文本页无过滤，可选中模型不支持的语种输出垃圾）
+        // 目标语言(type=2)：只有「内置 Hy-MT2」套官方 38 种白名单；导入的任意 GGUF 不限制
         val prefs = CustomPreference.getInstance(requireContext())
-        val isHyMt2 = prefs.getInt("Text_API", 1) == com.moe.starflow.utils.Constants.TextApi.AI.id &&
+        val isLlamaCppEngine = prefs.getInt("Text_API", 1) == com.moe.starflow.utils.Constants.TextApi.AI.id &&
             prefs.getInt("Text_AI", 0) == com.moe.starflow.utils.Constants.TextAI.HYMT2.id
+        val isHyMt2 = if (isLlamaCppEngine) {
+            com.moe.starflow.llamacpp.LlamaCppModelStore.init(requireContext())
+            com.moe.starflow.llamacpp.LlamaCppModelStore.isHyMt2Active()
+        } else false
         val enabled = if (type == 2 && isHyMt2) {
-            list.map { it.getOriCode() in translationapi.hymt2translation.HyMt2Languages.supportedCodes }
+            list.map { it.getOriCode() in com.moe.starflow.llamacpp.LlamaCppLanguages.hyMt2SupportedCodes }
         } else null
         LanguageSelectionDialog(requireContext(), type, list, enabled = enabled) { locale ->
             if (type == 1) {

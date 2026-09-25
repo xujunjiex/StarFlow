@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  LlamaCpp 模型管理页：
+    内置模型（Hy-MT2，走既有下载流水线）+ 导入的模型（本地 GGUF）
+    「添加模型」= 直接 SAF 选择本地 .gguf（本项目不做预设列表下载）
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <!-- ========== 说明 ========== -->
+        <TextView
+            android:id="@+id/introTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingVertical="6dp"
+            android:text="@string/llamacpp_intro_title"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/introText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:lineSpacingExtra="3dp"
+            android:textColor="@color/text_tertiary"
+            android:textSize="13sp" />
+
+        <!-- ========== 内置模型 ========== -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:paddingVertical="6dp"
+            android:text="@string/llamacpp_group_builtin"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:id="@+id/builtinContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+
+        <!-- ========== 导入的模型 ========== -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:paddingVertical="6dp"
+            android:text="@string/llamacpp_group_imported"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/importedEmpty"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/llamacpp_empty_imported"
+            android:textColor="@color/text_tertiary"
+            android:textSize="13sp" />
+
+        <LinearLayout
+            android:id="@+id/importedContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+
+        <!-- ========== 添加模型 ========== -->
+        <Button
+            android:id="@+id/btnAddModel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:text="@string/llamacpp_add_model" />
+
+        <TextView
+            android:id="@+id/addHint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="@string/llamacpp_import_hint"
+            android:textColor="@color/text_tertiary"
+            android:textSize="12sp" />
+
+        <!-- 导入进度（导入期间显示） -->
+        <LinearLayout
+            android:id="@+id/importProgressBox"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:orientation="vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/importProgressText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/llamacpp_import_started"
+                android:textSize="13sp" />
+
+            <ProgressBar
+                android:id="@+id/importProgress"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="100" />
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>

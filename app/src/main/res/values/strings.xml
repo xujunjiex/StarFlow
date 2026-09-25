@@ -1341,4 +1341,55 @@
     <string name="error_download_incomplete">Download incomplete: expected %1$s, got %2$s</string>
     <string name="error_md5_failed">MD5 verification failed</string>
 
+    <!-- LlamaCpp 通用本地引擎（模型管理页文案在后续阶段继续补） -->
+    <string name="llamacpp_released_translate">The local model was released, please try again</string>
+    <string name="llamacpp_model_file_missing">Model file for \"%1$s\" not found — please re-download or re-import it</string>
+    <string name="llamacpp_init_failed">Failed to load the local model</string>
+    <string name="llamacpp_error_text_too_long">Input text too long (exceeds model context)</string>
+    <string name="llamacpp_empty_result">The model returned an empty result</string>
+
+    <!-- LlamaCpp 引擎与模型管理页 -->
+    <string name="llamacpp_name">LlamaCpp Local Model</string>
+    <string name="llamacpp_description">Run a GGUF model fully offline on-device (built-in Hy-MT2 or any llama.cpp-compatible model you import). <b><u>A device with 6GB+ RAM is recommended.</u></b> Tap \"Manage LlamaCpp Models\" below to pick, import or delete models.</string>
+    <string name="manage_llamacpp_models">Manage LlamaCpp Models</string>
+    <string name="llamacpp_no_active_model">No LlamaCpp model selected. Open \"Manage LlamaCpp Models\" and pick or import one first.</string>
+    <string name="llamacpp_manager_title">LlamaCpp Models</string>
+    <string name="llamacpp_group_builtin">Built-in</string>
+    <string name="llamacpp_group_imported">Imported</string>
+    <string name="llamacpp_add_model">Add Model</string>
+    <string name="llamacpp_add_local">Import local GGUF file</string>
+    <string name="llamacpp_add_local_desc">Pick a .gguf file from device storage (any llama.cpp-compatible model).</string>
+    <string name="llamacpp_import_hint">The file is copied into the app\'s own folder and verified (GGUF header + MD5). Files already in the library are not imported twice.</string>
+    <string name="llamacpp_empty_imported">No imported models yet. Tap \"Add Model\" and choose a local .gguf file.</string>
+    <string name="llamacpp_badge_active">ACTIVE</string>
+    <string name="llamacpp_badge_missing">FILE MISSING</string>
+    <string name="llamacpp_badge_builtin">BUILT-IN</string>
+    <string name="llamacpp_set_active">Set as active</string>
+    <string name="llamacpp_active_set">\"%1$s\" is now the active model</string>
+    <string name="llamacpp_import_started">Importing…</string>
+    <string name="llamacpp_importing">Importing… %1$d%%</string>
+    <string name="llamacpp_import_completed">Imported \"%1$s\"</string>
+    <string name="llamacpp_import_failed">Import failed: %1$s</string>
+    <string name="llamacpp_import_duplicate">This model is already in the library (\"%1$s\")</string>
+    <string name="llamacpp_import_cancelled">Import cancelled</string>
+    <string name="llamacpp_not_gguf">Only .gguf files are supported</string>
+    <string name="llamacpp_delete_title">Delete model</string>
+    <string name="llamacpp_delete_message">Delete \"%1$s\"? The model file will be removed from the device.</string>
+    <string name="llamacpp_delete_done">Deleted</string>
+    <string name="llamacpp_delete_builtin_message">Remove the downloaded built-in model file \"%1$s\"? You can download it again later.</string>
+    <string name="llamacpp_meta_format">%1$s · %2$s</string>
+    <string name="llamacpp_source_builtin">Built-in</string>
+    <string name="llamacpp_source_imported">Imported</string>
+    <string name="llamacpp_params_title">Settings for \"%1$s\"</string>
+    <string name="llamacpp_params_saved">Settings saved</string>
+    <string name="llamacpp_params_builtin_note">This model keeps the Hy-MT2 chat format (instruction in the system segment); the template below is the instruction part.</string>
+    <string name="llamacpp_params_generic_note">This model is rendered with its own chat template from the GGUF file; the system prompt and template below are used as system/user messages.</string>
+    <string name="llamacpp_system_prompt_label">System prompt</string>
+    <string name="llamacpp_system_prompt_hint">Used only for imported models (Hy-MT2 has its own chat format)</string>
+    <string name="llamacpp_enable_thinking_label">Enable thinking (reasoning)</string>
+    <string name="llamacpp_enable_thinking_hint">Off = faster translation. Only affects models that support reasoning (e.g. Qwen3).</string>
+    <string name="llamacpp_reset_default">Reset to default</string>
+    <string name="llamacpp_intro_title">LlamaCpp Local Inference</string>
+    <string name="llamacpp_intro_content">Runs GGUF models on-device with llama.cpp — no network needed after the model is in place.\n\n• <b>Built-in:</b> Hy-MT2 1.8B 1.25-bit (461MB), the default translation model.\n• <b>Imported:</b> any llama.cpp-compatible .gguf (Qwen, Gemma, Hunyuan, …). Imported models are rendered with their own chat template, so the model\'s own formatting is respected.\n• Each model keeps its own prompt template and sampling parameters.\n\n⚠️ Local inference is CPU-bound: the stronger the chip, the faster the translation.</string>
+
 </resources>

@@ -27,6 +27,9 @@
 #include "llama.h"
 #include "ggml.h"
 #include "ggml-cpu.h"
+// llama-common：minja（Jinja）对话模板渲染。CMakeLists 里开了 LLAMA_BUILD_COMMON 才有。
+#include "common.h"
+#include "chat.h"
 
 #define TAG "LlamaCppBridge"
 
@@ -532,6 +535,14 @@ Java_translationapi_llamacpp_LlamaCppNative_nativeInit(
                  h->user_token, h->asst_token, h->eot_token, h->sys_token);
         }
 
+        // 取消机制：注册上游 abort_callback（CPU 后端每处理一个图节点查一次 → 能中断很长的 prefill），
+        // 数据源仍是 handle 里的 atomic abort（nativeAbort 置位）。旧实现只在 token 之间查标志，
+        // 长 prompt 的 prefill 阶段取消不掉（2026-09 上游源码审计结论）。
+        llama_set_abort_callback(ctx, [](void* data) -> bool {
+            auto* hh = static_cast<LlamaCppHandle*>(data);
+            return hh != nullptr && hh->abort.load(std::memory_order_acquire);
+        }, h);
+
         // 预热：解码一个 token 跑一次全前向，把 440MB 权重页调入内存（首次解码会 mmap 缺页 ~15s）
         // 把这段耗时并入"模型加载中…"，避免首次翻译时才卡 15 秒
         const long long t_warm = now_ms();
@@ -571,10 +582,14 @@ Java_translationapi_llamacpp_LlamaCppNative_nativeInit(
 
 // 核心翻译实现。jCallback != nullptr 时，每生成一段译文就回调 onToken(累积的完整译文) 实现流式显示。
 // jPrefix 传「固定指令前缀」字符串（不含待翻译文本）；同一前缀跨翻译复用 KV 缓存，跳过重复 prefill。
+// jRawMode=false（Hy-MT2 profile）：按 [BOS]{指令}<sys_end><hy_User>{原文}<hy_Assistant> 手工拼装；
+// jRawMode=true（通用 GGUF）：prompt 已由 Kotlin 侧用模型自带 Jinja 模板渲染好，这里只做
+//   tokenize → 前缀缓存 → 采样 → 解 token，不再插入任何模型专属角色标记。
 static jstring translate_impl(JNIEnv* env, jlong jHandle, jstring jPrompt, jstring jPrefix,
     jfloat temperature, jfloat topP, jint topK,
-    jfloat repetitionPenalty, jint maxTokens, jobject jCallback) {
+    jfloat repetitionPenalty, jint maxTokens, jobject jCallback, jboolean jRawMode) {
     try {
+        const bool raw_mode = (jRawMode == JNI_TRUE);
         const long long t_entry = now_ms();
         LOGI("translate: ENTER handle=%lld temp=%.3f top_p=%.3f top_k=%d rep=%.3f max_tokens=%d",
              jHandle, temperature, topP, topK, repetitionPenalty, maxTokens);
@@ -651,7 +666,8 @@ static jstring translate_impl(JNIEnv* env, jlong jHandle, jstring jPrompt, jstri
                 return env->NewStringUTF("");
             }
             // ⚠️ 缓存命中时 KV 前缀已含 [BOS][指令][sys_end][User]，不能再重复加这些角色标记
-            if (has_chat && h->asst_token >= 0) prompt_tok.push_back(h->asst_token);
+            // 通用（raw）模式不插任何角色标记：prompt 已由模型模板渲染完整
+            if (!raw_mode && has_chat && h->asst_token >= 0) prompt_tok.push_back(h->asst_token);
             start_pos = h->prefix_n;
             LOGI("translate: prefix cache HIT prefix_n=%d rest_tokens=%d", h->prefix_n, nr);
         } else {
@@ -663,21 +679,25 @@ static jstring translate_impl(JNIEnv* env, jlong jHandle, jstring jPrompt, jstri
             std::vector<llama_token> prefix_tok, rest_tok;
             if (want_cache && rest_len >= 0) {
                 // 指令（prefix）→ system 段；原文（rest）→ user 段
-                const int32_t np = tokenize_str(prefix.c_str(), static_cast<int32_t>(prefix.size()), false, prefix_tok);
+                // raw 模式：前缀部分放开 add_special，让引擎按模型配置加 BOS（等价于整段 tokenize 的行为）
+                const int32_t np = tokenize_str(prefix.c_str(), static_cast<int32_t>(prefix.size()), raw_mode, prefix_tok);
                 const int32_t nr = tokenize_str(prompt + prefix.size(), rest_len, false, rest_tok);
                 if (np < 0 || nr < 0) {
                     LOGE("translate: split tokenize failed np=%d nr=%d", np, nr);
                     env->ReleaseStringUTFChars(jPrompt, prompt);
                     return env->NewStringUTF("");
                 }
-                // 固定前缀：BOS + 指令 + sys_end + User，跨翻译复用 KV 跳过重复 prefill
-                h->prefix_n = chat_prefix + static_cast<int32_t>(prefix_tok.size());
+                // Hy-MT2：固定前缀 = BOS + 指令 + sys_end + User（模板角色标记由我们补）
+                // raw：固定前缀就是前缀本身的 token（模板标记已在 prompt 文本里）
+                h->prefix_n = (raw_mode ? 0 : chat_prefix) + static_cast<int32_t>(prefix_tok.size());
                 h->prefix_key = prefix;
-                LOGI("translate: prefix cache built prefix_n=%d prefix_tokens=%d sys_end=%d",
-                     h->prefix_n, np, h->sys_token);
+                LOGI("translate: prefix cache built prefix_n=%d prefix_tokens=%d sys_end=%d raw=%d",
+                     h->prefix_n, np, h->sys_token, raw_mode ? 1 : 0);
             } else {
-                // 无前缀（模板不含 {source_text} 或缓存禁用）：全部放 user 段
-                const int32_t n = tokenize_str(prompt, static_cast<int32_t>(text_len), false, rest_tok);
+                // 无前缀（模板不含 {source_text} 或缓存禁用）
+                // Hy-MT2：全部放 user 段、角色标记手工补，故 add_special=false
+                // raw：整段 prompt 直接 tokenize，add_special=true 让引擎按模型配置加 BOS
+                const int32_t n = tokenize_str(prompt, static_cast<int32_t>(text_len), raw_mode, rest_tok);
                 if (n < 0) {
                     LOGE("translate: prompt tokenize failed (%d)", n);
                     env->ReleaseStringUTFChars(jPrompt, prompt);
@@ -686,10 +706,15 @@ static jstring translate_impl(JNIEnv* env, jlong jHandle, jstring jPrompt, jstri
                 if (!want_cache) h->prefix_key.clear();
             }
 
-            // ⚠️ 按模型 chat 模板构造输入:
-            //   [BOS] + {指令} + <hy_place_holder_no_3>(system 结束) + <hy_User> + {原文} + <hy_Assistant>
-            // 指令放 system 段（官方模板结构，BLEU 比全塞 user 高 5~13）；不包角色标记直接喂裸文本会退化输出垃圾
-            if (has_chat) {
+            if (raw_mode) {
+                // 通用模式：prompt 已由模型自带 Jinja 模板渲染完整 → 前缀 token 与变化部分原样拼接
+                prompt_tok.reserve(prefix_tok.size() + rest_tok.size());
+                prompt_tok.insert(prompt_tok.end(), prefix_tok.begin(), prefix_tok.end());
+                prompt_tok.insert(prompt_tok.end(), rest_tok.begin(), rest_tok.end());
+            } else if (has_chat) {
+                // ⚠️ 按模型 chat 模板构造输入:
+                //   [BOS] + {指令} + <hy_place_holder_no_3>(system 结束) + <hy_User> + {原文} + <hy_Assistant>
+                // 指令放 system 段（官方模板结构，BLEU 比全塞 user 高 5~13）；不包角色标记直接喂裸文本会退化输出垃圾
                 if (h->bos_token > 0) prompt_tok.push_back(h->bos_token);
                 prompt_tok.insert(prompt_tok.end(), prefix_tok.begin(), prefix_tok.end());
                 if (h->sys_token >= 0) prompt_tok.push_back(h->sys_token);
@@ -909,7 +934,7 @@ Java_translationapi_llamacpp_LlamaCppNative_nativeTranslate(
     JNIEnv* env, jclass, jlong jHandle, jstring jPrompt, jstring jPrefix,
     jfloat temperature, jfloat topP, jint topK,
     jfloat repetitionPenalty, jint maxTokens) {
-    return translate_impl(env, jHandle, jPrompt, jPrefix, temperature, topP, topK, repetitionPenalty, maxTokens, nullptr);
+    return translate_impl(env, jHandle, jPrompt, jPrefix, temperature, topP, topK, repetitionPenalty, maxTokens, nullptr, JNI_FALSE);
 }
 
 extern "C" JNIEXPORT jstring JNICALL
@@ -917,7 +942,126 @@ Java_translationapi_llamacpp_LlamaCppNative_nativeTranslateStreaming(
     JNIEnv* env, jclass, jlong jHandle, jstring jPrompt, jstring jPrefix,
     jfloat temperature, jfloat topP, jint topK,
     jfloat repetitionPenalty, jint maxTokens, jobject jCallback) {
-    return translate_impl(env, jHandle, jPrompt, jPrefix, temperature, topP, topK, repetitionPenalty, maxTokens, jCallback);
+    return translate_impl(env, jHandle, jPrompt, jPrefix, temperature, topP, topK, repetitionPenalty, maxTokens, jCallback, JNI_FALSE);
+}
+
+// ── 通用（任意 GGUF）推理：prompt 由 Kotlin 侧用模型自带 Jinja 模板渲染好，桥接只做
+//    tokenize → 前缀 KV 缓存 → 采样 → detokenize，不插入任何模型专属角色标记。
+extern "C" JNIEXPORT jstring JNICALL
+Java_translationapi_llamacpp_LlamaCppNative_nativeTranslateRaw(
+    JNIEnv* env, jclass, jlong jHandle, jstring jPrompt, jstring jPrefix,
+    jfloat temperature, jfloat topP, jint topK,
+    jfloat repetitionPenalty, jint maxTokens) {
+    return translate_impl(env, jHandle, jPrompt, jPrefix, temperature, topP, topK, repetitionPenalty, maxTokens, nullptr, JNI_TRUE);
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_translationapi_llamacpp_LlamaCppNative_nativeTranslateRawStreaming(
+    JNIEnv* env, jclass, jlong jHandle, jstring jPrompt, jstring jPrefix,
+    jfloat temperature, jfloat topP, jint topK,
+    jfloat repetitionPenalty, jint maxTokens, jobject jCallback) {
+    return translate_impl(env, jHandle, jPrompt, jPrefix, temperature, topP, topK, repetitionPenalty, maxTokens, jCallback, JNI_TRUE);
+}
+
+// ── 模型信息：key=value 逐行（Kotlin 侧按行解析；不用 JSON，省掉任意字符串的转义问题）。
+//    arch/name 来自 GGUF 元数据，has_hy=1 表示 vocab 里有 Hy-MT2 专属角色标记（决定用哪条 prompt 通道）。
+extern "C" JNIEXPORT jstring JNICALL
+Java_translationapi_llamacpp_LlamaCppNative_nativeModelInfo(JNIEnv* env, jclass, jlong jHandle) {
+    try {
+        auto* h = reinterpret_cast<LlamaCppHandle*>(jHandle);
+        if (h == nullptr || h->model == nullptr) return env->NewStringUTF("");
+        auto meta = [&](const char* key) -> std::string {
+            char buf[4096];
+            const int n = llama_model_meta_val_str(h->model, key, buf, sizeof(buf));
+            if (n < 0) return std::string();
+            std::string s(buf);
+            for (char& c : s) if (c == '\n' || c == '\r' || c == '=') c = ' ';  // 保证单行 key=value
+            return s;
+        };
+        const char* tmpl = llama_model_chat_template(h->model, nullptr);
+        std::string out;
+        out += "arch=" + meta("general.architecture") + "\n";
+        out += "name=" + meta("general.name") + "\n";
+        out += "ctx_train=" + std::to_string(llama_model_n_ctx_train(h->model)) + "\n";
+        out += "bos=" + std::to_string(static_cast<int>(llama_vocab_bos(h->vocab))) + "\n";
+        out += "eos=" + std::to_string(static_cast<int>(llama_vocab_eos(h->vocab))) + "\n";
+        out += "vocab_n=" + std::to_string(llama_vocab_n_tokens(h->vocab)) + "\n";
+        out += "has_hy=" + std::string((h->user_token >= 0 && h->asst_token >= 0) ? "1" : "0") + "\n";
+        out += "chat_template_len=" + std::to_string(tmpl ? strlen(tmpl) : 0) + "\n";
+        return env->NewStringUTF(out.c_str());
+    } catch (const std::exception& e) {
+        LOGE("nativeModelInfo exception: %s", e.what());
+        return env->NewStringUTF("");
+    } catch (...) {
+        return env->NewStringUTF("");
+    }
+}
+
+// 模型自带的 chat_template 原文（可能很长、含换行）；没有则返回空串。
+extern "C" JNIEXPORT jstring JNICALL
+Java_translationapi_llamacpp_LlamaCppNative_nativeChatTemplate(JNIEnv* env, jclass, jlong jHandle) {
+    auto* h = reinterpret_cast<LlamaCppHandle*>(jHandle);
+    if (h == nullptr || h->model == nullptr) return env->NewStringUTF("");
+    const char* tmpl = llama_model_chat_template(h->model, nullptr);
+    return env->NewStringUTF(tmpl ? tmpl : "");
+}
+
+// 用模型自带模板（minja/Jinja）把 system + 多轮 user/assistant 渲染成最终 prompt。
+// 失败（模型无模板 / 模板解析异常）返回空串，Kotlin 侧据此回退到 ChatML 兜底。
+extern "C" JNIEXPORT jstring JNICALL
+Java_translationapi_llamacpp_LlamaCppNative_nativeFormatChat(
+    JNIEnv* env, jclass, jlong jHandle, jstring jSystem,
+    jintArray jRoles, jobjectArray jContents,
+    jboolean jAddAssistant, jboolean jEnableThinking) {
+    try {
+        auto* h = reinterpret_cast<LlamaCppHandle*>(jHandle);
+        if (h == nullptr || h->model == nullptr) return env->NewStringUTF("");
+
+        std::string system_text;
+        if (jSystem != nullptr) {
+            const char* s = env->GetStringUTFChars(jSystem, nullptr);
+            if (s != nullptr) { system_text = s; env->ReleaseStringUTFChars(jSystem, s); }
+        }
+        const jsize n_msg = (jRoles != nullptr) ? env->GetArrayLength(jRoles) : 0;
+        std::vector<jint> roles(n_msg > 0 ? n_msg : 0);
+        if (n_msg > 0) env->GetIntArrayRegion(jRoles, 0, n_msg, roles.data());
+
+        common_chat_templates_ptr tmpls = common_chat_templates_init(h->model, "");
+        common_chat_templates_inputs inputs;
+        if (!system_text.empty()) {
+            common_chat_msg sys_msg;
+            sys_msg.role = "system";
+            sys_msg.content = system_text;
+            inputs.messages.push_back(std::move(sys_msg));
+        }
+        for (jsize i = 0; i < n_msg; ++i) {
+            jstring js = (jstring) env->GetObjectArrayElement(jContents, i);
+            std::string content;
+            if (js != nullptr) {
+                const char* c = env->GetStringUTFChars(js, nullptr);
+                if (c != nullptr) { content = c; env->ReleaseStringUTFChars(js, c); }
+                env->DeleteLocalRef(js);
+            }
+            common_chat_msg msg;
+            msg.role = (roles[i] == 1) ? "assistant" : "user";
+            msg.content = content;
+            inputs.messages.push_back(std::move(msg));
+        }
+        inputs.add_generation_prompt = (jAddAssistant == JNI_TRUE);
+        inputs.use_jinja             = true;
+        inputs.enable_thinking       = (jEnableThinking == JNI_TRUE);
+
+        common_chat_params params = common_chat_templates_apply(tmpls.get(), inputs);
+        LOGI("nativeFormatChat: %zu chars, messages=%d thinking=%d",
+             params.prompt.size(), static_cast<int>(n_msg), inputs.enable_thinking ? 1 : 0);
+        return safe_new_string_utf8(env, params.prompt.c_str(), params.prompt.size());
+    } catch (const std::exception& e) {
+        LOGE("nativeFormatChat exception: %s", e.what());
+        return env->NewStringUTF("");
+    } catch (...) {
+        LOGE("nativeFormatChat unknown exception");
+        return env->NewStringUTF("");
+    }
 }
 
 extern "C" JNIEXPORT void JNICALL

@@ -30,7 +30,7 @@ import com.moe.starflow.databinding.ActivityManageBinding
 import com.moe.starflow.download.ModelKey
 import com.moe.starflow.me.about.OpenSource
 import com.moe.starflow.me.model.NllbModelFragment
-import com.moe.starflow.me.model.HyMt2DetailFragment
+import com.moe.starflow.me.model.LlamaCppModelFragment
 import com.moe.starflow.me.apiconfig.OnlineAPI
 import com.moe.starflow.me.apiconfig.OpenAIText
 import com.moe.starflow.me.apiconfig.CustomTextAPI
@@ -43,7 +43,10 @@ class ManageActivity : BaseActivity() {
         const val EXTRA_CUSTOM_CODE = "custom_code"
         const val EXTRA_IS_NEW = "is_new"
         const val TYPE_FRAGMENT_MANAGE_NLLB = 2
+        /** 兼容旧入口（值 12 保留）：现在指向 LlamaCpp 模型管理页 */
         const val TYPE_FRAGMENT_MANAGE_HYMT2 = 12
+        /** LlamaCpp 模型管理页（内置 Hy-MT2 + 导入的 GGUF） */
+        const val TYPE_FRAGMENT_MANAGE_LLAMACPP = 13
         // 1 已废弃：原 ML Kit 离线翻译（已移除）
         const val TYPE_FRAGMENT_MANAGE_NIU_API = 3
         const val TYPE_FRAGMENT_MANAGE_VOLC_API = 4
@@ -78,8 +81,8 @@ class ManageActivity : BaseActivity() {
                     .replace(binding.manageFragmentContainer.id, fragment)
                     .commit()
             }
-            TYPE_FRAGMENT_MANAGE_HYMT2 -> {
-                val fragment = HyMt2DetailFragment()
+            TYPE_FRAGMENT_MANAGE_HYMT2, TYPE_FRAGMENT_MANAGE_LLAMACPP -> {
+                val fragment = LlamaCppModelFragment()
                 supportFragmentManager.beginTransaction()
                     .replace(binding.manageFragmentContainer.id, fragment)
                     .commit()

@@ -95,7 +95,7 @@ class APIConfig : PreferenceFragmentCompat() {
 
             findPreference<Preference>("manage_hymt2_model")?.setOnPreferenceClickListener {
                 val intent = Intent(requireContext(), ManageActivity::class.java).apply {
-                    putExtra(ManageActivity.EXTRA_FRAGMENT_TYPE, ManageActivity.TYPE_FRAGMENT_MANAGE_HYMT2)
+                    putExtra(ManageActivity.EXTRA_FRAGMENT_TYPE, ManageActivity.TYPE_FRAGMENT_MANAGE_LLAMACPP)
                 }
                 startActivity(intent)
                 true

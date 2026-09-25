@@ -43,12 +43,12 @@
 
         <SwitchPreferenceCompat
             app:key="hymt2_translation"
-            app:title="@string/hymt2_name"
-            app:summary="@string/hymt2_description"/>
+            app:title="@string/llamacpp_name"
+            app:summary="@string/llamacpp_description"/>
 
         <Preference
             app:key="manage_hymt2_model"
-            app:title="@string/manage_hymt2_models" />
+            app:title="@string/manage_llamacpp_models" />
 
     </PreferenceCategory>
 

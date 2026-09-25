@@ -342,6 +342,8 @@ class ModelDownloadService : LifecycleService() {
 
         if (result.isSuccess) {
             // downloadModel 内部已按服务器 Content-Length + MD5 校验，文件有效。
+            // 本地 GGUF 再多一步：1.25-bit 类型重打标（42→43，幂等）
+            retagIfGguf(destFile)
             if (fileCount == 1) {
                 // 单文件模型：下载完成立即标记 Done。
                 // 否则状态会停在 Running，只有重启 initialize() 才能识别成 Done。
@@ -421,11 +423,35 @@ class ModelDownloadService : LifecycleService() {
             file.delete()
             return VerifyResult.DAMAGED
         }
-        if (fileInfo.checksum.isNotEmpty() && !ChecksumHelper.verifyChecksum(file, fileInfo.checksum)) {
+        // ⚠️ 本地 GGUF 会被「1.25-bit 类型重打标」改写（张量类型 42→43，见 patches/README.md），
+        //    文件 MD5 随之改变：有 <file>.retagged 标记时按标记里的 MD5 校验，
+        //    否则会把已经改好的模型误判成 DAMAGED 并删掉（然后重复下载 → 死循环）。
+        val retaggedMd5 = com.moe.starflow.llamacpp.GgufTypeRetag.retaggedMd5(file)
+        val expected = retaggedMd5 ?: fileInfo.checksum
+        if (expected.isNotEmpty() && !ChecksumHelper.verifyChecksum(file, expected)) {
             file.delete()
             return VerifyResult.DAMAGED
         }
         return VerifyResult.COMPLETE
+    }
+
+    /**
+     * GGUF 模型下载完成后做量化类型重打标（幂等；只有含 42 号张量的 1.25-bit 文件会被改写），
+     * 并把新的 MD5 同步进 LlamaCpp 模型清单。
+     */
+    private fun retagIfGguf(file: File) {
+        if (!file.name.endsWith(".gguf", ignoreCase = true)) return
+        if (!com.moe.starflow.llamacpp.GgufTypeRetag.ensureRetagged(file)) return
+        val md5 = com.moe.starflow.llamacpp.GgufTypeRetag.retaggedMd5(file)
+        LogCollector.d(TAG, "GGUF 重打标完成：${file.name} md5=$md5")
+        if (md5 != null) {
+            com.moe.starflow.llamacpp.LlamaCppModelStore.init(applicationContext)
+            com.moe.starflow.llamacpp.LlamaCppModelStore.builtinHymt2()?.let { m ->
+                if (m.fileName == file.name) {
+                    com.moe.starflow.llamacpp.LlamaCppModelStore.markRetagged(m.id, md5)
+                }
+            }
+        }
     }
 
     private fun targetFileFor(modelKey: ModelKey, fileName: String): File {

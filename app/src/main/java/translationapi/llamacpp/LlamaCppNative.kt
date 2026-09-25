@@ -66,6 +66,60 @@ object LlamaCppNative {
     /** 中止当前推理（设置 native 端取消标志，解码循环提前退出）。 */
     external fun nativeAbort(handle: Long)
 
+    // ─────────────── 通用（任意 GGUF）通道 ───────────────
+    // prompt 由 Kotlin 侧用模型自带 Jinja 模板渲染好（见 nativeFormatChat），桥接只做
+    // tokenize → 前缀 KV 缓存 → 采样 → detokenize，不插入任何模型专属角色标记。
+
+    /** 通用模式：非流式推理。 */
+    external fun nativeTranslateRaw(
+        handle: Long,
+        prompt: String,
+        prefix: String,
+        temperature: Float,
+        topP: Float,
+        topK: Int,
+        repetitionPenalty: Float,
+        maxTokens: Int
+    ): String
+
+    /** 通用模式：流式推理（回调语义同 [nativeTranslateStreaming]）。 */
+    external fun nativeTranslateRawStreaming(
+        handle: Long,
+        prompt: String,
+        prefix: String,
+        temperature: Float,
+        topP: Float,
+        topK: Int,
+        repetitionPenalty: Float,
+        maxTokens: Int,
+        callback: LlamaCppStreamCallback
+    ): String
+
+    /**
+     * 模型元信息，`key=value` 逐行返回（Kotlin 侧按行解析）。
+     * 键：`arch` / `name` / `ctx_train` / `bos` / `eos` / `vocab_n` / `has_hy`（是否有 Hy-MT2 专属角色标记）/
+     * `chat_template_len`。
+     */
+    external fun nativeModelInfo(handle: Long): String
+
+    /** 模型自带的 chat_template 原文（可能很长、含换行）；模型没有模板时返回空串。 */
+    external fun nativeChatTemplate(handle: Long): String
+
+    /**
+     * 用模型自带模板（minja / Jinja）渲染 system + 多轮 user/assistant 为最终 prompt。
+     * @param roles 每条消息角色：0=user, 1=assistant；contents 对应文本
+     * @param addAssistant 是否追加「assistant 开始」标记（生成提示）
+     * @return 渲染好的 prompt；模型无模板或渲染失败返回空串（调用方回退 ChatML）
+     */
+    external fun nativeFormatChat(
+        handle: Long,
+        systemPrompt: String,
+        roles: IntArray,
+        contents: Array<String>,
+        addAssistant: Boolean,
+        enableThinking: Boolean
+    ): String
+
     /**
      * 多轮对话推理（Hy-MT2 profile）：组装 [BOS]{system}<sys_end><hy_User>m1<hy_Assistant>m2...<hy_Assistant>。
      * @param roles 每条消息角色：0=user, 1=assistant；contents 对应文本。

@@ -1,10 +1,15 @@
-package translationapi.hymt2translation
+package com.moe.starflow.llamacpp
 
 /**
- * ISO 639 代码 → Hy-MT2 提示词中的中文目标语言名（对应桌面端 38 个目标语言选项）。
- * 仅用于拼装翻译提示词，不参与任何语言选择 UI。
+ * 目标语言名与内置 Hy-MT2 的语言白名单（原 `translationapi.hymt2translation.HyMt2Languages`
+ * 迁移过来：那个包已随老引擎删除）。
+ *
+ * - [getTargetName]：ISO 639 代码 → 提示词里用的中文语言名（两条 prompt 通道都用它）；
+ * - [hyMt2SupportedCodes]：内置 Hy-MT2 官方支持的 **38 种**目标语言，用于目标语言白名单置灰；
+ *   用户导入的任意 GGUF **不套用**这个白名单（模型能力未知，交给用户自己选）。
  */
-object HyMt2Languages {
+object LlamaCppLanguages {
+
     private val TARGET_NAMES: Map<String, String> = mapOf(
         "zh" to "中文",
         "zh-TW" to "繁体中文",
@@ -53,10 +58,10 @@ object HyMt2Languages {
 
     /**
      * Hy-MT2 官方支持的 38 种目标语言（官方 README「支持的语种」表，与 TARGET_NAMES 一一对应）。
-     * 用于目标语言选择白名单：Hy-MT2 引擎下，不在集合内的语言一律置灰（模型不支持，翻了也是垃圾）。
+     * 用于目标语言选择白名单：**内置 Hy-MT2** 下不在集合内的语言一律置灰（模型不支持，翻了也是垃圾）。
      * 注意 UI 语言池（nllb_text_support_languages.xml 68 种）远大于此集合，必须用白名单而非黑名单。
      */
-    val supportedCodes: Set<String>
+    val hyMt2SupportedCodes: Set<String>
         get() = TARGET_NAMES.keys
 
     /** 取目标语言中文名；不在 38 种内时回退原代码（翻译质量不保证，接受）。 */
