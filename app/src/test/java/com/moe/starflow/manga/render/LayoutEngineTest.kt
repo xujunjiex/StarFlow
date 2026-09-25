@@ -344,6 +344,57 @@ class LayoutEngineTest {
 
     // ---------- ⑤ 横排对齐 ----------
 
+    /**
+     * ⚠️ 用户要求：**RT-DETR 选「横排渲染」后必须受「横排对齐」设置影响**。
+     *
+     * RT 的选区是 RT-DETR 给的**矩形气泡框**（多列/宽气泡，文字往往远窄于框），
+     * 所以这里用「宽框 + 单行短文本」这个 RT 典型形态钉死三种对齐的**绝对锚点**：
+     * - 左：`region.left + pad`
+     * - 居中：`region.centerX - 行宽/2`
+     * - 右：`region.right - pad - 行宽`
+     *
+     * 绘制端 `VerticalTextRenderer.draw` 只按 `line.x` 落笔、不做任何对齐决策，
+     * 所以断言 `line.x` 就等于断言最终落笔位置（Robolectric 的 Canvas 不栅格化文字，
+     * 像素级断言在这里做不出来 —— 形状能画、字形画不出来）。
+     */
+    @Test
+    fun horizontalAlign_wideBubble_anchorsLeftCenterRight() {
+        val region = Box(0f, 0f, 200f, 60f)          // 宽框（RT 气泡框的典型形态）
+        fun layoutOf(align: TextAlign) = LayoutEngine.plan(
+            measurer = measurer(charRatio = 1f, lineRatio = 1f), text = "译文",
+            region = region, direction = TextDirection.HORIZONTAL,
+            requestedFontSize = 20f, autoFit = true,
+            align = align, trackingRatio = 0f, leadingRatio = 0f, minPaddingPx = PAD
+        )
+
+        val left = layoutOf(TextAlign.LEFT)
+        val center = layoutOf(TextAlign.CENTER)
+        val right = layoutOf(TextAlign.RIGHT)
+
+        assertEquals("单行", 1, left.lines.size)
+        val w = left.lines[0].width
+        assertEquals("行宽应一致（对齐不改变换行）", w, center.lines[0].width, 0.01f)
+
+        assertEquals("左对齐锚在左内边距", region.left + PAD, left.lines[0].x, 0.5f)
+        assertEquals("居中锚在中心", region.centerX - w / 2f, center.lines[0].x, 0.5f)
+        assertEquals("右对齐锚在右内边距", region.right - PAD - w, right.lines[0].x, 0.5f)
+    }
+
+    /** 反向：**竖排不吃对齐设置**（设置页文案「竖排不受影响」）。 */
+    @Test
+    fun verticalDirection_ignoresHorizontalAlign() {
+        val region = Box(0f, 0f, 60f, 200f)
+        fun layoutOf(align: TextAlign) = LayoutEngine.plan(
+            measurer = measurer(charRatio = 1f, lineRatio = 1f), text = "译文",
+            region = region, direction = TextDirection.VERTICAL_RL,
+            requestedFontSize = 20f, autoFit = true,
+            align = align, trackingRatio = 0f, leadingRatio = 0f, minPaddingPx = PAD
+        )
+        val left = layoutOf(TextAlign.LEFT).lines.map { it.x }
+        val right = layoutOf(TextAlign.RIGHT).lines.map { it.x }
+        assertEquals("竖排列位置不应随对齐变化", left, right)
+    }
+
     @Test
     fun horizontalAlign_positionsLinesRelatively() {
         // "ABCD" 换行成两行，行宽不等：第一行满宽、第二行短

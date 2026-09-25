@@ -13,6 +13,7 @@ import com.moe.starflow.manga.OcrLock
 import com.moe.starflow.manga.TranslationCancelledException
 import com.moe.starflow.manga.TranslateUtils
 import com.moe.starflow.manga.config.MangaModeConfig
+import com.moe.starflow.manga.config.RtTextDirection
 import com.moe.starflow.manga.config.TranslationTextRules
 import com.moe.starflow.manga.engine.DetectionBridge
 import com.moe.starflow.manga.pipeline.BatchOutcome
@@ -713,6 +714,8 @@ class ReaderTranslationController(
             // 分批开关：增量模式强制关，其余跟随用户设置
             incrementalEnabled = enabled && appPrefs.getBoolean("Incremental_Render", true),
             isAutoTranslating = false,
+            // RT-DETR + manga-ocr 的渲染方向（两态，默认竖排右→左；该路径不判横竖）
+            rtTextDirection = RtTextDirection.load(appPrefs),
         )
         val host = ReaderBatchHost(bitmap, translator, phase, page)
         val pipeline = IncrementalBatchPipeline(host, scope, cfg)
@@ -757,7 +760,7 @@ class ReaderTranslationController(
                 // 省掉普通路径的第二次整页 RT 检测（气泡少的页面恒定走这条，开销省一半）
                 return translatePlain(
                     bitmap, det, ocr, srcLang, tgtLang, translator, phase, page,
-                    cfg.keepTextFree, outcome.bubbles
+                    cfg.keepTextFree, outcome.bubbles, cfg.rtTextDirection
                 )
             }
             is BatchOutcome.NotApplicable -> {
@@ -765,7 +768,8 @@ class ReaderTranslationController(
                 // ⚠️ keepTextFree 必须**显式**带过去：这条路径会重新检测一次，漏传就会丢掉自由文字，
                 // 而同一次翻译的分批路径是保留的 —— 表现为「同一页有时有旁白、有时没有」
                 return translatePlain(
-                    bitmap, det, ocr, srcLang, tgtLang, translator, phase, page, cfg.keepTextFree, null
+                    bitmap, det, ocr, srcLang, tgtLang, translator, phase, page, cfg.keepTextFree, null,
+                    cfg.rtTextDirection
                 )
             }
         }
@@ -788,21 +792,29 @@ class ReaderTranslationController(
          * 成功识别时 `recognizeCroppedBubbles` 会自己回收这些裁剪图；失败则本函数兜底回收。
          */
         preDetected: List<CroppedBubble>?,
+        /**
+         * RT-DETR + manga-ocr 的渲染方向（`RtTextDirection`）。由分批配置带过来，两条路径必须一致 ——
+         * RT 路径不判横竖，方向完全由它决定。
+         */
+        rtTextDirection: TextDirection = TextDirection.VERTICAL_RL,
     ): List<TranslatedBubble>? {
         val blocks: List<TextBlockInfo> = if (preDetected != null) {
             LogCollector.d(TAG, "translatePlain: 复用分批检测的 ${preDetected.size} 个气泡，只跑识别")
             try {
-                DetectionBridge.recognizeCroppedBubbles(preDetected, srcLang)
+                DetectionBridge.recognizeCroppedBubbles(preDetected, srcLang, rtTextDirection)
             } catch (e: Exception) {
                 // 成功路径由 recognizeCroppedBubbles 内部回收；抛异常时可能一张都没回收 → 这里兜底
                 preDetected.forEach { if (!it.croppedBitmap.isRecycled) it.croppedBitmap.recycle() }
                 throw e
             }
         } else {
-            DetectionBridge.runOCR(bitmap, srcLang, det.value, ocr.value, context, keepTextFree)
+            DetectionBridge.runOCR(bitmap, srcLang, det.value, ocr.value, context, keepTextFree, rtTextDirection)
         }
         val overlayConfig = cacheManager.getOverlayConfig(appPrefs)
-        val bubbleRegions = DetectionBridge.ocrToBubbleRegions(blocks, overlayConfig.textDirection)
+        // RT-DETR 用 RT 自己的渲染方向（不看竖排方向设置）；PP/ML Kit 用竖排方向设置
+        val bubbleRegions = DetectionBridge.ocrToBubbleRegions(
+            blocks, RtTextDirection.resolve(det, rtTextDirection, overlayConfig.textDirection)
+        )
         // ⚠️ 这条路径**不查文本缓存**（缓存只在分批管线的 translateWithCache 里）。
         // 打出来是为了不让「同页重翻有时调 API 有时不调」变成谜：走哪条路决定了有没有缓存。
         LogCollector.d(
@@ -1098,7 +1110,11 @@ class ReaderTranslationController(
         textColor = cfg.textColor,
         bgColor = cfg.bgColor,
         useOriginalText = mode == TranslationCacheManager.OverlayMode.ORIGINAL,
-        verticalDirection = cfg.textDirection,
+        // 渲染时的竖排方向覆盖：RT-DETR + manga-ocr 用「RT-DETR 渲染方向」（不看竖排方向设置，
+        // 日文竖排恒右→左）；PP/ML Kit 用竖排方向设置
+        verticalDirection = RtTextDirection.resolve(
+            runDet, RtTextDirection.load(appPrefs), cfg.textDirection
+        ),
         // 阅读器译图渲染也要用自定义结果字体（Custom_Result_Font），否则恒为系统字体
         fontTypeface = OverlayRenderer.loadResultTypeface(context, customPrefs),
         align = cfg.horizontalAlign,

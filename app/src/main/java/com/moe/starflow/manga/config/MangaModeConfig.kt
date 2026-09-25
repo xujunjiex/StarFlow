@@ -29,7 +29,14 @@ data class MangaModeConfig(
     val keepTextFree: Boolean = true,  // RT-DETR-V2: 是否保留 text_free 区域（自由文字/旁白/音效）
     val horizontalAlign: TextAlign = TextAlign.CENTER,  // 横排译文对齐（竖排不受影响）
     val trackingRatio: Float = 0f,                      // 用户字间距（×字号）
-    val leadingRatio: Float = 0f                        // 用户行间距（×字号）
+    val leadingRatio: Float = 0f,                       // 用户行间距（×字号）
+    /**
+     * **RT-DETR-V2 + manga-ocr 的渲染方向**（两态：竖排右→左 / 横排），见 [RtTextDirection]。
+     *
+     * ⚠️ 只对 RT 路径生效：该组合只有矩形气泡框、没有文字行 quad，方向不做几何判断；
+     * PP-OCRv5/v6 与 ML Kit 仍自动判断横竖（本值被忽略）。
+     */
+    val rtTextDirection: TextDirection = TextDirection.VERTICAL_RL
 ) {
     companion object {
         /**

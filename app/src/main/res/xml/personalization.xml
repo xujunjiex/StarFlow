@@ -192,6 +192,19 @@
             android:title="@string/manga_keep_text_free_title"
             android:summary="@string/manga_keep_text_free_summary" />
 
+        <!-- RT-DETR-V2 + manga-ocr 的渲染方向：该组合只有矩形气泡框、且只识别日文，
+             所以**不做横竖判断**（"气泡高>宽⇒竖排"对多列竖排的宽气泡必反），默认竖排右→左。
+             ⚠️ 与上面的「竖排方向」(Manga_Text_Direction) 不是一回事：那个管竖排列序（右→左/左→右）、
+             只对 PP-OCRv5/v6 生效；本项管 RT 路径「竖排还是横排」，PP 路径自动判断、忽略本项。 -->
+        <ListPreference
+            android:key="Manga_RT_Text_Direction"
+            app:iconSpaceReserved="false"
+            android:defaultValue="0"
+            android:title="@string/manga_rt_text_direction_title"
+            android:summary="@string/manga_rt_text_direction_summary"
+            android:entries="@array/manga_rt_text_direction_entries"
+            android:entryValues="@array/manga_rt_text_direction_values"/>
+
         <SwitchPreference
             android:key="Manga_Text_Merge"
             app:iconSpaceReserved="false"

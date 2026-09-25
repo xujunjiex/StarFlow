@@ -6,14 +6,16 @@ import kotlin.math.abs
 import kotlin.math.hypot
 
 /**
- * 文字方向判定的**唯一入口**。
+ * 文字方向判定的**唯一入口**（只服务"拿得到文字行几何"的路径）。
  *
  * 背景：判定曾散在 6 处、用了强弱不同的信号，排查「某页方向判反了」时定位不到是哪一层干的。
  * 这里把判定收敛成两个**函数名自带信号强度**的函数，并在日志里打出用了哪档信号
- * （`signal=quad` / `signal=aabb`），grep 一行即可对账。
+ * （强信号 `signal=quad` / AABB 兜底 `signal=aabb`），grep 一行即可对账。
  *
- * ⚠️ 两档信号**不合并**：输入语义不同（一个是文字行 quad，一个是气泡矩形），
- * 合并会让「强信号」被「弱信号」的假设污染。
+ * ⚠️ **RT-DETR-V2 + manga-ocr 路径不在这里判**：它只有矩形气泡框，"气泡高 > 宽 ⇒ 竖排"这种
+ * 弱信号对多列竖排的宽气泡必反，已改为直接读用户设置（默认竖排右→左，见
+ * [com.moe.starflow.manga.config.RtTextDirection]）。删掉的 `textVerticalFromBubbleAabb`
+ * 就是那个弱信号 —— 不要再加回来。
  */
 object BubbleOrientation {
 
@@ -53,19 +55,6 @@ object BubbleOrientation {
             ?: textVerticalFromQuad(cornerPoints)
             ?: (boundingBox?.let { it.height() > it.width() } ?: false)
         log("block", cornerPoints != null, boundingBox, vertical)
-        return vertical
-    }
-
-    /**
-     * **弱信号**：只有气泡矩形可用时（RT-DETR / MangaOcr 路径只回传气泡框，拿不到文字行角点），
-     * 只能按「气泡高 > 宽 ⇒ 文字竖排」这个启发式猜。
-     *
-     * ⚠️ 这是启发式，不是判定。收在这里是为了「只有一处」，而非因为它准确 ——
-     * 同一页换 OCR 引擎会切换判定路径，强弱信号可能给出不同结论。
-     */
-    fun textVerticalFromBubbleAabb(rect: Rect): Boolean {
-        val vertical = rect.height() > rect.width()
-        log("bubble", false, rect, vertical)
         return vertical
     }
 

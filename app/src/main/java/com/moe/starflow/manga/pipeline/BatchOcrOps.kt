@@ -39,7 +39,18 @@ interface BatchOcrOps {
 
     suspend fun recognizeV5(ctx: Context, crops: List<Bitmap>, lang: PPOcrV5Engine.RecLang): List<RecResult>
     suspend fun recognizeV6(ctx: Context, crops: List<Bitmap>): List<RecResult>
-    suspend fun recognizeCroppedBubbles(crops: List<CroppedBubble>, lang: String): List<TextBlockInfo>
+
+    /**
+     * MangaOcr 批量识别。
+     *
+     * @param rtDirection RT-DETR-V2 的渲染方向（`RtTextDirection`）。**必须传真实配置** ——
+     *   RT 路径不做横竖几何判断（只有矩形气泡框，判不准），方向完全由它决定。
+     */
+    suspend fun recognizeCroppedBubbles(
+        crops: List<CroppedBubble>,
+        lang: String,
+        rtDirection: TextDirection,
+    ): List<TextBlockInfo>
 }
 
 /** 直连真实引擎（生产用）。 */
@@ -67,6 +78,6 @@ object RealBatchOcrOps : BatchOcrOps {
         PPOcrV6Engine.recognizeBatchWithCls(ctx, crops)
 
     override suspend fun recognizeCroppedBubbles(
-        crops: List<CroppedBubble>, lang: String,
-    ): List<TextBlockInfo> = DetectionBridge.recognizeCroppedBubbles(crops, lang)
+        crops: List<CroppedBubble>, lang: String, rtDirection: TextDirection,
+    ): List<TextBlockInfo> = DetectionBridge.recognizeCroppedBubbles(crops, lang, rtDirection)
 }

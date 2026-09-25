@@ -36,4 +36,21 @@ data class BatchPipelineConfig(
     val prefs: CustomPreference,
     val incrementalEnabled: Boolean,
     val isAutoTranslating: Boolean,
+    /**
+     * RT-DETR-V2 + manga-ocr 的渲染方向（见 [com.moe.starflow.manga.config.RtTextDirection]）：
+     * 两态、默认竖排右→左，**不做横竖几何判断**。仅该引擎组合使用（[renderTextDirection]）。
+     */
+    val rtTextDirection: TextDirection = TextDirection.VERTICAL_RL,
 )
+
+/**
+ * 本次任务的气泡/渲染方向：**RT-DETR-V2 用 [rtTextDirection]，其余引擎用 [textDirection]**。
+ *
+ * ⚠️ 与 [textDirection] 的分工：PP-OCRv5/v6 会用 [textDirection] 决定**竖排列序**（右→左 / 左→右）；
+ * RT 路径只识别日文竖排，列序恒右→左，这里把方向整体交给 [rtTextDirection]，
+ * 用户把「竖排方向」设成左→右时 RT 不会跟着变。
+ */
+val BatchPipelineConfig.renderTextDirection: TextDirection
+    get() = com.moe.starflow.manga.config.RtTextDirection.resolve(
+        detEngine, rtTextDirection, textDirection
+    )

@@ -637,6 +637,10 @@
     <string name="manga_text_direction_summary">Which column vertical text is read first; PP-OCRv5/v6 only</string>
     <string name="manga_text_direction_rl">Recognize right to left, common in Japanese manga</string>
     <string name="manga_text_direction_lr">Recognize left to right</string>
+    <string name="manga_rt_text_direction_title">RT-DETR render direction</string>
+    <string name="manga_rt_text_direction_summary">Applies only to RT-DETR-V2 + manga-ocr: vertical (right to left) by default. PP-OCRv5/v6 detect the direction automatically and ignore this setting</string>
+    <string name="manga_rt_text_direction_vertical">Vertical (right to left)</string>
+    <string name="manga_rt_text_direction_horizontal">Horizontal</string>
 
     <string name="manga_horizontal_align_title">Horizontal Text Alignment</string>
     <string name="manga_horizontal_align_summary">Line alignment for horizontal text; vertical text is unaffected</string>

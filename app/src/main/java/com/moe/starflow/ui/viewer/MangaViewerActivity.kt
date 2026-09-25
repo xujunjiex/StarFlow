@@ -775,11 +775,16 @@ class MangaViewerActivity : AppCompatActivity() {
 
                         initializeEngines(detEngine, ocrEngine)
 
-                        val ocrResults = DetectionBridge.runOCR(cropped, sourceLang, detEngine.value, ocrEngine.value, this@MangaViewerActivity)
+                        val rtDirection = RtTextDirection.load(prefs.getSharedPreferences())
+                        val ocrResults = DetectionBridge.runOCR(cropped, sourceLang, detEngine.value, ocrEngine.value, this@MangaViewerActivity, rtDirection = rtDirection)
                         if (ocrResults.isEmpty()) throw Exception("OCR 未识别到文字")
-                        // 重翻遵循用户配置的竖排方向
+                        // 重翻遵循用户配置的竖排方向；RT-DETR + manga-ocr 例外 —— 它用自己那条
+                        // 「RT-DETR 渲染方向」（两态，默认竖排右→左），不判横竖、也不看竖排方向
                         val textDirection = VerticalFlow.fromPref(prefs.getString("Manga_Text_Direction", "0")).toTextDirection()
-                        val bubbles = DetectionBridge.ocrToBubbleRegions(ocrResults, textDirection)
+                        val bubbles = DetectionBridge.ocrToBubbleRegions(
+                            ocrResults,
+                            RtTextDirection.resolve(detEngine, rtDirection, textDirection)
+                        )
                         if (bubbles.isEmpty()) throw Exception("无有效文字区域")
                         val translator = createTranslator(prefs) ?: throw Exception("翻译器创建失败")
                         try {

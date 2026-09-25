@@ -181,6 +181,17 @@
         <item>1</item>
     </string-array>
 
+    <!-- RT-DETR-V2 + manga-ocr 渲染方向（Manga_RT_Text_Direction）：只有两态 -->
+    <string-array name="manga_rt_text_direction_entries">
+        <item>@string/manga_rt_text_direction_vertical</item>
+        <item>@string/manga_rt_text_direction_horizontal</item>
+    </string-array>
+
+    <string-array name="manga_rt_text_direction_values">
+        <item>0</item>
+        <item>1</item>
+    </string-array>
+
     <!-- ===== 此前仅存在于 values/，中文环境回退英文 → 补全 ===== -->
     <string-array name="context_count_entries">
         <item>5 轮</item>

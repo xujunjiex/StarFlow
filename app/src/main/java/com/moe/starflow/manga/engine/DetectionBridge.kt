@@ -417,11 +417,20 @@ object DetectionBridge {
          * （[detectAndCropRTDetrV2] / [detectWithRTDetrV2Debug]）仍保留 `false` 默认，
          * 调用方**必须**显式传 `config.keepTextFree`。
          */
-        keepTextFree: Boolean? = null
+        keepTextFree: Boolean? = null,
+        /**
+         * 渲染方向（[RtTextDirection]）。**null = 读设置**（默认竖排右→左）。
+         *
+         * ⚠️ RT-DETR-V2 只有矩形气泡框、拿不到文字行 quad，所以**不做横竖几何判断**：
+         * 直接用这个值（默认竖排右→左，日漫正文常态）。旧实现在这里用 `h > w` 猜，
+         * 多列竖排的宽气泡必被猜反（译文按行渲染）。
+         */
+        rtDirection: TextDirection? = null
     ): List<TextBlockInfo> {
         val keepTextFree = resolveKeepTextFree(context, keepTextFree)
+        val resolvedRt = resolveRtTextDirection(context, rtDirection)
         try {
-            LogCollector.d(TAG, "使用 RT-DETR-V2 + MangaOcr 检测文字区域...")
+            LogCollector.d(TAG, "使用 RT-DETR-V2 + MangaOcr 检测文字区域... rtDirection=$resolvedRt")
 
             // Step 1: RT-DETR-V2 检测（返回所有类别）
             val allBubbles = ComicBubbleDetector.detectBubbles(bitmap)
@@ -475,14 +484,16 @@ object DetectionBridge {
                 val text = texts[i].trim()
                 if (text.isNotBlank() && !isDotOnlyPattern(text)) {
                     val rect = sortedBubbles[i].rect
-                    val isVertical = BubbleOrientation.textVerticalFromBubbleAabb(rect)
+                    // RT-DETR-V2 路径**不做横竖判断**：方向来自设置（默认竖排右→左），见 [RtTextDirection]。
+                    // 旧实现用 `BubbleOrientation.textVerticalFromBubbleAabb(rect)`（h>w）猜 → 宽的多列竖排气泡必反。
+                    val isVertical = resolvedRt != TextDirection.HORIZONTAL
                     results.add(TextBlockInfo(
                         text = text,
                         boundingBox = rect,
                         cornerPoints = null,
                         isVertical = isVertical
                     ))
-                    LogCollector.d(TAG, "RT-DETR-V2(MangaOcr) [$i]: rect=$rect, class=${sortedBubbles[i].classId}, text='$text', isVertical=$isVertical")
+                    LogCollector.d(TAG, "RT-DETR-V2(MangaOcr) [$i]: rect=$rect, class=${sortedBubbles[i].classId}, text='$text', isVertical=$isVertical(设置=$resolvedRt)")
                 }
             }
 
@@ -590,7 +601,12 @@ object DetectionBridge {
      */
     suspend fun recognizeCroppedBubbles(
         croppedBubbles: List<CroppedBubble>,
-        @Suppress("UNUSED_PARAMETER") language: String
+        @Suppress("UNUSED_PARAMETER") language: String,
+        /**
+         * 渲染方向（[RtTextDirection]）。**必须由调用方传真实配置** —— 这里没有 Context，读不了设置。
+         * 默认竖排右→左（日漫正文常态），且**不做横竖几何判断**（只有矩形气泡框，判不准）。
+         */
+        rtDirection: TextDirection = TextDirection.VERTICAL_RL
     ): List<TextBlockInfo> = withContext(Dispatchers.IO) {
         if (croppedBubbles.isEmpty()) return@withContext emptyList()
 
@@ -604,14 +620,14 @@ object DetectionBridge {
             val text = texts[i].trim()
             if (text.isNotBlank() && !isDotOnlyPattern(text)) {
                 val bubble = croppedBubbles[i]
-                val isVertical = BubbleOrientation.textVerticalFromBubbleAabb(bubble.rect)
+                val isVertical = rtDirection != TextDirection.HORIZONTAL
                 results.add(TextBlockInfo(
                     text = text,
                     boundingBox = bubble.rect,
                     cornerPoints = null,
                     isVertical = isVertical
                 ))
-                LogCollector.d(TAG, "recognizeCroppedBubbles(MangaOcr) [$i]: rect=${bubble.rect}, text='$text', isVertical=$isVertical")
+                LogCollector.d(TAG, "recognizeCroppedBubbles(MangaOcr) [$i]: rect=${bubble.rect}, text='$text', isVertical=$isVertical(设置=$rtDirection)")
             }
         }
 
@@ -630,7 +646,9 @@ object DetectionBridge {
      * @return Channel<Pair<Int, TextBlockInfo>> (索引, 识别结果)
      */
     suspend fun recognizeCroppedBubblesStreaming(
-        croppedBubbles: List<CroppedBubble>
+        croppedBubbles: List<CroppedBubble>,
+        /** 渲染方向（[RtTextDirection]）：同 [recognizeCroppedBubbles]，不做横竖判断。 */
+        rtDirection: TextDirection = TextDirection.VERTICAL_RL
     ): kotlinx.coroutines.channels.Channel<Pair<Int, TextBlockInfo>> {
         val channel = kotlinx.coroutines.channels.Channel<Pair<Int, TextBlockInfo>>(kotlinx.coroutines.channels.Channel.UNLIMITED)
 
@@ -649,14 +667,14 @@ object DetectionBridge {
             val trimmed = text.trim()
             if (trimmed.isNotBlank() && !isDotOnlyPattern(trimmed)) {
                 val bubble = croppedBubbles[i]
-                val isVertical = BubbleOrientation.textVerticalFromBubbleAabb(bubble.rect)
+                val isVertical = rtDirection != TextDirection.HORIZONTAL
                 channel.send(Pair(i, TextBlockInfo(
                     text = trimmed,
                     boundingBox = bubble.rect,
                     cornerPoints = null,
                     isVertical = isVertical
                 )))
-                LogCollector.d(TAG, "recognizeCroppedBubblesStreaming(MangaOcr) [$i]: rect=${bubble.rect}, text='$trimmed', isVertical=$isVertical")
+                LogCollector.d(TAG, "recognizeCroppedBubblesStreaming(MangaOcr) [$i]: rect=${bubble.rect}, text='$trimmed', isVertical=$isVertical(设置=$rtDirection)")
             }
         }
 
@@ -735,7 +753,12 @@ object DetectionBridge {
         detEngine: Int,
         ocrEngine: Int,
         context: Context,
-        keepTextFree: Boolean? = null
+        keepTextFree: Boolean? = null,
+        /**
+         * RT-DETR-V2 的渲染方向（[RtTextDirection]）。**null = 读设置**（默认竖排右→左）。
+         * 其余引擎忽略（PP-OCRv5/v6 自动判断横竖）。
+         */
+        rtDirection: TextDirection? = null
     ): List<TextBlockInfo> {
         val det = DetEngine.fromValue(detEngine)
         val ocr = OcrEngine.fromValue(ocrEngine)
@@ -747,7 +770,7 @@ object DetectionBridge {
             DetEngine.RT_DETR_V2 -> {
                 val keep = resolveKeepTextFree(context, keepTextFree)
                 LogCollector.d(TAG, "使用 RT-DETR-V2 检测, ocr=$ocr, language=$language, keepTextFree=$keep")
-                detectWithRTDetrV2(bitmap, language, context, keep)
+                detectWithRTDetrV2(bitmap, language, context, keep, rtDirection)
             }
             DetEngine.PP_OCR_V5 -> {
                 LogCollector.d(TAG, "使用 PP-OCRv5 独立检测+识别, language=$language")
@@ -771,6 +794,19 @@ object DetectionBridge {
         explicit ?: androidx.preference.PreferenceManager
             .getDefaultSharedPreferences(context)
             .getBoolean(MangaModeConfig.KEY_KEEP_TEXT_FREE, true)
+
+    /**
+     * RT-DETR-V2 渲染方向的设置解析：**显式传入优先，否则读设置**（[RtTextDirection.KEY]，
+     * 未设置时默认竖排右→左）。
+     *
+     * 与 [resolveKeepTextFree] 同形：没有 Context 的引擎重载（[detectAndCropRTDetrV2] /
+     * [recognizeCroppedBubbles]）读不了设置，必须由调用方把 `config.rtTextDirection` 传下来；
+     * 解析放这里只为一个可测的入口。
+     */
+    fun resolveRtTextDirection(context: Context, explicit: TextDirection?): TextDirection =
+        explicit ?: RtTextDirection.load(
+            androidx.preference.PreferenceManager.getDefaultSharedPreferences(context)
+        )
 
     /**
      * 将 OCR 结果转换为 BubbleRegion 列表（正常翻译和重翻共用）。

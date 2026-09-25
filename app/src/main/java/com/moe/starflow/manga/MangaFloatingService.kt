@@ -408,6 +408,8 @@ class MangaFloatingService : LifecycleService() {
             "Manga_Text_Color",
             "Manga_BG_Color",
             "Manga_Text_Direction",
+            // RT-DETR + manga-ocr 的渲染方向（在【识别自由文字】正下方）：改完立刻重读 config
+            com.moe.starflow.manga.config.RtTextDirection.KEY,
             TranslationCacheManager.KEY_MANGA_HORIZONTAL_ALIGN,
             TranslationCacheManager.KEY_MANGA_TRACKING,
             TranslationCacheManager.KEY_MANGA_LEADING,
@@ -634,7 +636,9 @@ class MangaFloatingService : LifecycleService() {
                 else -> TextAlign.CENTER
             },
             trackingRatio = prefs.getInt(TranslationCacheManager.KEY_MANGA_TRACKING, 0) / 100f,
-            leadingRatio = prefs.getInt(TranslationCacheManager.KEY_MANGA_LEADING, 0) / 100f
+            leadingRatio = prefs.getInt(TranslationCacheManager.KEY_MANGA_LEADING, 0) / 100f,
+            // RT-DETR-V2 + manga-ocr 的渲染方向（两态，默认竖排右→左）：该路径不做横竖判断
+            rtTextDirection = RtTextDirection.load(prefs.getSharedPreferences())
         )
     }
 
@@ -1961,6 +1965,7 @@ class MangaFloatingService : LifecycleService() {
         prefs = prefs,
         incrementalEnabled = prefs.getBoolean("Incremental_Render", true),
         isAutoTranslating = autoTranslateEngine.isAutoTranslating,
+        rtTextDirection = config.rtTextDirection,
     )
 
     /**
@@ -2342,8 +2347,8 @@ class MangaFloatingService : LifecycleService() {
                             OCRBridge.recognizeWithLocation(config.sourceLang, bitmap)
                         }
                         DetEngine.RT_DETR_V2 -> {
-                            LogCollector.d(TAG, "使用 RT-DETR-V2(检测) + MangaOcr(识别), lang=${config.sourceLang}")
-                            DetectionBridge.detectWithRTDetrV2(bitmap, config.sourceLang, this@MangaFloatingService, config.keepTextFree)
+                            LogCollector.d(TAG, "使用 RT-DETR-V2(检测) + MangaOcr(识别), lang=${config.sourceLang}, rtDirection=${config.rtTextDirection}")
+                            DetectionBridge.detectWithRTDetrV2(bitmap, config.sourceLang, this@MangaFloatingService, config.keepTextFree, config.rtTextDirection)
                         }
                         DetEngine.PP_OCR_V5 -> {
                             LogCollector.d(TAG, "使用 PP-OCRv5(独立det+cls+rec), lang=${config.sourceLang}, rec=${ppRecLang?.code}")
@@ -2410,7 +2415,8 @@ class MangaFloatingService : LifecycleService() {
                         rect = rect,
                         texts = listOf(block.text),
                         fontSize = if (isVertical) rect.width().toFloat() else rect.height().toFloat(),
-                        direction = if (isVertical) config.textDirection else TextDirection.HORIZONTAL,
+                        // ⚠️ RT-DETR-V2 用 rtTextDirection（该路径不判横竖，由设置决定）；PP 用竖排方向设置
+                        direction = if (isVertical) config.renderTextDirection else TextDirection.HORIZONTAL,
                         angle = block.angle,
                         centerX = block.centerX,
                         centerY = block.centerY
@@ -2499,7 +2505,7 @@ class MangaFloatingService : LifecycleService() {
                 autoFit = config.autoFontSize,
                 textColor = config.textColor,
                 bgColor = config.bgColor,
-                verticalDirection = config.textDirection,
+                verticalDirection = config.renderTextDirection,   // RT-DETR 用 RT 渲染方向；PP 用竖排方向
                 fontTypeface = OverlayRenderer.loadResultTypeface(this@MangaFloatingService, prefs),
                 showCacheMarker = prefs.getBoolean(com.moe.starflow.data.TranslationCacheManager.KEY_CACHE_MARKER, false),
                 align = config.horizontalAlign,
@@ -2560,7 +2566,7 @@ class MangaFloatingService : LifecycleService() {
                 autoFit = config.autoFontSize,
                 textColor = config.textColor,
                 bgColor = config.bgColor,
-                verticalDirection = config.textDirection,
+                verticalDirection = config.renderTextDirection,   // RT-DETR 用 RT 渲染方向；PP 用竖排方向
                 fontTypeface = OverlayRenderer.loadResultTypeface(this@MangaFloatingService, prefs),
                 showCacheMarker = prefs.getBoolean(com.moe.starflow.data.TranslationCacheManager.KEY_CACHE_MARKER, false),
                 align = config.horizontalAlign,
@@ -3153,7 +3159,7 @@ class MangaFloatingService : LifecycleService() {
                     textColor = config.textColor,
                     bgColor = config.bgColor,
                     useOriginalText = copyOriginalMode,
-                    verticalDirection = config.textDirection,
+                    verticalDirection = config.renderTextDirection,   // RT-DETR 用 RT 渲染方向；PP 用竖排方向
                     fontTypeface = OverlayRenderer.loadResultTypeface(this@MangaFloatingService, prefs),
                     showCacheMarker = prefs.getBoolean(com.moe.starflow.data.TranslationCacheManager.KEY_CACHE_MARKER, false),
                     align = config.horizontalAlign,
@@ -3790,7 +3796,7 @@ class MangaFloatingService : LifecycleService() {
                     OCRBridge.recognizeWithLocation(config.sourceLang, bitmap)
                 }
                 DetEngine.RT_DETR_V2 -> {
-                    DetectionBridge.detectWithRTDetrV2(bitmap, config.sourceLang, this@MangaFloatingService, config.keepTextFree)
+                    DetectionBridge.detectWithRTDetrV2(bitmap, config.sourceLang, this@MangaFloatingService, config.keepTextFree, config.rtTextDirection)
                 }
                 DetEngine.PP_OCR_V6 -> {
                     DetectionBridge.detectWithPPOcrV6(bitmap, config.sourceLang, this@MangaFloatingService)

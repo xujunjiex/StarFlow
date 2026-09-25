@@ -251,6 +251,17 @@
         <item>1</item>
     </string-array>
 
+    <!-- RT-DETR-V2 + manga-ocr render direction (Manga_RT_Text_Direction): two states only -->
+    <string-array name="manga_rt_text_direction_entries">
+        <item>@string/manga_rt_text_direction_vertical</item>
+        <item>@string/manga_rt_text_direction_horizontal</item>
+    </string-array>
+
+    <string-array name="manga_rt_text_direction_values">
+        <item>0</item>
+        <item>1</item>
+    </string-array>
+
     <string-array name="manga_horizontal_align_entries">
         <item>@string/manga_horizontal_align_left</item>
         <item>@string/manga_horizontal_align_center</item>

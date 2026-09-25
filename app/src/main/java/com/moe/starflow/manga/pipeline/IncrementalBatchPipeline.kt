@@ -152,7 +152,7 @@ class IncrementalBatchPipeline(
         } else {
             if (firstTranslated.isEmpty()) markTranslating()  // 第一批没内容 → 这里补上翻译中状态
             val secondBubbleRegions = MangaSpatialGrouping.textBlocksToBubbleRegions(
-                secondTextBlocks, config.textDirection
+                secondTextBlocks, config.renderTextDirection
             )
             translateWithCache(secondBubbleRegions, forceContext = true) { partialBubbles ->
                 if (partialBubbles.isNotEmpty()) {
@@ -195,7 +195,7 @@ class IncrementalBatchPipeline(
     private suspend fun rtDetrMangaOcr(bitmap: Bitmap): BatchOutcome {
         host.ensureEnginesReady(config.detEngine, config.ocrEngine)
 
-        LogCollector.d(TAG, "rtDetrMangaOcr: 开始检测+裁剪, keepTextFree=${config.keepTextFree}")
+        LogCollector.d(TAG, "rtDetrMangaOcr: 开始检测+裁剪, keepTextFree=${config.keepTextFree}, rtDirection=${config.rtTextDirection}")
         val croppedBubbles = ops.detectBubblesRTDetr(bitmap, config.keepTextFree)
         if (croppedBubbles.isEmpty()) {
             LogCollector.d(TAG, "rtDetrMangaOcr: 未检测到气泡")
@@ -220,16 +220,16 @@ class IncrementalBatchPipeline(
         var ocrJob: Deferred<List<TextBlockInfo>>? = null
         try {
             host.onProgress(R.string.recognizing_half)
-            val firstTextBlocks = ops.recognizeCroppedBubbles(firstBatch, config.sourceLang)
+            val firstTextBlocks = ops.recognizeCroppedBubbles(firstBatch, config.sourceLang, config.rtTextDirection)
             LogCollector.d(TAG, "rtDetrMangaOcr: 第一批 OCR ${firstTextBlocks.size} 个文字块")
 
             val firstBubbleRegions = if (firstTextBlocks.isEmpty()) {
                 emptyList()
             } else {
-                MangaSpatialGrouping.textBlocksToBubbleRegions(firstTextBlocks, config.textDirection)
+                MangaSpatialGrouping.textBlocksToBubbleRegions(firstTextBlocks, config.renderTextDirection)
             }
             val ocr = scope.async(Dispatchers.IO) {
-                ops.recognizeCroppedBubbles(secondBatch, config.sourceLang)
+                ops.recognizeCroppedBubbles(secondBatch, config.sourceLang, config.rtTextDirection)
             }
             ocrJob = ocr
             val batch = translateFirstThenSecondBatch(firstBubbleRegions, ocr)

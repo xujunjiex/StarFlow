@@ -551,6 +551,10 @@
     <string name="manga_text_direction_summary">竖排先读右列还是左列；仅 PP-OCRv5/v6 适用</string>
     <string name="manga_text_direction_rl">从右往左识别，日漫常用</string>
     <string name="manga_text_direction_lr">从左往右识别</string>
+    <string name="manga_rt_text_direction_title">RT-DETR 渲染方向</string>
+    <string name="manga_rt_text_direction_summary">仅 RT-DETR-V2 + manga-ocr 生效：默认竖排（右到左）；PP-OCRv5/v6 会自动判断方向，不受此项影响</string>
+    <string name="manga_rt_text_direction_vertical">竖排（右到左）</string>
+    <string name="manga_rt_text_direction_horizontal">横排渲染</string>
 
     <string name="manga_horizontal_align_title">横排对齐</string>
     <string name="manga_horizontal_align_summary">横排译文的行对齐方式；竖排不受影响</string>

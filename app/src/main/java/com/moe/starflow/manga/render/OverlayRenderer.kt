@@ -100,13 +100,8 @@ object OverlayRenderer {
 
         // 竖排方向覆盖：所有竖排气泡（RL 或 LR）统一用当前配置方向，横排保持。
         // 保证历史/缓存命中的气泡（方向可能是旧设置时存的）也按当前设置实时渲染。
-        val effectiveRegions = if (verticalDirection != null) {
-            regions.map { r ->
-                if (r.direction == TextDirection.VERTICAL_RL || r.direction == TextDirection.VERTICAL_LR) {
-                    r.copy(direction = verticalDirection)
-                } else r
-            }
-        } else regions
+        // ⚠️ 与字号模式（自动/非自动）**无关**：覆盖发生在排版之前，两条路径吃的是同一份 direction。
+        val effectiveRegions = applyVerticalDirectionOverride(regions, verticalDirection)
 
         // Phase 1: 每气泡的绘制参数（文字、字号、所需矩形）
         val params = effectiveRegions.map { region ->
@@ -144,7 +139,7 @@ object OverlayRenderer {
                 // 非自动模式：字号由用户定，矩形随文字实际尺寸扩展/收缩（见 calculateCompactRect）
                 calculateCompactRect(
                     region.rect, displayText, region.direction, fitFontSize,
-                    trackingRatio, leadingRatio, LayoutEngine.MIN_PADDING_DP * density
+                    trackingRatio, leadingRatio, LayoutEngine.MIN_PADDING_DP * density, align
                 )
             }
             Param(region, displayText, fitFontSize, neededRect)
@@ -237,6 +232,27 @@ object OverlayRenderer {
 
     private fun hasTilt(region: TranslatedBubble): Boolean = kotlin.math.abs(region.angle) > 0.5f
 
+    /**
+     * 渲染时的**竖排方向覆盖**（纯函数，供 [renderOverlay] 与单测共用）：
+     * 所有竖排气泡（RL/LR）统一改成 [direction]；横排原样保留；[direction] 为 null = 不改。
+     *
+     * 语义边界（两条都别动）：
+     * - **只改写竖排**：横排的列序语义是"上→下、左→右"，被改成 RL/LR 会把送进翻译/显示的顺序弄错。
+     * - **与字号模式无关**：覆盖只改 `direction` 字段，自动/非自动字号吃的是同一份结果 ——
+     *   「自动字号关闭时设置失效」那类问题只可能出在排版/绘制入口，不会出在这里。
+     */
+    internal fun applyVerticalDirectionOverride(
+        regions: List<TranslatedBubble>,
+        direction: TextDirection?
+    ): List<TranslatedBubble> {
+        if (direction == null) return regions
+        return regions.map { r ->
+            if (r.direction == TextDirection.VERTICAL_RL || r.direction == TextDirection.VERTICAL_LR) {
+                r.copy(direction = direction)
+            } else r
+        }
+    }
+
     /** union-find：neededRect 两两相交 → 归为同一合并组 */
     private fun mergeOverlapping(params: List<Param>): IntArray {
         val n = params.size
@@ -310,6 +326,10 @@ object OverlayRenderer {
      *
      * 两侧边距严格相等：增长时以原气泡中心为锚点双向扩展（旧实现锚在「文字流向起始角」，
      * 只往一侧长，看着像偏了）。
+     *
+     * ⚠️ **横排时白块的水平位置遵循用户「横排对齐」**（[align]）：非自动模式的白块会收缩到
+     * 文字本身，若恒居中就等于**在这条路径上「横排对齐」设置完全失效** —— RT-DETR 选
+     * 「横排渲染」时最明显（它的选区是宽矩形气泡框，文字通常远窄于框）。竖排不吃对齐设置，恒居中。
      */
     private fun calculateCompactRect(
         rect: Rect,
@@ -318,7 +338,8 @@ object OverlayRenderer {
         fontSize: Float,
         trackingRatio: Float,
         leadingRatio: Float,
-        minPaddingPx: Float
+        minPaddingPx: Float,
+        align: TextAlign = TextAlign.CENTER
     ): Rect {
         if (text.isEmpty() || fontSize <= 0f) return rect
         val pad = LayoutEngine.paddingFor(
@@ -351,7 +372,18 @@ object OverlayRenderer {
         val h = (measured.totalHeight + 2 * pad).toInt().coerceAtLeast(1)
 
         // 以原气泡中心为锚点：文字块比气泡小就收缩（露出原图），大就向外扩展
-        val left = rect.centerX() - w / 2
+        // ⚠️ 只有**白块装得进气泡**时才按对齐摆放：装不下说明文字比气泡还宽，那必须对称生长，
+        // 否则白块会朝一侧溢出、盖住相邻画面。
+        val fitsInside = direction == TextDirection.HORIZONTAL && w <= rect.width() - 2 * pad
+        val left = if (fitsInside) {
+            when (align) {
+                TextAlign.LEFT -> rect.left + pad
+                TextAlign.RIGHT -> rect.right - pad - w
+                TextAlign.CENTER -> rect.centerX() - w / 2
+            }
+        } else {
+            rect.centerX() - w / 2
+        }
         val top = rect.centerY() - h / 2
         return Rect(left, top, left + w, top + h)
     }

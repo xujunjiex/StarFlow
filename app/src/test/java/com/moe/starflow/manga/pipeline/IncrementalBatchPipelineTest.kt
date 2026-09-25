@@ -110,9 +110,10 @@ class IncrementalBatchPipelineTest {
         }
 
         override suspend fun recognizeCroppedBubbles(
-            crops: List<CroppedBubble>, lang: String,
+            crops: List<CroppedBubble>, lang: String, rtDirection: TextDirection,
         ): List<TextBlockInfo> {
             calls += Call("recognizeCroppedBubbles", crops.size)
+            lastRtDirection = rtDirection
             return crops.mapIndexed { i, _ ->
                 TextBlockInfo(
                     text = "rt-$i",
@@ -124,6 +125,9 @@ class IncrementalBatchPipelineTest {
                 )
             }
         }
+
+        /** 最近一次 MangaOcr 识别收到的渲染方向（RT 路径必须把这个设置传下去）。 */
+        var lastRtDirection: TextDirection? = null
 
         /**
          * 造 [n] 行、分成相距很远的两簇 —— 保证 `groupByProximity` 分出 2 组、
@@ -179,6 +183,14 @@ class IncrementalBatchPipelineTest {
         val ballStates = mutableListOf<BallStateManager.State>()
         val partialRenders = mutableListOf<Int>()
         val batchResults = mutableListOf<Int>()
+
+        /**
+         * 上屏/交付过的气泡方向（断言"方向没被改错"用）。
+         *
+         * ⚠️ 必须同时收 partial 与 batch 两处：分批时首批结果走 [onPartialRender]，
+         * 只看 [batchResults] 会漏掉一半。
+         */
+        val bubbleDirections = mutableListOf<TextDirection>()
         var cancelled = false
         val history = LinkedList<Pair<String, String>>()
         val cache = RegionCacheManager()
@@ -188,8 +200,14 @@ class IncrementalBatchPipelineTest {
         override fun onToast(text: String, long: Boolean) { toasts += text }
         override fun onError(text: String) { errors += text }
         override fun onBallState(state: BallStateManager.State) { ballStates += state }
-        override fun onPartialRender(bubbles: List<TranslatedBubble>) { partialRenders += bubbles.size }
-        override suspend fun onBatchResult(bubbles: List<TranslatedBubble>) { batchResults += bubbles.size }
+        override fun onPartialRender(bubbles: List<TranslatedBubble>) {
+            partialRenders += bubbles.size
+            bubbleDirections += bubbles.map { it.direction }
+        }
+        override suspend fun onBatchResult(bubbles: List<TranslatedBubble>) {
+            batchResults += bubbles.size
+            bubbleDirections += bubbles.map { it.direction }
+        }
         override fun isCancelled() = cancelled
         override fun contextHistory() = history
         override fun textCache() = cache
@@ -215,6 +233,7 @@ class IncrementalBatchPipelineTest {
         incremental: Boolean = true,
         autoTranslating: Boolean = false,
         textDirection: TextDirection = TextDirection.VERTICAL_RL,
+        rtTextDirection: TextDirection = TextDirection.VERTICAL_RL,
     ) = BatchPipelineConfig(
         detEngine = det,
         ocrEngine = ocr,
@@ -225,6 +244,7 @@ class IncrementalBatchPipelineTest {
         prefs = CustomPreference.getInstance(ctx),
         incrementalEnabled = incremental,
         isAutoTranslating = autoTranslating,
+        rtTextDirection = rtTextDirection,
     )
 
     private fun pipeline(host: FakeHost, cfg: BatchPipelineConfig, scope: kotlinx.coroutines.CoroutineScope) =
@@ -430,6 +450,72 @@ class IncrementalBatchPipelineTest {
             reusable.bubbles.none { it.croppedBitmap.isRecycled }
         )
         reusable.bubbles.forEach { if (!it.croppedBitmap.isRecycled) it.croppedBitmap.recycle() }
+    }
+
+    /**
+     * ⚠️ RT-DETR + manga-ocr 路径**不做横竖判断**：方向完全来自 `rtTextDirection`（两态设置）。
+     *
+     * 契约两半：
+     * ① 识别阶段收到的是 `rtTextDirection`（不是 `textDirection`）；
+     * ② 上屏的气泡方向就是它 —— 用户把「竖排方向」设成左→右时，RT 路径**不能**跟着变
+     *    （日文竖排恒右→左；旧实现还会用 h>w 猜方向，多列竖排的宽气泡必反）。
+     */
+    @Test
+    fun `rt-detr 渲染方向来自 rtTextDirection 而非竖排方向`() = runTest {
+        ops.bubbleCount = 10
+        val host = FakeHost(ctx, FakeTranslator())
+        val cfg = config(
+            det = DetEngine.RT_DETR_V2, ocr = OcrEngine.MangaOcr,
+            textDirection = TextDirection.VERTICAL_LR,       // 用户把竖排方向设成左→右
+            rtTextDirection = TextDirection.VERTICAL_RL,     // RT 设置：竖排右→左（默认）
+        )
+        pipeline(host, cfg, this).run(bitmap())
+
+        assertEquals(TextDirection.VERTICAL_RL, ops.lastRtDirection)
+        assertTrue("RT 路线必须有气泡上屏", host.bubbleDirections.isNotEmpty())
+        assertTrue(
+            "RT 气泡方向必须是 rtTextDirection（右→左），实际 ${host.bubbleDirections.distinct()}",
+            host.bubbleDirections.all { it == TextDirection.VERTICAL_RL }
+        )
+    }
+
+    /** RT 设置选「横排渲染」时：气泡方向=横排，且识别阶段收到的也是横排。 */
+    @Test
+    fun `rt-detr 选择横排时气泡方向为横排`() = runTest {
+        ops.bubbleCount = 10
+        val host = FakeHost(ctx, FakeTranslator())
+        val cfg = config(
+            det = DetEngine.RT_DETR_V2, ocr = OcrEngine.MangaOcr,
+            rtTextDirection = TextDirection.HORIZONTAL,
+        )
+        pipeline(host, cfg, this).run(bitmap())
+
+        assertEquals(TextDirection.HORIZONTAL, ops.lastRtDirection)
+        assertTrue(host.bubbleDirections.isNotEmpty())
+        assertTrue(
+            "应全部横排，实际 ${host.bubbleDirections.distinct()}",
+            host.bubbleDirections.all { it == TextDirection.HORIZONTAL }
+        )
+    }
+
+    /** PP-OCR 路径**不受 RT 设置影响**：仍用 `textDirection`（PP 自己判横竖，本项对它无效）。 */
+    @Test
+    fun `pp 路线不看 rtTextDirection`() = runTest {
+        ops.lineCount = 10
+        val host = FakeHost(ctx, FakeTranslator())
+        val cfg = config(
+            det = DetEngine.PP_OCR_V5, ocr = OcrEngine.PPOcrV5,
+            textDirection = TextDirection.VERTICAL_LR,
+            rtTextDirection = TextDirection.HORIZONTAL,   // 只对 RT 生效 → 这里不该有影响
+        )
+        pipeline(host, cfg, this).run(bitmap())
+
+        // fake 文字块 isVertical=true（见 fakeLines→toTextLine 的映射）→ 方向应取 textDirection=LR
+        assertTrue(host.bubbleDirections.isNotEmpty())
+        assertTrue(
+            "PP 路线应保持竖排方向设置 LR，实际 ${host.bubbleDirections.distinct()}",
+            host.bubbleDirections.all { it == TextDirection.VERTICAL_LR }
+        )
     }
 
     @Test
