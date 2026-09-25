@@ -8,6 +8,10 @@ enum class NovelFormat { TXT, EPUB, ZIP_HTML, HTML }
  *
  * ⚠️ 正文懒加载：300 章的 EPUB 若在导入时全解，会卡几十秒并把整本书的字符串堆在内存里。
  * [locator] 是「怎么取到这一章」的指针，各格式语义见 [NovelParser.loadChapter]。
+ *
+ * ⚠️ **不变量：[index] 必须等于本元素在 [NovelBook.chapters] 里的位置（下标）。**
+ * 所有解析器都按 `index = i` 赋值，而消费方按**列表位置**取章，不看 [index] ——
+ * 两者一旦不一致，会静默串章（拿 [index] 当下标去查列表）。
  */
 data class NovelChapterMeta(
     val index: Int,

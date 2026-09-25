@@ -47,6 +47,30 @@ class NovelFormatDetectorTest {
         assertEquals(NovelFormat.ZIP_HTML, NovelFormatDetector.detect(f))
     }
 
+    /** C1 回归守卫：文本 + 图片共存时**文本优先**（Kototoro 的 `chapter_N.html` + `images/N/` 就是这个形状）。 */
+    @Test
+    fun `文本与图片共存的 zip 判成小说包`() {
+        val f = zip("c2.zip",
+            "ch1.html" to "<p>hi</p>".toByteArray(),
+            "cover.jpg" to ByteArray(16))
+        assertEquals(NovelFormat.ZIP_HTML, NovelFormatDetector.detect(f))
+    }
+
+    @Test
+    fun `有 txt 的 zip 是小说包`() {
+        val f = zip("c3.zip",
+            "ch1.txt" to "你好".toByteArray(),
+            "ch2.txt" to "世界".toByteArray())
+        assertEquals(NovelFormat.ZIP_HTML, NovelFormatDetector.detect(f))
+    }
+
+    /** 只有 container.xml、没有 mimetype 条目的包也认成 EPUB。 */
+    @Test
+    fun `只有 container_xml 的 zip 认成 epub`() {
+        val f = zip("a2.epub", "META-INF/container.xml" to "<container/>".toByteArray())
+        assertEquals(NovelFormat.EPUB, NovelFormatDetector.detect(f))
+    }
+
     @Test
     fun `扩展名兜底 txt 与 html`() {
         assertEquals(NovelFormat.TXT, NovelFormatDetector.detect(file("d.txt", "你好".toByteArray())))
