@@ -200,4 +200,73 @@ class NovelPaginatorTest {
             }
         }
     }
+
+    // ===== 整段优先（「每页翻译完整、句子不跨页中断」的前提） =====
+
+    /**
+     * 放不下的段要**整体**挪到下一页，不能从中间切开。
+     *
+     * 切开的后果不是"排版难看"：同一段被拆到两页上，翻译也只能按半段来，
+     * 读者看到的是半句话（用户明确要求「保证当前段落句子完整，不会出现句子中断」）。
+     */
+    @Test
+    fun `整段优先：放不下的段落整体挪到下一页而不是切开`() {
+        val paras = listOf(
+            textPara(0, "a".repeat(40)),
+            textPara(1, "b".repeat(40)),
+            textPara(2, "c".repeat(40)),
+        )
+        // 每段 4 行（40 字 / 每行 10 字），每页 10 行
+        val pages = NovelPaginator.paginateByLines(
+            paras, lineStarts(paras, 10),
+            lineHeightPx = 10f, paragraphSpacingPx = 0f, pageHeightPx = 100f,
+        )
+        assertEquals("页1 放 p0+p1（8 行），p2 放不下 → 整段进页2", 2, pages.size)
+        assertEquals(listOf(0, 1), pages[0].segments.map { it.paraIndex })
+        assertEquals(listOf(2), pages[1].segments.map { it.paraIndex })
+        for (page in pages) {
+            for (seg in page.segments) {
+                assertEquals("段落被切开了（起点不是 0）", 0, seg.charStart)
+                assertEquals("段落被切开了（终点不是段长）", 40, seg.charEnd)
+            }
+        }
+        assertFullCoverage(paras, pages)
+    }
+
+    /** 比一整页还长的段无路可走，只能按行切 —— 但不能因此丢字。 */
+    @Test
+    fun `超过一整页的段落仍会被按行切分且不丢字`() {
+        val paras = listOf(textPara(0, "a".repeat(250)))
+        val pages = NovelPaginator.paginateByLines(
+            paras, lineStarts(paras, 10),
+            lineHeightPx = 10f, paragraphSpacingPx = 0f, pageHeightPx = 100f,
+        )
+        assertEquals("25 行 / 每页 10 行 = 3 页", 3, pages.size)
+        assertTrue("必须被切成多段", pages.all { it.segments.size == 1 })
+        assertFullCoverage(paras, pages)
+    }
+
+    /** 关掉整段优先时行为与老实现一致（按行填满，段可以被切开）。 */
+    @Test
+    fun `关闭整段优先后按行填满`() {
+        // 每段 6 行、每页 10 行：整段优先 → 一段一页共 3 页；按行填满 → 2 页且必有段被切开
+        val paras = listOf(
+            textPara(0, "a".repeat(60)),
+            textPara(1, "b".repeat(60)),
+            textPara(2, "c".repeat(60)),
+        )
+        val starts = lineStarts(paras, 10)
+
+        val whole = NovelPaginator.paginateByLines(paras, starts, 10f, 0f, 100f)
+        assertEquals("整段优先：每段独占一页", 3, whole.size)
+        assertTrue("整段优先下不允许有任何段被切开", whole.all { it.segments.all { s -> s.charStart == 0 } })
+
+        val filled = NovelPaginator.paginateByLines(paras, starts, 10f, 0f, 100f, keepParagraphsWhole = false)
+        assertEquals("按行填满：12 行装进 10 行的页 → 2 页", 2, filled.size)
+        assertTrue(
+            "按行填满应当出现被切开的段",
+            filled.flatMap { it.segments }.any { it.charStart != 0 },
+        )
+        assertFullCoverage(paras, filled)
+    }
 }

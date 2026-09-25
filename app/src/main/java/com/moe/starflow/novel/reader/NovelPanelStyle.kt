@@ -115,6 +115,53 @@ object NovelPanelStyle {
     fun setPaddingDp(prefs: SharedPreferences, v: Int) =
         prefs.edit().putInt(KEY_PADDING, v.coerceIn(PADDING_MIN, PADDING_MAX)).apply()
 
+    // ===== 上下间距（正文与屏幕上下边缘之间留出的空间） =====
+
+    private const val KEY_TOP_PADDING = "novel_reader_top_padding"
+    private const val KEY_BOTTOM_PADDING = "novel_reader_bottom_padding"
+    private const val KEY_PADDING_AUTO = "novel_reader_padding_auto"
+
+    const val VERTICAL_PADDING_MIN = 0
+    const val VERTICAL_PADDING_MAX = 240
+
+    /**
+     * 「自动」时的上下间距。
+     *
+     * 取值就是**避开上下浮层**所需的最小值：顶部返回/菜单圆形钮在 34dp 处、直径 ~40dp，
+     * 章节胶囊在 38dp 处；底部胶囊 10+48dp，右下翻译浮层组 62+52dp。
+     * 不留这些空间，正文就会被压在浮层底下 —— 这也是用户反馈「上下要预留空间、不要和 UI 重叠」。
+     */
+    const val AUTO_TOP_PADDING_DP = 96
+    const val AUTO_BOTTOM_PADDING_DP = 132
+
+    fun isVerticalPaddingAuto(prefs: SharedPreferences): Boolean =
+        prefs.getBoolean(KEY_PADDING_AUTO, true)
+
+    fun setVerticalPaddingAuto(prefs: SharedPreferences, auto: Boolean) =
+        prefs.edit().putBoolean(KEY_PADDING_AUTO, auto).apply()
+
+    /** 实际生效的上间距 dp（自动时返回自动值；手动时返回用户值）。 */
+    fun topPaddingDp(prefs: SharedPreferences): Int =
+        if (isVerticalPaddingAuto(prefs)) AUTO_TOP_PADDING_DP
+        else prefs.getInt(KEY_TOP_PADDING, AUTO_TOP_PADDING_DP)
+            .coerceIn(VERTICAL_PADDING_MIN, VERTICAL_PADDING_MAX)
+
+    fun bottomPaddingDp(prefs: SharedPreferences): Int =
+        if (isVerticalPaddingAuto(prefs)) AUTO_BOTTOM_PADDING_DP
+        else prefs.getInt(KEY_BOTTOM_PADDING, AUTO_BOTTOM_PADDING_DP)
+            .coerceIn(VERTICAL_PADDING_MIN, VERTICAL_PADDING_MAX)
+
+    /** 拖动上下间距滑块：自动关闭，落到手动值。 */
+    fun setTopPaddingDp(prefs: SharedPreferences, v: Int) = prefs.edit()
+        .putBoolean(KEY_PADDING_AUTO, false)
+        .putInt(KEY_TOP_PADDING, v.coerceIn(VERTICAL_PADDING_MIN, VERTICAL_PADDING_MAX))
+        .apply()
+
+    fun setBottomPaddingDp(prefs: SharedPreferences, v: Int) = prefs.edit()
+        .putBoolean(KEY_PADDING_AUTO, false)
+        .putInt(KEY_BOTTOM_PADDING, v.coerceIn(VERTICAL_PADDING_MIN, VERTICAL_PADDING_MAX))
+        .apply()
+
     fun readerMode(prefs: SharedPreferences): Int {
         migrateReaderMode(prefs)
         return prefs.getInt(KEY_READER_MODE, READER_PAGED).coerceIn(0, 2)
@@ -154,7 +201,13 @@ object NovelPanelStyle {
     fun setDisplayMode(prefs: SharedPreferences, mode: NovelDisplayMode) =
         prefs.edit().putString(KEY_DISPLAY_MODE, NovelDisplayModeCodec.toPref(mode)).apply()
 
-    /** 用当前偏好拼出排版参数。dp → px 在这里换算，调用方只管传 density。 */
+    /**
+     * 用当前偏好拼出排版参数。dp → px 在这里换算，调用方只管传 density。
+     *
+     * ⚠️ 字号走 `MangaFontSize` 但**只取固定档位**：漫画那边的「自动字号」是按气泡图尺寸算的，
+     * 对纯文本没有意义（文本字号与图片尺寸无关）。面板里改字号会写 `setSize`，
+     * 那个路径本来就会把 auto 关掉。
+     */
     fun textStyle(context: Context, prefs: SharedPreferences): NovelTextStyle {
         val density = context.resources.displayMetrics.scaledDensity
         val densityDpi = context.resources.displayMetrics.density
@@ -163,6 +216,8 @@ object NovelPanelStyle {
             lineSpacingMultiplier = lineSpacingStep(prefs) / 10f,
             paragraphSpacingPx = paragraphSpacingDp(prefs) * densityDpi,
             paddingPx = paddingDp(prefs) * densityDpi,
+            topPaddingPx = topPaddingDp(prefs) * densityDpi,
+            bottomPaddingPx = bottomPaddingDp(prefs) * densityDpi,
         )
     }
 

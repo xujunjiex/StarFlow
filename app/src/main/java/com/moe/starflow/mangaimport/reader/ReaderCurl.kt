@@ -179,6 +179,32 @@ class CurlPageView @JvmOverloads constructor(
     private var isVertical = false
     private var isReversed = false
 
+    /**
+     * 页面底色。
+     *
+     * ⚠️ **不能用 `View.setBackgroundColor`**：View 的背景是在 `draw()` 里画完才轮到
+     * `dispatchDraw()`，而折页的裁剪只作用在 `dispatchDraw` 里 —— 背景会**整块不裁剪地**画出来，
+     * 表现为「折页时文字在翻，背景却纹丝不动」。所以底色必须由本类在**裁剪之后**自己画。
+     */
+    private var pageBackground = Color.TRANSPARENT
+
+    private val backgroundPaint = Paint().apply { style = Paint.Style.FILL }
+
+    /** 设置页面底色（见 [pageBackground] 的说明）。 */
+    fun setPageBackground(color: Int) {
+        if (pageBackground == color) return
+        pageBackground = color
+        // 把 View 自己的背景清掉，否则 View.draw() 还会再画一层不裁剪的底色
+        setBackgroundColor(Color.TRANSPARENT)
+        invalidate()
+    }
+
+    private fun drawPageBackground(canvas: Canvas) {
+        if (pageBackground == Color.TRANSPARENT) return
+        backgroundPaint.color = pageBackground
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), backgroundPaint)
+    }
+
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
         strokeWidth = 2.5f * resources.displayMetrics.density
@@ -218,12 +244,18 @@ class CurlPageView @JvmOverloads constructor(
 
     override fun dispatchDraw(canvas: Canvas) {
         if (foldProgress <= 0f) {
+            // 没折页：底色 + 内容一起画（底色走本类，理由见 pageBackground）
+            drawPageBackground(canvas)
             super.dispatchDraw(canvas)
             return
         }
         val w = width.toFloat()
         val h = height.toFloat()
-        if (w <= 0f || h <= 0f) { super.dispatchDraw(canvas); return }
+        if (w <= 0f || h <= 0f) {
+            drawPageBackground(canvas)
+            super.dispatchDraw(canvas)
+            return
+        }
 
         val cw = if (isVertical) h else w
         val ch = if (isVertical) w else h
@@ -239,9 +271,11 @@ class CurlPageView @JvmOverloads constructor(
         val pivot = map(geo.bottomCurl)
         val topV = map(geo.topCurl)
 
-        // 1) 前端（未翻起部分）：裁到 frontPoly 后正常画
+        // 1) 前端（未翻起部分）：裁到 frontPoly 后画「底色 + 内容」。
+        //    ⚠️ 底色也必须在这层裁剪里 —— 否则折页时背景会整块露出来，看起来就是"只有文字在动"
         canvas.save()
         canvas.clipPath(front)
+        drawPageBackground(canvas)
         super.dispatchDraw(canvas)
         canvas.restore()
 
@@ -260,6 +294,7 @@ class CurlPageView @JvmOverloads constructor(
         canvas.concat(m)
         canvas.save()
         canvas.clipPath(back)
+        drawPageBackground(canvas)
         super.dispatchDraw(canvas)
         canvas.restore()
         canvas.restore()

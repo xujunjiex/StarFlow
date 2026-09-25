@@ -59,7 +59,7 @@
             android:id="@+id/tab_style">
             <ImageView android:id="@+id/sel_tab_style" android:layout_width="40dp" android:layout_height="40dp" android:layout_gravity="center" android:src="@drawable/ic_sel_circle" android:visibility="gone"/>
             <ImageView android:layout_width="24dp" android:layout_height="24dp" android:layout_gravity="center"
-                android:src="@drawable/ic_reader_appearance" android:contentDescription="@string/novel_tab_style"/>
+                android:src="@drawable/ic_reader_style" android:contentDescription="@string/novel_tab_style"/>
         </FrameLayout>
 
         <FrameLayout
@@ -280,18 +280,6 @@
                 </LinearLayout>
                 <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000"/>
 
-                <!-- 字体大小：与漫画面板**同一个控件、同一份设置**（utils/MangaFontSize） -->
-                <LinearLayout android:id="@+id/btn_font_size" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:paddingTop="10dp" android:paddingBottom="10dp"
-                    android:gravity="center_vertical" android:clickable="true">
-                    <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="14sp" android:autoSizeStepGranularity="1sp"
-                        android:id="@+id/tv_font_size_row" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:textSize="14sp" android:textColor="#333333"/>
-                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-                        android:text="›" android:textSize="16sp" android:textColor="#BBBBBB"/>
-                </LinearLayout>
-                <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000"/>
-
                 <!-- 语言区：源/目标语言（两格圆角并排 + 互换） -->
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:orientation="horizontal" android:gravity="center_vertical"
@@ -372,7 +360,20 @@
 
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical"
                     android:paddingStart="16dp" android:paddingEnd="16dp" android:paddingTop="10dp">
+
+                    <!-- 字号：从「翻译」搬到这里 —— 它是排版参数，和行距/段距/边距是一类。
+                         小说不做「自动字号」（那是漫画按气泡尺寸算的，对纯文本没意义） -->
                     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+                        <TextView android:id="@+id/tv_font_size_label" android:layout_width="0dp" android:layout_height="wrap_content"
+                            android:layout_weight="1" android:text="@string/novel_style_font_size" android:textSize="13sp" android:textColor="#333333"/>
+                        <TextView android:id="@+id/tv_font_size_value" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:text="" android:textSize="12sp" android:textColor="#55AEEA"/>
+                    </LinearLayout>
+                    <SeekBar android:id="@+id/sb_font_size" android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:min="8" android:max="48" android:layout_marginTop="2dp"
+                        android:thumbTint="#55AEEA" android:progressTint="#55AEEA" android:progressBackgroundTint="#55AEEA"/>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:paddingTop="6dp">
                         <TextView android:id="@+id/tv_line_spacing_label" android:layout_width="0dp" android:layout_height="wrap_content"
                             android:layout_weight="1" android:text="@string/novel_style_line_spacing" android:textSize="13sp" android:textColor="#333333"/>
                         <TextView android:id="@+id/tv_line_spacing_value" android:layout_width="wrap_content" android:layout_height="wrap_content"
@@ -400,6 +401,41 @@
                     </LinearLayout>
                     <SeekBar android:id="@+id/sb_padding" android:layout_width="match_parent" android:layout_height="wrap_content"
                         android:min="8" android:max="48" android:layout_marginTop="2dp"
+                        android:thumbTint="#55AEEA" android:progressTint="#55AEEA" android:progressBackgroundTint="#55AEEA"/>
+
+                    <!-- 上下间距：正文与屏幕上下边缘之间留出的空间。
+                         预览里顶部三件浮层与底部胶囊压在屏幕上下 —— 不留空间正文会被压在 UI 底下。
+                         「自动」按浮层尺寸算一组能避开它们的值；关掉自动才走两个滑块 -->
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:paddingTop="10dp" android:gravity="center_vertical">
+                        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+                            android:layout_weight="1" android:orientation="vertical">
+                            <TextView android:id="@+id/tv_vertical_padding_label" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                                android:text="@string/novel_style_vertical_padding" android:textSize="13sp" android:textColor="#333333"/>
+                            <TextView android:id="@+id/tv_vertical_padding_value" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                                android:layout_marginTop="1dp" android:textSize="11sp" android:textColor="#888888"/>
+                        </LinearLayout>
+                        <Switch android:id="@+id/sw_padding_auto" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                    </LinearLayout>
+
+                    <LinearLayout android:id="@+id/row_top_padding" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:paddingTop="6dp">
+                        <TextView android:id="@+id/tv_top_padding_label" android:layout_width="0dp" android:layout_height="wrap_content"
+                            android:layout_weight="1" android:text="@string/novel_style_top_padding" android:textSize="13sp" android:textColor="#333333"/>
+                        <TextView android:id="@+id/tv_top_padding_value" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:text="" android:textSize="12sp" android:textColor="#55AEEA"/>
+                    </LinearLayout>
+                    <SeekBar android:id="@+id/sb_top_padding" android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:min="0" android:max="240" android:layout_marginTop="2dp"
+                        android:thumbTint="#55AEEA" android:progressTint="#55AEEA" android:progressBackgroundTint="#55AEEA"/>
+
+                    <LinearLayout android:id="@+id/row_bottom_padding" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:paddingTop="6dp">
+                        <TextView android:id="@+id/tv_bottom_padding_label" android:layout_width="0dp" android:layout_height="wrap_content"
+                            android:layout_weight="1" android:text="@string/novel_style_bottom_padding" android:textSize="13sp" android:textColor="#333333"/>
+                        <TextView android:id="@+id/tv_bottom_padding_value" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:text="" android:textSize="12sp" android:textColor="#55AEEA"/>
+                    </LinearLayout>
+                    <SeekBar android:id="@+id/sb_bottom_padding" android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:min="0" android:max="240" android:layout_marginTop="2dp"
                         android:thumbTint="#55AEEA" android:progressTint="#55AEEA" android:progressBackgroundTint="#55AEEA"/>
 
                     <TextView android:id="@+id/tv_style_hint" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginBottom="12dp"

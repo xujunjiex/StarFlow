@@ -19,10 +19,28 @@ data class NovelPage(val segments: List<PageSegment>)
 /**
  * 排版参数。分页与绘制**共用同一份**，保证「怎么分的就怎么画」——
  * 两处各算一套的话，字号一改就会出现文字与分页错位。
+ *
+ * @param paddingPx 左右内边距
+ * @param topPaddingPx 上内边距（正文顶部与屏幕顶之间的距离）
+ * @param bottomPaddingPx 下内边距（正文底部与屏幕底之间的距离）
+ *
+ * ⚠️ 上下内边距**不只是好看**：顶部三件浮层（返回/菜单/章节胶囊）与底部胶囊压在屏幕上下，
+ * 不留出空间正文就会被压在 UI 底下。默认自动取一组能避开这些浮层的值
+ * （见 `NovelPanelStyle.verticalPadding`）。
  */
 data class NovelTextStyle(
     val fontSizePx: Float,
     val lineSpacingMultiplier: Float,
     val paragraphSpacingPx: Float,
     val paddingPx: Float,
-)
+    val topPaddingPx: Float = 0f,
+    val bottomPaddingPx: Float = 0f,
+) {
+    /** 一页真正能放正文的高度。 */
+    fun contentHeightPx(pageHeightPx: Int): Float =
+        (pageHeightPx - topPaddingPx - bottomPaddingPx).coerceAtLeast(1f)
+
+    /** 一页真正能放正文的宽度。 */
+    fun contentWidthPx(pageWidthPx: Int): Int =
+        (pageWidthPx - 2 * paddingPx).toInt().coerceAtLeast(1)
+}

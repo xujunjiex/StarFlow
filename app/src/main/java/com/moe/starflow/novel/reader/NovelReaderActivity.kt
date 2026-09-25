@@ -350,6 +350,7 @@ class NovelReaderActivity : AppCompatActivity() {
             }
         )
         // 滚动模式：滚动即翻段，同步当前段/进度条/lastRead
+        binding.novelScroll.clipToPadding = false
         binding.novelScroll.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) = updateFromScroll()
         })
@@ -572,9 +573,13 @@ class NovelReaderActivity : AppCompatActivity() {
     private fun goToPage(page: Int) {
         val pages = content?.pages ?: return
         if (isScrollMode()) {
+            // ⚠️ 滚动模式要**瞬间**跳，不能平滑滚动：进度条上跨的是几十页的跨度，
+            // 平滑滚过去要好几秒、中途整屏文字飞速掠过（用户明确要求瞬间切换）
             val total = scrollAdapter.itemCount
             if (total <= 0) return
-            smoothScrollTo(page.coerceIn(0, total - 1))
+            val target = page.coerceIn(0, total - 1)
+            (binding.novelScroll.layoutManager as? LinearLayoutManager)
+                ?.scrollToPositionWithOffset(target, 0)
             return
         }
         val p = page.coerceIn(0, pages.lastIndex.coerceAtLeast(0))
@@ -774,6 +779,9 @@ class NovelReaderActivity : AppCompatActivity() {
             val textColor = NovelPanelStyle.textColor(bgMode)
             val bgColor = NovelPanelStyle.backgroundColor(bgMode)
             if (isScrollMode()) {
+                // 上下间距落在**列表**上而不是每一段上：落在每段上会变成段间距。
+                // clipToPadding=false → 正文可以滚到浮层底下再滑走，而不是被硬切一刀
+                binding.novelScroll.setPadding(0, style.topPaddingPx.toInt(), 0, style.bottomPaddingPx.toInt())
                 scrollAdapter.submit(loaded, style, textColor, bgColor)
                 val pos = if (keepPara == Int.MAX_VALUE) {
                     (scrollAdapter.itemCount - 1).coerceAtLeast(0)
@@ -1168,9 +1176,13 @@ class NovelReaderActivity : AppCompatActivity() {
                 animation = animationMode,
                 bg = bgMode,
                 displayMode = NovelPanelStyle.displayMode(prefs),
+                fontSizeSp = com.moe.starflow.utils.MangaFontSize.size(this@NovelReaderActivity),
                 lineSpacingStep = NovelPanelStyle.lineSpacingStep(prefs),
                 paragraphSpacingDp = NovelPanelStyle.paragraphSpacingDp(prefs),
                 paddingDp = NovelPanelStyle.paddingDp(prefs),
+                paddingAuto = NovelPanelStyle.isVerticalPaddingAuto(prefs),
+                topPaddingDp = NovelPanelStyle.topPaddingDp(prefs),
+                bottomPaddingDp = NovelPanelStyle.bottomPaddingDp(prefs),
                 autoTurn = autoTurnEnabled,
                 intervalSec = autoTurnIntervalSec,
                 rotateLabel = rotateLabel(),
@@ -1197,9 +1209,25 @@ class NovelReaderActivity : AppCompatActivity() {
                 onAnimation = { a -> NovelPanelStyle.setAnimation(prefs, a); animationMode = a; applyAnimation() },
                 onBackground = { v -> NovelPanelStyle.setBackground(prefs, v); applyBackground(); refreshCurrentVisual() },
                 onDisplayMode = { m -> NovelPanelStyle.setDisplayMode(prefs, m); loadChapter(chapterIndex, keepPara = pendingParaIndex) },
+                onFontSize = { sp ->
+                    // 写的是与悬浮窗/漫画共用的那份字号设置；该路径会顺手关掉「自动字号」
+                    com.moe.starflow.utils.MangaFontSize.setSize(this@NovelReaderActivity, sp)
+                    loadChapter(chapterIndex, keepPara = pendingParaIndex)
+                },
                 onLineSpacing = { v -> NovelPanelStyle.setLineSpacingStep(prefs, v); loadChapter(chapterIndex, keepPara = pendingParaIndex) },
                 onParagraphSpacing = { v -> NovelPanelStyle.setParagraphSpacingDp(prefs, v); loadChapter(chapterIndex, keepPara = pendingParaIndex) },
                 onPadding = { v -> NovelPanelStyle.setPaddingDp(prefs, v); loadChapter(chapterIndex, keepPara = pendingParaIndex) },
+                onPaddingAuto = { auto ->
+                    if (!auto) {
+                        // 关掉「自动」→ 先把**当前生效值**落成手动值，否则正文会跳到一组陈旧的旧值
+                        NovelPanelStyle.setTopPaddingDp(prefs, NovelPanelStyle.topPaddingDp(prefs))
+                        NovelPanelStyle.setBottomPaddingDp(prefs, NovelPanelStyle.bottomPaddingDp(prefs))
+                    }
+                    NovelPanelStyle.setVerticalPaddingAuto(prefs, auto)
+                    loadChapter(chapterIndex, keepPara = pendingParaIndex)
+                },
+                onTopPadding = { v -> NovelPanelStyle.setTopPaddingDp(prefs, v); loadChapter(chapterIndex, keepPara = pendingParaIndex) },
+                onBottomPadding = { v -> NovelPanelStyle.setBottomPaddingDp(prefs, v); loadChapter(chapterIndex, keepPara = pendingParaIndex) },
                 onAutoTurn = { enabled, interval ->
                     prefs.edit().putBoolean(KEY_AUTO_TURN, enabled).putInt(KEY_INTERVAL, interval).apply()
                     autoTurnEnabled = enabled

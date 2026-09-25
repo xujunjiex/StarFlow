@@ -1374,6 +1374,12 @@
     <string name="novel_style_line_spacing">行间距</string>
     <string name="novel_style_paragraph_spacing">段间距</string>
     <string name="novel_style_padding">左右边距</string>
+    <string name="novel_style_vertical_padding">上下间距</string>
+    <string name="novel_style_top_padding">上间距</string>
+    <string name="novel_style_bottom_padding">下间距</string>
+    <string name="novel_style_padding_auto">自动</string>
+    <string name="novel_style_padding_auto_value">自动（上 %1$d / 下 %2$d dp）</string>
+    <string name="novel_padding_need_manual">先关掉「自动」</string>
     <string name="novel_style_reader_mode">阅读模式</string>
     <string name="novel_reader_mode_paged">左右翻页</string>
     <string name="novel_reader_mode_vertical">上下翻页</string>

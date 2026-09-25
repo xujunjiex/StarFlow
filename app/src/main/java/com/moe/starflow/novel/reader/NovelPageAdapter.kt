@@ -86,7 +86,8 @@ class NovelPageAdapter : RecyclerView.Adapter<NovelPageAdapter.VH>() {
         // 不复位就会「重绑出来的新页是隐形的」。
         holder.curl.resetTransform()
         holder.itemView.tag = position
-        holder.curl.setBackgroundColor(backgroundColor)
+        // 用 setPageBackground 而不是 setBackgroundColor：折页时底色必须跟着裁剪一起动
+        holder.curl.setPageBackground(backgroundColor)
         val c = content ?: return
         val page = c.pages.getOrNull(position) ?: return
         NovelDebug.log(

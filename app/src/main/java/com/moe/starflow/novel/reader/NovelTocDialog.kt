@@ -64,13 +64,23 @@ object NovelTocDialog {
             height = ((ROW_HEIGHT_DP * density).toInt() * chapters.size.coerceAtMost(MAX_ROWS))
                 .coerceAtLeast((ROW_HEIGHT_DP * density).toInt())
         }
+        var dialog: AlertDialog? = null
         val adapter = RowAdapter(chapters, stats, currentChapter, dark) { position ->
+            // ⚠️ **必须在跳章的同时关掉弹窗**：不关的话，章在弹窗背后换了，弹窗里的高亮
+            // 还停在被点之前那一章 —— 看起来就是「点了目录，弹窗没跟着更新」。
+            dialog?.dismiss()
             onPick(position)
         }
         binding.rvToc.layoutManager = LinearLayoutManager(context)
         binding.rvToc.adapter = adapter
-        // 打开就定位到当前章（几百章时否则要自己滚很久）
-        binding.rvToc.scrollToPosition(currentChapter.coerceIn(0, (chapters.size - 1).coerceAtLeast(0)))
+        // 打开就定位到当前章。⚠️ 用 `scrollToPositionWithOffset` 并且**延到布局之后**执行：
+        // 弹窗里的列表在 show() 之前还没测量，直接 scrollToPosition 会静默失效，
+        // 几百章的书打开后停在第一章、高亮的那一章在屏幕外 —— 同样是「看着没同步」。
+        binding.rvToc.post {
+            val target = currentChapter.coerceIn(0, (chapters.size - 1).coerceAtLeast(0))
+            (binding.rvToc.layoutManager as? LinearLayoutManager)
+                ?.scrollToPositionWithOffset((target - 1).coerceAtLeast(0), 0)
+        }
         // 行高先按常量估（避免首帧闪一下整屏高），首帧布局完再用**真实行高**校正一次 ——
         // 系统字号放大时行会变高，照常量算会在面板底部留一条空白
         binding.rvToc.post {
@@ -82,10 +92,10 @@ object NovelTocDialog {
             }
         }
 
-        val dialog = AlertDialog.Builder(context)
+        dialog = AlertDialog.Builder(context)
             .setView(binding.root)
             .create()
-        binding.btnTocCancel.setOnClickListener { dialog.dismiss() }
+        binding.btnTocCancel.setOnClickListener { dialog?.dismiss() }
 
         dialog.show()
         dialog.window?.setBackgroundDrawableResource(if (dark) R.drawable.bg_dialog_dark else R.drawable.bg_dialog_white)

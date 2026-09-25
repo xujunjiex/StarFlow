@@ -43,9 +43,14 @@ class NovelPanelState(
     val animation: Int = NovelPanelStyle.ANIM_SLIDE,
     val bg: Int = 0,
     val displayMode: NovelDisplayMode = NovelDisplayMode.TRANSLATED,
+    val fontSizeSp: Float = 16f,
     val lineSpacingStep: Int = 15,
     val paragraphSpacingDp: Int = 14,
     val paddingDp: Int = 20,
+    /** 上下间距是否自动（自动 = 按上下浮层尺寸算，保证正文不被 UI 压住）。 */
+    val paddingAuto: Boolean = true,
+    val topPaddingDp: Int = NovelPanelStyle.AUTO_TOP_PADDING_DP,
+    val bottomPaddingDp: Int = NovelPanelStyle.AUTO_BOTTOM_PADDING_DP,
     val autoTurn: Boolean = false,
     val intervalSec: Int = 5,
     val rotateLabel: String = "",
@@ -67,9 +72,13 @@ class NovelPanelCallbacks(
     val onAnimation: (Int) -> Unit,
     val onBackground: (Int) -> Unit,
     val onDisplayMode: (NovelDisplayMode) -> Unit,
+    val onFontSize: (Float) -> Unit = {},
     val onLineSpacing: (Int) -> Unit,
     val onParagraphSpacing: (Int) -> Unit,
     val onPadding: (Int) -> Unit,
+    val onPaddingAuto: (Boolean) -> Unit = {},
+    val onTopPadding: (Int) -> Unit = {},
+    val onBottomPadding: (Int) -> Unit = {},
     val onAutoTurn: (Boolean, Int) -> Unit,
     val onRotate: () -> Unit,
     val onOpenToc: () -> Unit,
@@ -255,6 +264,16 @@ class NovelPanelSheet(
             cb.onDisplayMode(next)
         }
 
+        // 字号：从「翻译」搬到排版里。**只给固定档位，不提供「自动」** ——
+        // 漫画那套自动字号是按气泡图尺寸推的，对纯文本没有意义。
+        // 改动写 `MangaFontSize.setSize`（它会顺手把 auto 关掉）。
+        val sbFont = view.findViewById<SeekBar>(R.id.sb_font_size)
+        val tvFontValue = view.findViewById<TextView>(R.id.tv_font_size_value)
+        sbFont.progress = state.fontSizeSp.toInt()
+            .coerceIn(MangaFontSize.MIN_SIZE, MangaFontSize.MAX_SIZE)
+        tvFontValue.text = "${sbFont.progress} sp"
+        sbFont.setOnSeekBarChangeListener(sliderLabel({ tvFontValue.text = "$it sp" }) { cb.onFontSize(it.toFloat()) })
+
         val sbLine = view.findViewById<SeekBar>(R.id.sb_line_spacing)
         val tvLine = view.findViewById<TextView>(R.id.tv_line_spacing_value)
         sbLine.progress = state.lineSpacingStep
@@ -277,10 +296,47 @@ class NovelPanelSheet(
         val tvPad = view.findViewById<TextView>(R.id.tv_padding_value)
         sbPad.progress = state.paddingDp
         tvPad.text = "${state.paddingDp} dp"
-        sbPad.setOnSeekBarChangeListener(slider {
-            tvPad.text = "${sbPad.progress} dp"
-            cb.onPadding(sbPad.progress)
-        })
+        sbPad.setOnSeekBarChangeListener(sliderLabel({ tvPad.text = "$it dp" }) { cb.onPadding(it) })
+
+        // ---- 上下间距：正文与屏幕上下边缘之间的空间 ----
+        // 顶部三件浮层（返回/菜单/章节胶囊）与底部胶囊压在屏幕上下 —— 不留空间正文会被压在 UI 底下。
+        // 「自动」按浮层尺寸算一组能避开它们的值；关掉自动才走两个滑块。
+        val swPadAuto = view.findViewById<Switch>(R.id.sw_padding_auto)
+        val tvPadAutoValue = view.findViewById<TextView>(R.id.tv_vertical_padding_value)
+        val tvTopLabel = view.findViewById<TextView>(R.id.tv_top_padding_label)
+        val tvBottomLabel = view.findViewById<TextView>(R.id.tv_bottom_padding_label)
+        val tvTopValue = view.findViewById<TextView>(R.id.tv_top_padding_value)
+        val tvBottomValue = view.findViewById<TextView>(R.id.tv_bottom_padding_value)
+        val sbTop = view.findViewById<SeekBar>(R.id.sb_top_padding)
+        val sbBottom = view.findViewById<SeekBar>(R.id.sb_bottom_padding)
+
+        var padAuto = state.paddingAuto
+        fun refreshPaddingUi() {
+            val top = if (padAuto) state.topPaddingDp else sbTop.progress
+            val bottom = if (padAuto) state.bottomPaddingDp else sbBottom.progress
+            if (padAuto) {
+                sbTop.progress = top
+                sbBottom.progress = bottom
+            }
+            tvTopValue.text = "$top dp"
+            tvBottomValue.text = "$bottom dp"
+            // 自动时把两个滑块**置灰但保留数值**：用户要能看见自动替他选了什么，
+            // 全藏起来会让人以为「这功能没生效」
+            tvPadAutoValue.visibility = if (padAuto) View.VISIBLE else View.GONE
+            tvPadAutoValue.text = getString(R.string.novel_style_padding_auto_value, top, bottom)
+            for (v in listOf<View>(sbTop, sbBottom, tvTopLabel, tvBottomLabel)) {
+                v.isEnabled = !padAuto
+                v.alpha = if (padAuto) 0.45f else 1f
+            }
+        }
+        swPadAuto.setOnCheckedChangeListener { _, checked ->
+            padAuto = checked
+            refreshPaddingUi()
+            cb.onPaddingAuto(checked)
+        }
+        sbTop.setOnSeekBarChangeListener(sliderLabel({ tvTopValue.text = "$it dp" }) { cb.onTopPadding(it) })
+        sbBottom.setOnSeekBarChangeListener(sliderLabel({ tvBottomValue.text = "$it dp" }) { cb.onBottomPadding(it) })
+        refreshPaddingUi()
 
         // ---- 翻译：模式 / 防抖 / 向后章数 / 每批段数 / 模型 / 字号 / 语言 / 章节列表 ----
         val rbManual = view.findViewById<RadioButton>(R.id.translate_mode_manual)
@@ -336,16 +392,6 @@ class NovelPanelSheet(
         view.findViewById<TextView>(R.id.tv_translator_model_row).text =
             getString(R.string.reader_translate_translator_model, ReaderTranslationInfo.translatorModelLabel(requireContext()))
         view.findViewById<View>(R.id.btn_model_translate).setOnClickListener { cb.onOpenApiConfig() }
-
-        // 字体大小：与漫画面板同一个控件、同一份设置（utils/MangaFontSize）
-        val tvFontSize = view.findViewById<TextView>(R.id.tv_font_size_row)
-        fun refreshFontSizeRow() {
-            tvFontSize.text = getString(R.string.reader_translate_font_size, MangaFontSize.summary(requireContext()))
-        }
-        refreshFontSizeRow()
-        view.findViewById<View>(R.id.btn_font_size).setOnClickListener {
-            MangaFontSizeDialog.create(requireContext(), dark = darkPanel) { refreshFontSizeRow() }.show()
-        }
 
         // 语言区
         refreshLangRow(view)
@@ -427,26 +473,33 @@ class NovelPanelSheet(
             R.id.tv_mode_label, R.id.tv_animation_label, R.id.tv_background_label,
             R.id.tv_translate_mode_label,
             R.id.tv_rotate_label, R.id.tv_auto_turn_label, R.id.tv_toc_label, R.id.tv_settings_label,
-            R.id.tv_translator_model_row, R.id.tv_font_size_row,
+            R.id.tv_translator_model_row,
             R.id.tv_source_lang_value, R.id.tv_target_lang_value,
             R.id.tv_debounce_label, R.id.tv_ahead_label, R.id.tv_batch_label,
-            R.id.tv_display_label, R.id.tv_line_spacing_label, R.id.tv_para_spacing_label,
-            R.id.tv_padding_label,
+            R.id.tv_display_label, R.id.tv_font_size_label,
+            R.id.tv_line_spacing_label, R.id.tv_para_spacing_label,
+            R.id.tv_padding_label, R.id.tv_vertical_padding_label,
+            R.id.tv_top_padding_label, R.id.tv_bottom_padding_label,
         ).forEach { view.findViewById<TextView>(it).setTextColor(labelColor) }
         listOf(
             R.id.tv_rotate_value, R.id.tv_interval_value, R.id.tv_toc_value,
             R.id.tv_source_caption, R.id.tv_target_caption,
             R.id.tv_debounce_value, R.id.tv_ahead_value, R.id.tv_batch_value,
-            R.id.tv_display_value, R.id.tv_line_spacing_value, R.id.tv_para_spacing_value,
-            R.id.tv_padding_value, R.id.tv_style_hint,
+            R.id.tv_display_value, R.id.tv_font_size_value,
+            R.id.tv_line_spacing_value, R.id.tv_para_spacing_value,
+            R.id.tv_padding_value, R.id.tv_vertical_padding_value,
+            R.id.tv_top_padding_value, R.id.tv_bottom_padding_value,
+            R.id.tv_style_hint,
         ).forEach { view.findViewById<TextView>(it).setTextColor(subColor) }
         reapplySegments(view)
         chapterAdapter.dark = darkPanel
         // Switch 配色（避免与面板背景重叠/看不清）
         val swTrack = if (dark) 0xFF3A4046.toInt() else 0xFFCFD8DC.toInt()
-        view.findViewById<Switch>(R.id.sw_auto_turn).let {
-            it.thumbTintList = ColorStateList.valueOf(0xFF55AEEA.toInt())
-            it.trackTintList = ColorStateList.valueOf(swTrack)
+        listOf(R.id.sw_auto_turn, R.id.sw_padding_auto).forEach { id ->
+            view.findViewById<Switch>(id).let {
+                it.thumbTintList = ColorStateList.valueOf(0xFF55AEEA.toInt())
+                it.trackTintList = ColorStateList.valueOf(swTrack)
+            }
         }
         val spinnerColor = if (dark) 0xFFB8BCC2.toInt() else 0xFF777777.toInt()
         listOf(R.id.iv_source_spinner, R.id.iv_target_spinner).forEach {
@@ -568,6 +621,25 @@ class NovelPanelSheet(
         override fun onStartTrackingTouch(seekBar: SeekBar?) {}
         override fun onStopTrackingTouch(seekBar: SeekBar?) {}
     }
+
+    /**
+     * 滑块：数值标签**实时**跟手，但只在**松手**时才回调宿主。
+     *
+     * 字号/行距/段距/边距/上下间距每改一次都要**重排整章**（几百个 `StaticLayout`）。
+     * 逐格回调 = 拖动时每秒重排几十次整章，主线程直接卡死。松手才落地，拖动过程只动标签。
+     */
+    private fun sliderLabel(onLabel: (Int) -> Unit, onSettle: (Int) -> Unit) =
+        object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) onLabel(progress)
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                seekBar?.let { onSettle(it.progress) }
+            }
+        }
 
     // ===== 翻译汇总 / 过滤 =====
 

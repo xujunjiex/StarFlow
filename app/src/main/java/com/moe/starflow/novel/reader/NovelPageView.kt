@@ -30,9 +30,11 @@ class NovelPageView(context: Context) : View(context) {
         super.onDraw(canvas)
         val c = content ?: return
         val p = page ?: return
-        val width = (width - 2 * style.paddingPx).toInt().coerceAtLeast(1)
+        val width = style.contentWidthPx(getWidth())
 
-        var y = style.paddingPx
+        // 正文从**上内边距**之下开始画：顶部三件浮层（返回/菜单/章节胶囊）压在屏幕上方，
+        // 不偏移的话第一行会被压在浮层底下
+        var y = style.topPaddingPx
         for (seg in p.segments) {
             val full = c.displayOf(seg.paraIndex)
             if (full.isEmpty()) continue

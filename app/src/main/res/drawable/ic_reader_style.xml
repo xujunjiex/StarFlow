@@ -1,0 +1,14 @@
+<!--
+  Material: text_format（「A + 下划线」＝排版/样式）。
+  第三面板放的是字号、行距、段距、上下间距 —— 用「调色」那个画笔图标（漫画的 color filter）
+  语义完全对不上，用户看不出这一格是排版。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M5,17v2h14v-2H5zM9.5,12.8h5l0.9,2.2h2.1L12.75,4h-1.5L6.5,15h2.1l0.9,-2.2zM12,5.98L13.87,11h-3.74L12,5.98z"/>
+</vector>
