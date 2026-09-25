@@ -74,6 +74,9 @@ class NovelReaderActivity : AppCompatActivity() {
         /** 上下 UI 显隐的淡入淡出时长（与漫画一致）。 */
         private const val CHROME_FADE_MS = 160L
 
+        /** 视口尺寸变化后的重排防抖（尺寸是连续事件，见 [scheduleRepaginate]）。 */
+        private const val REPAGINATE_DEBOUNCE_MS = 180L
+
         private const val KEY_ROTATE = "reader_rotate_mode"
         private const val KEY_AUTO_TURN = "reader_auto_turn"
         private const val KEY_INTERVAL = "reader_auto_turn_interval"
@@ -131,6 +134,15 @@ class NovelReaderActivity : AppCompatActivity() {
     private var pagedWidth = 0
     private var pagedHeight = 0
 
+    /**
+     * `loadChapter` 的序号。**并发加载按序号丢弃过期结果**（见 [loadChapter] 说明）。
+     *
+     * 这是本阅读器最容易踩的一个坑：加载是异步的、慢的（读文件 + 整章 StaticLayout 分页），
+     * 而触发它的路径又多（进入、每次尺寸变化、译文到达、改排版），
+     * 一旦让过期结果落地就会把用户已经翻好的位置拽回去 —— 表现为「翻页/切章都没反应」。
+     */
+    private var loadToken = 0
+
     /** 本次离开是去「个性化设置」页 —— 返回时重建 Activity，让设置项真正生效。 */
     private var returnedFromSettings = false
 
@@ -139,6 +151,9 @@ class NovelReaderActivity : AppCompatActivity() {
 
     /** pager 最近一次的滚动状态。跳页（无滚动）与落定要区分开，见 [normalizePageTransforms]。 */
     private var pagerScrollState = ViewPager2.SCROLL_STATE_IDLE
+
+    /** 在途的防抖重排（尺寸变化用），见 [scheduleRepaginate]。 */
+    private var repaginateJob: Job? = null
 
     private val tapDetector by lazy {
         GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
@@ -197,6 +212,12 @@ class NovelReaderActivity : AppCompatActivity() {
         applyBackground()
         updateRotateMode(rotateMode, persist = false)
         applyReaderMode()
+
+        NovelDebug.log(
+            "onCreate book=${loaded.id} chapters=$chapterCount ch=$chapterIndex para=$pendingParaIndex " +
+                "mode=${NovelPanelStyle.readerMode(prefs)} anim=$animationMode bg=$bgMode " +
+                "root=${binding.root.width}x${binding.root.height}"
+        )
 
         // ⚠️ **先渲染正文**：首次进入绝不能只有「译文读回来」那一条链才会加载内容 ——
         // 那条链在「本章一句译文都没有」时会判定「没变化」直接返回，结果第一次进阅读器
@@ -262,9 +283,10 @@ class NovelReaderActivity : AppCompatActivity() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        // 视口尺寸变了 → 页表必须按新尺寸重排，否则字会溢出或被裁
+        // 视口尺寸变了 → 页表必须按新尺寸重排，否则字会溢出或被裁。
+        // 走防抖：旋转/分屏会连着一串布局回调，直接重排会重排很多遍
         applyBackground()
-        loadChapter(chapterIndex, keepPara = pendingParaIndex)
+        scheduleRepaginate()
     }
 
     override fun onDestroy() {
@@ -374,6 +396,7 @@ class NovelReaderActivity : AppCompatActivity() {
         }
 
         override fun onPageSelected(position: Int) {
+            NovelDebug.log("onPageSelected pos=$position itemCount=${pageAdapter.itemCount} state=$pagerScrollState")
             if (animationMode == NovelPanelStyle.ANIM_NONE) animState.anchorPage = position
             // 跳页（setCurrentItem(_, false)，无动画模式与点击翻页都走它）不会产生滚动，
             // 于是**不会有任何一次 transformPage 去把新页从"动画中途态"复位**。
@@ -403,15 +426,15 @@ class NovelReaderActivity : AppCompatActivity() {
     private fun realignPagerAfterResize() {
         val w = binding.root.width
         val h = binding.root.height
+        NovelDebug.log("realign root=${w}x$h paged=${pagedWidth}x$pagedHeight mode=${NovelPanelStyle.readerMode(prefs)}")
         if (w <= 0 || h <= 0) return
         if (w != pagedWidth || h != pagedHeight) {
-            // 尺寸确实变了 → 重排（loadChapter 会更新 pagedWidth/Height）
-            loadChapter(chapterIndex, keepPara = pendingParaIndex)
+            scheduleRepaginate()
             return
         }
         if (isScrollMode()) return
-        val rv = binding.novelPager.getChildAt(0) as? RecyclerView ?: return
-        rv.scrollToPosition(currentPage())
+        // 尺寸没变（多半是子 View 引起的无关布局回调）：只把动画重新贴一遍。
+        // ⚠️ 这里**不要**再 scrollToPosition 硬吸一次 —— 那会在用户正滑到一半时把他拽回去
         applyAnimation()
     }
 
@@ -540,16 +563,27 @@ class NovelReaderActivity : AppCompatActivity() {
         lm.startSmoothScroll(scroller)
     }
 
+    /**
+     * 跳到章内第 [page] 页（进度条拖拽/点击）。
+     *
+     * ⚠️ 滚动模式也要实现：那条进度条在滚动模式下是**显示**的，
+     * 拖了没反应就是「控件在、功能不在」。滚动模式按**段**定位。
+     */
     private fun goToPage(page: Int) {
         val pages = content?.pages ?: return
-        // 滚动模式没有「页」可跳（底部进度条在该模式下本来就隐藏了）
-        if (isScrollMode()) return
+        if (isScrollMode()) {
+            val total = scrollAdapter.itemCount
+            if (total <= 0) return
+            smoothScrollTo(page.coerceIn(0, total - 1))
+            return
+        }
         val p = page.coerceIn(0, pages.lastIndex.coerceAtLeast(0))
         binding.novelPager.setCurrentItem(p, false)
         onPaged(p)
     }
 
     private fun gotoChapter(index: Int, atLastPage: Boolean = false) {
+        NovelDebug.log("gotoChapter index=$index chapterCount=$chapterCount")
         if (chapterCount <= 0) return
         if (index < 0) {
             toast(R.string.novel_first_chapter)
@@ -561,6 +595,21 @@ class NovelReaderActivity : AppCompatActivity() {
         }
         persistProgress()
         loadChapter(index, keepPara = if (atLastPage) Int.MAX_VALUE else 0, atLastPage = atLastPage)
+    }
+
+    /**
+     * 尺寸变了要重排，但**必须防抖**。
+     *
+     * 重排 = 读文件 + 对整章跑 `StaticLayout` + 重建全部页，很重。而尺寸变化是**连续事件**：
+     * 旋转、分屏、MIUI 小窗缩放都会在一秒内派发几十次布局回调 —— 每次都重排会把主线程压死，
+     * 现场表现就是「整个画面卡住不刷新」。这里只在尺寸稳定下来之后排一次。
+     */
+    private fun scheduleRepaginate() {
+        repaginateJob?.cancel()
+        repaginateJob = lifecycleScope.launch {
+            delay(REPAGINATE_DEBOUNCE_MS)
+            loadChapter(chapterIndex, keepPara = pendingParaIndex)
+        }
     }
 
     // ===== 模式 / 背景 / 动画 =====
@@ -675,22 +724,52 @@ class NovelReaderActivity : AppCompatActivity() {
     /**
      * 加载并渲染一章。
      *
+     * ⚠️ **并发加载必须按序号丢弃过期结果**（[loadToken]）：这个函数会被很多条路径调到 ——
+     * onCreate、每次窗口尺寸变化（[realignPagerAfterResize]）、译文到达（[refreshTranslations]）、
+     * 改排版/改显示模式。每次都要读文件 + 对整章跑 `StaticLayout` 分页，**几百毫秒很正常**。
+     * 不做序号保护的话，早先发出的那次加载会在用户已经翻页/换章之后再落地，把
+     * `chapterIndex`、`content` 和 `setCurrentItem` 一起**拽回旧章旧页**：
+     * 表现就是「翻页卡在第一页、点目录切章也没用、整个画面像卡死不会刷新」。踩过。
+     *
      * @param keepPara 要定位到的段落号（[Int.MAX_VALUE] = 本章末尾）
      */
     private fun loadChapter(index: Int, keepPara: Int = 0, atLastPage: Boolean = false) {
         val b = book ?: return
+        val token = ++loadToken
         lifecycleScope.launch {
             val style = NovelPanelStyle.textStyle(this@NovelReaderActivity, prefs)
             val w = binding.root.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
             val h = binding.root.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels
-            pagedWidth = w
-            pagedHeight = h
+            NovelDebug.log("loadChapter#$token start ch=$index keepPara=$keepPara atLast=$atLastPage size=${w}x$h")
+
+            // ⚠️ **本章译文必须在这里按章取**，不能沿用上一次的 `translations`：
+            // 那个表是「paraIndex -> 译文」，换章后 paraIndex 会撞上，于是新章每一段都显示
+            // **上一章同一段号的译文** —— 用户看到的就是「切了章内容却一点没变」。
+            // 而且分页是在「显示文本」上做的，译文换了就必须重排。
+            val map = runCatching { translator().loadTranslations(b, index) }
+                .getOrDefault(translations)
+            if (token != loadToken) {
+                NovelDebug.log("loadChapter#$token DISCARDED after translations (latest=$loadToken)")
+                return@launch
+            }
+            translations = map
 
             val loaded = repository.load(b, index, translations, NovelPanelStyle.displayMode(prefs), style, w, h)
+            if (token != loadToken) {
+                NovelDebug.log("loadChapter#$token DISCARDED (latest=$loadToken)")
+                return@launch
+            }
+            pagedWidth = w
+            pagedHeight = h
             chapterIndex = index
             content = loaded
             scrollTranslated = computeScrollTranslated(loaded)
             showStatus(if (loaded.isEmpty) getString(R.string.novel_empty_chapter) else null)
+            NovelDebug.log(
+                "loadChapter#$token done ch=$index paras=${loaded.paragraphs.size} pages=${loaded.pages.size} " +
+                    "texts=${loaded.displayTexts.size} " +
+                    "p0=${loaded.pages.firstOrNull()?.segments?.firstOrNull()?.let { s -> NovelDebug.brief(loaded.displayOf(s.paraIndex)) }}"
+            )
 
             val textColor = NovelPanelStyle.textColor(bgMode)
             val bgColor = NovelPanelStyle.backgroundColor(bgMode)
@@ -713,6 +792,7 @@ class NovelReaderActivity : AppCompatActivity() {
                 }
                 binding.novelPager.setCurrentItem(page, false)
                 onPaged(page)
+                NovelDebug.log("loadChapter submit pages=${pageAdapter.itemCount} gotoPage=$page")
             }
             refreshOverlay()
             refreshTranslationChrome()
@@ -800,12 +880,15 @@ class NovelReaderActivity : AppCompatActivity() {
     /** 译文到达后：重新分页（译文比原文长）+ 保持位置。 */
     private fun refreshTranslations(keepPara: Int = pendingParaIndex) {
         val b = book ?: return
+        val ch = chapterIndex
         lifecycleScope.launch {
-            val map = runCatching { translator().loadTranslations(b, chapterIndex) }
+            val map = runCatching { translator().loadTranslations(b, ch) }
                 .getOrDefault(emptyMap())
+            // 读译文期间用户可能已经换章：那次结果作废（新章进来时 loadChapter 自己会再取一次），
+            // 否则会把上一章的译文贴到新章上
+            if (ch != chapterIndex) return@launch
             // ⚠️ `content == null` 时必须照样往下走：首次进入本章一句译文都没有时
-            // `map == translations`（都是空表）成立，早退就会让正文永远不加载 ——
-            // 表现是「第一次进阅读器一片空白，切一次章才显示」。踩过。
+            // `map == translations`（都是空表）成立，早退就会让正文永远不加载。
             if (map == translations && content != null) {
                 refreshTranslationChrome()
                 return@launch

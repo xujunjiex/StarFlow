@@ -62,6 +62,7 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
     override fun onBindViewHolder(holder: VH, position: Int) {
         val c = content ?: return
         val para = NovelScrollMapping.visibleParagraphs(c).getOrNull(position) ?: return
+        NovelDebug.log("bindPara pos=$position paraIndex=${para.index} text=${NovelDebug.brief(c.displayOf(para.index))}")
         holder.view.bind(c.displayOf(para.index), style, textColor, backgroundColor)
     }
 
