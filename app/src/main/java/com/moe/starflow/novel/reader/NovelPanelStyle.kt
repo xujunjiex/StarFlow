@@ -8,19 +8,44 @@ import com.moe.starflow.R
 /**
  * 小说阅读器的偏好读写。**收敛成一处**，避免键名散落各处写错。
  *
- * ⚠️ **存的是与漫画阅读器同一份 `SharedPreferences`**（[PREFS_NAME]），
- * 背景/翻页动画两个键更是**直接共用**同一个 key —— 用户在漫画里把背景调成黑色，
- * 切到小说也该是黑的。两套存储会让「同一个软件」这个前提当场破功。
+ * ⚠️ 背景 / 翻页动画 / 旋转 存的是与漫画阅读器同一份 `SharedPreferences`（[PREFS_NAME]），
+ * 那几个键更是直接共用 —— 用户在漫画里把背景调成黑色，切到小说也该是黑的。
+ * 两套存储会让「同一个软件」这个前提当场破功。
  *
- * ⚠️ 字号走 `MangaFontSize`（唯一来源），这里只转发 —— 漫画阅读器与悬浮窗也用同一套档位，
- * 另起一个键会让「设置页改了字号，小说没变」。
+ * ⚠️ 但**字号是小说自己一份**（[fontSizeSp]）：漫画的字号是按气泡图尺寸推的
+ * （它还有「自动字号」），与正文排版没有关系；共用会让「恢复默认字号」连带改掉漫画，
+ * 而正文默认 16sp 明显偏小。排版参数（行距/段距/边距/间距）本来就是小说独有的。
  */
 object NovelPanelStyle {
 
     /** 与 `MangaReaderActivity` 同一个 prefs 文件。 */
     const val PREFS_NAME = "manga_reader"
 
-    // ===== 阅读背景 / 翻页动画（键与漫画共用） =====
+    // ===== 手机上方/下方浮层需要避开的尺寸（自动排版用） =====
+
+    /**
+     * 上下浮层占掉的纵向空间。
+     * 顶部：返回/菜单圆形钮在 34dp 处、直径 40dp；章节胶囊在 38dp 处。
+     * 底部：胶囊 10+48dp，右下翻译浮层组 62+52dp。
+     */
+    private const val CHROME_TOP_DP = 80
+    private const val CHROME_BOTTOM_DP = 120
+
+    // ===== 字号（小说独立一份） =====
+
+    const val FONT_SIZE_MIN = 12f
+    const val FONT_SIZE_MAX = 34f
+    const val FONT_SIZE_DEFAULT = 20f
+
+    private const val KEY_FONT_SIZE = "novel_font_size"
+
+    fun fontSizeSp(prefs: SharedPreferences): Float =
+        prefs.getFloat(KEY_FONT_SIZE, FONT_SIZE_DEFAULT).coerceIn(FONT_SIZE_MIN, FONT_SIZE_MAX)
+
+    fun setFontSizeSp(prefs: SharedPreferences, sp: Float) =
+        prefs.edit().putFloat(KEY_FONT_SIZE, sp.coerceIn(FONT_SIZE_MIN, FONT_SIZE_MAX)).apply()
+
+    // ===== 背景 / 翻页动画（键与漫画共用） =====
 
     private const val KEY_BG = "reader_background"
     private const val KEY_ANIM = "reader_animation"
@@ -38,7 +63,7 @@ object NovelPanelStyle {
 
     /**
      * 阅读背景：0 默认 / 1 浅 / 2 深 / 3 白 / 4 黑 / 5 自动。
-     * 值域与 [com.moe.starflow.mangaimport.reader.MangaReaderActivity] 完全一致。
+     * 值域与 `MangaReaderActivity` 完全一致。
      */
     fun background(prefs: SharedPreferences): Int = prefs.getInt(KEY_BG, 0).coerceIn(0, 5)
 
@@ -50,7 +75,6 @@ object NovelPanelStyle {
         (android.content.res.Resources.getSystem().configuration.uiMode and
             Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
 
-    /** 背景是否深色（面板配色据此翻转）。 */
     fun isDarkBackground(bg: Int): Boolean = when (bg) {
         2, 4 -> true
         3 -> false
@@ -63,104 +87,218 @@ object NovelPanelStyle {
 
     /** 背景色值。与漫画的 `resolveBgColor()` 同一套取值。 */
     fun backgroundColor(bg: Int): Int = when (bg) {
-        1 -> 0xFFF0F0EE.toInt()          // Light
-        2 -> 0xFF18181C.toInt()          // Dark
+        1 -> 0xFFF0F0EE.toInt()
+        2 -> 0xFF18181C.toInt()
         3 -> android.graphics.Color.WHITE
         4 -> android.graphics.Color.BLACK
         5 -> if (isSystemDark()) android.graphics.Color.BLACK else android.graphics.Color.WHITE
         else -> if (isSystemDark()) android.graphics.Color.BLACK else android.graphics.Color.WHITE
     }
 
-    // ===== 开本与排版 =====
+    // ===== 排版间距 =====
 
-    const val LINE_SPACING_MIN = 10      // 行距倍率 ×10（10 = 1.0 倍）
-    const val LINE_SPACING_MAX = 30
-    const val PARAGRAPH_SPACING_MIN = 0  // 段间距 dp
-    const val PARAGRAPH_SPACING_MAX = 40
-    const val PADDING_MIN = 8            // 左右边距 dp
-    const val PADDING_MAX = 48
+    /**
+     * 字号 → 行高的经验系数。
+     *
+     * `StaticLayout` 的行高来自字体的 `top..bottom`，对常见中文字体约为字号的 1.15 倍。
+     * 这里用它把「行距倍率」换算成**真实的行间空隙**（`字号 × 系数 × (倍率 - 1)`），
+     * 后面「段距必须大于行距」的约束全靠这个换算。
+     */
+    private const val FONT_LINE_FACTOR = 1.15f
+
+    /** 行距倍率 ×10。范围 1.0× ~ 2.2×：再小中文会挤，再大就散架了。 */
+    const val LINE_SPACING_MIN = 10
+    const val LINE_SPACING_MAX = 22
+    const val LINE_SPACING_DEFAULT = 15
+
+    /** 段间距 dp。**下限是动态算出来的**（见 [minParagraphSpacingDp]），这里的 MAX 是硬上限。 */
+    const val PARA_SPACING_MAX = 48
+    const val PARA_SPACING_DEFAULT = 18
+
+    /** 段落间距与行间距的最小倍数关系：段距给的空隙至少是行间空隙的 1.2 倍。 */
+    private const val PARA_OVER_LINE_RATIO = 1.2f
+
+    /** 段距的绝对下限：即使行距为 1.0×（行间空隙为 0），段距也得看得出是分段。与面板 `sb_para_spacing` 的 min 一致。 */
+    const val PARA_SPACING_ABS_MIN = 6
+
+    const val SIDE_PADDING_MIN = 16
+    const val SIDE_PADDING_MAX = 64
+    const val SIDE_PADDING_DEFAULT = 20
+
+    const val VERTICAL_PADDING_MIN = 16
+    const val VERTICAL_PADDING_MAX = 160
+
+    /** 自动排版时一行大约放多少个汉字 —— 行宽跟着字号走就靠它。 */
+    private const val AUTO_CJK_PER_LINE = 26f
 
     private const val KEY_LINE_SPACING = "novel_line_spacing"
     private const val KEY_PARA_SPACING = "novel_paragraph_spacing"
     private const val KEY_PADDING = "novel_reader_padding"
-    private const val KEY_READER_MODE = "novel_reader_mode"
-
-    /** 阅读模式取值版本的标记键。见 [migrateReaderMode]。 */
+    private const val KEY_TOP_PADDING = "novel_reader_top_padding"
+    private const val KEY_BOTTOM_PADDING = "novel_reader_bottom_padding"
+    private const val KEY_AUTO_LAYOUT = "novel_auto_layout"
     private const val KEY_READER_MODE_VERSION = "novel_reader_mode_version"
+    private const val KEY_READER_MODE = "novel_reader_mode"
     private const val READER_MODE_VERSION = 1
-    private const val KEY_DISPLAY_MODE = "novel_display_mode"
+
+    fun lineSpacingStep(prefs: SharedPreferences): Int =
+        prefs.getInt(KEY_LINE_SPACING, LINE_SPACING_DEFAULT).coerceIn(LINE_SPACING_MIN, LINE_SPACING_MAX)
+
+    fun lineSpacingLabel(step: Int): String = String.format(java.util.Locale.US, "%.1f×", step / 10f)
+
+    /** 行距换算出的**真实行间空隙**（sp）。 */
+    fun lineGapSp(fontSizeSp: Float, lineStep: Int): Float =
+        fontSizeSp * FONT_LINE_FACTOR * (lineStep / 10f - 1f)
+
+    /**
+     * 段落间距的下限（dp）。
+     *
+     * ⚠️ **段距必须始终大于行距**，否则段落之间看起来和行之间一样，整页糊成一块、分不出段。
+     * 判据不是「数字上比行距大」而是「视觉空隙更大」：行距倍率给出的空隙是
+     * `字号 × 1.15 × (倍率-1)`，段距必须比它再大一截（[PARA_OVER_LINE_RATIO]）。
+     * 行距调到 1.0× 时行间空隙为 0，此时用绝对下限 [PARA_SPACING_ABS_MIN] 兜底。
+     */
+    fun minParagraphSpacingDp(fontSizeSp: Float, lineStep: Int): Int {
+        val gapDp = lineGapSp(fontSizeSp, lineStep) * PARA_OVER_LINE_RATIO
+        return maxOf(kotlin.math.ceil(gapDp).toInt(), PARA_SPACING_ABS_MIN)
+    }
+
+    /**
+     * 段距的**上限**。通常是 [PARA_SPACING_MAX]，但当字号/行距很大时，下限会顶到甚至超过 48dp
+     * （34sp × 2.2× 时下限 ≈ 57dp）—— 那时必须把上限抬上去。
+     *
+     * ⚠️ 不抬的话 `coerceIn(min, 48)` 会变成 `min > max` 的空区间，**Kotlin 直接抛
+     * IllegalArgumentException**（"Cannot coerce value to an empty range"）。这是能把阅读器
+     * 打崩的那种 bug，不是显示问题。
+     */
+    fun maxParagraphSpacingDp(fontSizeSp: Float, lineStep: Int): Int =
+        maxOf(PARA_SPACING_MAX, minParagraphSpacingDp(fontSizeSp, lineStep) + 4)
+
+    /** 读段距时也按当前字号/行距夹一次：改了行距之后，旧段距可能已经不满足「大于行距」。 */
+    fun paragraphSpacingDp(prefs: SharedPreferences, fontSizeSp: Float): Int {
+        val step = lineSpacingStep(prefs)
+        return prefs.getInt(KEY_PARA_SPACING, PARA_SPACING_DEFAULT)
+            .coerceIn(minParagraphSpacingDp(fontSizeSp, step), maxParagraphSpacingDp(fontSizeSp, step))
+    }
+
+    fun setParagraphSpacingDp(prefs: SharedPreferences, v: Int, fontSizeSp: Float) {
+        val step = lineSpacingStep(prefs)
+        prefs.edit()
+            .putInt(
+                KEY_PARA_SPACING,
+                v.coerceIn(minParagraphSpacingDp(fontSizeSp, step), maxParagraphSpacingDp(fontSizeSp, step)),
+            )
+            .apply()
+    }
+
+    /** 改行距：顺手把段距抬到新下限，避免出现「段距小于行距」的非法组合。 */
+    fun setLineSpacingStep(prefs: SharedPreferences, v: Int, fontSizeSp: Float) {
+        val step = v.coerceIn(LINE_SPACING_MIN, LINE_SPACING_MAX)
+        prefs.edit().putInt(KEY_LINE_SPACING, step).apply()
+        val min = minParagraphSpacingDp(fontSizeSp, step)
+        if (paragraphSpacingDpRaw(prefs) < min) {
+            prefs.edit().putInt(KEY_PARA_SPACING, min).apply()
+        }
+    }
+
+    private fun paragraphSpacingDpRaw(prefs: SharedPreferences): Int =
+        prefs.getInt(KEY_PARA_SPACING, PARA_SPACING_DEFAULT)
+
+    fun paddingDp(prefs: SharedPreferences): Int =
+        prefs.getInt(KEY_PADDING, SIDE_PADDING_DEFAULT).coerceIn(SIDE_PADDING_MIN, SIDE_PADDING_MAX)
+
+    fun setPaddingDp(prefs: SharedPreferences, v: Int) =
+        prefs.edit().putInt(KEY_PADDING, v.coerceIn(SIDE_PADDING_MIN, SIDE_PADDING_MAX)).apply()
+
+    fun topPaddingDp(prefs: SharedPreferences): Int =
+        prefs.getInt(KEY_TOP_PADDING, verticalPaddingDefaultDp())
+            .coerceIn(VERTICAL_PADDING_MIN, VERTICAL_PADDING_MAX)
+
+    fun bottomPaddingDp(prefs: SharedPreferences): Int =
+        prefs.getInt(KEY_BOTTOM_PADDING, verticalPaddingDefaultDp())
+            .coerceIn(VERTICAL_PADDING_MIN, VERTICAL_PADDING_MAX)
+
+    fun setTopPaddingDp(prefs: SharedPreferences, v: Int) = prefs.edit()
+        .putInt(KEY_TOP_PADDING, v.coerceIn(VERTICAL_PADDING_MIN, VERTICAL_PADDING_MAX)).apply()
+
+    fun setBottomPaddingDp(prefs: SharedPreferences, v: Int) = prefs.edit()
+        .putInt(KEY_BOTTOM_PADDING, v.coerceIn(VERTICAL_PADDING_MIN, VERTICAL_PADDING_MAX)).apply()
+
+    /** 上下间距的默认值：**上下取同一个数**，且要够避开上下浮层。 */
+    fun verticalPaddingDefaultDp(): Int = CHROME_BOTTOM_DP.coerceIn(VERTICAL_PADDING_MIN, VERTICAL_PADDING_MAX)
+
+    // ===== 自动排版 =====
+
+    /**
+     * 自动排版：**只跟字号走**，其余间距由它推出来。
+     *
+     * 调整顺序（后一步依赖前一步）：
+     * 1. **行距**：正文经典 1.5×。它本身就是相对字号的比例，字号一变行间空隙同步变
+     * 2. **左右边距**：按「一行约 [AUTO_CJK_PER_LINE] 个汉字」反推 —— 字号越大边距越小，
+     *    保证每行字数大体稳定（行太长会看错行）
+     * 3. **段落间距**：从「必须大于行距」的下限往上取一档（[PARA_OVER_LINE_RATIO] 的 1.5 倍）
+     * 4. **上下间距**：**上下必须取相等的值**；大小要够避开上下浮层
+     *
+     * 打开自动排版时还会做**整段保护**（分页不在段落中间切），见 [keepParagraphsWhole]。
+     */
+    fun applyAutoLayout(context: Context, prefs: SharedPreferences) {
+        val fontSp = fontSizeSp(prefs)
+        val dm = context.resources.displayMetrics
+
+        val lineStep = LINE_SPACING_DEFAULT
+
+        // 一行目标宽度（px）→ 反推左右边距
+        val targetWidth = AUTO_CJK_PER_LINE * fontSp * dm.scaledDensity
+        val side = (((dm.widthPixels - targetWidth) / 2f) / dm.density).toInt()
+            .coerceIn(SIDE_PADDING_MIN, SIDE_PADDING_MAX)
+
+        val paraMin = minParagraphSpacingDp(fontSp, lineStep)
+        val para = (paraMin * 1.5f).toInt().coerceIn(paraMin, maxParagraphSpacingDp(fontSp, lineStep))
+
+        val vertical = verticalPaddingDefaultDp()
+
+        prefs.edit()
+            .putInt(KEY_LINE_SPACING, lineStep)
+            .putInt(KEY_PARA_SPACING, para)
+            .putInt(KEY_PADDING, side)
+            .putInt(KEY_TOP_PADDING, vertical)
+            .putInt(KEY_BOTTOM_PADDING, vertical)
+            .apply()
+    }
+
+    fun isAutoLayout(prefs: SharedPreferences): Boolean = prefs.getBoolean(KEY_AUTO_LAYOUT, true)
+
+    /** 自动排版开关。打开时立刻按当前字号重算一组间距。 */
+    fun setAutoLayout(context: Context, prefs: SharedPreferences, auto: Boolean) {
+        prefs.edit().putBoolean(KEY_AUTO_LAYOUT, auto).apply()
+        if (auto) applyAutoLayout(context, prefs)
+    }
+
+    /**
+     * **关掉自动排版就不做整段保护**：用户自己接管排版时，按行填满才能把页面用满；
+     * 整段保护会让页面留出大片空白（那是「每页翻译完整」的代价，只在自动模式下付）。
+     */
+    fun keepParagraphsWhole(prefs: SharedPreferences): Boolean = isAutoLayout(prefs)
+
+    // ===== 恢复默认 =====
+
+    /** 恢复默认：字号回 [FONT_SIZE_DEFAULT]，并重新打开自动排版（间距随之全部重算）。 */
+    fun resetTypography(context: Context, prefs: SharedPreferences) {
+        prefs.edit()
+            .putFloat(KEY_FONT_SIZE, FONT_SIZE_DEFAULT)
+            .putBoolean(KEY_AUTO_LAYOUT, true)
+            .apply()
+        applyAutoLayout(context, prefs)
+    }
+
+    // ===== 阅读模式 =====
 
     /** 阅读模式：0 左右翻页 / 1 上下翻页 / 2 连续滚动。 */
     const val READER_PAGED = 0
     const val READER_VERTICAL = 1
     const val READER_SCROLL = 2
 
-    fun lineSpacingStep(prefs: SharedPreferences): Int =
-        prefs.getInt(KEY_LINE_SPACING, 15).coerceIn(LINE_SPACING_MIN, LINE_SPACING_MAX)
-
-    fun setLineSpacingStep(prefs: SharedPreferences, v: Int) =
-        prefs.edit().putInt(KEY_LINE_SPACING, v.coerceIn(LINE_SPACING_MIN, LINE_SPACING_MAX)).apply()
-
-    fun lineSpacingLabel(step: Int): String = String.format(java.util.Locale.US, "%.1f×", step / 10f)
-
-    fun paragraphSpacingDp(prefs: SharedPreferences): Int =
-        prefs.getInt(KEY_PARA_SPACING, 14).coerceIn(PARAGRAPH_SPACING_MIN, PARAGRAPH_SPACING_MAX)
-
-    fun setParagraphSpacingDp(prefs: SharedPreferences, v: Int) =
-        prefs.edit().putInt(KEY_PARA_SPACING, v.coerceIn(PARAGRAPH_SPACING_MIN, PARAGRAPH_SPACING_MAX)).apply()
-
-    fun paddingDp(prefs: SharedPreferences): Int =
-        prefs.getInt(KEY_PADDING, 20).coerceIn(PADDING_MIN, PADDING_MAX)
-
-    fun setPaddingDp(prefs: SharedPreferences, v: Int) =
-        prefs.edit().putInt(KEY_PADDING, v.coerceIn(PADDING_MIN, PADDING_MAX)).apply()
-
-    // ===== 上下间距（正文与屏幕上下边缘之间留出的空间） =====
-
-    private const val KEY_TOP_PADDING = "novel_reader_top_padding"
-    private const val KEY_BOTTOM_PADDING = "novel_reader_bottom_padding"
-    private const val KEY_PADDING_AUTO = "novel_reader_padding_auto"
-
-    const val VERTICAL_PADDING_MIN = 0
-    const val VERTICAL_PADDING_MAX = 240
-
-    /**
-     * 「自动」时的上下间距。
-     *
-     * 取值就是**避开上下浮层**所需的最小值：顶部返回/菜单圆形钮在 34dp 处、直径 ~40dp，
-     * 章节胶囊在 38dp 处；底部胶囊 10+48dp，右下翻译浮层组 62+52dp。
-     * 不留这些空间，正文就会被压在浮层底下 —— 这也是用户反馈「上下要预留空间、不要和 UI 重叠」。
-     */
-    const val AUTO_TOP_PADDING_DP = 96
-    const val AUTO_BOTTOM_PADDING_DP = 132
-
-    fun isVerticalPaddingAuto(prefs: SharedPreferences): Boolean =
-        prefs.getBoolean(KEY_PADDING_AUTO, true)
-
-    fun setVerticalPaddingAuto(prefs: SharedPreferences, auto: Boolean) =
-        prefs.edit().putBoolean(KEY_PADDING_AUTO, auto).apply()
-
-    /** 实际生效的上间距 dp（自动时返回自动值；手动时返回用户值）。 */
-    fun topPaddingDp(prefs: SharedPreferences): Int =
-        if (isVerticalPaddingAuto(prefs)) AUTO_TOP_PADDING_DP
-        else prefs.getInt(KEY_TOP_PADDING, AUTO_TOP_PADDING_DP)
-            .coerceIn(VERTICAL_PADDING_MIN, VERTICAL_PADDING_MAX)
-
-    fun bottomPaddingDp(prefs: SharedPreferences): Int =
-        if (isVerticalPaddingAuto(prefs)) AUTO_BOTTOM_PADDING_DP
-        else prefs.getInt(KEY_BOTTOM_PADDING, AUTO_BOTTOM_PADDING_DP)
-            .coerceIn(VERTICAL_PADDING_MIN, VERTICAL_PADDING_MAX)
-
-    /** 拖动上下间距滑块：自动关闭，落到手动值。 */
-    fun setTopPaddingDp(prefs: SharedPreferences, v: Int) = prefs.edit()
-        .putBoolean(KEY_PADDING_AUTO, false)
-        .putInt(KEY_TOP_PADDING, v.coerceIn(VERTICAL_PADDING_MIN, VERTICAL_PADDING_MAX))
-        .apply()
-
-    fun setBottomPaddingDp(prefs: SharedPreferences, v: Int) = prefs.edit()
-        .putBoolean(KEY_PADDING_AUTO, false)
-        .putInt(KEY_BOTTOM_PADDING, v.coerceIn(VERTICAL_PADDING_MIN, VERTICAL_PADDING_MAX))
-        .apply()
+    private const val KEY_DISPLAY_MODE = "novel_display_mode"
 
     fun readerMode(prefs: SharedPreferences): Int {
         migrateReaderMode(prefs)
@@ -178,15 +316,14 @@ object NovelPanelStyle {
      * 阅读模式取值的一次性迁移。
      *
      * 引入「上下翻页」之前只有 `0 分页 / 1 滚动`；现在 1 变成了「上下翻页」、滚动挪到 2。
-     * 不迁移的话，用户原来选的「滚动」会**静默变成「上下翻页」**（而且是在他完全不知情的
-     * 情况下换了模式，只会觉得"滚动模式坏了"）。
+     * 不迁移的话，用户原来选的「滚动」会**静默变成「上下翻页」**，他只会觉得"滚动模式坏了"。
      */
     private fun migrateReaderMode(prefs: SharedPreferences) {
         if (prefs.getInt(KEY_READER_MODE_VERSION, 0) >= READER_MODE_VERSION) return
         val old = prefs.getInt(KEY_READER_MODE, READER_PAGED)
         val migrated = when (old) {
-            1 -> READER_SCROLL   // 旧值 1 = 滚动
-            2 -> READER_VERTICAL // 理论上取不到，防御性保留
+            1 -> READER_SCROLL
+            2 -> READER_VERTICAL
             else -> READER_PAGED
         }
         prefs.edit()
@@ -203,21 +340,19 @@ object NovelPanelStyle {
 
     /**
      * 用当前偏好拼出排版参数。dp → px 在这里换算，调用方只管传 density。
-     *
-     * ⚠️ 字号走 `MangaFontSize` 但**只取固定档位**：漫画那边的「自动字号」是按气泡图尺寸算的，
-     * 对纯文本没有意义（文本字号与图片尺寸无关）。面板里改字号会写 `setSize`，
-     * 那个路径本来就会把 auto 关掉。
      */
     fun textStyle(context: Context, prefs: SharedPreferences): NovelTextStyle {
         val density = context.resources.displayMetrics.scaledDensity
         val densityDpi = context.resources.displayMetrics.density
+        val fontSp = fontSizeSp(prefs)
         return NovelTextStyle(
-            fontSizePx = com.moe.starflow.utils.MangaFontSize.size(context) * density,
+            fontSizePx = fontSp * density,
             lineSpacingMultiplier = lineSpacingStep(prefs) / 10f,
-            paragraphSpacingPx = paragraphSpacingDp(prefs) * densityDpi,
+            paragraphSpacingPx = paragraphSpacingDp(prefs, fontSp) * densityDpi,
             paddingPx = paddingDp(prefs) * densityDpi,
             topPaddingPx = topPaddingDp(prefs) * densityDpi,
             bottomPaddingPx = bottomPaddingDp(prefs) * densityDpi,
+            keepParagraphsWhole = keepParagraphsWhole(prefs),
         )
     }
 

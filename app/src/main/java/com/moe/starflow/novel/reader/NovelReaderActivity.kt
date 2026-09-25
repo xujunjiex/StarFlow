@@ -1170,17 +1170,18 @@ class NovelReaderActivity : AppCompatActivity() {
 
     private fun showMenuNow(chapters: List<com.moe.starflow.novel.model.NovelChapterMeta>, stats: Map<Int, NovelChapterStat>) {
         if (isFinishing || isDestroyed) return
+        val fontSp = NovelPanelStyle.fontSizeSp(prefs)
         val sheet = NovelPanelSheet(
             NovelPanelState(
                 readerMode = NovelPanelStyle.readerMode(prefs),
                 animation = animationMode,
                 bg = bgMode,
                 displayMode = NovelPanelStyle.displayMode(prefs),
-                fontSizeSp = com.moe.starflow.utils.MangaFontSize.size(this@NovelReaderActivity),
+                fontSizeSp = fontSp,
                 lineSpacingStep = NovelPanelStyle.lineSpacingStep(prefs),
-                paragraphSpacingDp = NovelPanelStyle.paragraphSpacingDp(prefs),
+                paragraphSpacingDp = NovelPanelStyle.paragraphSpacingDp(prefs, fontSp),
                 paddingDp = NovelPanelStyle.paddingDp(prefs),
-                paddingAuto = NovelPanelStyle.isVerticalPaddingAuto(prefs),
+                autoLayout = NovelPanelStyle.isAutoLayout(prefs),
                 topPaddingDp = NovelPanelStyle.topPaddingDp(prefs),
                 bottomPaddingDp = NovelPanelStyle.bottomPaddingDp(prefs),
                 autoTurn = autoTurnEnabled,
@@ -1210,20 +1211,28 @@ class NovelReaderActivity : AppCompatActivity() {
                 onBackground = { v -> NovelPanelStyle.setBackground(prefs, v); applyBackground(); refreshCurrentVisual() },
                 onDisplayMode = { m -> NovelPanelStyle.setDisplayMode(prefs, m); loadChapter(chapterIndex, keepPara = pendingParaIndex) },
                 onFontSize = { sp ->
-                    // 写的是与悬浮窗/漫画共用的那份字号设置；该路径会顺手关掉「自动字号」
-                    com.moe.starflow.utils.MangaFontSize.setSize(this@NovelReaderActivity, sp)
+                    NovelPanelStyle.setFontSizeSp(prefs, sp)
+                    // 自动排版是「跟着字号走」的：字号一变必须重算一组间距，否则排版与字号脱节
+                    if (NovelPanelStyle.isAutoLayout(prefs)) {
+                        NovelPanelStyle.applyAutoLayout(this@NovelReaderActivity, prefs)
+                    }
                     loadChapter(chapterIndex, keepPara = pendingParaIndex)
                 },
-                onLineSpacing = { v -> NovelPanelStyle.setLineSpacingStep(prefs, v); loadChapter(chapterIndex, keepPara = pendingParaIndex) },
-                onParagraphSpacing = { v -> NovelPanelStyle.setParagraphSpacingDp(prefs, v); loadChapter(chapterIndex, keepPara = pendingParaIndex) },
+                onLineSpacing = { v ->
+                    NovelPanelStyle.setLineSpacingStep(prefs, v, NovelPanelStyle.fontSizeSp(prefs))
+                    loadChapter(chapterIndex, keepPara = pendingParaIndex)
+                },
+                onParagraphSpacing = { v ->
+                    NovelPanelStyle.setParagraphSpacingDp(prefs, v, NovelPanelStyle.fontSizeSp(prefs))
+                    loadChapter(chapterIndex, keepPara = pendingParaIndex)
+                },
                 onPadding = { v -> NovelPanelStyle.setPaddingDp(prefs, v); loadChapter(chapterIndex, keepPara = pendingParaIndex) },
-                onPaddingAuto = { auto ->
-                    if (!auto) {
-                        // 关掉「自动」→ 先把**当前生效值**落成手动值，否则正文会跳到一组陈旧的旧值
-                        NovelPanelStyle.setTopPaddingDp(prefs, NovelPanelStyle.topPaddingDp(prefs))
-                        NovelPanelStyle.setBottomPaddingDp(prefs, NovelPanelStyle.bottomPaddingDp(prefs))
-                    }
-                    NovelPanelStyle.setVerticalPaddingAuto(prefs, auto)
+                onAutoLayout = { auto ->
+                    NovelPanelStyle.setAutoLayout(this@NovelReaderActivity, prefs, auto)
+                    loadChapter(chapterIndex, keepPara = pendingParaIndex)
+                },
+                onResetTypography = {
+                    NovelPanelStyle.resetTypography(this@NovelReaderActivity, prefs)
                     loadChapter(chapterIndex, keepPara = pendingParaIndex)
                 },
                 onTopPadding = { v -> NovelPanelStyle.setTopPaddingDp(prefs, v); loadChapter(chapterIndex, keepPara = pendingParaIndex) },

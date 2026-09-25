@@ -27,7 +27,6 @@ import com.moe.starflow.translate.TranslateTools
 import com.moe.starflow.utils.Constants
 import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.MangaFontSize
-import com.moe.starflow.utils.MangaFontSizeDialog
 import com.moe.starflow.utils.OcrEngineManager
 import translationapi.hymt2translation.HyMt2Languages
 
@@ -43,14 +42,14 @@ class NovelPanelState(
     val animation: Int = NovelPanelStyle.ANIM_SLIDE,
     val bg: Int = 0,
     val displayMode: NovelDisplayMode = NovelDisplayMode.TRANSLATED,
-    val fontSizeSp: Float = 16f,
-    val lineSpacingStep: Int = 15,
-    val paragraphSpacingDp: Int = 14,
-    val paddingDp: Int = 20,
-    /** 上下间距是否自动（自动 = 按上下浮层尺寸算，保证正文不被 UI 压住）。 */
-    val paddingAuto: Boolean = true,
-    val topPaddingDp: Int = NovelPanelStyle.AUTO_TOP_PADDING_DP,
-    val bottomPaddingDp: Int = NovelPanelStyle.AUTO_BOTTOM_PADDING_DP,
+    val fontSizeSp: Float = NovelPanelStyle.FONT_SIZE_DEFAULT,
+    val lineSpacingStep: Int = NovelPanelStyle.LINE_SPACING_DEFAULT,
+    val paragraphSpacingDp: Int = NovelPanelStyle.PARA_SPACING_DEFAULT,
+    val paddingDp: Int = NovelPanelStyle.SIDE_PADDING_DEFAULT,
+    /** 自动排版：只跟字号走，其余间距由它推出来。关掉后间距全手动、且不做整段保护。 */
+    val autoLayout: Boolean = true,
+    val topPaddingDp: Int = NovelPanelStyle.VERTICAL_PADDING_MIN,
+    val bottomPaddingDp: Int = NovelPanelStyle.VERTICAL_PADDING_MIN,
     val autoTurn: Boolean = false,
     val intervalSec: Int = 5,
     val rotateLabel: String = "",
@@ -76,7 +75,8 @@ class NovelPanelCallbacks(
     val onLineSpacing: (Int) -> Unit,
     val onParagraphSpacing: (Int) -> Unit,
     val onPadding: (Int) -> Unit,
-    val onPaddingAuto: (Boolean) -> Unit = {},
+    val onAutoLayout: (Boolean) -> Unit = {},
+    val onResetTypography: () -> Unit = {},
     val onTopPadding: (Int) -> Unit = {},
     val onBottomPadding: (Int) -> Unit = {},
     val onAutoTurn: (Boolean, Int) -> Unit,
@@ -264,79 +264,88 @@ class NovelPanelSheet(
             cb.onDisplayMode(next)
         }
 
-        // 字号：从「翻译」搬到排版里。**只给固定档位，不提供「自动」** ——
-        // 漫画那套自动字号是按气泡图尺寸推的，对纯文本没有意义。
-        // 改动写 `MangaFontSize.setSize`（它会顺手把 auto 关掉）。
+        // ---- 排版：自动排版 / 恢复默认 / 字号 / 行距 / 段距 / 左右边距 / 上下间距 ----
+        //
+        // ⚠️ 自动排版**只跟字号走**：行距 → 左右边距 → 段距 → 上下间距，顺序有依赖
+        // （见 `NovelPanelStyle.applyAutoLayout` 的说明）。开着时这些间距全部由它算好写盘，
+        // 所以滑块置灰；关掉才由用户自己拖，且**不再做整段保护**。
+        val swAutoLayout = view.findViewById<Switch>(R.id.sw_auto_layout)
         val sbFont = view.findViewById<SeekBar>(R.id.sb_font_size)
         val tvFontValue = view.findViewById<TextView>(R.id.tv_font_size_value)
+        val sbLine = view.findViewById<SeekBar>(R.id.sb_line_spacing)
+        val tvLine = view.findViewById<TextView>(R.id.tv_line_spacing_value)
+        val sbPara = view.findViewById<SeekBar>(R.id.sb_para_spacing)
+        val tvPara = view.findViewById<TextView>(R.id.tv_para_spacing_value)
+        val sbPad = view.findViewById<SeekBar>(R.id.sb_padding)
+        val tvPad = view.findViewById<TextView>(R.id.tv_padding_value)
+        val sbTop = view.findViewById<SeekBar>(R.id.sb_top_padding)
+        val tvTopValue = view.findViewById<TextView>(R.id.tv_top_padding_value)
+        val sbBottom = view.findViewById<SeekBar>(R.id.sb_bottom_padding)
+        val tvBottomValue = view.findViewById<TextView>(R.id.tv_bottom_padding_value)
+
+        var autoLayout = state.autoLayout
+        var lineStep = state.lineSpacingStep
+
+        /** 段距的下限**跟着字号与行距走**：段距必须始终大于行距，否则分不出段。 */
+        fun refreshParaMin() {
+            val min = NovelPanelStyle.minParagraphSpacingDp(state.fontSizeSp, lineStep)
+            val max = NovelPanelStyle.maxParagraphSpacingDp(state.fontSizeSp, lineStep)
+            sbPara.min = min
+            // 上限也要跟着抬：字号/行距很大时 min 会顶到 48 以上，SeekBar 的 max 必须 >= min
+            sbPara.max = max.coerceAtLeast(min + 1)
+            if (sbPara.progress < min) sbPara.progress = min
+            tvPara.text = "${sbPara.progress} dp"
+        }
+
+        /** 自动排版开着时把间距滑块置灰（**保留数值**：用户要看得见自动替他选了什么）。 */
+        fun refreshLayoutEnabled() {
+            swAutoLayout.isChecked = autoLayout
+            for (v in listOf<View>(sbLine, sbPara, sbPad, sbTop, sbBottom)) {
+                v.isEnabled = !autoLayout
+                v.alpha = if (autoLayout) 0.45f else 1f
+            }
+        }
+
+        swAutoLayout.setOnCheckedChangeListener { _, checked ->
+            autoLayout = checked
+            refreshLayoutEnabled()
+            cb.onAutoLayout(checked)
+        }
+        view.findViewById<View>(R.id.btn_reset_typography).setOnClickListener { cb.onResetTypography() }
+
         sbFont.progress = state.fontSizeSp.toInt()
-            .coerceIn(MangaFontSize.MIN_SIZE, MangaFontSize.MAX_SIZE)
+            .coerceIn(NovelPanelStyle.FONT_SIZE_MIN.toInt(), NovelPanelStyle.FONT_SIZE_MAX.toInt())
         tvFontValue.text = "${sbFont.progress} sp"
         sbFont.setOnSeekBarChangeListener(sliderLabel({ tvFontValue.text = "$it sp" }) { cb.onFontSize(it.toFloat()) })
 
-        val sbLine = view.findViewById<SeekBar>(R.id.sb_line_spacing)
-        val tvLine = view.findViewById<TextView>(R.id.tv_line_spacing_value)
         sbLine.progress = state.lineSpacingStep
         tvLine.text = NovelPanelStyle.lineSpacingLabel(state.lineSpacingStep)
-        sbLine.setOnSeekBarChangeListener(slider {
-            tvLine.text = NovelPanelStyle.lineSpacingLabel(sbLine.progress)
-            cb.onLineSpacing(sbLine.progress)
-        })
+        sbLine.setOnSeekBarChangeListener(sliderLabel(
+            onLabel = { tvLine.text = NovelPanelStyle.lineSpacingLabel(it) },
+            onSettle = { v ->
+                lineStep = v
+                cb.onLineSpacing(v)
+                // 行距一变，段距的下限跟着变：这里立刻把它抬上去，避免出现"段距小于行距"
+                refreshParaMin()
+            },
+        ))
 
-        val sbPara = view.findViewById<SeekBar>(R.id.sb_para_spacing)
-        val tvPara = view.findViewById<TextView>(R.id.tv_para_spacing_value)
         sbPara.progress = state.paragraphSpacingDp
-        tvPara.text = "${state.paragraphSpacingDp} dp"
-        sbPara.setOnSeekBarChangeListener(slider {
-            tvPara.text = "${sbPara.progress} dp"
-            cb.onParagraphSpacing(sbPara.progress)
-        })
+        refreshParaMin()
+        sbPara.setOnSeekBarChangeListener(sliderLabel({ tvPara.text = "$it dp" }) { cb.onParagraphSpacing(it) })
 
-        val sbPad = view.findViewById<SeekBar>(R.id.sb_padding)
-        val tvPad = view.findViewById<TextView>(R.id.tv_padding_value)
         sbPad.progress = state.paddingDp
         tvPad.text = "${state.paddingDp} dp"
         sbPad.setOnSeekBarChangeListener(sliderLabel({ tvPad.text = "$it dp" }) { cb.onPadding(it) })
 
-        // ---- 上下间距：正文与屏幕上下边缘之间的空间 ----
-        // 顶部三件浮层（返回/菜单/章节胶囊）与底部胶囊压在屏幕上下 —— 不留空间正文会被压在 UI 底下。
-        // 「自动」按浮层尺寸算一组能避开它们的值；关掉自动才走两个滑块。
-        val swPadAuto = view.findViewById<Switch>(R.id.sw_padding_auto)
-        val tvPadAutoValue = view.findViewById<TextView>(R.id.tv_vertical_padding_value)
-        val tvTopLabel = view.findViewById<TextView>(R.id.tv_top_padding_label)
-        val tvBottomLabel = view.findViewById<TextView>(R.id.tv_bottom_padding_label)
-        val tvTopValue = view.findViewById<TextView>(R.id.tv_top_padding_value)
-        val tvBottomValue = view.findViewById<TextView>(R.id.tv_bottom_padding_value)
-        val sbTop = view.findViewById<SeekBar>(R.id.sb_top_padding)
-        val sbBottom = view.findViewById<SeekBar>(R.id.sb_bottom_padding)
-
-        var padAuto = state.paddingAuto
-        fun refreshPaddingUi() {
-            val top = if (padAuto) state.topPaddingDp else sbTop.progress
-            val bottom = if (padAuto) state.bottomPaddingDp else sbBottom.progress
-            if (padAuto) {
-                sbTop.progress = top
-                sbBottom.progress = bottom
-            }
-            tvTopValue.text = "$top dp"
-            tvBottomValue.text = "$bottom dp"
-            // 自动时把两个滑块**置灰但保留数值**：用户要能看见自动替他选了什么，
-            // 全藏起来会让人以为「这功能没生效」
-            tvPadAutoValue.visibility = if (padAuto) View.VISIBLE else View.GONE
-            tvPadAutoValue.text = getString(R.string.novel_style_padding_auto_value, top, bottom)
-            for (v in listOf<View>(sbTop, sbBottom, tvTopLabel, tvBottomLabel)) {
-                v.isEnabled = !padAuto
-                v.alpha = if (padAuto) 0.45f else 1f
-            }
-        }
-        swPadAuto.setOnCheckedChangeListener { _, checked ->
-            padAuto = checked
-            refreshPaddingUi()
-            cb.onPaddingAuto(checked)
-        }
+        sbTop.progress = state.topPaddingDp
+        tvTopValue.text = "${state.topPaddingDp} dp"
+        sbBottom.progress = state.bottomPaddingDp
+        tvBottomValue.text = "${state.bottomPaddingDp} dp"
         sbTop.setOnSeekBarChangeListener(sliderLabel({ tvTopValue.text = "$it dp" }) { cb.onTopPadding(it) })
         sbBottom.setOnSeekBarChangeListener(sliderLabel({ tvBottomValue.text = "$it dp" }) { cb.onBottomPadding(it) })
-        refreshPaddingUi()
+
+        refreshLayoutEnabled()
 
         // ---- 翻译：模式 / 防抖 / 向后章数 / 每批段数 / 模型 / 字号 / 语言 / 章节列表 ----
         val rbManual = view.findViewById<RadioButton>(R.id.translate_mode_manual)
@@ -476,6 +485,7 @@ class NovelPanelSheet(
             R.id.tv_translator_model_row,
             R.id.tv_source_lang_value, R.id.tv_target_lang_value,
             R.id.tv_debounce_label, R.id.tv_ahead_label, R.id.tv_batch_label,
+            R.id.tv_auto_layout_label,
             R.id.tv_display_label, R.id.tv_font_size_label,
             R.id.tv_line_spacing_label, R.id.tv_para_spacing_label,
             R.id.tv_padding_label, R.id.tv_vertical_padding_label,
@@ -487,7 +497,8 @@ class NovelPanelSheet(
             R.id.tv_debounce_value, R.id.tv_ahead_value, R.id.tv_batch_value,
             R.id.tv_display_value, R.id.tv_font_size_value,
             R.id.tv_line_spacing_value, R.id.tv_para_spacing_value,
-            R.id.tv_padding_value, R.id.tv_vertical_padding_value,
+            R.id.tv_padding_value,
+            R.id.tv_auto_layout_value,
             R.id.tv_top_padding_value, R.id.tv_bottom_padding_value,
             R.id.tv_style_hint,
         ).forEach { view.findViewById<TextView>(it).setTextColor(subColor) }
@@ -495,7 +506,7 @@ class NovelPanelSheet(
         chapterAdapter.dark = darkPanel
         // Switch 配色（避免与面板背景重叠/看不清）
         val swTrack = if (dark) 0xFF3A4046.toInt() else 0xFFCFD8DC.toInt()
-        listOf(R.id.sw_auto_turn, R.id.sw_padding_auto).forEach { id ->
+        listOf(R.id.sw_auto_turn, R.id.sw_auto_layout).forEach { id ->
             view.findViewById<Switch>(id).let {
                 it.thumbTintList = ColorStateList.valueOf(0xFF55AEEA.toInt())
                 it.trackTintList = ColorStateList.valueOf(swTrack)

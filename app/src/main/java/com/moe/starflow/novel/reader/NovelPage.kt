@@ -23,10 +23,11 @@ data class NovelPage(val segments: List<PageSegment>)
  * @param paddingPx 左右内边距
  * @param topPaddingPx 上内边距（正文顶部与屏幕顶之间的距离）
  * @param bottomPaddingPx 下内边距（正文底部与屏幕底之间的距离）
+ * @param keepParagraphsWhole **整段保护**：分页不在段落中间切断（放不下的段整段挪到下一页）。
+ *   由「自动排版」开关决定 —— 见 `NovelPanelStyle.keepParagraphsWhole`。
  *
  * ⚠️ 上下内边距**不只是好看**：顶部三件浮层（返回/菜单/章节胶囊）与底部胶囊压在屏幕上下，
- * 不留出空间正文就会被压在 UI 底下。默认自动取一组能避开这些浮层的值
- * （见 `NovelPanelStyle.verticalPadding`）。
+ * 不留出空间正文就会被压在 UI 底下。
  */
 data class NovelTextStyle(
     val fontSizePx: Float,
@@ -35,6 +36,7 @@ data class NovelTextStyle(
     val paddingPx: Float,
     val topPaddingPx: Float = 0f,
     val bottomPaddingPx: Float = 0f,
+    val keepParagraphsWhole: Boolean = true,
 ) {
     /** 一页真正能放正文的高度。 */
     fun contentHeightPx(pageHeightPx: Int): Float =

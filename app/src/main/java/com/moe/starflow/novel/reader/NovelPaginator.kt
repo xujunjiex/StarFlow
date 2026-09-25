@@ -130,7 +130,6 @@ object NovelPaginator {
         style: NovelTextStyle,
         widthPx: Int,
         heightPx: Int,
-        keepParagraphsWhole: Boolean = true,
     ): List<NovelPage> {
         val visible = paragraphs.filter { it.type != NovelParagraphType.SKIP }
         if (visible.isEmpty() || widthPx <= 0 || heightPx <= 0) return emptyList()
@@ -150,7 +149,8 @@ object NovelPaginator {
         }
 
         return paginateByLines(
-            visible, lineStarts, lineHeight, style.paragraphSpacingPx, contentHeight, keepParagraphsWhole,
+            visible, lineStarts, lineHeight, style.paragraphSpacingPx, contentHeight,
+            style.keepParagraphsWhole,
         )
     }
 }
