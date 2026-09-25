@@ -394,6 +394,7 @@ class ModelDownloadRepository private constructor(private val context: Context) 
     private fun baseDirFor(modelKey: ModelKey): File = when (modelKey) {
         ModelKey.NLLB_GROUP -> File(context.getExternalFilesDir(null), "models")
         ModelKey.HY_MT2_GROUP -> File(context.getExternalFilesDir(null), "models")
+        ModelKey.HY_MT2_Q4_KM -> File(context.getExternalFilesDir(null), "models")
         ModelKey.MANGA_OCR_GROUP -> File(context.getExternalFilesDir(null), "manga_ocr_download")
         ModelKey.RT_DETR_V2 -> File(context.getExternalFilesDir(null), "rt_detr")
         ModelKey.PP_OCR_V6_MEDIUM_DET, ModelKey.PP_OCR_V6_MEDIUM_REC ->

@@ -46,7 +46,7 @@ enum class LlamaCppModelSource { BUILTIN, IMPORTED }
 /**
  * 每个模型一套推理参数（用户已确认：per-model，而不是全局一套）。
  *
- * Hy-MT2 的默认值来自官方推荐（temp 0.7 / top_p 0.6 / top_k 20 / rep 1.05）；
+ * Hy-MT2 的默认值来自官方 GGUF 自带的采样参数（temp 0.7 / top_p 0.8 / top_k 20 / rep 1.05）；
  * 导入的通用 instruct 模型用更保守的默认（temp 0.6 / top_p 0.8），提示词模板由用户按模型风格自己改。
  */
 data class LlamaCppParams(
@@ -106,11 +106,14 @@ data class LlamaCppParams(
 
         fun forSource(source: LlamaCppModelSource): LlamaCppParams =
             if (source == LlamaCppModelSource.BUILTIN) {
+                // 内置 Hy-MT2 系列：直接采用模型自带的采样参数（GGUF 元数据 general.sampling.*：
+                // top_k=20 / top_p=0.8 / temp=0.7）；上下文 2048 够手机翻短句且省内存。
+                // 两个内置模型（1.25-bit 与 Q4_K_M）默认值**完全一致**，避免"为什么两个配置不一样"。
                 LlamaCppParams(
                     promptTemplate = DEFAULT_PROMPT,
                     systemPrompt = DEFAULT_SYSTEM_PROMPT,
                     temperature = 0.7f,
-                    topP = 0.6f,
+                    topP = 0.8f,
                     topK = 20,
                     repetitionPenalty = 1.05f,
                     maxTokens = 4096,

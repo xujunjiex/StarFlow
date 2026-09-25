@@ -397,8 +397,6 @@ class TranslateFragment : Fragment() {
                     // 用磁盘文件检查 NLLB 是否已完整下载，替代旧的 Download_NLLB 布尔标记
                     val nllbDownloaded = ModelDownloadRepository.getInstance(requireContext())
                         .isFullyDownloaded(ModelKey.NLLB_GROUP)
-                    val hymt2Downloaded = ModelDownloadRepository.getInstance(requireContext())
-                        .isFullyDownloaded(ModelKey.HY_MT2_GROUP)
                     if (textAi == Constants.TextAI.NLLB.id && !nllbDownloaded) {
                         LogCollector.d(TAG, "NLLB fully downloaded: $nllbDownloaded")
                         val dialog = AlertDialog.Builder(requireContext())

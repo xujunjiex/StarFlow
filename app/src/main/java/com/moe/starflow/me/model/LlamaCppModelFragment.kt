@@ -33,8 +33,9 @@ import kotlinx.coroutines.launch
  * LlamaCpp 模型管理页。
  *
  * 结构（用户 2026-09 定稿）：
- *  - **内置模型**卡片组：Hy-MT2 1.8B 1.25-bit，仍走既有下载流水线（ModelKey.HY_MT2_GROUP），
- *    可下载/暂停/继续/取消/删除，下载完成后可激活；
+ *  - **内置模型**卡片组：Hy-MT2 1.8B（1.25-bit / Q4_K_M 两张卡），仍走既有下载流水线
+ *    （ModelKey.HY_MT2_GROUP / ModelKey.HY_MT2_Q4_KM），可下载/暂停/继续/取消/删除，
+ *    下载完成后点卡片激活；
  *  - **导入的模型**列表：用户从本地 SAF 选择的任意 .gguf（允许激活/改参数/删除）；
  *  - **添加模型 = 直接导入本地 GGUF**（不做预设列表下载）。
  *
@@ -48,8 +49,6 @@ class LlamaCppModelFragment : Fragment() {
 
     private lateinit var repo: ModelDownloadRepository
     private lateinit var prefs: CustomPreference
-
-    private val builtinKey = ModelKey.HY_MT2_GROUP
 
     // SAF：选一个本地 .gguf（.gguf 没有标准 MIME，MIME 过滤传通配，选完按扩展名 + GGUF 文件头校验）
     private val openDocumentLauncher = registerForActivityResult(
@@ -99,7 +98,8 @@ class LlamaCppModelFragment : Fragment() {
             }
         }
         viewLifecycleOwner.lifecycleScope.launch {
-            repo.refreshFromDisk(builtinKey)
+            // 内置模型可能被外部删除（或刚下载完）→ 把**每个**内置条目对应的下载 key 都刷新一遍
+            LlamaCppModelStore.builtinModelKeys().forEach { repo.refreshFromDisk(it) }
             repo.observe().collectLatest { renderAll(LlamaCppModelStore.models.value, LlamaCppModelStore.activeId.value) }
         }
     }
@@ -172,19 +172,18 @@ class LlamaCppModelFragment : Fragment() {
         row.rowActive.setOnClickListener(activate)
 
         // 按钮右对齐、按内容宽度；同一时刻最多 3 个
-        row.rowParams.visibility = View.VISIBLE
-        row.rowParams.setOnClickListener { showParamsDialog(m) }
         row.rowDelete.visibility = if (m.source == LlamaCppModelSource.BUILTIN && missing) View.GONE else View.VISIBLE
         row.rowDelete.setOnClickListener { confirmDelete(m) }
 
-        if (m.source == LlamaCppModelSource.BUILTIN) {
+        // 内置模型可以有多个（1.25-bit / Q4_K_M）：每行用**自己的**下载 key
+        val key = builtinKeyOf(m)
+        val state = key?.let { repo.getState(it) }
+        if (key != null && state != null) {
             // 内置模型：下载控制（状态来自下载流水线）
-            val state = repo.getState(builtinKey)
             row.rowStatus.visibility = View.VISIBLE
             row.rowProgress.visibility = if (state is DownloadState.Running || state is DownloadState.Paused) View.VISIBLE else View.GONE
             when (state) {
                 DownloadState.Idle, DownloadState.Done -> {
-                    // 已下载时行内不再放「删除」——删除在 ⋮ 菜单里（避免按钮拥挤）
                     row.rowDownload.visibility = if (missing) View.VISIBLE else View.GONE
                     row.rowStatus.text = getString(
                         if (missing) R.string.model_status_idle else R.string.model_status_done
@@ -208,19 +207,28 @@ class LlamaCppModelFragment : Fragment() {
                 }
             }
             row.rowDownload.setOnClickListener {
-                ModelDownloadService.startDownload(requireContext(), builtinKey, isResume = false)
+                ModelDownloadService.startDownload(requireContext(), key, isResume = false)
             }
-            row.rowPause.setOnClickListener { ModelDownloadService.pauseDownload(requireContext(), builtinKey) }
+            row.rowPause.setOnClickListener { ModelDownloadService.pauseDownload(requireContext(), key) }
             row.rowResume.setOnClickListener {
-                ModelDownloadService.startDownload(requireContext(), builtinKey, isResume = true)
+                ModelDownloadService.startDownload(requireContext(), key, isResume = true)
             }
-            row.rowCancel.setOnClickListener { ModelDownloadService.cancelDownload(requireContext(), builtinKey) }
+            row.rowCancel.setOnClickListener { ModelDownloadService.cancelDownload(requireContext(), key) }
         } else {
             row.rowStatus.visibility = View.GONE
             row.rowProgress.visibility = View.GONE
         }
+
+        // 下载/续传进行中只放 [暂停/继续][取消]；其余状态才有 [模型设置]
+        val busy = state is DownloadState.Running || state is DownloadState.Paused || state is DownloadState.Partial
+        row.rowParams.visibility = if (busy) View.GONE else View.VISIBLE
+        row.rowParams.setOnClickListener { showParamsDialog(m) }
         return row.root
     }
+
+    /** 内置模型对应的下载 key（`builtinModelKey` 是枚举名，防止清单被改坏时崩）。 */
+    private fun builtinKeyOf(m: LlamaCppModel): ModelKey? =
+        m.builtinModelKey?.let { name -> runCatching { ModelKey.valueOf(name) }.getOrNull() }
 
     // ───────────────────────── 导入 ─────────────────────────
 
@@ -272,7 +280,7 @@ class LlamaCppModelFragment : Fragment() {
                 viewLifecycleOwner.lifecycleScope.launch {
                     if (isBuiltin) {
                         // 内置：只删下载下来的文件，条目保留（之后可重新下载）
-                        repo.deleteDownload(builtinKey)
+                        builtinKeyOf(m)?.let { repo.deleteDownload(it) }
                     } else {
                         runCatching {
                             m.absoluteFile.delete()

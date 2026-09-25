@@ -1120,7 +1120,6 @@
     <string name="manga_reading">读取原文中…</string>
 
     <!-- ===== Hy-MT2 ===== -->
-    <string name="manage_hymt2_models">管理 Hy-MT2 模型文件</string>
     <string name="llamacpp_section_params">模型设置</string>
     <string name="llamacpp_prompt_label">提示词模板</string>
     <string name="llamacpp_threads_label">生成线程数</string>
@@ -1136,7 +1135,7 @@
     <string name="llamacpp_help_batch_threads">读取原文（prefill/批量）阶段的 CPU 线程数（llama.cpp n_threads_batch）。默认用满设备核心数。与生成线程数相互独立、可分别调整；不要超过核心数。</string>
     <string name="llamacpp_help_context">最大上下文长度。1024≈500-700 个汉字，2048≈1000-1400 个，4096≈2000-2800 个。</string>
     <string name="llamacpp_help_temperature">随机性温度，控制创造性与多样性。翻译建议 0.1（严格直译、高度稳定）到 0.7（适合意译、更自然）。</string>
-    <string name="llamacpp_help_top_p" formatted="false">核采样阈值：只从累计概率达到 60% 的候选词中取样。top_p 越低（如 0.6）越能过滤低概率词，译文更严谨。</string>
+    <string name="llamacpp_help_top_p" formatted="false">核采样阈值：只从累计概率达到阈值（默认 0.8）的候选词中取样。top_p 越低（如 0.6）越能过滤低概率词，译文更严谨。</string>
     <string name="llamacpp_help_top_k">Top-k：每次生成只从概率最高的 20 个候选词中取样，避免译出跑题或错词。</string>
     <string name="llamacpp_help_rep_penalty">重复惩罚，对已生成的 token 轻度惩罚。1.05 可避免无休止重复，又不会破坏正常重复（排版、标点）。</string>
     <string name="llamacpp_help_max_tokens">单次请求的最大输出 token 数。限制一次翻译的输出长度，不是模型上下文（-c）。</string>
@@ -1378,7 +1377,7 @@
     <string name="llamacpp_params_help">参数说明</string>
     <string name="llamacpp_reset_default">恢复默认</string>
     <string name="llamacpp_intro_title">LlamaCpp 本地推理</string>
-    <string name="llamacpp_intro_content">LlamaCpp 本地推理\n\n• 内置模型：Hy-MT2 1.8B（1.25-bit 量化，约 461MB），安装完成后即可离线使用。\n• 导入模型：支持任意 llama.cpp 兼容的 GGUF 文件（Qwen、Gemma、混元 等），按模型自带的对话模板渲染，保持模型原始格式。\n• 每个模型独立保存提示词模板与采样参数。\n\n提示：本地推理占用 CPU 与内存，芯片性能越好翻译越快；推理期间设备会发热并增加耗电。</string>
+    <string name="llamacpp_intro_content">LlamaCpp 本地推理\n\n• 内置模型：Hy-MT2 1.8B 两个量化档（1.25-bit 约 461MB / Q4_K_M 约 1.08GB），下载完成后即可离线使用。\n• 导入模型：支持任意 llama.cpp 兼容的 GGUF 文件（Qwen、Gemma、混元 等），按模型自带的对话模板渲染，保持模型原始格式。\n• 每个模型独立保存提示词模板与采样参数。\n\n提示：本地推理占用 CPU 与内存，芯片性能越好翻译越快；推理期间设备会发热并增加耗电。</string>
     <string name="llamacpp_section_prompt">提示词</string>
     <string name="llamacpp_section_sampling">采样参数</string>
     <string name="llamacpp_section_performance">性能</string>

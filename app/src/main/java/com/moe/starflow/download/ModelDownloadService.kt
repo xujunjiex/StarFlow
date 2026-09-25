@@ -220,6 +220,7 @@ class ModelDownloadService : LifecycleService() {
     private fun ModelKey.displayName(): String = when (this) {
         ModelKey.NLLB_GROUP -> "NLLB"
         ModelKey.HY_MT2_GROUP -> "Hy-MT2"
+        ModelKey.HY_MT2_Q4_KM -> "Hy-MT2 Q4_K_M"
         ModelKey.MANGA_OCR_GROUP -> "manga-ocr"
         ModelKey.RT_DETR_V2 -> "RT-DETR-V2"
         ModelKey.PP_OCR_V5_DET -> "PP-OCRv5 DET"
@@ -446,11 +447,13 @@ class ModelDownloadService : LifecycleService() {
         LogCollector.d(TAG, "GGUF 重打标完成：${file.name} md5=$md5")
         if (md5 != null) {
             com.moe.starflow.llamacpp.LlamaCppModelStore.init(applicationContext)
-            com.moe.starflow.llamacpp.LlamaCppModelStore.builtinHymt2()?.let { m ->
-                if (m.fileName == file.name) {
-                    com.moe.starflow.llamacpp.LlamaCppModelStore.markRetagged(m.id, md5)
+            // 内置模型不止一个（1.25-bit / Q4_K_M）→ 按文件名把所有命中的条目都更新
+            com.moe.starflow.llamacpp.LlamaCppModelStore.models.value
+                .filter {
+                    it.fileName == file.name &&
+                        it.source == com.moe.starflow.llamacpp.LlamaCppModelSource.BUILTIN
                 }
-            }
+                .forEach { com.moe.starflow.llamacpp.LlamaCppModelStore.markRetagged(it.id, md5) }
         }
     }
 
@@ -463,6 +466,7 @@ class ModelDownloadService : LifecycleService() {
     private fun baseDirFor(modelKey: ModelKey): File = when (modelKey) {
         ModelKey.NLLB_GROUP -> File(applicationContext.getExternalFilesDir(null), "models")
         ModelKey.HY_MT2_GROUP -> File(applicationContext.getExternalFilesDir(null), "models")
+        ModelKey.HY_MT2_Q4_KM -> File(applicationContext.getExternalFilesDir(null), "models")
         ModelKey.MANGA_OCR_GROUP -> File(applicationContext.getExternalFilesDir(null), "manga_ocr_download")
         ModelKey.RT_DETR_V2 -> File(applicationContext.getExternalFilesDir(null), "rt_detr")
         ModelKey.PP_OCR_V6_MEDIUM_DET, ModelKey.PP_OCR_V6_MEDIUM_REC ->

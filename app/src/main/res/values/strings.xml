@@ -122,7 +122,7 @@
     <string name="llamacpp_help_batch_threads">CPU threads for the read-source (prefill/batch) stage (llama.cpp n_threads_batch). Defaults to all device cores. Independent of generation threads and adjustable separately; must not exceed the core count.</string>
     <string name="llamacpp_help_context">Maximum context length. 1024≈500–700 Chinese characters, 2048≈1000–1400, 4096≈2000–2800.</string>
     <string name="llamacpp_help_temperature">Randomness temperature. Controls creativity and diversity. For translation, 0.1 (strict literal, highly stable) to 0.7 (better for paraphrase, more natural) is recommended.</string>
-    <string name="llamacpp_help_top_p" formatted="false">Nucleus sampling threshold: only candidates whose cumulative probability reaches 60% are considered. A lower top_p (e.g. 0.6) filters low-probability words for more rigorous translations.</string>
+    <string name="llamacpp_help_top_p" formatted="false">Nucleus sampling threshold: only candidates whose cumulative probability reaches the threshold (default 0.8) are considered. A lower top_p (e.g. 0.6) filters low-probability words for more rigorous translations.</string>
     <string name="llamacpp_help_top_k">Top-k: each generation draws only from the top 20 most probable candidates, preventing off-topic or wrong-word translations.</string>
     <string name="llamacpp_help_rep_penalty">Repetition penalty. Mildly penalizes already-generated tokens. 1.05 avoids endless repetition without breaking legitimate repeats (layout, punctuation).</string>
     <string name="llamacpp_help_max_tokens">Maximum output tokens per single request. Caps the output length of one translation; not the model context (-c).</string>
@@ -214,7 +214,6 @@
     <string name="mlkit_name">ML Kit</string>
     <string name="nllb_description">NLLB is a built-in machine translation model by the MoeTranslate author. It supports multiple languages with good translation quality. The model needs to be downloaded before use: about 1GB on first use, and the device needs at least 6GB of RAM. After the download is complete, it works offline. Click "Manage NLLB Model Files" below to download or delete the model files.</string>
     <string name="manage_nllb_models">Manage NLLB Model Files</string>
-    <string name="manage_hymt2_models">Manage Hy-MT2 model files</string>
     <string name="baiduapi_name">Baidu Translate</string>
     <string name="baiduapi_description">Baidu Translate\'s API, click \"Manage Baidu Translate API\" below to set up the API, and you can also view the API application tutorial (there is a free call quota of 1 million characters per month).</string>
     <string name="tencentapi_description">Tencent Cloud\'s translation API, click \"Manage Tencent Cloud API\" below to set up the API, and you can also view the API application tutorial (there is a free call quota of 5 million characters per month).</string>
@@ -1373,7 +1372,7 @@
     <string name="llamacpp_params_help">Parameter help</string>
     <string name="llamacpp_reset_default">Reset to default</string>
     <string name="llamacpp_intro_title">LlamaCpp Local Inference</string>
-    <string name="llamacpp_intro_content">Local inference powered by LlamaCpp.\n\n• Built-in: Hy-MT2 1.8B (1.25-bit, ~461MB), usable offline once installed.\n• Imported: any llama.cpp-compatible GGUF file (Qwen, Gemma, Hunyuan and others), rendered with the model\'s own chat template so its original format is preserved.\n• Each model stores its own prompt template and sampling parameters.\n\nNote: local inference occupies CPU and memory. A faster chip translates faster, and the device may become warm and consume more power while running.</string>
+    <string name="llamacpp_intro_content">Local inference powered by LlamaCpp.\n\n• Built-in: Hy-MT2 1.8B in two quantization levels (1.25-bit ~461MB / Q4_K_M ~1.08GB), usable offline once downloaded.\n• Imported: any llama.cpp-compatible GGUF file (Qwen, Gemma, Hunyuan and others), rendered with the model\'s own chat template so its original format is preserved.\n• Each model stores its own prompt template and sampling parameters.\n\nNote: local inference occupies CPU and memory. A faster chip translates faster, and the device may become warm and consume more power while running.</string>
     <string name="llamacpp_section_prompt">Prompt</string>
     <string name="llamacpp_section_sampling">Sampling</string>
     <string name="llamacpp_section_performance">Performance</string>

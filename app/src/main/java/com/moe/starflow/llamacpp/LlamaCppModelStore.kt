@@ -34,11 +34,15 @@ object LlamaCppModelStore {
      */
     const val PREF_ACTIVE_IS_BUILTIN = "LlamaCpp_Active_Is_Builtin"
 
-    /** 内置 Hy-MT2 的稳定 id */
+    /** 内置 Hy-MT2 1.25-bit 的稳定 id */
     const val BUILTIN_HYMT2_ID = "builtin:hymt2"
+
+    /** 内置 Hy-MT2 Q4_K_M 的稳定 id */
+    const val BUILTIN_HYMT2_Q4KM_ID = "builtin:hymt2-q4km"
 
     /** downloadinfo.json 读不到时的兜底文件名 */
     private const val BUILTIN_HYMT2_FILE_FALLBACK = "Hy-MT2-1.8B-1.25Bit.gguf"
+    private const val BUILTIN_HYMT2_Q4KM_FILE_FALLBACK = "Hy-MT2-1.8B-Q4_K_M.gguf"
 
     private var ctx: Context? = null
     private var prefs: CustomPreference? = null
@@ -94,8 +98,21 @@ object LlamaCppModelStore {
 
     fun builtinHymt2(): LlamaCppModel? = byId(BUILTIN_HYMT2_ID)
 
+    /** 所有**内置可下载模型**的下载 key（模型管理页刷新磁盘状态时逐个查）。 */
+    fun builtinModelKeys(): List<ModelKey> = BUILTINS.map { it.modelKey }
+
     /** 当前激活的是不是内置 Hy-MT2（决定语言白名单是否套用 38 种限制）。 */
-    fun isHyMt2Active(): Boolean = active()?.id == BUILTIN_HYMT2_ID
+    fun isHyMt2Active(): Boolean = active()?.hyProfile == true
+
+    /**
+     * 某个模型是不是内置 Hy-MT2（= 走 hy 专用 prompt 通道）。
+     *
+     * ⚠️ 内置模型**不止一个**（1.25-bit / Q4_K_M，之后可能还有），所以判据是模型自身的
+     * `hyProfile`，不能再写死某一个 id —— 写死会让第二个内置模型被当成通用模型，
+     * 走错 prompt 通道 / 语言白名单失效。
+     */
+    private fun hyProfileOf(id: String?): Boolean =
+        id != null && _models.value.firstOrNull { it.id == id }?.hyProfile == true
 
     /**
      * 只有 prefs 的调用点的等价判断：引擎是 LlamaCpp 且激活模型是内置 Hy-MT2。
@@ -115,7 +132,7 @@ object LlamaCppModelStore {
     fun setActive(id: String) {
         ensureLoadedSync()
         prefs?.setString(PREF_ACTIVE_ID, id)
-        prefs?.setBoolean(PREF_ACTIVE_IS_BUILTIN, id == BUILTIN_HYMT2_ID)
+        prefs?.setBoolean(PREF_ACTIVE_IS_BUILTIN, hyProfileOf(id))
         _activeId.value = id
         LogCollector.d(TAG, "激活模型：$id")
     }
@@ -203,37 +220,62 @@ object LlamaCppModelStore {
         _activeId.value = active
         if (!active.isNullOrBlank()) {
             prefs?.setString(PREF_ACTIVE_ID, active)
-            prefs?.setBoolean(PREF_ACTIVE_IS_BUILTIN, active == BUILTIN_HYMT2_ID)
+            prefs?.setBoolean(PREF_ACTIVE_IS_BUILTIN, hyProfileOf(active))
         }
         LogCollector.d(TAG, "载入清单：${list.size} 个模型（激活=${active ?: "无"}）")
     }
 
-    /** 内置 Hy-MT2：文件信息取自 downloadinfo.json（与下载流水线同一份真值）。 */
+    /**
+     * 补种**可下载的内置模型**（不打进 APK，只是内置于「模型管理」里可一键下载的条目）。
+     *
+     * 目前两个都是腾讯 Hy-MT2 1.8B，来自官方 HuggingFace 仓库
+     * `https://huggingface.co/tencent/Hy-MT2-1.8B-GGUF`：
+     *  - 1.25-bit（私有量化，下载后由 GgufTypeRetag 重打标 42→43）
+     *  - Q4_K_M（标准量化，无需重打标）
+     * 文件信息（文件名/大小/MD5）一律取自 `assets/models/downloadinfo.json` —— 与下载流水线同一份真值。
+     */
+    private data class BuiltinSpec(
+        val id: String,
+        val displayName: String,
+        val modelKey: ModelKey,
+        val fallbackFileName: String,
+    )
+
+    private val BUILTINS = listOf(
+        BuiltinSpec(BUILTIN_HYMT2_ID, "Hy-MT2 1.8B 1.25-bit", ModelKey.HY_MT2_GROUP, BUILTIN_HYMT2_FILE_FALLBACK),
+        BuiltinSpec(BUILTIN_HYMT2_Q4KM_ID, "Hy-MT2 1.8B Q4_K_M", ModelKey.HY_MT2_Q4_KM, BUILTIN_HYMT2_Q4KM_FILE_FALLBACK),
+    )
+
     private fun seedBuiltinIfMissing(c: Context, list: MutableList<LlamaCppModel>) {
-        if (list.any { it.id == BUILTIN_HYMT2_ID }) return
-        val fileInfo = runCatching {
-            ModelDownloadRepository.getInstance(c).getModelInfo(ModelKey.HY_MT2_GROUP)?.files?.firstOrNull()
-        }.getOrNull()
-        val fileName = fileInfo?.fileName ?: BUILTIN_HYMT2_FILE_FALLBACK
-        list.add(
-            0,
-            LlamaCppModel(
-                id = BUILTIN_HYMT2_ID,
-                displayName = "Hy-MT2 1.8B 1.25-bit",
-                fileName = fileName,
-                sizeBytes = fileInfo?.fileSize ?: 0L,
-                md5 = fileInfo?.checksum?.takeIf { it.isNotBlank() },
-                source = LlamaCppModelSource.BUILTIN,
-                // 内置模型的 gguf 由下载流水线放在 files/models/（与 baseDirFor(HY_MT2_GROUP) 一致）
-                dirName = "models",
-                builtinModelKey = ModelKey.HY_MT2_GROUP.name,
-                hyProfile = true, // 内置 Hy-MT2 恒用专用 prompt 通道（vocab 里有 hy_ 角色标记）
-                params = LlamaCppParams.forSource(LlamaCppModelSource.BUILTIN),
+        var added = false
+        BUILTINS.forEachIndexed { index, spec ->
+            if (list.any { it.id == spec.id }) return@forEachIndexed
+            val fileInfo = runCatching {
+                ModelDownloadRepository.getInstance(c).getModelInfo(spec.modelKey)?.files?.firstOrNull()
+            }.getOrNull()
+            val fileName = fileInfo?.fileName ?: spec.fallbackFileName
+            list.add(
+                // 顺序即展示顺序：1.25-bit 在前
+                minOf(index, list.size),
+                LlamaCppModel(
+                    id = spec.id,
+                    displayName = spec.displayName,
+                    fileName = fileName,
+                    sizeBytes = fileInfo?.fileSize ?: 0L,
+                    md5 = fileInfo?.checksum?.takeIf { it.isNotBlank() },
+                    source = LlamaCppModelSource.BUILTIN,
+                    // 内置模型的 gguf 由下载流水线放在 files/models/（与 baseDirFor 一致）
+                    dirName = "models",
+                    builtinModelKey = spec.modelKey.name,
+                    hyProfile = true, // Hy-MT2 系列 vocab 里都有 hy_ 角色标记 → 用专用 prompt 通道
+                    params = LlamaCppParams.forSource(LlamaCppModelSource.BUILTIN),
+                ),
             )
-        )
+            added = true
+            LogCollector.d(TAG, "补种内置模型：${spec.displayName}（$fileName）")
+        }
         // 老用户全局参数迁移到内置模型（只在第一次补种时做，之后以 per-model 参数为准）
-        migrateLegacyParams(list)
-        LogCollector.d(TAG, "补种内置模型：$fileName")
+        if (added) migrateLegacyParams(list)
     }
 
     /**
@@ -247,6 +289,14 @@ object LlamaCppModelStore {
             val p = list[i].params
             if (p.promptTemplate == LlamaCppParams.LEGACY_DEFAULT_PROMPT) {
                 list[i] = list[i].copy(params = p.copy(promptTemplate = LlamaCppParams.DEFAULT_PROMPT))
+                changed++
+            }
+            // 内置 Hy-MT2 的旧默认采样对（temp 0.7 / top_p 0.6）对齐到模型自带元数据的 0.8；
+            // 只在这个精确组合下改，用户自己调过的值不动
+            if (list[i].source == LlamaCppModelSource.BUILTIN &&
+                list[i].params.temperature == 0.7f && list[i].params.topP == 0.6f
+            ) {
+                list[i] = list[i].copy(params = list[i].params.copy(topP = 0.8f))
                 changed++
             }
             // 旧的通用默认 system 提示词（长规则版）也一并收敛成短角色句，避免与新模板重复

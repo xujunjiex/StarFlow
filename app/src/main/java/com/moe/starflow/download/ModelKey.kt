@@ -42,5 +42,11 @@ enum class ModelKey(val stableId: Int) {
     NLLB_GROUP(2010),
 
     /** Hy-MT2 本地翻译模型（Hy-MT2-1.8B-1.25Bit.gguf 单文件 ~440MB） */
-    HY_MT2_GROUP(2011);
+    HY_MT2_GROUP(2011),
+
+    /**
+     * Hy-MT2 1.8B **Q4_K_M**（标准量化，单文件 ~1.08GB）—— 官方 HuggingFace 仓库直接下载。
+     * 与 1.25-bit 一样是「可下载的内置模型」，不打进 APK；标准量化无需重打标。
+     */
+    HY_MT2_Q4_KM(2012);
 }
