@@ -681,8 +681,8 @@
     <string name="builtin_api_prefix">Built-in</string>
 
     <!-- 模型管理 -->
-    <string name="model_management">Model Management</string>
-    <string name="model_management_tip">Manage downloaded recognition models</string>
+    <string name="model_management">OCR Model Management</string>
+    <string name="model_management_tip">Manage downloaded OCR recognition models</string>
     <string name="detector_section">Detector</string>
     <string name="detector_rtdetr_desc">Block-level + bubble detection, fast, 11MB</string>
     <string name="detector_mlkit_desc">Google ML Kit detection + recognition, ~10MB, fast for subtitles</string>

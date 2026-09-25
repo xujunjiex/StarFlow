@@ -614,8 +614,8 @@
     <string name="builtin_api_prefix">内置</string>
 
     <!-- 模型管理 -->
-    <string name="model_management">模型管理</string>
-    <string name="model_management_tip">管理已下载的识别模型</string>
+    <string name="model_management">OCR 模型管理</string>
+    <string name="model_management_tip">管理已下载的 OCR 识别模型</string>
     <string name="detector_section">检测器</string>
     <string name="detector_rtdetr_desc">块级+气泡检测，速度快，11MB</string>
     <string name="detector_mlkit_desc">Google ML Kit 检测+识别，约10MB，速度快适合字幕翻译</string>

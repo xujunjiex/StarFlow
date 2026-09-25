@@ -87,11 +87,20 @@ class LlamaCppModelFragment : Fragment() {
 
         viewLifecycleOwner.lifecycleScope.launch {
             // 清单一变就重绘；同时把内置模型的磁盘状态刷新一遍（可能被外部删除）
-            LlamaCppModelStore.models.collectLatest { renderAll(it) }
+            LlamaCppModelStore.models.collectLatest {
+                // 型号列表可能被删/加，activeId 也可能一起变
+                renderAll(it, LlamaCppModelStore.activeId.value)
+            }
+        }
+        viewLifecycleOwner.lifecycleScope.launch {
+            // ⚠️ 必须单独观察 activeId：切换模型只改它，不重绘的话 RadioButton 会出现「多个都选中」
+            LlamaCppModelStore.activeId.collectLatest { activeId ->
+                renderAll(LlamaCppModelStore.models.value, activeId)
+            }
         }
         viewLifecycleOwner.lifecycleScope.launch {
             repo.refreshFromDisk(builtinKey)
-            repo.observe().collectLatest { renderAll(LlamaCppModelStore.models.value) }
+            repo.observe().collectLatest { renderAll(LlamaCppModelStore.models.value, LlamaCppModelStore.activeId.value) }
         }
     }
 
@@ -104,9 +113,8 @@ class LlamaCppModelFragment : Fragment() {
 
     // ───────────────────────── 渲染 ─────────────────────────
 
-    private fun renderAll(models: List<LlamaCppModel>) {
+    private fun renderAll(models: List<LlamaCppModel>, activeId: String?) {
         val b = _binding ?: return
-        val activeId = LlamaCppModelStore.activeId.value
 
         b.builtinContainer.removeAllViews()
         models.filter { it.source == LlamaCppModelSource.BUILTIN }.forEach { m ->
@@ -151,6 +159,7 @@ class LlamaCppModelFragment : Fragment() {
         }
 
         row.rowActive.isChecked = (m.id == activeId)
+        // 点卡片 = 设为当前使用（不再单独放按钮）；已是当前/文件缺失时只提示
         val activate = View.OnClickListener {
             if (missing) {
                 UiUtils.showToast(ctx, getString(R.string.llamacpp_model_file_missing, m.displayName), isShort = true)
@@ -162,9 +171,7 @@ class LlamaCppModelFragment : Fragment() {
         row.root.setOnClickListener(activate)
         row.rowActive.setOnClickListener(activate)
 
-        // 按钮直接铺在卡片上（等宽一行），不进溢出菜单
-        row.rowActivate.visibility = if (!missing && m.id != activeId) View.VISIBLE else View.GONE
-        row.rowActivate.setOnClickListener(activate)
+        // 按钮右对齐、按内容宽度；同一时刻最多 3 个
         row.rowParams.visibility = View.VISIBLE
         row.rowParams.setOnClickListener { showParamsDialog(m) }
         row.rowDelete.visibility = if (m.source == LlamaCppModelSource.BUILTIN && missing) View.GONE else View.VISIBLE
