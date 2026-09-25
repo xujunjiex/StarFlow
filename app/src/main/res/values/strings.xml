@@ -1368,6 +1368,7 @@
     <string name="llamacpp_system_prompt_hint">Used only for imported models (Hy-MT2 has its own chat format)</string>
     <string name="llamacpp_enable_thinking_label">Enable thinking (reasoning)</string>
     <string name="llamacpp_enable_thinking_hint">Off = faster translation. Only affects models that support reasoning (e.g. Qwen3).</string>
+    <string name="llamacpp_params_effect_hint">Context size and thread counts take effect the next time the model is loaded; prompts and sampling parameters apply immediately.</string>
     <string name="llamacpp_params_help">Parameter help</string>
     <string name="llamacpp_reset_default">Reset to default</string>
     <string name="llamacpp_intro_title">LlamaCpp Local Inference</string>

@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   LlamaCpp 模型管理页。
-  这里**不再重复**功能说明（首次进入有弹窗、底部留一个「功能说明」入口可随时再看），
-  页面只放：内置模型卡片组 + 导入模型列表 + 添加模型。
+  这里**不再重复**功能说明（首次进入有弹窗、底部留一个「功能说明」入口可随时再看）。
+  文字颜色全部显式指定（@color/text_primary / text_tertiary）：深浅主题下都不会与卡片/页面底色融在一起。
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -23,6 +23,7 @@
             android:layout_height="wrap_content"
             android:paddingBottom="8dp"
             android:text="@string/llamacpp_group_builtin"
+            android:textColor="@color/text_primary"
             android:textSize="14sp"
             android:textStyle="bold" />
 
@@ -39,6 +40,7 @@
             android:layout_marginTop="18dp"
             android:paddingBottom="8dp"
             android:text="@string/llamacpp_group_imported"
+            android:textColor="@color/text_primary"
             android:textSize="14sp"
             android:textStyle="bold" />
 
@@ -57,13 +59,18 @@
             android:layout_height="wrap_content"
             android:orientation="vertical" />
 
-        <!-- ========== 添加模型 ========== -->
-        <Button
+        <!-- ========== 添加模型（蓝色主操作胶囊，与项目其它主按钮一致） ========== -->
+        <TextView
             android:id="@+id/btnAddModel"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="18dp"
-            android:text="@string/llamacpp_add_model" />
+            android:background="@drawable/btn_download"
+            android:gravity="center"
+            android:minHeight="44dp"
+            android:text="@string/llamacpp_add_model"
+            android:textColor="@android:color/white"
+            android:textSize="14sp" />
 
         <TextView
             android:id="@+id/addHint"
@@ -89,13 +96,16 @@
             android:textColor="@color/text_tertiary"
             android:textSize="12sp" />
 
-        <!-- 导入进度（导入期间显示） -->
+        <!-- 导入进度（导入期间显示；任务在应用级作用域，离开页面也会继续） -->
         <LinearLayout
             android:id="@+id/importProgressBox"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="14dp"
+            android:background="@drawable/dialog_background"
             android:orientation="vertical"
+            android:paddingHorizontal="14dp"
+            android:paddingVertical="12dp"
             android:visibility="gone">
 
             <TextView
@@ -103,7 +113,8 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="@string/llamacpp_import_started"
-                android:textSize="13sp" />
+                android:textColor="@color/text_primary"
+                android:textSize="12sp" />
 
             <ProgressBar
                 android:id="@+id/importProgress"
@@ -113,16 +124,19 @@
                 android:layout_marginTop="6dp"
                 android:max="100" />
 
-            <Button
+            <TextView
                 android:id="@+id/btnCancelImport"
-                style="?android:attr/borderlessButtonStyle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_gravity="end"
-                android:minWidth="0dp"
-                android:paddingHorizontal="8dp"
+                android:layout_marginTop="6dp"
+                android:background="@drawable/btn_neutral"
+                android:gravity="center"
+                android:minHeight="32dp"
+                android:minWidth="72dp"
                 android:text="@string/cancel"
-                android:textSize="13sp" />
+                android:textColor="@color/text_primary"
+                android:textSize="12sp" />
         </LinearLayout>
     </LinearLayout>
 </ScrollView>

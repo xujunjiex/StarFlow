@@ -290,7 +290,7 @@ class LlamaCppModelFragment : Fragment() {
 
         b.noteText.text = getString(
             if (isBuiltin) R.string.llamacpp_params_builtin_note else R.string.llamacpp_params_generic_note
-        )
+        ) + "\n\n" + getString(R.string.llamacpp_params_effect_hint)
         b.systemPromptBox.visibility = if (isBuiltin) View.GONE else View.VISIBLE
         b.thinkingBox.visibility = if (isBuiltin) View.GONE else View.VISIBLE
         b.thinkingHint.visibility = if (isBuiltin) View.GONE else View.VISIBLE

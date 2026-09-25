@@ -85,7 +85,7 @@ class LlamaCppTranslation(
         cancelled = false
         val epoch = currentEpoch
         val targetName = LlamaCppLanguages.getTargetName(targetLanguage)
-        val params = model.params
+        val params = currentParams()
         currentTask = Thread {
             try {
                 val tLoad0 = System.currentTimeMillis()
@@ -194,7 +194,7 @@ class LlamaCppTranslation(
     ) {
         cancelled = false
         val epoch = currentEpoch
-        val params = model.params
+        val params = currentParams()
         currentTask = Thread {
             try {
                 val h = ensureLoaded()
@@ -252,6 +252,12 @@ class LlamaCppTranslation(
 
     // ───────────────────────── 加载 / 释放 ─────────────────────────
 
+    /**
+     * 每次推理现读参数：采样/提示词类参数改了**不用重载模型**（加载期参数见 LlamaCppSharedHolder.keyOf）。
+     * 清单里查不到（模型被删）时退回本实例创建时的快照，保证行为可预期。
+     */
+    private fun currentParams(): LlamaCppParams =
+        LlamaCppModelStore.byId(model.id)?.params ?: model.params
     private fun loadFailureMessage(): String = when {
         released -> ctx.getString(R.string.llamacpp_released_translate)
         !model.absoluteFile.isFile -> ctx.getString(R.string.llamacpp_model_file_missing, model.displayName)
@@ -280,7 +286,7 @@ class LlamaCppTranslation(
                 }
             }
 
-            val params = model.params
+            val params = currentParams()
             val epochAtEntry = currentEpoch
             handle = LlamaCppNative.nativeInit(file.absolutePath, params.threads, params.batchThreads, params.contextSize)
             if (handle == 0L) {

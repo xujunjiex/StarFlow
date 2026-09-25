@@ -1373,6 +1373,7 @@
     <string name="llamacpp_system_prompt_hint">仅对导入的模型生效（内置 Hy-MT2 有自己的对话格式）</string>
     <string name="llamacpp_enable_thinking_label">启用思考（推理）</string>
     <string name="llamacpp_enable_thinking_hint">关闭可加快翻译。仅对支持推理的模型（如 Qwen3）生效。</string>
+    <string name="llamacpp_params_effect_hint">上下文长度与线程数在下次加载模型时生效；提示词与采样参数立即生效。</string>
     <string name="llamacpp_params_help">参数说明</string>
     <string name="llamacpp_reset_default">恢复默认</string>
     <string name="llamacpp_intro_title">LlamaCpp 本地推理</string>

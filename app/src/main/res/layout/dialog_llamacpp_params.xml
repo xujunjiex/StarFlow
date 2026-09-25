@@ -1,8 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   单个 LlamaCpp 模型的参数对话框（per-model：每个模型各自一套提示词与采样参数）。
-  布局原则：分区（提示词 / 采样参数 / 性能）+ 双列配对字段留出横向间距 + 底部两行按钮，
-  不要把所有控件和按钮挤成一片。
+
+  两条硬约定（都踩过坑）：
+    - 所有文字颜色**显式**指定（@color/text_primary / text_tertiary）：对话框底是 @drawable/dialog_background
+      （浅色 = #FFFFFF / 夜间 = #121212），不要依赖系统默认 Button/Text 颜色，否则浅色下看不见；
+    - 按钮用 TextView + 胶囊底图（btn_neutral 次要 / btn_download 主操作），不用默认 Button 样式。
 -->
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -32,6 +35,7 @@
             android:layout_marginTop="16dp"
             android:paddingBottom="6dp"
             android:text="@string/llamacpp_section_prompt"
+            android:textColor="@color/text_primary"
             android:textSize="14sp"
             android:textStyle="bold" />
 
@@ -39,6 +43,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/llamacpp_prompt_label"
+            android:textColor="@color/text_primary"
             android:textSize="12sp" />
 
         <EditText
@@ -49,6 +54,8 @@
             android:gravity="top"
             android:inputType="textMultiLine"
             android:minLines="3"
+            android:textColor="@color/text_primary"
+            android:textColorHint="@color/text_tertiary"
             android:textSize="13sp" />
 
         <LinearLayout
@@ -62,6 +69,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
                 android:text="@string/llamacpp_system_prompt_label"
+                android:textColor="@color/text_primary"
                 android:textSize="12sp" />
 
             <EditText
@@ -72,6 +80,8 @@
                 android:gravity="top"
                 android:inputType="textMultiLine"
                 android:minLines="2"
+                android:textColor="@color/text_primary"
+                android:textColorHint="@color/text_tertiary"
                 android:textSize="13sp" />
 
             <TextView
@@ -90,6 +100,7 @@
             android:layout_marginTop="16dp"
             android:paddingBottom="6dp"
             android:text="@string/llamacpp_section_sampling"
+            android:textColor="@color/text_primary"
             android:textSize="14sp"
             android:textStyle="bold" />
 
@@ -108,6 +119,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="@string/llamacpp_temp_label"
+                    android:textColor="@color/text_primary"
                     android:textSize="12sp" />
 
                 <EditText
@@ -116,6 +128,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
                     android:inputType="numberDecimal"
+                    android:textColor="@color/text_primary"
                     android:textSize="13sp" />
             </LinearLayout>
 
@@ -130,6 +143,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="@string/llamacpp_top_p_label"
+                    android:textColor="@color/text_primary"
                     android:textSize="12sp" />
 
                 <EditText
@@ -138,6 +152,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
                     android:inputType="numberDecimal"
+                    android:textColor="@color/text_primary"
                     android:textSize="13sp" />
             </LinearLayout>
         </LinearLayout>
@@ -158,6 +173,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="@string/llamacpp_top_k_label"
+                    android:textColor="@color/text_primary"
                     android:textSize="12sp" />
 
                 <EditText
@@ -166,6 +182,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
                     android:inputType="number"
+                    android:textColor="@color/text_primary"
                     android:textSize="13sp" />
             </LinearLayout>
 
@@ -180,6 +197,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="@string/llamacpp_rep_penalty_label"
+                    android:textColor="@color/text_primary"
                     android:textSize="12sp" />
 
                 <EditText
@@ -188,6 +206,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
                     android:inputType="numberDecimal"
+                    android:textColor="@color/text_primary"
                     android:textSize="13sp" />
             </LinearLayout>
         </LinearLayout>
@@ -208,6 +227,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="@string/llamacpp_max_tokens_label"
+                    android:textColor="@color/text_primary"
                     android:textSize="12sp" />
 
                 <EditText
@@ -216,6 +236,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
                     android:inputType="number"
+                    android:textColor="@color/text_primary"
                     android:textSize="13sp" />
             </LinearLayout>
 
@@ -230,6 +251,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="@string/llamacpp_context_label"
+                    android:textColor="@color/text_primary"
                     android:textSize="12sp" />
 
                 <com.google.android.material.textfield.MaterialAutoCompleteTextView
@@ -237,7 +259,9 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
-                    android:inputType="none" />
+                    android:inputType="none"
+                    android:textColor="@color/text_primary"
+                    android:textSize="13sp" />
             </LinearLayout>
         </LinearLayout>
 
@@ -248,6 +272,7 @@
             android:layout_marginTop="16dp"
             android:paddingBottom="6dp"
             android:text="@string/llamacpp_section_performance"
+            android:textColor="@color/text_primary"
             android:textSize="14sp"
             android:textStyle="bold" />
 
@@ -266,6 +291,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="@string/llamacpp_threads_label"
+                    android:textColor="@color/text_primary"
                     android:textSize="12sp" />
 
                 <EditText
@@ -274,6 +300,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
                     android:inputType="number"
+                    android:textColor="@color/text_primary"
                     android:textSize="13sp" />
             </LinearLayout>
 
@@ -288,6 +315,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="@string/llamacpp_batch_threads_label"
+                    android:textColor="@color/text_primary"
                     android:textSize="12sp" />
 
                 <EditText
@@ -296,6 +324,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
                     android:inputType="number"
+                    android:textColor="@color/text_primary"
                     android:textSize="13sp" />
             </LinearLayout>
         </LinearLayout>
@@ -318,6 +347,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:text="@string/llamacpp_enable_thinking_label"
+                android:textColor="@color/text_primary"
                 android:textSize="12sp" />
         </LinearLayout>
 
@@ -330,7 +360,7 @@
             android:textColor="@color/text_tertiary"
             android:textSize="11sp" />
 
-        <!-- ===================== 操作区（两行，避免挤成一排） ===================== -->
+        <!-- ===================== 操作区（两行，胶囊按钮） ===================== -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -338,48 +368,62 @@
             android:gravity="start"
             android:orientation="horizontal">
 
-            <Button
+            <TextView
                 android:id="@+id/btnHelp"
-                style="?android:attr/borderlessButtonStyle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:minWidth="0dp"
-                android:paddingHorizontal="8dp"
+                android:background="@drawable/btn_neutral"
+                android:gravity="center"
+                android:minHeight="32dp"
+                android:minWidth="72dp"
                 android:text="@string/llamacpp_params_help"
+                android:textColor="@color/text_primary"
                 android:textSize="12sp" />
 
-            <Button
+            <TextView
                 android:id="@+id/btnReset"
-                style="?android:attr/borderlessButtonStyle"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="8dp"
-                android:minWidth="0dp"
-                android:paddingHorizontal="8dp"
+                android:background="@drawable/btn_neutral"
+                android:gravity="center"
+                android:minHeight="32dp"
+                android:minWidth="72dp"
                 android:text="@string/llamacpp_reset_default"
+                android:textColor="@color/text_primary"
                 android:textSize="12sp" />
         </LinearLayout>
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
+            android:layout_marginTop="8dp"
             android:gravity="end"
             android:orientation="horizontal">
 
-            <Button
+            <TextView
                 android:id="@+id/btnCancel"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
+                android:background="@drawable/btn_neutral"
+                android:gravity="center"
+                android:minHeight="36dp"
+                android:minWidth="80dp"
                 android:text="@string/user_cancel"
+                android:textColor="@color/text_primary"
                 android:textSize="13sp" />
 
-            <Button
+            <TextView
                 android:id="@+id/btnSave"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="10dp"
+                android:background="@drawable/btn_download"
+                android:gravity="center"
+                android:minHeight="36dp"
+                android:minWidth="80dp"
                 android:text="@string/save"
+                android:textColor="@android:color/white"
                 android:textSize="13sp" />
         </LinearLayout>
     </LinearLayout>

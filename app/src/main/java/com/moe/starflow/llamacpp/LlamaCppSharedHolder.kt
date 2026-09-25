@@ -20,7 +20,13 @@ object LlamaCppSharedHolder {
     @Volatile private var instance: LlamaCppTranslation? = null
     @Volatile private var instanceKey: String? = null
 
-    /** 参数指纹：任何一个影响推理的参数变了都要重建（模型加载时读的就是这些值）。 */
+    /**
+     * 实例指纹 = **只在加载时生效**的参数（模型文件、上下文、线程数）。
+     *
+     * ⚠️ 提示词 / 温度 / top_p / top_k / 重复惩罚 / 最大输出 / 思考开关**不进指纹**：
+     * 这些是每次推理现读的（见 `LlamaCppTranslation.currentParams()`），改了立即生效，
+     * 没必要为了改个温度把几百 MB 的模型重新加载一遍。
+     */
     private fun keyOf(model: LlamaCppModel): String {
         val p = model.params
         return buildString {
@@ -28,15 +34,7 @@ object LlamaCppSharedHolder {
             append(model.fileName).append('|')
             append(p.contextSize).append('|')
             append(p.threads).append('|')
-            append(p.batchThreads).append('|')
-            append(p.promptTemplate.hashCode()).append('|')
-            append(p.systemPrompt.hashCode()).append('|')
-            append(p.temperature).append('|')
-            append(p.topP).append('|')
-            append(p.topK).append('|')
-            append(p.repetitionPenalty).append('|')
-            append(p.maxTokens).append('|')
-            append(p.enableThinking)
+            append(p.batchThreads)
         }
     }
 

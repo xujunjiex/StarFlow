@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  中性胶囊按钮底图：卡片上的次要操作（模型设置 / 设为当前 / 暂停 / 取消）用它。
+  颜色走 @color/surface_variant（浅色 #EFF7FB / 夜间 #1E1E22），配合 @color/text_primary 文字，
+  深浅两个主题下都清晰可见 —— 不要用系统默认 Button 样式（在浅色卡片上会出现白字白底看不见）。
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <solid android:color="@color/surface_variant" />
+    <corners android:radius="8dp" />
+</shape>

@@ -1,18 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   单个 LlamaCpp 模型行（内置 Hy-MT2 与用户导入的 GGUF 共用）。
-  按钮**直接铺在卡片上**：一行等宽（weight=1），按状态显隐，最多同时出现 3 个，
-  所以既不用「⋮ 菜单」也不会挤。
-    内置已下载：[模型设置] [删除]
-    内置未下载：[下载] [模型设置] [删除]
-    下载中：    [暂停] [取消]
-    暂停/未完成：[继续] [取消]
-    导入的模型：[设为当前] [模型设置] [删除]
+
+  配色/按钮沿用项目既有约定（见 item_model_row_browser.xml）：
+    - 文字颜色必须显式写（@color/text_primary / text_tertiary），**不要依赖系统默认 Button 样式** ——
+      浅色卡片（@color/surface = #FFFFFF）上默认样式的文字/底色会与卡片融在一起看不见；
+    - 按钮用 TextView + 胶囊底图：主操作 @drawable/btn_download（蓝）+ 白字，
+      危险操作 @drawable/btn_delete（红）+ 白字，次要操作 @drawable/btn_neutral + @color/text_primary；
+    - 一行等宽（weight=1）、最多同时 3 个，高度 minHeight=34dp，不会互相重叠。
+
+  显隐规则：
+    内置已下载：[模型设置][删除]
+    内置未下载：[下载][模型设置][删除]
+    下载中：[暂停][取消] / 暂停或未完成：[继续][取消]
+    导入的模型：[设为当前][模型设置][删除]
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_marginBottom="10dp"
+    android:layout_marginBottom="12dp"
     android:background="@drawable/dialog_background"
     android:orientation="vertical"
     android:paddingHorizontal="14dp"
@@ -29,6 +35,7 @@
             android:id="@+id/rowActive"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:buttonTint="@color/primary"
             android:clickable="false"
             android:focusable="false" />
 
@@ -44,6 +51,7 @@
                 android:layout_height="wrap_content"
                 android:ellipsize="middle"
                 android:singleLine="true"
+                android:textColor="@color/text_primary"
                 android:textSize="14sp"
                 android:textStyle="bold" />
 
@@ -61,6 +69,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="8dp"
+            android:textColor="@color/success"
             android:textSize="11sp"
             android:textStyle="bold"
             android:visibility="gone" />
@@ -71,7 +80,7 @@
         android:id="@+id/rowStatus"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
+        android:layout_marginTop="6dp"
         android:textColor="@color/text_tertiary"
         android:textSize="12sp"
         android:visibility="gone" />
@@ -81,97 +90,126 @@
         style="?android:attr/progressBarStyleHorizontal"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
+        android:layout_marginTop="4dp"
         android:max="100"
         android:visibility="gone" />
 
-    <!-- 第三行：等宽按钮，直接铺在卡片上 -->
+    <!-- 第三行：等宽胶囊按钮 -->
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
+        android:layout_marginTop="10dp"
         android:orientation="horizontal">
 
-        <Button
+        <TextView
             android:id="@+id/rowActivate"
-            style="?android:attr/borderlessButtonStyle"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
+            android:layout_marginEnd="6dp"
             android:layout_weight="1"
-            android:minWidth="0dp"
+            android:background="@drawable/btn_neutral"
+            android:gravity="center"
+            android:maxLines="1"
+            android:minHeight="34dp"
             android:paddingHorizontal="4dp"
             android:text="@string/llamacpp_set_active"
-            android:textSize="13sp"
+            android:textColor="@color/text_primary"
+            android:textSize="12sp"
             android:visibility="gone" />
 
-        <Button
+        <TextView
             android:id="@+id/rowDownload"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
+            android:layout_marginEnd="6dp"
             android:layout_weight="1"
-            android:minWidth="0dp"
+            android:background="@drawable/btn_download"
+            android:gravity="center"
+            android:maxLines="1"
+            android:minHeight="34dp"
             android:paddingHorizontal="4dp"
             android:text="@string/download"
-            android:textSize="13sp"
+            android:textColor="@android:color/white"
+            android:textSize="12sp"
             android:visibility="gone" />
 
-        <Button
+        <TextView
             android:id="@+id/rowResume"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
+            android:layout_marginEnd="6dp"
             android:layout_weight="1"
-            android:minWidth="0dp"
+            android:background="@drawable/btn_download"
+            android:gravity="center"
+            android:maxLines="1"
+            android:minHeight="34dp"
             android:paddingHorizontal="4dp"
             android:text="@string/resume"
-            android:textSize="13sp"
+            android:textColor="@android:color/white"
+            android:textSize="12sp"
             android:visibility="gone" />
 
-        <Button
+        <TextView
             android:id="@+id/rowPause"
-            style="?android:attr/borderlessButtonStyle"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
+            android:layout_marginEnd="6dp"
             android:layout_weight="1"
-            android:minWidth="0dp"
+            android:background="@drawable/btn_neutral"
+            android:gravity="center"
+            android:maxLines="1"
+            android:minHeight="34dp"
             android:paddingHorizontal="4dp"
             android:text="@string/pause"
-            android:textSize="13sp"
+            android:textColor="@color/text_primary"
+            android:textSize="12sp"
             android:visibility="gone" />
 
-        <Button
+        <TextView
             android:id="@+id/rowCancel"
-            style="?android:attr/borderlessButtonStyle"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
+            android:layout_marginEnd="6dp"
             android:layout_weight="1"
-            android:minWidth="0dp"
+            android:background="@drawable/btn_neutral"
+            android:gravity="center"
+            android:maxLines="1"
+            android:minHeight="34dp"
             android:paddingHorizontal="4dp"
             android:text="@string/cancel"
-            android:textSize="13sp"
+            android:textColor="@color/text_primary"
+            android:textSize="12sp"
             android:visibility="gone" />
 
-        <Button
+        <TextView
             android:id="@+id/rowParams"
-            style="?android:attr/borderlessButtonStyle"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
+            android:layout_marginEnd="6dp"
             android:layout_weight="1"
-            android:minWidth="0dp"
+            android:background="@drawable/btn_neutral"
+            android:gravity="center"
+            android:maxLines="1"
+            android:minHeight="34dp"
             android:paddingHorizontal="4dp"
             android:text="@string/llamacpp_section_params"
-            android:textSize="13sp"
+            android:textColor="@color/text_primary"
+            android:textSize="12sp"
             android:visibility="gone" />
 
-        <Button
+        <TextView
             android:id="@+id/rowDelete"
-            style="?android:attr/borderlessButtonStyle"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:minWidth="0dp"
+            android:background="@drawable/btn_delete"
+            android:gravity="center"
+            android:maxLines="1"
+            android:minHeight="34dp"
             android:paddingHorizontal="4dp"
             android:text="@string/delete"
-            android:textSize="13sp"
+            android:textColor="@android:color/white"
+            android:textSize="12sp"
             android:visibility="gone" />
     </LinearLayout>
 </LinearLayout>
