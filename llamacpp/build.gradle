@@ -1,0 +1,78 @@
+/*
+ * :llamacpp —— 本地 GGUF 推理模块（llama.cpp 源码自编）
+ *
+ * 纯 native 模块：只暴露 translationapi.llamacpp.LlamaCppNative 对应的 JNI 桥
+ * （Kotlin 侧的引擎/模型管理层仍在 :app 里）。
+ *
+ * 与老的 :app 内 hymt2 桥接的区别：
+ *   - llama.cpp 不再用预编译 .so，而是本模块的 submodule（llamacpp/src/main/cpp/llama.cpp）源码编译；
+ *   - 打开 LLAMA_BUILD_COMMON，拿到 minja（Jinja）对话模板渲染，任何模型自带模板都能正确拼 prompt；
+ *   - 老桥接（libhymt2.so）在迁移期保留，便于真机上 A/B 对比。
+ */
+plugins {
+    id 'com.android.library'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.moe.starflow.llamacpp'
+    compileSdk 35
+
+    defaultConfig {
+        minSdk 29
+        consumerProguardFiles 'consumer-rules.pro'
+
+        // llama.cpp 只对 arm64 有意义（与项目其它 native 库一致）
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+
+        externalNativeBuild {
+            cmake {
+                // llama.cpp 大量使用异常与 RTTI，且要求 C++17
+                cppFlags '-std=c++17 -fexceptions -frtti'
+                arguments '-DANDROID_STL=c++_shared',
+                          '-DCMAKE_BUILD_TYPE=Release'
+            }
+        }
+    }
+
+    // 与 :app 保持同一个 NDK，避免两套工具链产物混用
+    ndkVersion "25.2.9519653"
+
+    externalNativeBuild {
+        cmake {
+            path file('src/main/cpp/CMakeLists.txt')
+            version '3.22.1'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    buildFeatures {
+        buildConfig false
+    }
+
+    packagingOptions {
+        jniLibs {
+            useLegacyPackaging false
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.15.0'
+}

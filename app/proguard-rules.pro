@@ -31,6 +31,8 @@
 # HyMt2StreamCallback 的 onToken/onPhase 由 hymt2_bridge.cpp 通过 GetMethodID 查找，
 # R8 混淆改名后找不到 → art::ThrowNewExceptionF → abort（release-only 崩溃）
 -keep class translationapi.hymt2translation.HyMt2StreamCallback { *; }
+# LlamaCppStreamCallback 同理（llamacpp_bridge.cpp 通过 GetMethodID 查找 onToken/onPhase）
+-keep class translationapi.llamacpp.LlamaCppStreamCallback { *; }
 
 # --- Serializable / Parcelable ---
 -keepclassmembers class * implements java.io.Serializable {
