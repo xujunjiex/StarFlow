@@ -49,6 +49,17 @@ object TranslateUtils {
     // 带编号翻译结果的行匹配：`[N] 文本`（N 可为任意数字，前缀 [N]、N.、N、 也兼容）。两个解析器共用，避免行为漂移。
     private val NUMBERED_TRANSLATION_REGEX = Regex("""\[(\d+)]\s*([\s\S]*?)(?=\[\d+]|$)""")
 
+    /**
+     * 降级按行拆时用的行首编号前缀（`[N]` / `[N` / `N.` / `N、`）。
+     *
+     * ⚠️ **不要写回 `^\[?\d+]?[.、\s]*`**：`\[?` 与 `]?` 各自独立可选，合起来就能匹配
+     * 「一个裸数字开头的行」，于是把正文里的数字整行吃掉 —— 页码气泡（OCR 出 `330`）恰好是
+     * 每批的第 1 条时，这一行被丢掉 → 结果少一条 → 补齐空串 → **整批译文前移一位、末条空白**。
+     * 2026-09-25 用户日志实测：火山(standard)/DeepSeek(prefix) 三家同一页稳定复现，
+     * 智谱(json，按数组下标) 不受影响。裸数字行必须原样保留。
+     */
+    private val LINE_MARKER_PREFIX = Regex("""^(?:\[\d+]?|\d+[.、])\s*""")
+
     // 批量翻译超时策略：
     //  - 网络 API：请求发出起 35s 内必须返回（无响应即超时）
     //  - 本地引擎（Hy-MT2）：不设总时长（本地总会翻完），改为「30s 无任何新输出」的卡死看门狗
@@ -75,18 +86,26 @@ object TranslateUtils {
     ): List<TranslatedBubble> {
         LogCollector.d(TAG, "translateBubbles: ${bubbles.size} bubbles, translator=${translator.javaClass.simpleName}")
 
-        // 准备气泡数据：清理文本，过滤空的，分离纯符号气泡
+        // 准备气泡数据：清理文本，过滤空的，分离「不需要翻译」的气泡（纯符号 / 纯数字页码）
         val preparedBubbles = mutableListOf<Pair<BubbleRegion, String>>()
-        val symbolOnlyBubbles = mutableListOf<TranslatedBubble>()
+        val passthroughBubbles = mutableListOf<TranslatedBubble>()
 
         for (bubble in bubbles) {
             val cleaned = bubble.texts.map { cleanOcrText(it) }.filter { it.isNotBlank() }
             if (cleaned.isEmpty()) continue
             val combinedText = cleaned.joinToString("")
 
-            if (isSymbolOnlyText(combinedText)) {
-                LogCollector.d(TAG, "translateBubbles: skipping symbol-only: '$combinedText'")
-                symbolOnlyBubbles.add(TranslatedBubble(
+            // 纯符号与纯数字（页码 "330"）都原文回填、**不进翻译批次**：
+            // 页码本身翻不出内容，却要占掉批量编号里的一位 —— 而模型把它原样返回成"纯数字行"时，
+            // 正是 2026-09-25 那批「整批译文前移一位 + 末条空白」的触发源。从源头掐掉最稳。
+            val reason = when {
+                isSymbolOnlyText(combinedText) -> "symbol-only"
+                isNumericOnlyText(combinedText) -> "numeric"
+                else -> null
+            }
+            if (reason != null) {
+                LogCollector.d(TAG, "translateBubbles: skipping $reason: '$combinedText'")
+                passthroughBubbles.add(TranslatedBubble(
                     rect = bubble.rect,
                     originalText = combinedText,
                     translatedText = combinedText,
@@ -101,7 +120,7 @@ object TranslateUtils {
                 preparedBubbles.add(bubble to combinedText)
             }
         }
-        if (preparedBubbles.isEmpty()) return symbolOnlyBubbles
+        if (preparedBubbles.isEmpty()) return passthroughBubbles
 
         // AI 翻译（OpenAI 兼容 / 本地 Hy-MT2）用批量请求，其余机器翻译用逐个请求
         // Hy-MT2 走批量：输入 [N] 编号，模型按官方默认模板只输出译文并保持 [N] 编号，管线按编号解析
@@ -120,8 +139,17 @@ object TranslateUtils {
         // parseNumberedTranslations，所以这里兜一次，幂等）。
         // ⚠️ 用户「译文替换表」**不在这里**：它在渲染时套用（OverlayRenderer）—— 译文只存文本、
         // overlay 后期才画，所以改规则只需重新渲染，不必重翻 API。
-        return (symbolOnlyBubbles + translatedResults).map { bubble ->
-            val out = TranslationTextRules.normalizeEllipsis(bubble.translatedText)
+        //
+        // ⚠️ **空译文绝不能进结果**：解析错位、模型漏给、机器翻译返回空串都会产出 `""`，
+        // 渲染出来就是「识别到了但没翻」（用户看到的空白格）。回退原文至少让用户看见"这句没翻"，
+        // 而不是一片空白；调用方（管道/阅读器）也据此把这条当作"没译出来"。
+        val blankCount = (passthroughBubbles + translatedResults).count { it.translatedText.isBlank() }
+        if (blankCount > 0) {
+            LogCollector.w(TAG, "translateBubbles: $blankCount/${preparedBubbles.size} 条译文为空，已回退原文")
+        }
+        return (passthroughBubbles + translatedResults).map { bubble ->
+            val normalized = TranslationTextRules.normalizeEllipsis(bubble.translatedText)
+            val out = normalized.ifBlank { bubble.originalText }
             if (out == bubble.translatedText) bubble else bubble.copy(translatedText = out)
         }
     }
@@ -464,26 +492,61 @@ object TranslateUtils {
      *
      * ⚠️ 先做点串归一化：`[\s\S]*?` 抓的是**跨行**内容，模型把一条译文写成
      * `[1] .` / `.` / `.` 三行时，这条译文就真的是 `".\n.\n."`（用户看到的「每个点占一行」）。
+     *
+     * 三条分支，按可靠性从高到低：
+     * 1. **编号齐全**（模型连 `[1]` 一起复述）→ 按位置取。
+     * 2. **编号从 `[2]` 起**（续写 prefill `"[1] "` 被服务端吞掉，content 里没有 `[1]`，
+     *    火山 standard / DeepSeek prefix / 千问 partial 都是这个形态）→ **第一个标记之前的正文
+     *    就是第 1 条**，按**编号**对位重建。⚠️ 绝不能在这里退化成「按行拆」：只要正文里有以
+     *    数字开头的行（页码 `330`），按行拆就会掉行 → 整批前移 + 末尾空串（2026-09-25 日志实证）。
+     *    编号有跳号时该号留空，由调用方回退原文 —— 也远好于让整批错位。
+     * 3. **一个标记都没有**（模型没按格式答）→ 才按行拆，且只用 [LINE_MARKER_PREFIX] 剥真编号。
      */
     fun parseNumberedTranslations(text: String, expectedCount: Int): List<String> {
         val normalized = TranslationTextRules.normalizeEllipsis(text)
-        val results = mutableListOf<String>()
-        // 匹配 [N] 或 N. 或 N、开头的行
         val matches = NUMBERED_TRANSLATION_REGEX.findAll(normalized).toList()
 
+        // 分支 1：编号齐全 → 直接按位置取
         if (matches.size >= expectedCount) {
-            for (match in matches.take(expectedCount)) {
-                results.add(match.groupValues[2].trim())
+            return matches.take(expectedCount).map { it.groupValues[2].trim() }
+        }
+
+        // 分支 2：有标记但不满条数（典型：prefill 吃掉了 [1]）→ 按编号对位
+        val firstMarker = matches.firstOrNull()
+        if (firstMarker != null) {
+            val byNumber = HashMap<Int, String>(expectedCount)
+            normalized.substring(0, firstMarker.range.first).trim()
+                .takeIf { it.isNotEmpty() }
+                ?.let { byNumber[1] = it }
+            matches.forEach { m ->
+                m.groupValues[1].toIntOrNull()?.let { byNumber[it] = m.groupValues[2].trim() }
             }
-        } else {
-            // 降级：按行拆分
-            val lines = normalized.lines().map { it.trim() }.filter { it.isNotBlank() }
-            for (line in lines) {
-                val cleaned = line.replace(Regex("""^\[?\d+]?[.、\s]*"""), "").trim()
-                if (cleaned.isNotBlank()) {
-                    results.add(cleaned)
-                }
+            val out = (1..expectedCount).map { byNumber[it].orEmpty() }
+            if (out.any { it.isBlank() }) {
+                LogCollector.w(
+                    TAG,
+                    "parseNumberedTranslations: 期望 $expectedCount 条，编号 " +
+                        "${matches.mapNotNull { it.groupValues[1].toIntOrNull() }} 中缺号/空条目，原文片段=${normalized.take(120)}"
+                )
             }
+            return out
+        }
+
+        // 分支 3：完全没有编号 → 按行拆（降级）
+        val results = mutableListOf<String>()
+        val lines = normalized.lines().map { it.trim() }.filter { it.isNotBlank() }
+        for (line in lines) {
+            val cleaned = line.replace(LINE_MARKER_PREFIX, "").trim()
+            if (cleaned.isNotBlank()) {
+                results.add(cleaned)
+            }
+        }
+        if (results.size != expectedCount) {
+            LogCollector.w(
+                TAG,
+                "parseNumberedTranslations: 无编号格式，解析 ${results.size} 条、期望 $expectedCount 条，" +
+                    "原文片段=${normalized.take(120)}"
+            )
         }
 
         // 补齐不足的部分
@@ -522,6 +585,31 @@ object TranslateUtils {
             .replace(Regex("[\\n\\r]+"), "")
             .replace(Regex("\\s+"), " ")
             .trim()
+    }
+
+    /**
+     * 检查文本是否为「纯数字」（页码 / 编号 / 年份这类），这类气泡**不需要也翻不出内容**。
+     *
+     * 除了省一次请求，更重要的是**保住批量编号的对位**：模型对纯数字条目的译文就是原样回一个
+     * 数字行（`330`），而按行降级解析时这种行最容易被当成编号前缀吃掉 → 整批译文前移一位、
+     * 末条空白。这类气泡直接从批次里摘掉（原文回填），比事后修补稳。
+     *
+     * 判据：去掉空白后必须**至少有一个数字**，其余只能是数字或数字里常见的分隔符
+     * （`.,-/–—:·`）。所以 `100%`、`$100`、`3F`、`第 3 话` 都不算，仍会送去翻译。
+     */
+    fun isNumericOnlyText(text: String): Boolean {
+        val stripped = text.filterNot { it.isWhitespace() }
+        if (stripped.isEmpty()) return false
+        var digits = 0
+        for (ch in stripped) {
+            when {
+                ch.isDigit() -> digits++
+                ch == '.' || ch == ',' || ch == '-' || ch == '/' || ch == '–' ||
+                    ch == '—' || ch == ':' || ch == '·' -> Unit
+                else -> return false
+            }
+        }
+        return digits > 0
     }
 
     /**

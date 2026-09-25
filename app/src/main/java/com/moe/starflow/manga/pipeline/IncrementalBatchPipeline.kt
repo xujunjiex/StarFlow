@@ -607,6 +607,13 @@ class IncrementalBatchPipeline(
 
         // 缓存翻译结果
         for (result in results) {
+            // ⚠️ 空译文**绝不入缓存**：解析错位/模型漏给产生的 "" 一旦写进缓存，同一阅读会话里
+            // 相同（精确）或相似（模糊）的文本会直接命中、连 API 都不调 —— 表现为「换 API 也没用、
+            // 同一句反复漏翻」。2026-09-25 日志实证：'NO, NO, NO,THAT'S NO' → '' 被缓存后一直复用。
+            if (result.translatedText.isBlank()) {
+                LogCollector.w(TAG, "跳过缓存空译文: '${result.originalText.take(20)}'")
+                continue
+            }
             val textHash = result.originalText.hashCode()
             cache.add(
                 RegionCacheManager.TranslatedRegion(
