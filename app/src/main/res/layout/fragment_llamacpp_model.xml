@@ -3,7 +3,7 @@
   LlamaCpp 模型管理页。
 
   结构（2026-09 用户明确）：
-    - 上半部：**可滚动**的内容区（官方模型卡片组 + 导入的模型列表）；
+    - 上半部：**可滚动**的内容区（预制模型卡片组 + 导入的模型列表）；
     - 下半部：**固定操作区**——「添加模型」按钮始终贴在页面最底部，不随内容滚动跑掉
       （内容少时不会飘到半空，内容多时也不用滚到底才找得到）；导入进度与导入说明也在这一区；
     - 「功能说明」入口放在页首标题行右侧：原来它在按钮下方，会把按钮顶离底部。
@@ -29,7 +29,7 @@
             android:paddingHorizontal="16dp"
             android:paddingTop="12dp">
 
-            <!-- ========== 标题行：官方模型 + 功能说明入口 ========== -->
+            <!-- ========== 标题行：预制模型 + 功能说明入口 ========== -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -41,7 +41,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="@string/llamacpp_group_official"
+                    android:text="@string/llamacpp_group_preset"
                     android:textColor="@color/text_primary"
                     android:textSize="14sp"
                     android:textStyle="bold" />

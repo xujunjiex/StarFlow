@@ -118,7 +118,7 @@ class TextTranslateFragment : Fragment() {
 
     private fun showLanguageDialog(type: Int) {
         val list = TranslateTools.getLanguagesList(requireContext(), type) ?: return
-        // 目标语言(type=2)：只有「内置 Hy-MT2」套官方 38 种白名单；导入的任意 GGUF 不限制
+        // 目标语言(type=2)：只有「预制 Hy-MT2」套官方 38 种白名单；导入的任意 GGUF 不限制
         val prefs = CustomPreference.getInstance(requireContext())
         val isLlamaCppEngine = prefs.getInt("Text_API", 1) == com.moe.starflow.utils.Constants.TextApi.AI.id &&
             prefs.getInt("Text_AI", 0) == com.moe.starflow.utils.Constants.TextAI.HYMT2.id

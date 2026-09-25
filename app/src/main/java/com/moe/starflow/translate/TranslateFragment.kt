@@ -977,7 +977,7 @@ class TranslateFragment : Fragment() {
             val locales = TranslateTools.getLanguagesList(requireContext(), type, ocrGroup) ?: return
             LogCollector.d(TAG, locales.toString())
             val disabledTargets = if (type == 2) TranslateTools.getDisabledTargetLangs(prefs) else emptySet()
-            // 只有「内置 Hy-MT2」才套官方 38 种目标语言白名单；用户导入的任意 GGUF 不限制（模型能力未知，交给用户）
+            // 只有「预制 Hy-MT2」才套官方 38 种目标语言白名单；用户导入的任意 GGUF 不限制（模型能力未知，交给用户）
             val isLlamaCppEngine = prefs.getInt("Text_API", Constants.TextApi.BING.id) == Constants.TextApi.AI.id &&
                 prefs.getInt("Text_AI", Constants.TextAI.NLLB.id) == Constants.TextAI.HYMT2.id
             val isHyMt2 = if (isLlamaCppEngine) {

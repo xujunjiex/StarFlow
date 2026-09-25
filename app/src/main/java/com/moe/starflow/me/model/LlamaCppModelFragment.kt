@@ -34,8 +34,8 @@ import kotlinx.coroutines.launch
  * LlamaCpp 模型管理页。
  *
  * 结构（用户 2026-09 定稿）：
- *  - **官方模型**卡片组：Hy-MT2 1.8B（1.25-bit / Q4_K_M 两张卡）—— 只是**提供下载**（不打进 APK），
- *    所以叫「官方模型」而不是「内置模型」，仍走既有下载流水线
+ *  - **预制模型**卡片组：Hy-MT2 1.8B（1.25-bit / Q4_K_M 两张卡）—— 只是**提供下载**（不打进 APK），
+ *    所以叫「预制模型」而不是「内置模型」/「官方模型」，仍走既有下载流水线
  *    （ModelKey.HY_MT2_GROUP / ModelKey.HY_MT2_Q4_KM），可下载/暂停/继续/取消/删除，
  *    下载完成后点卡片激活；
  *  - **导入的模型**列表：用户从本地 SAF 选择的任意 .gguf（允许激活/改参数/删除）；
@@ -157,7 +157,7 @@ class LlamaCppModelFragment : Fragment() {
         row.rowName.text = m.displayName
         val missing = LlamaCppModelStore.fileMissing(m)
         val sourceLabel = getString(
-            if (m.source == LlamaCppModelSource.BUILTIN) R.string.llamacpp_source_official
+            if (m.source == LlamaCppModelSource.BUILTIN) R.string.llamacpp_source_preset
             else R.string.llamacpp_source_imported
         )
         row.rowMeta.text = getString(
@@ -170,7 +170,7 @@ class LlamaCppModelFragment : Fragment() {
         val badge = when {
             m.id == activeId -> getString(R.string.llamacpp_badge_active)
             missing -> getString(R.string.llamacpp_badge_missing)
-            m.source == LlamaCppModelSource.BUILTIN -> getString(R.string.llamacpp_badge_official)
+            m.source == LlamaCppModelSource.BUILTIN -> getString(R.string.llamacpp_badge_preset)
             else -> null
         }
         row.rowBadge.visibility = if (badge == null) View.GONE else View.VISIBLE
@@ -295,7 +295,7 @@ class LlamaCppModelFragment : Fragment() {
             .setTitle(R.string.llamacpp_delete_title)
             .setMessage(
                 getString(
-                    if (isBuiltin) R.string.llamacpp_delete_official_message else R.string.llamacpp_delete_message,
+                    if (isBuiltin) R.string.llamacpp_delete_preset_message else R.string.llamacpp_delete_message,
                     m.displayName,
                 )
             )
@@ -328,7 +328,7 @@ class LlamaCppModelFragment : Fragment() {
         val p = m.params
 
         b.noteText.text = getString(
-            if (isBuiltin) R.string.llamacpp_params_official_note else R.string.llamacpp_params_generic_note
+            if (isBuiltin) R.string.llamacpp_params_preset_note else R.string.llamacpp_params_generic_note
         ) + "\n\n" + getString(R.string.llamacpp_params_effect_hint)
         b.systemPromptBox.visibility = if (isBuiltin) View.GONE else View.VISIBLE
         b.thinkingBox.visibility = if (isBuiltin) View.GONE else View.VISIBLE

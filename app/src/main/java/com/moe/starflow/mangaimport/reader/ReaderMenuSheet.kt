@@ -755,7 +755,7 @@ class ReaderMenuSheet(
         val ocrGroup = if (type == 1) OcrEngineManager.getOcrEngineGroup(appPrefs) else null
         val locales = languagesList(type, ocrGroup)
         if (locales.isEmpty()) return
-        // 只有「内置 Hy-MT2」套官方 38 种白名单；导入的任意 GGUF 不限制
+        // 只有「预制 Hy-MT2」套官方 38 种白名单；导入的任意 GGUF 不限制
         val isHyMt2 = com.moe.starflow.llamacpp.LlamaCppModelStore.isHyMt2ActiveFromPrefs(customPrefs)
         val disabledTargets = if (type == 2) TranslateTools.getDisabledTargetLangs(customPrefs) else emptySet()
         val enabled = when (type) {

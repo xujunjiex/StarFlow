@@ -117,7 +117,7 @@
     <string name="llamacpp_top_k_label">top_k</string>
     <string name="llamacpp_rep_penalty_label">repetition_penalty</string>
     <string name="llamacpp_max_tokens_label">max_tokens</string>
-    <string name="llamacpp_help_prompt">Official default translation prompt. During translation {target_lang} is replaced by the full target language name (e.g. “Japanese”) and {source_text} by the text to translate.</string>
+    <string name="llamacpp_help_prompt">Default translation prompt (from Tencent\'s Hy-MT2 example). During translation {target_lang} is replaced by the full target language name (e.g. “Japanese”) and {source_text} by the text to translate.</string>
     <string name="llamacpp_help_threads">CPU threads for the generation stage (llama.cpp n_threads). Defaults to a value based on device core count (never exceeding it). Too few threads underutilize compute; more than the core count causes contention and slowdowns. Adjust to taste.</string>
     <string name="llamacpp_help_batch_threads">CPU threads for the read-source (prefill/batch) stage (llama.cpp n_threads_batch). Defaults to all device cores. Independent of generation threads and adjustable separately; must not exceed the core count.</string>
     <string name="llamacpp_help_context">Maximum context length. 1024≈500–700 Chinese characters, 2048≈1000–1400, 4096≈2000–2800.</string>
@@ -1328,11 +1328,11 @@
 
     <!-- LlamaCpp 引擎与模型管理页 -->
     <string name="llamacpp_name">LlamaCpp Local Model</string>
-    <string name="llamacpp_description">Run a GGUF model fully offline on-device (download the official Hy-MT2, or import any llama.cpp-compatible model). <b><u>A device with 6GB+ RAM is recommended.</u></b> Tap &quot;Manage LlamaCpp Models&quot; below to pick, import or delete models.</string>
+    <string name="llamacpp_description">Run a GGUF model fully offline on-device (download a preset model, or import any llama.cpp-compatible model). <b><u>A device with 6GB+ RAM is recommended.</u></b> Tap &quot;Manage LlamaCpp Models&quot; below to pick, import or delete models.</string>
     <string name="manage_llamacpp_models">Manage LlamaCpp Models</string>
     <string name="llamacpp_no_active_model">No LlamaCpp model selected. Open \"Manage LlamaCpp Models\" and pick or import one first.</string>
     <string name="llamacpp_manager_title">LlamaCpp Models</string>
-    <string name="llamacpp_group_official">Official models</string>
+    <string name="llamacpp_group_preset">Preset models</string>
     <string name="llamacpp_import_notification_title">Model import</string>
     <string name="llamacpp_import_running">Another import is already running, please wait</string>
     <string name="llamacpp_group_imported">Imported</string>
@@ -1343,7 +1343,7 @@
     <string name="llamacpp_empty_imported">No imported models yet. Tap \"Add Model\" and choose a local .gguf file.</string>
     <string name="llamacpp_badge_active">ACTIVE</string>
     <string name="llamacpp_badge_missing">FILE MISSING</string>
-    <string name="llamacpp_badge_official">OFFICIAL</string>
+    <string name="llamacpp_badge_preset">PRESET</string>
     <string name="llamacpp_set_active">Set as active</string>
     <string name="llamacpp_active_set">\"%1$s\" is now the active model</string>
     <string name="llamacpp_import_started">Importing…</string>
@@ -1356,23 +1356,23 @@
     <string name="llamacpp_delete_title">Delete model</string>
     <string name="llamacpp_delete_message">Delete \"%1$s\"? The model file will be removed from the device.</string>
     <string name="llamacpp_delete_done">Deleted</string>
-    <string name="llamacpp_delete_official_message">Remove the downloaded official model \"%1$s\"? You can download it again later.</string>
+    <string name="llamacpp_delete_preset_message">Remove the downloaded preset model \"%1$s\"? You can download it again later.</string>
     <string name="llamacpp_meta_format">%1$s · %2$s</string>
-    <string name="llamacpp_source_official">Official</string>
+    <string name="llamacpp_source_preset">Preset</string>
     <string name="llamacpp_source_imported">Imported</string>
     <string name="llamacpp_params_title">Settings for \"%1$s\"</string>
     <string name="llamacpp_params_saved">Settings saved</string>
-    <string name="llamacpp_params_official_note">This model keeps the Hy-MT2 chat format (instruction in the system segment); the template below is the instruction part.</string>
+    <string name="llamacpp_params_preset_note">This model keeps the Hy-MT2 chat format (instruction in the system segment); the template below is the instruction part.</string>
     <string name="llamacpp_params_generic_note">This model is rendered with its own chat template from the GGUF file; the system prompt and template below are used as system/user messages.</string>
     <string name="llamacpp_system_prompt_label">System prompt</string>
-    <string name="llamacpp_system_prompt_hint">Used only for imported models (the official Hy-MT2 has its own chat format)</string>
+    <string name="llamacpp_system_prompt_hint">Used only for imported models (the preset Hy-MT2 has its own chat format)</string>
     <string name="llamacpp_enable_thinking_label">Enable thinking (reasoning)</string>
     <string name="llamacpp_enable_thinking_hint">Off = faster translation. Only affects models that support reasoning (e.g. Qwen3).</string>
     <string name="llamacpp_params_effect_hint">Context size and thread counts take effect the next time the model is loaded; prompts and sampling parameters apply immediately.</string>
     <string name="llamacpp_params_help">Parameter help</string>
     <string name="llamacpp_reset_default">Reset to default</string>
     <string name="llamacpp_intro_title">LlamaCpp Local Inference</string>
-    <string name="llamacpp_intro_content">Local inference powered by LlamaCpp.\n\n• Official models: Hy-MT2 1.8B in two quantization levels (1.25-bit ~461MB / Q4_K_M ~1.08GB); download required, then usable offline.\n• Imported: any llama.cpp-compatible GGUF file (Qwen, Gemma, Hunyuan and others), rendered with the model\'s own chat template so its original format is preserved.\n• Each model stores its own prompt template and sampling parameters.\n\nNote: local inference occupies CPU and memory. A faster chip translates faster, and the device may become warm and consume more power while running.</string>
+    <string name="llamacpp_intro_content">Local inference powered by LlamaCpp.\n\n• Preset models: Hy-MT2 1.8B in two quantization levels (1.25-bit ~461MB / Q4_K_M ~1.08GB); download required, then usable offline.\n• Imported: any llama.cpp-compatible GGUF file (Qwen, Gemma, Hunyuan and others), rendered with the model\'s own chat template so its original format is preserved.\n• Each model stores its own prompt template and sampling parameters.\n\nNote: local inference occupies CPU and memory. A faster chip translates faster, and the device may become warm and consume more power while running.</string>
     <string name="llamacpp_section_prompt">Prompt</string>
     <string name="llamacpp_section_sampling">Sampling</string>
     <string name="llamacpp_section_performance">Performance</string>
