@@ -13,4 +13,17 @@
         <item name="itemPaddingTop">10dp</item>
         <item name="itemPaddingBottom">12dp</item>
     </style>
+
+    <!-- 小说阅读器底部工具栏的单格 -->
+    <style name="NovelReaderTab">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">match_parent</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:gravity">center</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:textColor">#FFFFFF</item>
+        <item name="android:clickable">true</item>
+        <item name="android:background">?android:attr/selectableItemBackground</item>
+    </style>
+
 </resources>

@@ -1341,4 +1341,63 @@
     <string name="error_download_incomplete">Download incomplete: expected %1$s, got %2$s</string>
     <string name="error_md5_failed">MD5 verification failed</string>
 
+    <!-- ===== 小说（文本）导入 ===== -->
+    <string name="novel_shelf_title">Novels</string>
+    <string name="novel_import_file">Import files</string>
+    <string name="novel_import_dir">Import folder</string>
+    <string name="novel_import_dir_hint">Folder import: each text file inside becomes one book</string>
+    <string name="novel_import_wrong_format_manga">This is a manga file. Import it from the manga shelf.</string>
+    <string name="novel_import_wrong_format_text">Not a supported text format.</string>
+    <string name="novel_import_no_chapters">No readable chapters found.</string>
+    <string name="novel_import_failed">Import failed</string>
+    <string name="novel_import_reason_not_archive">Unsupported format or corrupted file.</string>
+    <string name="novel_import_reason_unreadable">File is unreadable. Check access permission.</string>
+    <string name="novel_import_reason_no_text_chapter">No readable text chapters.</string>
+    <string name="novel_import_reason_empty">Empty file.</string>
+    <string name="novel_import_reason_encrypted">This EPUB is DRM-encrypted and not supported.</string>
+    <string name="novel_import_reason_unknown">Unknown error.</string>
+    <string name="novel_importing_percent">Importing %1$s</string>
+    <string name="novel_chapter_count">%1$d chapters</string>
+    <string name="novel_cover_desc">Novel cover</string>
+    <string name="novel_file_lost">File missing</string>
+
+    <!-- ===== 小说阅读器 ===== -->
+    <string name="novel_toc">Contents</string>
+    <string name="novel_page_label">%1$d / %2$d</string>
+    <string name="novel_tab_style">Style</string>
+    <string name="novel_tab_translate">Translate</string>
+    <string name="novel_tab_more">More</string>
+    <string name="novel_style_font_size">Font size</string>
+    <string name="novel_style_line_spacing">Line spacing</string>
+    <string name="novel_style_paragraph_spacing">Paragraph spacing</string>
+    <string name="novel_style_padding">Side margin</string>
+    <string name="novel_style_reader_mode">Reading mode</string>
+    <string name="novel_reader_mode_paged">Paged</string>
+    <string name="novel_reader_mode_scroll">Scroll</string>
+    <string name="novel_display_translated">Translation</string>
+    <string name="novel_display_original">Original</string>
+    <string name="novel_display_bilingual">Bilingual</string>
+    <string name="novel_translate_mode">Translation mode</string>
+    <string name="novel_translate_mode_manual">Manual</string>
+    <string name="novel_translate_mode_auto_chapter">Auto (current chapter)</string>
+    <string name="novel_translate_mode_auto_ahead">Auto (next N chapters)</string>
+    <string name="novel_translate_debounce">Start delay</string>
+    <string name="novel_translate_debounce_value">%1$d ms</string>
+    <string name="novel_translate_ahead">Chapters ahead</string>
+    <string name="novel_translate_ahead_value">%1$d</string>
+    <string name="novel_translate_action">Translate this chapter</string>
+    <string name="novel_translate_clear">Clear translations of this book</string>
+    <string name="novel_translate_cleared">Translations cleared</string>
+    <string name="novel_chapter_label">Chapter %1$d</string>
+    <string name="novel_chapter_unread">Not translated</string>
+    <string name="novel_chapter_partial">%1$d/%2$d</string>
+    <string name="novel_chapter_done">Translated</string>
+    <string name="novel_translate_need_config">Configure a translation engine first</string>
+    <string name="novel_translate_busy">Waiting for another translation task…</string>
+    <string name="novel_file_missing_hint">Local file is missing. Re-import the book.</string>
+    <string name="novel_empty_chapter">This chapter has no readable text.</string>
+    <string name="novel_first_chapter">Already at the first chapter</string>
+    <string name="novel_last_chapter">Already at the last chapter</string>
+    <string name="novel_back">Back</string>
+
 </resources>

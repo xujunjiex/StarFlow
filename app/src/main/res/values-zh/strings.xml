@@ -1340,4 +1340,63 @@
     <string name="error_download_incomplete">下载不完整：期望 %1$s，实际 %2$s</string>
     <string name="error_md5_failed">MD5 校验失败</string>
 
+    <!-- ===== 小说（文本）导入 ===== -->
+    <string name="novel_shelf_title">小说</string>
+    <string name="novel_import_file">导入文件</string>
+    <string name="novel_import_dir">导入文件夹</string>
+    <string name="novel_import_dir_hint">文件夹导入：夹内每个文本文件各成一部书</string>
+    <string name="novel_import_wrong_format_manga">这是漫画文件，请到漫画书架导入</string>
+    <string name="novel_import_wrong_format_text">不是受支持的文本格式</string>
+    <string name="novel_import_no_chapters">未找到可阅读的章节</string>
+    <string name="novel_import_failed">导入失败</string>
+    <string name="novel_import_reason_not_archive">格式不支持或文件损坏</string>
+    <string name="novel_import_reason_unreadable">文件无法读取，请检查访问权限</string>
+    <string name="novel_import_reason_no_text_chapter">未找到可阅读的文本章节</string>
+    <string name="novel_import_reason_empty">空文件</string>
+    <string name="novel_import_reason_encrypted">该 EPUB 受 DRM 加密，暂不支持</string>
+    <string name="novel_import_reason_unknown">未知错误</string>
+    <string name="novel_importing_percent">导入中 %1$s</string>
+    <string name="novel_chapter_count">%1$d 章</string>
+    <string name="novel_cover_desc">小说封面</string>
+    <string name="novel_file_lost">文件丢失</string>
+
+    <!-- ===== 小说阅读器 ===== -->
+    <string name="novel_toc">目录</string>
+    <string name="novel_page_label">%1$d / %2$d</string>
+    <string name="novel_tab_style">样式</string>
+    <string name="novel_tab_translate">翻译</string>
+    <string name="novel_tab_more">更多</string>
+    <string name="novel_style_font_size">字体大小</string>
+    <string name="novel_style_line_spacing">行间距</string>
+    <string name="novel_style_paragraph_spacing">段间距</string>
+    <string name="novel_style_padding">左右边距</string>
+    <string name="novel_style_reader_mode">阅读模式</string>
+    <string name="novel_reader_mode_paged">翻页</string>
+    <string name="novel_reader_mode_scroll">滚动</string>
+    <string name="novel_display_translated">译文</string>
+    <string name="novel_display_original">原文</string>
+    <string name="novel_display_bilingual">双语</string>
+    <string name="novel_translate_mode">翻译模式</string>
+    <string name="novel_translate_mode_manual">手动</string>
+    <string name="novel_translate_mode_auto_chapter">自动（当前章）</string>
+    <string name="novel_translate_mode_auto_ahead">自动（后续 N 章）</string>
+    <string name="novel_translate_debounce">启动延迟</string>
+    <string name="novel_translate_debounce_value">%1$d 毫秒</string>
+    <string name="novel_translate_ahead">后续章数</string>
+    <string name="novel_translate_ahead_value">%1$d</string>
+    <string name="novel_translate_action">翻译本章</string>
+    <string name="novel_translate_clear">清空本书译文</string>
+    <string name="novel_translate_cleared">已清空本书译文</string>
+    <string name="novel_chapter_label">第 %1$d 章</string>
+    <string name="novel_chapter_unread">未翻译</string>
+    <string name="novel_chapter_partial">%1$d/%2$d</string>
+    <string name="novel_chapter_done">已翻译</string>
+    <string name="novel_translate_need_config">请先配置翻译引擎</string>
+    <string name="novel_translate_busy">正在等待其它翻译任务…</string>
+    <string name="novel_file_missing_hint">本地文件已丢失，请重新导入</string>
+    <string name="novel_empty_chapter">本章没有可阅读的正文</string>
+    <string name="novel_first_chapter">已经是第一章</string>
+    <string name="novel_last_chapter">已经是最后一章</string>
+    <string name="novel_back">返回</string>
+
 </resources>

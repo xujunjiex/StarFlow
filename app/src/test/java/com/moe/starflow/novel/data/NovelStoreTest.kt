@@ -46,7 +46,7 @@ class NovelStoreTest {
             coverPath = "/tmp/cover.jpg",
             sizeBytes = 12345,
             lastReadChapter = 2,
-            lastReadCharOffset = 500,
+            lastReadParaIndex = 500,
             lastReadPage = 7,
         )
         NovelStore.save(ctx, listOf(n))

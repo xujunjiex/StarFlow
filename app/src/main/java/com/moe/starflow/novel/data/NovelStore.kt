@@ -76,7 +76,7 @@ object NovelStore {
         put("sizeBytes", sizeBytes)
         put("description", description)
         put("lastReadChapter", lastReadChapter)
-        put("lastReadCharOffset", lastReadCharOffset)
+        put("lastReadParaIndex", lastReadParaIndex)
         put("lastReadPage", lastReadPage)
         // ⚠️ lost / importing / importPhase / importPercent 刻意不写 —— 瞬态字段，
         // 持久化会让「文件丢失」这种实时推导的结论变成过期缓存
@@ -95,7 +95,7 @@ object NovelStore {
         sizeBytes = optLong("sizeBytes", 0),
         description = optString("description", ""),
         lastReadChapter = optInt("lastReadChapter", 0),
-        lastReadCharOffset = optInt("lastReadCharOffset", 0),
+        lastReadParaIndex = optInt("lastReadParaIndex", 0),
         lastReadPage = optInt("lastReadPage", 0),
     )
 }
