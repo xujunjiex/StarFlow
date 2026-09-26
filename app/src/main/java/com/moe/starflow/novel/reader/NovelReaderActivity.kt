@@ -18,6 +18,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.LinearSmoothScroller
 import androidx.recyclerview.widget.RecyclerView
@@ -38,6 +39,7 @@ import com.moe.starflow.novel.data.ImportedNovel
 import com.moe.starflow.novel.data.NovelStore
 import com.moe.starflow.novel.translate.NovelBatchTranslator
 import com.moe.starflow.novel.translate.NovelChapterTranslator
+import com.moe.starflow.novel.translate.NovelEngineConfig
 import com.moe.starflow.novel.translate.NovelParagraphSplitter
 import com.moe.starflow.novel.translate.NovelQuota
 import com.moe.starflow.novel.translate.NovelTranslateMode
@@ -54,6 +56,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import translationapi.TranslatorFactory
+import kotlin.math.roundToInt
 
 /**
  * 小说阅读器。
@@ -83,6 +86,9 @@ class NovelReaderActivity : AppCompatActivity() {
 
         /** 视口尺寸变化后的重排防抖（尺寸是连续事件，见 [scheduleRepaginate]）。 */
         private const val REPAGINATE_DEBOUNCE_MS = 180L
+
+        /** 滚动模式按比例跳转时最多补齐几次（估算值会漂、一次 scrollBy 未必吃到目标，见 [seekScrollTo]）。 */
+        private const val MAX_SEEK_PASSES = 60
 
         private const val KEY_ROTATE = "reader_rotate_mode"
         private const val KEY_AUTO_TURN = "reader_auto_turn"
@@ -114,7 +120,12 @@ class NovelReaderActivity : AppCompatActivity() {
     private var chapterFailures: Map<Int, List<NovelFailureRow>> = emptyMap()
     private var translationJob: Job? = null
 
-    /** 滚动模式的「已翻译段」（进度条绿条），在 [loadChapter] 里随内容与译文一起重算。 */
+    /**
+     * 滚动模式的「已翻译」格集合（进度条绿条），在 [loadChapter] 里随内容与译文一起重算。
+     *
+     * 单位是 [NovelScrollProgress.STEPS] 格（不是段下标，也不是页）——
+     * 与 [refreshOverlay] 推进度条时用的是同一套坐标。
+     */
     private var scrollTranslated: Set<Int> = emptySet()
 
     /** 上下 UI（顶部三个浮层 + 底部胶囊 + 右下翻译浮层组）是否隐藏。 */
@@ -134,6 +145,12 @@ class NovelReaderActivity : AppCompatActivity() {
 
     /** 自动翻译队列（手动模式下不起）。惰性创建：它要用到翻译引擎。 */
     private var queue: NovelTranslationQueue? = null
+
+    /** 队列状态的观察者。队列被丢弃重建时要先 cancel，否则旧收集器一直挂在 lifecycleScope 上。 */
+    private var queueObserverJob: Job? = null
+
+    /** 模型/引擎配置变化的监听（见 [onEngineConfigChanged]）。 */
+    private var enginePrefsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
 
     /** 队列最近一次是按哪一章 / 哪个模式起的（重复调用时用来短路，省掉一次无谓重启）。 */
     private var queueChapter = -1
@@ -169,6 +186,13 @@ class NovelReaderActivity : AppCompatActivity() {
     /** 在途的防抖重排（尺寸变化用），见 [scheduleRepaginate]。 */
     private var repaginateJob: Job? = null
 
+    /**
+     * 上一次由**布局**补刷进度条时用的首可见段（见 [setupOverlays] 里的 layout listener）。
+     *
+     * 存在的唯一理由是防死循环：补刷 → `setText` → `requestLayout` → 又一次布局 → 又补刷……
+     */
+    private var lastLayoutScrollItem = -1
+
     private val tapDetector by lazy {
         GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
@@ -191,6 +215,16 @@ class NovelReaderActivity : AppCompatActivity() {
         enterImmersive()
 
         prefs = getSharedPreferences(NovelPanelStyle.PREFS_NAME, MODE_PRIVATE)
+
+        // ⚠️ **缓存的引擎/队列必须随「模型选择」失效**：模型只是在设置页里写了 prefs，
+        // 没有任何东西通知阅读器 —— 早先的现场就是「切换模型必须退出阅读器才生效」。
+        // 监听注册在**阅读器**（而不是面板）里：改模型要先离开面板去设置页，
+        // 面板回来时重新 onStart 才注册监听，那一刻**已经错过了**这次变化。
+        val appPrefs = PreferenceManager.getDefaultSharedPreferences(this)
+        enginePrefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (NovelEngineConfig.affectsEngine(key)) onEngineConfigChanged()
+        }
+        appPrefs.registerOnSharedPreferenceChangeListener(enginePrefsListener)
 
         bgMode = NovelPanelStyle.background(prefs)
         animationMode = NovelPanelStyle.animation(prefs)
@@ -310,6 +344,12 @@ class NovelReaderActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         queue?.stop()
+        queueObserverJob?.cancel()
+        enginePrefsListener?.let {
+            PreferenceManager.getDefaultSharedPreferences(this)
+                .unregisterOnSharedPreferenceChangeListener(it)
+        }
+        enginePrefsListener = null
         translationJob?.cancel()
         if (::repository.isInitialized) repository.evictAll()
         // ⚠️ 状态浮层是**进程级 TYPE_APPLICATION_OVERLAY 系统窗口**，不清会挂在桌面/别的应用上
@@ -373,6 +413,18 @@ class NovelReaderActivity : AppCompatActivity() {
         binding.novelScroll.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) = updateFromScroll()
         })
+        // ⚠️ **程序化跳转不派发 onScrolled**：换章/续读走的是 `scrollToPosition`，
+        // 布局跑完才知道自己滚到了哪 —— 少了这一句，从中间续读长章节时进度条会一直停在 0
+        // 直到用户手动滑一下（用户报的「进度条失效」有这一半）。
+        // ⚠️ 只在「首可见段真的变了」时才补刷：`updateChapterTocLabel` 里会 setText，
+        // 那会 requestLayout → 又回调到这里 —— 不设这个闸门就是每帧一次布局的死循环。
+        binding.novelScroll.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            if (!isScrollMode()) return@addOnLayoutChangeListener
+            val first = firstVisibleScrollItem()
+            if (first == lastLayoutScrollItem) return@addOnLayoutChangeListener
+            lastLayoutScrollItem = first
+            binding.novelScroll.post { updateFromScroll() }
+        }
         // 手势：⚠️ 挂到 ViewPager2 **内部那个真正消费触摸的 RecyclerView** 上。
         // 挂在页 View 上收不到 UP（页 View 不消费 DOWN → 不会成为 touch target），
         // 挂在 ViewPager2 自身上也收不到（子 View 消费后父的 onTouchEvent 就不再被调用）。
@@ -587,23 +639,46 @@ class NovelReaderActivity : AppCompatActivity() {
      * 跳到章内第 [page] 页（进度条拖拽/点击）。
      *
      * ⚠️ 滚动模式也要实现：那条进度条在滚动模式下是**显示**的，
-     * 拖了没反应就是「控件在、功能不在」。滚动模式按**段**定位。
+     * 拖了没反应就是「控件在、功能不在」。滚动模式的 [page] 是 [NovelScrollProgress] 的格。
      */
     private fun goToPage(page: Int) {
         val pages = content?.pages ?: return
         if (isScrollMode()) {
-            // ⚠️ 滚动模式要**瞬间**跳，不能平滑滚动：进度条上跨的是几十页的跨度，
-            // 平滑滚过去要好几秒、中途整屏文字飞速掠过（用户明确要求瞬间切换）
-            val total = scrollAdapter.itemCount
-            if (total <= 0) return
-            val target = page.coerceIn(0, total - 1)
-            (binding.novelScroll.layoutManager as? LinearLayoutManager)
-                ?.scrollToPositionWithOffset(target, 0)
+            seekScrollTo(NovelScrollProgress.fractionOfStep(page))
             return
         }
         val p = page.coerceIn(0, pages.lastIndex.coerceAtLeast(0))
         binding.novelPager.setCurrentItem(p, false)
         onPaged(p)
+    }
+
+    /**
+     * 滚动模式按**像素比例**跳转。
+     *
+     * ⚠️ 不能只按段号 `scrollToPositionWithOffset`：段高差几十倍（超长章节甚至整章一段），
+     * 按段号跳会落到离目标很远的地方，用户看到的就是"拖了没反应"。这里按像素目标滚。
+     *
+     * ⚠️ 而且要**循环补齐**：`ScrollbarHelper` 的总长是「已测量项的平均高度 × 段数」，
+     * 一次 `scrollBy` 未必吃到目标（新滚过的段落才刚被测量，估算值当场就变了）
+     * ——不补齐就会停在半路，用户看到的同样是"进度条失效"。循环有次数上限，不会卡死。
+     */
+    private fun seekScrollTo(fraction: Float) {
+        val rv = binding.novelScroll
+        val target = fraction.coerceIn(0f, 1f)
+        var passes = 0
+        fun step() {
+            val span = (rv.computeVerticalScrollRange() - rv.computeVerticalScrollExtent())
+                .coerceAtLeast(1)
+            val before = rv.computeVerticalScrollOffset()
+            val dy = (target * span).roundToInt() - before
+            if (dy == 0 || passes >= MAX_SEEK_PASSES) return
+            passes++
+            rv.scrollBy(0, dy)
+            // ⚠️ 必须 post：scrollBy 之后要等布局跑完才有新的 offset/range。
+            // 位置没动（内容不足一屏 / 已到边界）就不再补，免得空转几十次。
+            rv.post { if (rv.computeVerticalScrollOffset() != before) step() }
+        }
+        step()
     }
 
     private fun gotoChapter(index: Int, atLastPage: Boolean = false) {
@@ -802,6 +877,8 @@ class NovelReaderActivity : AppCompatActivity() {
                 // clipToPadding=false → 正文可以滚到浮层底下再滑走，而不是被硬切一刀
                 binding.novelScroll.setPadding(0, style.topPaddingPx.toInt(), 0, style.bottomPaddingPx.toInt())
                 scrollAdapter.submit(loaded, style, textColor, bgColor)
+                // 换章/重排后一定要让 layout listener 再补刷一次进度条（防死循环的闸门要复位）
+                lastLayoutScrollItem = -1
                 val pos = if (keepPara == Int.MAX_VALUE) {
                     (scrollAdapter.itemCount - 1).coerceAtLeast(0)
                 } else {
@@ -827,6 +904,26 @@ class NovelReaderActivity : AppCompatActivity() {
             persistProgress()
             restartQueueIfNeeded()
         }
+    }
+
+    /**
+     * 模型 / 引擎配置变了 → **丢掉缓存的队列（连同它捕获的那份引擎）**，下次用到时按新配置重建。
+     *
+     * ⚠️ 这里只丢、不无条件重启：这条回调多半发生在阅读器**已经 `onStop`** 的时候
+     * （用户正在设置页里改模型），就地重启会让翻译在后台跑起来 —— 与
+     * 「退出阅读器自动暂停」的约定冲突。回到前台由 `onStart → restartQueueIfNeeded()` 接上。
+     *
+     * ⚠️ 别改成「每批现造引擎」：本地引擎（NLLB）造一次要重载模型，
+     * 而模型只在用户切换时才变 —— 按变化失效比每批重建便宜得多。
+     */
+    private fun onEngineConfigChanged() {
+        NovelDebug.log("引擎配置变化 → 丢弃缓存的翻译队列")
+        queue?.stop()
+        queue = null
+        queueRunning = false
+        queueChapter = -1
+        queueMode = null
+        if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) restartQueueIfNeeded()
     }
 
     /**
@@ -1057,15 +1154,27 @@ class NovelReaderActivity : AppCompatActivity() {
             if (pages.isNullOrEmpty()) getString(R.string.novel_page_indicator, label, 0, 0)
             else getString(R.string.novel_page_indicator, label, currentPage() + 1, pages.size)
         }
-        binding.tvPageIndicator.text = text
+        // ⚠️ 文案没变就别 setText：TextView 会无条件 requestLayout，
+        // 而滚动回调是每帧一次的（还会牵动 [setupOverlays] 里的 layout listener）
+        if (binding.tvPageIndicator.text.toString() != text) binding.tvPageIndicator.text = text
         pushPanelState()
     }
 
     private fun refreshOverlay() {
         if (isScrollMode()) {
-            // 滚动模式的进度按**段**算（那边没有「页」）。不更新的话底部那条永远是死的 ——
-            // 用户反馈「滚动模式下底部进度条不动」。
-            binding.novelProgress.setPage(firstVisibleScrollItem(), scrollAdapter.itemCount)
+            // 滚动模式的位置**必须取像素进度，不能取段序号**：一个几万字的章节可能整章只有一段
+            // （`NovelParagraphSplitter` 只按空行分段），"第几段/共几段"恒为 0/1 —— 进度条永远不动，
+            // 这就是用户报的「章节文字太多时底部的进度条失效」。取像素后滚到一半就是一半。
+            // 见 `NovelScrollProgress`。
+            val rv = binding.novelScroll
+            binding.novelProgress.setPage(
+                NovelScrollProgress.stepOf(
+                    offset = rv.computeVerticalScrollOffset(),
+                    range = rv.computeVerticalScrollRange(),
+                    extent = rv.computeVerticalScrollExtent(),
+                ),
+                NovelScrollProgress.STEPS,
+            )
             binding.novelProgress.setTranslatedPages(scrollTranslated)
         } else {
             val pages = content?.pages ?: return
@@ -1094,16 +1203,17 @@ class NovelReaderActivity : AppCompatActivity() {
     }
 
     /**
-     * 滚动模式下的「已翻译段」集合（进度条上的绿色区间），值与 [loadChapter] 同步刷新。
+     * 滚动模式下的「已翻译」格集合（进度条上的绿色区间），值与 [loadChapter] 同步刷新。
      *
      * ⚠️ 不能每次滚动都现算：滚动回调是每帧一次的，几百段遍历会白烧 CPU。
+     * 单位与 [refreshOverlay] 推进度条时一致（[NovelScrollProgress] 的格）。
      */
     private fun computeScrollTranslated(c: ChapterContent): Set<Int> {
         if (translations.isEmpty()) return emptySet()
         val visible = NovelScrollMapping.visibleParagraphs(c)
-        val out = mutableSetOf<Int>()
-        for (i in visible.indices) if (translations.containsKey(visible[i].index)) out += i
-        return out
+        val hits = mutableSetOf<Int>()
+        for (i in visible.indices) if (translations.containsKey(visible[i].index)) hits += i
+        return NovelScrollProgress.stepsOfItems(hits, visible.size)
     }
 
     private fun showStatus(message: String?) {
@@ -1241,7 +1351,9 @@ class NovelReaderActivity : AppCompatActivity() {
 
     /** 观察自动队列状态 → 状态浮层（与漫画同样是「常驻芯片 + 结束即消」）。 */
     private fun observeQueue(q: NovelTranslationQueue) {
-        lifecycleScope.launch {
+        // 队列可能被丢弃重建（模型换了）：旧收集器要先撤，否则每次换模型都往 lifecycleScope 上挂一个
+        queueObserverJob?.cancel()
+        queueObserverJob = lifecycleScope.launch {
             q.state.collect { st ->
                 // 队列状态一变就把整份状态推给面板（否则面板不知道"正在翻/停了"）
                 pushPanelState()
