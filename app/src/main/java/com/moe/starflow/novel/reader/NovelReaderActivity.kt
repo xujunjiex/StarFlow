@@ -1042,11 +1042,9 @@ class NovelReaderActivity : AppCompatActivity() {
             ?.renderHostState(hostStateToPanel())
     }
 
-    private fun chapterTitle(index: Int): String {
-        val t = content?.takeIf { it.chapterIndex == index }?.title
-        if (!t.isNullOrBlank()) return t
-        return getString(R.string.novel_chapter_label, index + 1)
-    }
+    private fun chapterTitle(index: Int): String = chapterDisplayTitle(
+        this, index, content?.takeIf { it.chapterIndex == index }?.title,
+    )
 
     /** 章内页码/滚动进度相关的显示 + 推给面板。 */
     private fun updateChapterTocLabel() {

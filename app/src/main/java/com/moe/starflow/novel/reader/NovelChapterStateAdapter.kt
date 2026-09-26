@@ -1,5 +1,6 @@
 package com.moe.starflow.novel.reader
 
+import android.content.Context
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -17,6 +18,17 @@ import com.moe.starflow.novel.model.NovelChapterMeta
  * drawable），只是把「P{n}」换成「第 n 章」、「页状态」换成「章状态」。两个阅读器的面板
  * 必须长得一样 —— 各画一套行样式是最容易悄悄跑偏的地方。
  */
+/**
+ * 章行 / 目录 / 顶部胶囊显示的章标题。
+ *
+ * ⚠️ **有标题就只显示标题**：以前一律在前面拼「第N章」，于是没有章节标记的书
+ * （兜底按字数切成「第1节」「第2节」…）会显示成「第1章 第1节」这种双编号 ——
+ * 用户看到就是"莫名其妙"。只有该章**没有标题**时才用「第N章」兜底。
+ */
+internal fun chapterDisplayTitle(context: Context, index: Int, title: String?): String =
+    title?.trim()?.takeIf { it.isNotEmpty() }
+        ?: context.getString(R.string.novel_chapter_label, index + 1)
+
 class NovelChapterStateAdapter(
     private val onJump: (Int) -> Unit,
 ) : RecyclerView.Adapter<NovelChapterStateAdapter.VH>() {
@@ -148,8 +160,7 @@ class NovelChapterStateAdapter(
         val accent = 0xFF55AEEA.toInt()
 
         item.findViewById<TextView>(R.id.tv_page_label).apply {
-            text = item.context.getString(R.string.novel_chapter_label, index + 1) +
-                chapters.getOrNull(index)?.title?.takeIf { it.isNotBlank() }?.let { "　$it" }.orEmpty()
+            text = chapterDisplayTitle(item.context, index, chapters.getOrNull(index)?.title)
             setTextColor(if (index == currentChapter) accent else labelColor)
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END

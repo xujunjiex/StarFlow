@@ -134,9 +134,8 @@ object NovelTocDialog {
                     else -> android.graphics.Color.TRANSPARENT
                 }
             )
-            holder.binding.tvChapterTitle.text =
-                ctx.getString(R.string.novel_chapter_label, position + 1) +
-                    if (meta.title.isNotBlank()) "　${meta.title}" else ""
+            // 与面板章行同一套标题规则（有标题就只显示标题，别拼成「第1章 第1节」）
+            holder.binding.tvChapterTitle.text = chapterDisplayTitle(ctx, position, meta.title)
             holder.binding.tvChapterTitle.setTextColor(if (isCurrent) ACCENT else labelColor)
 
             val st = stats[position]

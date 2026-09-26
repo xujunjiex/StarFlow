@@ -1,5 +1,6 @@
 package com.moe.starflow.novel.reader
 
+import com.moe.starflow.R
 import com.moe.starflow.novel.translate.NovelParagraph
 import com.moe.starflow.novel.translate.NovelParagraphType
 import org.junit.Assert.assertEquals
@@ -188,6 +189,21 @@ class NovelDisplayModeTest {
             NovelPage(listOf(seg(2), seg(3))),
         )
         assertEquals(setOf(0), translatedPagesOf(wide, setOf(0, 1, 2)))
+    }
+
+    /**
+     * 章标题规则：**有标题就只显示标题**。
+     *
+     * ⚠️ 没有章节标记的书会被兜底切成「第1节」「第2节」…；再在前面拼「第N章」就变成
+     * 「第1章 第1节」的双编号，用户看到只会觉得莫名其妙。
+     */
+    @Test
+    fun `有标题时章标题不拼第N章`() {
+        val ctx = org.robolectric.RuntimeEnvironment.getApplication()
+        assertEquals("第1节", chapterDisplayTitle(ctx, 0, "第1节"))
+        assertEquals("雾港的清晨", chapterDisplayTitle(ctx, 0, "雾港的清晨"))
+        assertEquals("有空白也只算没标题", ctx.getString(R.string.novel_chapter_label, 1), chapterDisplayTitle(ctx, 0, "   "))
+        assertEquals("没标题才用第N章兜底", ctx.getString(R.string.novel_chapter_label, 1), chapterDisplayTitle(ctx, 0, null))
     }
 
     /** 空页不算「已翻译」（否则进度条上会凭空多一段绿）。 */
