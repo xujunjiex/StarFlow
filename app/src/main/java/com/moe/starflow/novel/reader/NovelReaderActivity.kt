@@ -1437,10 +1437,9 @@ class NovelReaderActivity : AppCompatActivity() {
      * 同步翻译浮层组（判据全部收敛在 [NovelTranslateChrome] 里，这个函数只负责画）。
      *
      * ### 判据（用户口径，别再改错）
-     * - **翻译按钮**：当前页还有没翻的可翻译段才显示；本页都翻过了就只剩三态。
-     *   滚动模式没有「页」，按**整章**还有没有没翻的段判（否则滚一屏就忽隐忽现）。
-     * - **三态按钮**：当前页（滚动模式 = 当前屏幕）有译文才显示 ——
-     *   没译文时点了看不出任何变化。
+     * - **翻译按钮**：当前视野还有没翻的可翻译段才显示（翻页 = 本页；滚动 = 当前屏幕可见段）。
+     *   都翻过了就只剩三态 —— 滚动模式也一样，别"始终显示"。
+     * - **三态按钮**：当前视野里有译文才显示 —— 没译文时点了看不出任何变化。
      * - **图标不再看「有没有译文」**：漫画那套「缓存命中 → 变重翻图标」在文本翻译里**不要**
      *   （用户明确要求）。重翻走长按多选，按钮语义由**选择集**决定。
      */
@@ -1504,12 +1503,15 @@ class NovelReaderActivity : AppCompatActivity() {
         count,
     )
 
-    /** 浮层判据：当前视野里**还没译文**的可翻译段数（滚动模式按整章 —— 见 [refreshTranslationChrome]）。 */
-    private fun chromeUntranslated(): Int {
-        if (!isScrollMode()) return translatableOnScreen().count { !translations.containsKey(it) }
-        val c = content ?: return 0
-        return c.paragraphs.count { it.isTranslatable() && !translations.containsKey(it.index) }
-    }
+    /**
+     * 浮层判据：当前视野里**还没译文**的可翻译段数。
+     *
+     * ⚠️ 两种阅读模式同口径（翻页 = 本页，滚动 = 当前屏幕可见段）：用户明确要求滚动模式
+     * 也别"始终显示翻译按钮"，当前屏翻完了就该收起来。代价是滚动时它会随内容出现/消失 ——
+     * 那是他要的行为。
+     */
+    private fun chromeUntranslated(): Int =
+        translatableOnScreen().count { !translations.containsKey(it) }
 
     /** 浮层判据：当前视野里已有译文的段数（三态按钮的显示条件）。 */
     private fun chromeTranslated(): Int = translatableOnScreen().count { translations.containsKey(it) }

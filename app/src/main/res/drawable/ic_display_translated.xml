@@ -1,27 +1,21 @@
 <!--
-  显示三态之一：**译文**。
-  「文」= 已转成目标语言的文字（与「原文」的 A 一眼可分）。
-  ⚠️ 不能再用翻译按钮那个「A + 文」并排字形 —— 两颗按钮在同一浮层组里并排，
-  同形就是"图标重复"（用户当场指出来了）。
+  显示三态之一：**译文**（只看译文）。
+  ⚠️ 不要描汉字字形：上一版照「文」描了几笔，22dp 下看着就是「六」，用户直接问"这什么玩意"。
+  改成与 `ic_display_original` / `ic_display_bilingual` **同一套「文字块」语言**：
+  「译文块」= 一行粗行 + 一行短行（就是双语图标里下半部分的那个块，单独拿出来）。
+  于是三枚之间的关系一眼可读：原文=多行细行 / 译文=一个译文块 / 双语=上下两块都画。
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
-    <!-- 亠：点 + 横 -->
+    <!-- 粗行 = 已换成译文的正文 -->
     <path
         android:fillColor="#FF000000"
-        android:pathData="M12,2.4l1.5,1.5 -1.5,1.5 -1.5,-1.5z" />
+        android:pathData="M4,9.2h16v3.1H4z" />
+    <!-- 短行 = 这一段的后半截 -->
     <path
         android:fillColor="#FF000000"
-        android:pathData="M6.6,7.2h10.8v2.1H6.6z" />
-    <!-- 撇（左下） -->
-    <path
-        android:fillColor="#FF000000"
-        android:pathData="M10.9,10.8l2.1,0.8 -5.3,9.7 -2.1,-0.8z" />
-    <!-- 捺（右下） -->
-    <path
-        android:fillColor="#FF000000"
-        android:pathData="M12.6,11.3l2.1,-0.6 5.6,8.6 -2,1.3z" />
+        android:pathData="M4,14.3h9v2.4H4z" />
 </vector>

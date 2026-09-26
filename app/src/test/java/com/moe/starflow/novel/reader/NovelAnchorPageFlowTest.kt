@@ -35,6 +35,12 @@ class NovelAnchorPageFlowTest {
         return starts to starts.map { a -> FloatArray(a.size) { lineHeight } }
     }
 
+    /** 与生产同口径的排版参数：段间距 0、不整段保护（测试关心的是行/页边界）。 */
+    private val style = NovelTextStyle(
+        fontSizePx = lineHeight, lineSpacingMultiplier = 1f, paragraphSpacingPx = 0f, paddingPx = 0f,
+        keepParagraphsWhole = false,
+    )
+
     private fun paginate(paragraphs: List<NovelParagraph>, anchor: NovelAnchor?): List<NovelPage> {
         val (starts, heights) = metrics(paragraphs)
         val forceBreak = anchor?.let { a ->
@@ -42,9 +48,13 @@ class NovelAnchorPageFlowTest {
                 .indexOfFirst { it.index == a.paraIndex }
             if (vi < 0) null else vi to (a.charOffsetOf(paragraphs[vi].originalText.length) / charsPerLine)
         }
-        return NovelPaginator.paginateByLines(
-            paragraphs, starts, heights, 0f, pageHeight, keepParagraphsWhole = false, forceBreak = forceBreak,
-        )
+        if (forceBreak == null) {
+            return NovelPaginator.paginateByLines(
+                paragraphs, starts, heights, 0f, pageHeight, keepParagraphsWhole = false,
+            )
+        }
+        // 生产路径：锚点当强制分页点（前半段倒着填满，见 paginateAround）
+        return NovelPaginator.paginateAround(paragraphs, starts, heights, style, pageHeight, forceBreak)
     }
 
     /**

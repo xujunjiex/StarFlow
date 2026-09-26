@@ -83,31 +83,56 @@ class NovelPaginatorTest {
     }
 
     /**
-     * **强制分页点**：指定的那一行必须出现在某一页的**顶部**。
+     * **锚点之前的内容从下往上填**：锚点顶到页首之后，前面每一页仍然要满。
      *
-     * 带位重排（译文到达后重排）靠它把锚点钉在页首：不强制时锚点可能落在页尾，
-     * 译文比原文短时它会被挤到**上一页** —— 读者看到的就是「翻译完回到前一页」（用户报的）。
+     * 上一版是"从头往下填、填到锚点就提前收页"，那会让锚点前一页只剩小半页、底部一大片空白
+     * （用户报的「有的页面提前莫名其妙分页，底部预留出大片空白」，双语↔译文/原文来回切时最明显）。
      */
     @Test
-    fun `强制分页点让指定行落在页首`() {
-        // 一段 100 字、每行 10 字 = 10 行、每行 100px；一页 400px = 4 行
+    fun `锚点之前的内容从下往上填满`() {
+        // 一段 10 行、每行 100px；一页 500px = 5 行
         val paras = listOf(textPara(0, "字".repeat(100)))
         val m = measured(paras, charsPerLine = 10, lineHeightPx = 100f)
+        val style = NovelTextStyle(50f, 1.2f, 0f, 0f)
 
-        val natural = NovelPaginator.paginateByLines(paras, m.starts, m.heights, 0f, 400f)
-        assertEquals("自然分页：每页 4 行", listOf(0, 4, 8), natural.map { it.segments.first().lineStart })
+        // 锚点在第 7 行（下标 7）
+        val pages = NovelPaginator.paginateAround(paras, m.starts, m.heights, style, 500f, 0 to 7)
 
-        // 强制第 5 行（下标 5）另起一页
-        val forced = NovelPaginator.paginateByLines(paras, m.starts, m.heights, 0f, 400f, true, 0 to 5)
-        val page = forced.first { p -> p.segments.any { it.lineStart == 5 } }
-        assertEquals("第 5 行必须是这一页的第一行", 5, page.segments.first().lineStart)
-        assertFullCoverage(paras, forced)
-        assertLineCoverage(forced)
+        assertEquals("开头那 2 行自成第一页（章首本来就填不满）", 2, pages[0].segments.sumOf { it.lineEnd - it.lineStart })
+        assertEquals("锚点前的最后一页必须是满的（5 行）", 5, pages[1].segments.sumOf { it.lineEnd - it.lineStart })
+        assertEquals("锚点行必须正好是新一页的第一行", 7, pages[2].segments.first().lineStart)
+        assertFullCoverage(paras, pages)
+        assertLineCoverage(pages)
+    }
 
-        // 已经落在页首的行强制分页不该改变页表（幂等：每次重排都传同一个锚点）
-        val again = NovelPaginator.paginateByLines(paras, m.starts, m.heights, 0f, 400f, true, 0 to 4)
-        assertEquals("第 4 行本来就在页首", natural.map { it.segments.first().lineStart },
-            again.map { it.segments.first().lineStart })
+    /**
+     * **值不值得强行分页**：锚点在页面上半部分就别强分 —— 强分会让**上一页提前结束**、
+     * 底部留一大片空白（用户报的「三态切换后翻页，有页面提前分页、底部大片空白」）。
+     * 在下半部分才强分（否则读者要往回跳将近一屏）。
+     */
+    @Test
+    fun `锚点在上半页不强分在下半页才强分`() {
+        // 一段 100 字 = 10 行、每行 100px；一页 400px = 4 行
+        val paras = listOf(textPara(0, "字".repeat(100)))
+        val m = measured(paras, charsPerLine = 10, lineHeightPx = 100f)
+        val pages = NovelPaginator.paginateByLines(paras, m.starts, m.heights, 0f, 400f)
+        val visOf = mapOf(0 to 0)
+
+        // 第 1 行 = 离页顶 100px（25%）→ 不强分
+        assertEquals(
+            false,
+            NovelPaginator.shouldForceBreak(pages, visOf, 0, 1, m.heights, 0f, 400f),
+        )
+        // 第 3 行 = 离页顶 300px（75%）→ 强分
+        assertEquals(
+            true,
+            NovelPaginator.shouldForceBreak(pages, visOf, 0, 3, m.heights, 0f, 400f),
+        )
+        // 锚点不在页表里（段被跳过）→ 不强分，别制造莫须有的分页
+        assertEquals(
+            false,
+            NovelPaginator.shouldForceBreak(pages, visOf, 99, 0, m.heights, 0f, 400f),
+        )
     }
 
     /**
