@@ -49,6 +49,14 @@ data class NovelParagraphTranslation(
     }
 }
 
+/** 一条失败明细（章行展开显示「为什么失败」）。 */
+data class NovelFailureRow(
+    val chapterIndex: Int,
+    val paraIndex: Int,
+    val failCode: String?,
+    val sourceText: String,
+)
+
 /** 章级聚合，目录面板的状态徽章用。 */
 data class NovelChapterStat(
     val chapterIndex: Int,
@@ -93,6 +101,59 @@ interface NovelParagraphTranslationDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(rows: List<NovelParagraphTranslation>)
+
+    /**
+     * **只在没有该行时插入**（已有行原样保留）。
+     *
+     * 批翻译的「标记翻译中」用它：`REPLACE` 会把这一段**已经拿到的译文覆盖成空**，
+     * 用户看到的就是「翻过的段又变回空白」。
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIgnore(rows: List<NovelParagraphTranslation>)
+
+    /**
+     * 把指定段标成失败（**不写空译文**，可被下一轮重挑）。
+     *
+     * `state != 2` 的条件是必须的：已经有译文（SUCCESS）的段不该因为一次失败被抹掉。
+     * state 字面量 2/3 = [NovelParagraphTranslation.STATE_SUCCESS] / [STATE_FAILED]。
+     */
+    @Query(
+        "UPDATE novel_paragraph_translation SET state = 3, failCode = :failCode, updatedAt = :now " +
+            "WHERE novelId = :novelId AND novelKey = :novelKey AND chapterIndex = :chapterIndex " +
+            "AND splitVersion = :splitVersion AND paraIndex IN (:paraIndexes) AND state != 2"
+    )
+    suspend fun markFailed(
+        novelId: Long,
+        novelKey: String,
+        chapterIndex: Int,
+        splitVersion: Int,
+        paraIndexes: List<Int>,
+        failCode: String,
+        now: Long,
+    )
+
+    /** 失败明细（章行展开显示原因用）：只取 FAILED 行。 */
+    @Query(
+        "SELECT chapterIndex, paraIndex, failCode, sourceText FROM novel_paragraph_translation " +
+            "WHERE novelId = :novelId AND novelKey = :novelKey AND splitVersion = :splitVersion " +
+            "AND state = 3 ORDER BY chapterIndex, paraIndex"
+    )
+    suspend fun failures(
+        novelId: Long,
+        novelKey: String,
+        splitVersion: Int,
+    ): List<NovelFailureRow>
+
+    /** 按章删译文（「清空本章译文」用）。 */
+    @Query(
+        "DELETE FROM novel_paragraph_translation " +
+            "WHERE novelId = :novelId AND novelKey = :novelKey AND chapterIndex = :chapterIndex"
+    )
+    suspend fun deleteForChapter(
+        novelId: Long,
+        novelKey: String,
+        chapterIndex: Int,
+    )
 
     /**
      * 全部章的 (总数, 成功数)。**只统计本指纹 + 本 splitVersion**：否则旧版本的行会把

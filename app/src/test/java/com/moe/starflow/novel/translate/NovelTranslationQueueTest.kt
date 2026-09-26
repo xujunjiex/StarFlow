@@ -1,94 +1,198 @@
 package com.moe.starflow.novel.translate
 
+import com.moe.starflow.novel.data.ImportedNovel
+import com.moe.starflow.novel.model.NovelFormat
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 翻译窗口的纯逻辑守卫。
+ * 队列推进的**语义守卫**（纯 JVM，用假翻译器驱动）。
  *
- * 队列本身（抢锁、轮询、写库）要跑真协程 + Room，覆盖在 `NovelChapterTranslatorTest`；
- * 这里只钉「挑哪一章」的判定 —— 那是最容易写错、也最难从现象反推的部分。
+ * 这里钉死的是三种模式到底怎么往前走 —— 这一块曾经整体做错过一次
+ * （把「增量」实现成了「向后 N **章**」），所以每条语义都配一条断言：
+ * 自动只在本页内推进、增量向后按**批**、章末停下、配额用尽停下、一批失败不无限重试。
  */
 class NovelTranslationQueueTest {
 
-    // ===== 窗口 =====
+    private class FakeTranslator : NovelBatchTranslator {
+        val batches = mutableListOf<List<Int>>()
+        var failAll = false
 
-    @Test
-    fun `手动模式窗口为空`() {
-        assertTrue(NovelQueueWindow.forMode(mode = NovelTranslateMode.MANUAL, current = 3, ahead = 5, chapterCount = 20).isEmpty())
+        override suspend fun translateBatch(
+            book: ImportedNovel,
+            chapterIndex: Int,
+            paragraphs: List<NovelParagraph>,
+            paraIndexes: List<Int>,
+            sourceLang: String,
+            targetLang: String,
+            translatorName: String,
+        ): Map<Int, String> {
+            batches += paraIndexes
+            if (failAll) return emptyMap()
+            return paraIndexes.associateWith { "译$it" }
+        }
     }
 
+    private fun book() = ImportedNovel(
+        id = 1, title = "t", localRoot = "/tmp", format = NovelFormat.TXT, chapterCount = 3, addedAt = 1,
+    )
+
+    private fun queue(
+        scope: CoroutineScope,
+        translator: FakeTranslator,
+        translated: MutableSet<Int>,
+        page: () -> List<Int>,
+        chapterSize: Int,
+        batchSize: Int,
+    ) = NovelTranslationQueue(
+        scope = scope,
+        translator = translator,
+        paragraphsOf = { _, _ ->
+            (0 until chapterSize).map { NovelParagraph(it, NovelParagraphType.TEXT, "p$it") }
+        },
+        sourceLang = { "en" },
+        targetLang = { "zh" },
+        translatorName = { "fake" },
+        batchSize = { batchSize },
+        debounceMs = { 0 },
+        currentPageParaIndexes = page,
+        chapterParaIndexes = { _, _ -> (0 until chapterSize).toList() },
+        translatedIndexes = { _, _ -> translated.toSet() },
+    )
+
+    /** 自动：当前页是唯一锚点 —— 本页翻完就停，**不越页**。 */
     @Test
-    fun `自动当前章只含当前章`() {
-        assertEquals(listOf(3), NovelQueueWindow.forMode(mode = NovelTranslateMode.AUTO, current = 3, ahead = 5, chapterCount = 20))
+    fun `自动模式把当前页翻完就停`() = runTest {
+        val t = FakeTranslator()
+        val translated = mutableSetOf<Int>()
+        val q = queue(backgroundScope, t, translated, page = { listOf(0, 1) }, chapterSize = 6, batchSize = 2)
+
+        q.start(book(), NovelTranslateMode.AUTO, currentChapter = { 0 }) { _, got -> translated += got.keys }
+        advanceTimeBy(5_000)
+
+        assertEquals("只翻当前页那一批", listOf(listOf(0, 1)), t.batches)
+        q.stop()
     }
 
+    /** 自动：本页有多批时要**一批批翻到整页翻完**（用户确认过的口径）。 */
     @Test
-    fun `自动后续 N 章从当前章起算`() {
-        assertEquals(
-            listOf(3, 4, 5, 6, 7),
-            NovelQueueWindow.forMode(mode = NovelTranslateMode.AHEAD, current = 3, ahead = 5, chapterCount = 20),
-        )
+    fun `自动模式在当前页内一批批翻到翻完`() = runTest {
+        val t = FakeTranslator()
+        val translated = mutableSetOf<Int>()
+        val q = queue(backgroundScope, t, translated, page = { listOf(0, 1, 2) }, chapterSize = 6, batchSize = 1)
+
+        q.start(book(), NovelTranslateMode.AUTO, currentChapter = { 0 }) { _, got -> translated += got.keys }
+        advanceTimeBy(5_000)
+
+        assertEquals(listOf(listOf(0), listOf(1), listOf(2)), t.batches)
+        q.stop()
     }
 
+    /** 增量：页内翻完后**继续在本章向后**，翻满配额即停（不是翻后面几章）。 */
     @Test
-    fun `窗口在书末被截断`() {
-        assertEquals(
-            listOf(18, 19),
-            NovelQueueWindow.forMode(mode = NovelTranslateMode.AHEAD, current = 18, ahead = 5, chapterCount = 20),
-        )
+    fun `增量模式向后翻满配额即停`() = runTest {
+        val t = FakeTranslator()
+        val translated = mutableSetOf<Int>()
+        val q = queue(backgroundScope, t, translated, page = { listOf(0, 1) }, chapterSize = 20, batchSize = 2)
+
+        q.start(
+            book(), NovelTranslateMode.AHEAD, quota = NovelQuota.of(2), currentChapter = { 0 },
+        ) { _, got -> translated += got.keys }
+        advanceTimeBy(60_000)
+
+        assertEquals(listOf(listOf(0, 1), listOf(2, 3)), t.batches)
+        q.stop()
     }
 
+    /** 增量：章末就停，**不去下一章**。 */
     @Test
-    fun `ahead 小于 1 时至少含当前章`() {
-        assertEquals(listOf(3), NovelQueueWindow.forMode(mode = NovelTranslateMode.AHEAD, current = 3, ahead = 0, chapterCount = 20))
+    fun `增量模式在本章末尾停下`() = runTest {
+        val t = FakeTranslator()
+        val translated = mutableSetOf<Int>()
+        val q = queue(backgroundScope, t, translated, page = { listOf(4) }, chapterSize = 5, batchSize = 2)
+
+        q.start(
+            book(), NovelTranslateMode.AHEAD, quota = NovelQuota.of(9), currentChapter = { 0 },
+        ) { _, got -> translated += got.keys }
+        advanceTimeBy(60_000)
+
+        assertEquals(listOf(listOf(4)), t.batches)
+        q.stop()
     }
 
+    /** 手动不进队列循环；点一次 = 从当前页锚点翻**一批**。 */
     @Test
-    fun `当前章越界返回空窗口`() {
-        assertTrue(NovelQueueWindow.forMode(mode = NovelTranslateMode.AHEAD, current = -1, ahead = 5, chapterCount = 20).isEmpty())
-        assertTrue(NovelQueueWindow.forMode(mode = NovelTranslateMode.AUTO, current = 20, ahead = 5, chapterCount = 20).isEmpty())
+    fun `手动模式不进队列但要一批就翻一批`() = runTest {
+        val t = FakeTranslator()
+        val translated = mutableSetOf<Int>()
+        val q = queue(backgroundScope, t, translated, page = { listOf(2, 3) }, chapterSize = 20, batchSize = 2)
+
+        q.start(book(), NovelTranslateMode.MANUAL, currentChapter = { 0 }) { _, got -> translated += got.keys }
+        advanceTimeBy(5_000)
+        assertTrue("手动模式队列不该自己翻", t.batches.isEmpty())
+
+        val got = q.translateOneBatch(book(), 0)
+        assertEquals(mapOf(2 to "译2", 3 to "译3"), got)
+        assertEquals(listOf(listOf(2, 3)), t.batches)
+        q.stop()
     }
 
-    // ===== 挑下一个待翻章 =====
-
+    /** 面板打开即暂停；关掉之后按同一套参数接着走。 */
     @Test
-    fun `挑窗口内第一个没翻过的章`() {
-        assertEquals(
-            4,
-            NovelQueueWindow.nextPending(listOf(3, 4, 5), translated = setOf(3), failed = emptySet()),
-        )
+    fun `面板打开暂停关闭后继续`() = runTest {
+        val t = FakeTranslator()
+        val translated = mutableSetOf<Int>()
+        val q = queue(backgroundScope, t, translated, page = { listOf(0, 1) }, chapterSize = 6, batchSize = 2)
+
+        q.setPanelOpen(true)
+        q.start(book(), NovelTranslateMode.AUTO, currentChapter = { 0 }) { _, got -> translated += got.keys }
+        advanceTimeBy(5_000)
+        assertTrue("面板开着时不该翻", t.batches.isEmpty())
+
+        q.setPanelOpen(false)
+        advanceTimeBy(5_000)
+        assertEquals(listOf(listOf(0, 1)), t.batches)
+        q.stop()
     }
 
     /**
-     * 失败章也要跳过。只跳「已成功」的话，内容性失败（空章、模型返回空）会被每轮重新挑中 ——
-     * 表现为「队列一直在转但什么都不发生」，而且因为「有章正在翻」不成立，连进度提示都没有。
+     * 一批彻底失败（模型回空）不能变成无限重试：失败的锚点要记账跳过，
+     * 否则每轮重挑同一批 —— 额度烧光、进度条永远不动。
      */
     @Test
-    fun `失败章也被跳过`() {
-        assertEquals(
-            5,
-            NovelQueueWindow.nextPending(listOf(3, 4, 5), translated = setOf(3), failed = setOf(4)),
-        )
+    fun `失败的批不会无限重试`() = runTest {
+        val t = FakeTranslator().apply { failAll = true }
+        val translated = mutableSetOf<Int>()
+        val q = queue(backgroundScope, t, translated, page = { listOf(0, 1) }, chapterSize = 6, batchSize = 2)
+
+        q.start(book(), NovelTranslateMode.AUTO, currentChapter = { 0 }) { _, got -> translated += got.keys }
+        advanceTimeBy(5_000)
+        val afterFirst = t.batches.size
+
+        advanceTimeBy(60_000)
+        assertEquals("失败后不该继续重挑同一批", afterFirst, t.batches.size)
+        assertEquals("失败 [0,1] → 锚点前移再失败 [1,2] → 之后再无待翻段，停", 2, afterFirst)
+        q.stop()
     }
 
+    /** 没有可翻的段（页内全翻完）→ 停在 DRAINED，而不是空转刷状态。 */
     @Test
-    fun `窗口内全部翻过或失败时返回 null`() {
-        assertNull(NovelQueueWindow.nextPending(listOf(3, 4), setOf(3, 4), emptySet()))
-        assertNull(NovelQueueWindow.nextPending(listOf(3, 4), emptySet(), setOf(3, 4)))
-        assertNull(NovelQueueWindow.nextPending(emptyList(), emptySet(), emptySet()))
-    }
+    fun `没有待翻的段时停在 DRAINED`() = runTest {
+        val t = FakeTranslator()
+        val translated = mutableSetOf(0, 1)
+        val q = queue(backgroundScope, t, translated, page = { listOf(0, 1) }, chapterSize = 6, batchSize = 2)
 
-    @Test
-    fun `已翻与失败混合时挑剩下的那个`() {
-        assertEquals(6, NovelQueueWindow.nextPending(listOf(3, 4, 5, 6), setOf(3, 4), setOf(5)))
-    }
+        q.start(book(), NovelTranslateMode.AUTO, currentChapter = { 0 }) { _, got -> translated += got.keys }
+        advanceTimeBy(5_000)
 
-    /** 窗口外的章（用户切章后不再需要翻）不该被挑走。 */
-    @Test
-    fun `只挑窗口内的章`() {
-        assertNull(NovelQueueWindow.nextPending(listOf(3, 4), setOf(3, 4), emptySet()))
+        assertTrue(t.batches.isEmpty())
+        assertEquals(NovelQueuePhase.DRAINED, q.state.value.phase)
+        assertNull("自动模式没有配额概念", q.state.value.remaining)
+        q.stop()
     }
 }

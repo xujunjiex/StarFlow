@@ -12,77 +12,62 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-/**
- * 翻译窗口计算（纯函数，可单测）。
- *
- * 窗口以**章**为单位而不是页：章的边界是内容自带的，页的划分随字号与译文变化 ——
- * 按页算窗口会在用户改字号后指向别处。
- */
-object NovelQueueWindow {
-
-    /** 窗口只对「自动 / 增量」有意义；手动不进队列（[NovelTranslateMode.MANUAL] 返回空窗口）。 */
-    fun forMode(mode: NovelTranslateMode, current: Int, ahead: Int, chapterCount: Int): List<Int> {
-        if (current !in 0 until chapterCount) return emptyList()
-        return when (mode) {
-            NovelTranslateMode.AUTO -> listOf(current)
-            NovelTranslateMode.AHEAD -> {
-                val n = ahead.coerceAtLeast(1)
-                (current until (current + n)).filter { it in 0 until chapterCount }
-            }
-            else -> emptyList()
-        }
-    }
-
-    /**
-     * 挑下一个待翻的章。
-     *
-     * ⚠️ **失败章也要跳过**。只跳「已成功」的话，内容性失败（空章、模型返回空）会被每一轮
-     * 重新挑中 → 每轮重试同一章、永远翻不动，而且因为「有章正在翻」不成立，用户看不到任何
-     * 进度提示，只觉得队列卡死了。
-     */
-    fun nextPending(window: List<Int>, translated: Set<Int>, failed: Set<Int>): Int? =
-        window.firstOrNull { it !in translated && it !in failed }
-}
-
 /** 队列阶段。 */
 enum class NovelQueuePhase {
-    /** 未启用或面板打开中。 */
+    /** 未启用 / 面板打开中 / 手动模式闲着。 */
     IDLE,
     /** 抢翻译锁中（漫画/悬浮窗翻译在跑时会出现）。 */
     WAITING_LOCK,
-    /** 正在翻某一章。 */
+    /** 正在翻某一批。 */
     TRANSLATING,
-    /** 窗口内全部翻过或全部失败，等用户切章。 */
+    /** 当前页翻完、配额用尽或章末 —— 停下等用户翻页/切模式。 */
     DRAINED,
 }
 
 data class NovelQueueState(
     val phase: NovelQueuePhase = NovelQueuePhase.IDLE,
     val chapterIndex: Int = -1,
-    val translatedChapters: Int = 0,
-    val windowSize: Int = 0,
+    /** 正在翻的这一批（段号）；空 = 没在翻。 */
+    val batchParaIndexes: List<Int> = emptyList(),
+    /** 本次启动已经翻完多少批。 */
+    val batchesDone: Int = 0,
+    /** 增量还剩多少批配额；手动/自动为 null。 */
+    val remaining: Int? = null,
 )
 
 /**
- * 自动翻译串行队列。
+ * 按**批**推进的翻译队列。
  *
- * 语义与漫画阅读器的翻译队列对齐（那套已踩平坑）：每轮 debounce → 重读当前章 → 取窗口内
- * 第一个待翻章 → 串行翻；**切章不重启队列**（窗口每轮自己重算），正在翻的章不被打断。
+ * ### 三种模式（用户口径，别再改错）
+ * - **手动**：不进队列。按钮点一次 = 从**当前页**第一段没翻的段起翻**一批**（见 [translateOneBatch]）
+ * - **自动**：盯着**当前页**，只要本页还有没翻的段就一批批翻下去；本页翻完 → `DRAINED`，
+ *   等用户翻到下一页再自动接上
+ * - **增量**：在自动的基础上**不受当前页限制**，连续向后翻，直到**配额用尽**或**章末**
  *
- * ⚠️ **抢 `OcrLock` 必须轮询等待，不能拿不到就 return**。`OcrLock.tryAcquire()` 是非阻塞的
- * （忙就返回 false，没有 await）。直接 return 会让本轮什么都不做，而下一轮又会选到同一个
- * 仍未翻的章 → 每 debounce 周期空转一次、永远翻不动，且「有章正在翻」这个判据不成立，
- * 用户连进度提示都看不到。
+ * ⚠️ 增量是「向后 N **批**」，不是「向后 N 章」—— 这条曾经做错过一次，
+ * 语义由 `NovelBatchPlannerTest` 与 `NovelTranslationQueueTest` 两处钉死。
+ *
+ * ⚠️ 三条纪律别改回去（都是踩过的坑）：
+ * 1. **`OcrLock` 必须轮询等**，拿不到就 return 会让本轮什么都不做、下一轮又选到同一批 → 空转
+ * 2. **失败的批要记进 [failedAnchors] 跳过**，否则每轮重挑同一批 → 无限重试、额度烧光
+ * 3. **面板打开时状态置空**（`NovelQueueState()`），否则用户看到一条永远不动的假进度
  */
 class NovelTranslationQueue(
     private val scope: CoroutineScope,
-    private val translator: NovelChapterTranslator,
+    private val translator: NovelBatchTranslator,
     /** 取某章的段落（由仓库提供，带缓存）。 */
     private val paragraphsOf: suspend (ImportedNovel, Int) -> List<NovelParagraph>,
     private val sourceLang: () -> String,
     private val targetLang: () -> String,
     private val translatorName: () -> String,
     private val batchSize: () -> Int,
+    private val debounceMs: () -> Int,
+    /** 当前页显示的段（按顺序）—— 手动/自动的锚点。 */
+    private val currentPageParaIndexes: () -> List<Int>,
+    /** 整章的段（按顺序）—— 增量在页内翻完后从这里向后找。 */
+    private val chapterParaIndexes: suspend (ImportedNovel, Int) -> List<Int>,
+    /** 某章已有译文的段。 */
+    private val translatedIndexes: suspend (ImportedNovel, Int) -> Set<Int>,
 ) {
 
     private companion object {
@@ -92,7 +77,7 @@ class NovelTranslationQueue(
         const val LOCK_POLL_MS = 200L
         const val LOCK_WAIT_TIMEOUT_MS = 30_000L
 
-        /** 全部翻完后的空转间隔（等用户切章）。 */
+        /** 停下之后的空转间隔（等用户翻页/切模式）。 */
         const val DRAINED_POLL_MS = 800L
     }
 
@@ -102,85 +87,158 @@ class NovelTranslationQueue(
     private var job: Job? = null
     private var panelOpen = false
 
-    /** 本次会话内已判定失败的章：进程内记住，避免每轮重挑同一个空章。 */
-    private var sessionFailed = mutableSetOf<Int>()
+    /**
+     * 本次会话里**翻过但没拿到译文**的批（用锚点段号记）。
+     *
+     * 和已翻译的段一起喂给 [NovelBatchPlanner]，让规划器直接跳过 ——
+     * 不记的话每轮都会重挑同一批：无限重试、额度烧光，而且「有批在翻」不成立，
+     * 用户连进度提示都看不到（只觉得队列卡死）。
+     */
+    private val failedAnchors = mutableSetOf<Int>()
 
     /**
-     * 启动（或按新参数重启）队列。
+     * 启动（或按新参数重启）队列。[NovelTranslateMode.MANUAL] 时只把状态清空 ——
+     * 手动不进循环，由按钮直接调 [translateOneBatch]。
      *
-     * @param currentChapter 每轮**重新求值**（lambda 而非值）：切章不重启队列，窗口自动跟上。
+     * @param quota 增量模式的批配额；手动/自动传什么都行
+     * @param currentChapter 每轮**重新求值**（lambda 而非值）：切章不重启队列
      */
     fun start(
         book: ImportedNovel,
         mode: NovelTranslateMode,
-        aheadCount: Int,
-        debounceMs: Int,
+        quota: NovelQuota = NovelQuota.of(NovelQuota.DEFAULT),
         currentChapter: () -> Int,
-        onChapterTranslated: suspend (Int) -> Unit,
+        onBatchTranslated: suspend (Int, Map<Int, String>) -> Unit,
     ) {
         job?.cancel()
-        sessionFailed = mutableSetOf()
+        failedAnchors.clear()
         if (mode == NovelTranslateMode.MANUAL) {
             _state.value = NovelQueueState()
             return
         }
         job = scope.launch {
+            var remaining = quota
+            var batchesDone = 0
             while (isActive) {
                 if (panelOpen) {
+                    // 面板打开：状态置空 + 不动。用户在看面板时翻下去既浪费额度也可能翻错
                     _state.value = NovelQueueState()
                     delay(LOCK_POLL_MS)
                     continue
                 }
-                delay(debounceMs.toLong())
+                delay(debounceMs().toLong())
 
-                val current = currentChapter()
-                val window = NovelQueueWindow.forMode(mode, current, aheadCount, book.chapterCount)
-                if (window.isEmpty()) {
-                    _state.value = NovelQueueState()
+                val chapter = currentChapter()
+                val chapterParas = chapterParaIndexes(book, chapter)
+                val done = translatedIndexes(book, chapter) + failedAnchors
+                val anchor = NovelBatchPlanner.anchorForMode(
+                    mode = mode,
+                    pageParaIndexes = currentPageParaIndexes(),
+                    chapterParaIndexes = chapterParas,
+                    translated = done,
+                )
+                if (anchor == null) {
+                    // 自动：当前页翻完（等翻页）；增量：本章翻完（不越到下一章）
+                    _state.value = drainState(chapter, batchesDone, mode, remaining)
+                    delay(DRAINED_POLL_MS)
                     continue
                 }
-
-                val stats = translator.chapterStats(book)
-                val done = stats.filterValues { it.total > 0 && it.success >= it.total }.keys
-                val failed = sessionFailed + stats.filterValues { it.total > 0 && it.success == 0 }.keys
-                val pending = NovelQueueWindow.nextPending(window, done, failed)
-                if (pending == null) {
-                    _state.value = NovelQueueState(NovelQueuePhase.DRAINED, current, done.size, window.size)
+                if (mode == NovelTranslateMode.AHEAD && remaining.exhausted) {
+                    _state.value = drainState(chapter, batchesDone, mode, remaining)
+                    delay(DRAINED_POLL_MS)
+                    continue
+                }
+                val batch = NovelBatchPlanner.nextBatch(chapterParas, anchor, done, batchSize())
+                if (batch.isEmpty()) {
+                    _state.value = drainState(chapter, batchesDone, mode, remaining)
                     delay(DRAINED_POLL_MS)
                     continue
                 }
 
-                _state.value = NovelQueueState(NovelQueuePhase.WAITING_LOCK, pending, done.size, window.size)
+                _state.value = NovelQueueState(
+                    NovelQueuePhase.WAITING_LOCK, chapter, batch, batchesDone, remaining.remaining,
+                )
                 if (!acquireLockWithWait()) {
-                    // 超时（别的翻译任务一直占着）→ 记账跳过，避免同一章无限重试刷屏
-                    LogCollector.w(TAG, "等待翻译锁超时，本轮跳过 ch=$pending")
-                    sessionFailed += pending
+                    LogCollector.w(TAG, "等待翻译锁超时，本轮跳过 ch=$chapter anchor=$anchor")
+                    failedAnchors += anchor
                     continue
                 }
                 try {
-                    _state.value = NovelQueueState(NovelQueuePhase.TRANSLATING, pending, done.size, window.size)
-                    val paragraphs = paragraphsOf(book, pending)
-                    var got = 0
-                    translator.translateChapter(
+                    _state.value = NovelQueueState(
+                        NovelQueuePhase.TRANSLATING, chapter, batch, batchesDone, remaining.remaining,
+                    )
+                    val got = translator.translateBatch(
                         book = book,
-                        chapterIndex = pending,
-                        paragraphs = paragraphs,
+                        chapterIndex = chapter,
+                        paragraphs = paragraphsOf(book, chapter),
+                        paraIndexes = batch,
                         sourceLang = sourceLang(),
                         targetLang = targetLang(),
                         translatorName = translatorName(),
-                        batchSize = batchSize(),
-                    ).collect { progress -> got = progress.translations.size }
-                    if (got == 0) sessionFailed += pending
-                    else onChapterTranslated(pending)
+                    )
+                    if (got.isEmpty()) {
+                        // 内容性失败（空章 / 模型回空）：记账跳过，别死循环重试
+                        LogCollector.w(TAG, "第 $chapter 章一批（${batch.size} 段）没拿到译文，跳过")
+                        failedAnchors += anchor
+                        continue
+                    }
+                    batchesDone += 1
+                    if (mode == NovelTranslateMode.AHEAD) remaining = remaining.consume()
+                    onBatchTranslated(chapter, got)
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    LogCollector.e(TAG, "第 $pending 章翻译失败", e)
-                    sessionFailed += pending
+                    LogCollector.e(TAG, "第 $chapter 章翻译失败", e)
+                    failedAnchors += anchor
                 } finally {
                     OcrLock.release()
                 }
             }
+        }
+    }
+
+    private fun drainState(
+        chapter: Int,
+        batchesDone: Int,
+        mode: NovelTranslateMode,
+        remaining: NovelQuota,
+    ) = NovelQueueState(
+        phase = NovelQueuePhase.DRAINED,
+        chapterIndex = chapter,
+        batchesDone = batchesDone,
+        remaining = if (mode == NovelTranslateMode.AHEAD) remaining.remaining else null,
+    )
+
+    /**
+     * **手动**：从当前页第一段没翻的段起，翻一批就返回。
+     *
+     * 与队列共用同一套锚点/成批规则（[NovelBatchPlanner]）—— 两条路各写一套迟早会不一致。
+     */
+    suspend fun translateOneBatch(book: ImportedNovel, chapterIndex: Int): Map<Int, String> {
+        val chapterParas = chapterParaIndexes(book, chapterIndex)
+        val done = translatedIndexes(book, chapterIndex)
+        val anchor = NovelBatchPlanner.anchorOnPage(currentPageParaIndexes(), done)
+            ?: chapterParas.firstOrNull { it !in done && it !in failedAnchors }
+            ?: return emptyMap()
+        val batch = NovelBatchPlanner.nextBatch(chapterParas, anchor, done, batchSize())
+        if (batch.isEmpty()) return emptyMap()
+
+        _state.value = NovelQueueState(NovelQueuePhase.WAITING_LOCK, chapterIndex, batch)
+        if (!acquireLockWithWait()) return emptyMap()
+        try {
+            _state.value = NovelQueueState(NovelQueuePhase.TRANSLATING, chapterIndex, batch)
+            return translator.translateBatch(
+                book = book,
+                chapterIndex = chapterIndex,
+                paragraphs = paragraphsOf(book, chapterIndex),
+                paraIndexes = batch,
+                sourceLang = sourceLang(),
+                targetLang = targetLang(),
+                translatorName = translatorName(),
+            )
+        } finally {
+            OcrLock.release()
+            _state.value = NovelQueueState()
         }
     }
 
@@ -202,7 +260,7 @@ class NovelTranslationQueue(
     }
 
     /**
-     * 翻译面板开合：**打开即暂停**。
+     * 翻译面板开合：**打开即暂停**（与漫画 `pauseToManual` 同义，「回退手动」由宿主做）。
      *
      * 用户打开面板多半是要改设置，此时继续按旧设置翻下去既浪费额度也可能翻错；
      * 关闭面板后由调用方按新参数重启队列。

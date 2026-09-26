@@ -37,6 +37,7 @@ import com.moe.starflow.novel.data.ImportedNovel
 import com.moe.starflow.novel.data.NovelStore
 import com.moe.starflow.novel.translate.NovelChapterTranslator
 import com.moe.starflow.novel.translate.NovelParagraphSplitter
+import com.moe.starflow.novel.translate.NovelQuota
 import com.moe.starflow.novel.translate.NovelTranslateMode
 import com.moe.starflow.novel.translate.NovelQueuePhase
 import com.moe.starflow.novel.translate.NovelTranslationEngine
@@ -843,6 +844,10 @@ class NovelReaderActivity : AppCompatActivity() {
             targetLang = { targetLang() },
             translatorName = { "novel" },
             batchSize = { NovelPanelStyle.batchSize(prefs) },
+            debounceMs = { NovelPanelStyle.debounceMs(prefs) },
+            currentPageParaIndexes = { currentPageParaIndexes() },
+            chapterParaIndexes = { book2, ch -> repository.paragraphsOf(book2, ch).map { it.index } },
+            translatedIndexes = { book2, ch -> translations.keys.toSet() },
         ).also { it2 ->
             queue = it2
             // ⚠️ 队列是惰性创建的：观察必须挂在这里，挂在 onCreate 会对着 null 收流，
@@ -855,16 +860,39 @@ class NovelReaderActivity : AppCompatActivity() {
         q.start(
             book = b,
             mode = mode,
-            aheadCount = NovelPanelStyle.aheadBatches(prefs),
-            debounceMs = NovelPanelStyle.debounceMs(prefs),
-            // 每轮重新求值：切章不重启队列，窗口自动跟上
+            quota = NovelQuota.of(NovelPanelStyle.aheadBatches(prefs)),
+            // 每轮重新求值：切章不重启队列，锚点自动跟上
             currentChapter = { chapterIndex },
-            onChapterTranslated = { ch ->
+            onBatchTranslated = { ch, _ ->
                 refreshChapterStats()
                 if (ch == chapterIndex) refreshTranslations(keepPara = pendingParaIndex)
             },
         )
         queueRunning = true
+    }
+
+    /**
+     * 当前页显示的段落号（按顺序）——翻译的**锚点**就是这一页里第一段没翻的段。
+     *
+     * 滚动模式没有「页」：用当前可见的首段往后一段，保持「以用户现在看到的内容为锚」。
+     */
+    private fun currentPageParaIndexes(): List<Int> {
+        if (isScrollMode()) return visibleScrollParaIndexes()
+        val page = content?.pages?.getOrNull(currentPage()) ?: return emptyList()
+        return page.segments.map { it.paraIndex }.distinct()
+    }
+
+    /** 滚动模式：当前可见的那几段（锚点用）。列表拿不到时退回首段。 */
+    private fun visibleScrollParaIndexes(): List<Int> {
+        val c = content ?: return emptyList()
+        val visible = NovelScrollMapping.visibleParagraphs(c)
+        if (visible.isEmpty()) return emptyList()
+        val lm = binding.novelScroll.layoutManager as? LinearLayoutManager
+            ?: return listOf(visible.first().index)
+        val first = lm.findFirstVisibleItemPosition().coerceAtLeast(0)
+        val last = lm.findLastVisibleItemPosition().coerceAtMost(visible.size - 1)
+        if (last < first) return listOf(visible[first.coerceAtMost(visible.size - 1)].index)
+        return (first..last).map { visible[it].index }
     }
 
     private fun sourceLang(): String = CustomPreference.getInstance(this).getString("Source_Language", "auto")

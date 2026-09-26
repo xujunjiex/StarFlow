@@ -2,6 +2,7 @@ package com.moe.starflow.novel.translate
 
 import com.moe.starflow.data.NovelChapterStat
 import com.moe.starflow.data.NovelParagraphTranslation
+import com.moe.starflow.data.NovelFailureRow
 import com.moe.starflow.data.NovelParagraphTranslationDao
 import com.moe.starflow.novel.data.ImportedNovel
 import com.moe.starflow.utils.LogCollector
@@ -21,12 +22,31 @@ import kotlinx.coroutines.flow.flow
  * ### 为什么 `TRANSLATING` 要落库
  * 它是跨进程的「本章正在翻」标记，也是 [resetStale] 的清理依据 —— 进程被杀会让它永久残留。
  */
+/**
+ * 队列真正需要的那一件事：**翻一批并落库**。
+ *
+ * 抽成接口只有一个目的 —— 让队列的推进逻辑（页锚点、批配额、何时停）能在普通单测里
+ * 用假实现驱动。那部分语义已经做错过一次（增量被做成"向后 N 章"），必须能在 JVM 单测里钉住，
+ * 而 `NovelChapterTranslator` 直接依赖 Room DAO，测试里造不起。
+ */
+interface NovelBatchTranslator {
+    suspend fun translateBatch(
+        book: ImportedNovel,
+        chapterIndex: Int,
+        paragraphs: List<NovelParagraph>,
+        paraIndexes: List<Int>,
+        sourceLang: String,
+        targetLang: String,
+        translatorName: String,
+    ): Map<Int, String>
+}
+
 class NovelChapterTranslator(
     private val dao: NovelParagraphTranslationDao,
     private val engine: NovelTranslationEngine,
     /** 必须与 `NovelParagraphSplitter.SPLIT_VERSION` 一致；不一致的旧译文读不出来。 */
     private val splitVersion: Int,
-) {
+) : NovelBatchTranslator {
 
     private companion object {
         const val TAG = "NovelChapterTranslator"
@@ -58,8 +78,38 @@ class NovelChapterTranslator(
         sourceLang: String,
         targetLang: String,
     ) {
+        val rows = translatingRows(book, chapterIndex, paragraphs, translatorName, sourceLang, targetLang)
+        if (rows.isNotEmpty()) dao.upsertAll(rows)
+    }
+
+    /**
+     * 批翻译的「标记翻译中」：**只插入没有的行**（`insertIgnore`）。
+     *
+     * ⚠️ 不能用 `upsertAll`（REPLACE）：那会把这一批里**已经拿到的译文覆盖成空串**，
+     * 用户看到的就是「翻过的段又变回空白」。
+     */
+    private suspend fun markTranslatingBatch(
+        book: ImportedNovel,
+        chapterIndex: Int,
+        paragraphs: List<NovelParagraph>,
+        translatorName: String,
+        sourceLang: String,
+        targetLang: String,
+    ) {
+        val rows = translatingRows(book, chapterIndex, paragraphs, translatorName, sourceLang, targetLang)
+        if (rows.isNotEmpty()) dao.insertIgnore(rows)
+    }
+
+    private fun translatingRows(
+        book: ImportedNovel,
+        chapterIndex: Int,
+        paragraphs: List<NovelParagraph>,
+        translatorName: String,
+        sourceLang: String,
+        targetLang: String,
+    ): List<NovelParagraphTranslation> {
         val now = System.currentTimeMillis()
-        val rows = paragraphs
+        return paragraphs
             .filter { it.type == NovelParagraphType.TEXT && it.originalText.isNotBlank() }
             .map { p ->
                 NovelParagraphTranslation(
@@ -77,7 +127,6 @@ class NovelChapterTranslator(
                     updatedAt = now,
                 )
             }
-        if (rows.isNotEmpty()) dao.upsertAll(rows)
     }
 
     private suspend fun persist(
@@ -138,6 +187,66 @@ class NovelChapterTranslator(
     suspend fun resetStale(book: ImportedNovel) {
         dao.resetTranslating(book.id, book.translationKey)
     }
+
+    /**
+     * 翻**一批**并落库（[paraIndexes] 来自 `NovelBatchPlanner.nextBatch`）。
+     *
+     * 与 [translateChapter] 的区别只在粒度：一次一批、只写这一批的库。
+     * 队列靠它实现「点一次翻一批」和「增量配额 x 批」。
+     *
+     * 这一批里没拿到的段标 `FAILED`（带 failCode）—— **绝不写空译文**：
+     * 空串会被读回路径当成「已成功翻译」而永不重试（见 [persist] 的说明）。
+     */
+    override suspend fun translateBatch(
+        book: ImportedNovel,
+        chapterIndex: Int,
+        paragraphs: List<NovelParagraph>,
+        paraIndexes: List<Int>,
+        sourceLang: String,
+        targetLang: String,
+        translatorName: String,
+    ): Map<Int, String> {
+        if (paraIndexes.isEmpty()) return emptyMap()
+        val wanted = paraIndexes.toSet()
+        val mine = paragraphs.filter {
+            it.index in wanted && it.type == NovelParagraphType.TEXT && it.originalText.isNotBlank()
+        }
+        if (mine.isEmpty()) return emptyMap()
+
+        markTranslatingBatch(book, chapterIndex, mine, translatorName, sourceLang, targetLang)
+        val got = engine.translateBatch(paragraphs, mine.map { it.index }, sourceLang, targetLang)
+        persist(
+            book = book,
+            chapterIndex = chapterIndex,
+            paragraphs = paragraphs,
+            progress = NovelChapterProgress(chapterIndex, got, isComplete = false),
+            translatorName = translatorName,
+            sourceLang = sourceLang,
+            targetLang = targetLang,
+        )
+        val missed = mine.map { it.index }.filter { it !in got }
+        if (missed.isNotEmpty()) {
+            dao.markFailed(
+                novelId = book.id,
+                novelKey = book.translationKey,
+                chapterIndex = chapterIndex,
+                splitVersion = splitVersion,
+                paraIndexes = missed,
+                failCode = FAIL_CODE_EMPTY,
+                now = System.currentTimeMillis(),
+            )
+            LogCollector.w(TAG, "第 $chapterIndex 章有 ${missed.size} 段没拿到译文，标记 FAILED")
+        }
+        return got
+    }
+
+    /** 失败明细（章行展开显示原因用），按章分组。 */
+    suspend fun failuresOf(book: ImportedNovel): Map<Int, List<NovelFailureRow>> =
+        dao.failures(book.id, book.translationKey, splitVersion).groupBy { it.chapterIndex }
+
+    /** 只清**本章**译文（用户明确要求：不要一点就清整本）。 */
+    suspend fun clearChapter(book: ImportedNovel, chapterIndex: Int) =
+        dao.deleteForChapter(book.id, book.translationKey, chapterIndex)
 
     /** 本章已成功的译文：`paraIndex -> 译文`。 */
     suspend fun loadTranslations(book: ImportedNovel, chapterIndex: Int): Map<Int, String> =
