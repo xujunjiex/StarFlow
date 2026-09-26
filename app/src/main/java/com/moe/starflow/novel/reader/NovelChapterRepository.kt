@@ -180,6 +180,10 @@ class NovelChapterRepository {
      *
      * 段落号超出本章内容时取**末页**：这发生在「上次读到的位置比现在的内容还靠后」
      * （换版本、缓存里的旧值），用户本来就在末尾附近，回到第一页更突兀。
+     *
+     * ⚠️ **别用它恢复阅读位置**：它给的是「含该段的**第一页**」，段一旦跨页（长段、整章一段）
+     * 那就是**段首**所在的页 —— 把读者从段中间拽回段首，正是「翻译之后页面跳变」的成因。
+     * 恢复位置用 `NovelAnchors.pageOf`（带段内比例）。
      */
     fun pageOfParagraph(pages: List<NovelPage>, paraIndex: Int): Int {
         if (pages.isEmpty()) return 0

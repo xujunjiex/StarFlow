@@ -160,7 +160,14 @@ class NovelReaderActivity : AppCompatActivity() {
     private var queueRunning = false
 
     /** 段落号 → 页码的请求：改排版/译文到达后重新分页时用它把位置找回来。 */
-    private var pendingParaIndex = 0
+    /**
+     * 当前阅读锚点（段号 + **段内比例**），见 [NovelAnchor]。
+     *
+     * ⚠️ 只有段号是不够的：段可以长到跨好几页（整章一段的样本就是），按段号恢复会落到
+     * **段首那一页/段顶**，于是每翻一批译文重排一次就把读者拽回去（用户报的「翻译之后位置跳变」）。
+     * 所有"重新加载但保持位置"的路径都传它；[persistProgress] 只存段号（断点续读的既有格式）。
+     */
+    private var pendingAnchor = NovelAnchor(0)
 
     /** 最近一次分页用的视口尺寸（px）。尺寸变了必须重排，否则页边界对不上真实视口。 */
     private var pagedWidth = 0
@@ -258,7 +265,8 @@ class NovelReaderActivity : AppCompatActivity() {
         binding.novelScroll.adapter = scrollAdapter
 
         chapterIndex = loaded.lastReadChapter.coerceAtLeast(0)
-        pendingParaIndex = loaded.lastReadParaIndex
+        // 断点续读只存了段号（既有格式），段内比例从段首起算
+        pendingAnchor = NovelAnchor(loaded.lastReadParaIndex)
 
         if (savedInstanceState != null) {
             returnedFromSettings = savedInstanceState.getBoolean(STATE_FROM_SETTINGS, false)
@@ -271,7 +279,7 @@ class NovelReaderActivity : AppCompatActivity() {
         applyReaderMode()
 
         NovelDebug.log(
-            "onCreate book=${loaded.id} chapters=$chapterCount ch=$chapterIndex para=$pendingParaIndex " +
+            "onCreate book=${loaded.id} chapters=$chapterCount ch=$chapterIndex para=${pendingAnchor.paraIndex} " +
                 "mode=${NovelPanelStyle.readerMode(prefs)} anim=$animationMode bg=$bgMode " +
                 "root=${binding.root.width}x${binding.root.height}"
         )
@@ -279,14 +287,14 @@ class NovelReaderActivity : AppCompatActivity() {
         // ⚠️ **先渲染正文**：首次进入绝不能只有「译文读回来」那一条链才会加载内容 ——
         // 那条链在「本章一句译文都没有」时会判定「没变化」直接返回，结果第一次进阅读器
         // 一片空白，必须切一次章才显示（用户实测反馈）。
-        loadChapter(chapterIndex, keepPara = pendingParaIndex)
+        loadChapter(chapterIndex, anchor = pendingAnchor)
 
         lifecycleScope.launch {
             // 清理上次异常退出留下的「翻译中」标记（进程被杀时退出清理不会执行）
             runCatching { translator().resetStale(loaded) }
                 .onFailure { LogCollector.w(TAG, "清理残留翻译状态失败", it) }
             refreshChapterStats()
-            refreshTranslations(keepPara = pendingParaIndex)
+            refreshTranslations(anchor = pendingAnchor)
         }
     }
 
@@ -800,7 +808,7 @@ class NovelReaderActivity : AppCompatActivity() {
         // 选择集是按**段号**记的，换章后段号会撞上别的段 —— 必须先清
         exitSelection()
         persistProgress()
-        loadChapter(index, keepPara = if (atLastPage) Int.MAX_VALUE else 0, atLastPage = atLastPage)
+        loadChapter(index, atLastPage = atLastPage)
     }
 
     /**
@@ -814,7 +822,7 @@ class NovelReaderActivity : AppCompatActivity() {
         repaginateJob?.cancel()
         repaginateJob = lifecycleScope.launch {
             delay(REPAGINATE_DEBOUNCE_MS)
-            loadChapter(chapterIndex, keepPara = pendingParaIndex)
+            loadChapter(chapterIndex, anchor = pendingAnchor)
         }
     }
 
@@ -939,16 +947,18 @@ class NovelReaderActivity : AppCompatActivity() {
      * `chapterIndex`、`content` 和 `setCurrentItem` 一起**拽回旧章旧页**：
      * 表现就是「翻页卡在第一页、点目录切章也没用、整个画面像卡死不会刷新」。踩过。
      *
-     * @param keepPara 要定位到的段落号（[Int.MAX_VALUE] = 本章末尾）
+     * @param anchor 要定位到的阅读锚点（段号 + 段内比例，见 [NovelAnchor]）；
+     *   译文到达 / 改排版都会重排，重排后**必须回到同一个位置**，否则每翻一批就跳一次
+     * @param atLastPage 本章末尾（切上一章时停在末页）
      */
-    private fun loadChapter(index: Int, keepPara: Int = 0, atLastPage: Boolean = false) {
+    private fun loadChapter(index: Int, anchor: NovelAnchor = NovelAnchor(0), atLastPage: Boolean = false) {
         val b = book ?: return
         val token = ++loadToken
         lifecycleScope.launch {
             val style = NovelPanelStyle.textStyle(this@NovelReaderActivity, prefs)
             val w = binding.root.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
             val h = binding.root.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels
-            NovelDebug.log("loadChapter#$token start ch=$index keepPara=$keepPara atLast=$atLastPage size=${w}x$h")
+            NovelDebug.log("loadChapter#$token start ch=$index anchor=$anchor atLast=$atLastPage size=${w}x$h")
 
             // ⚠️ **本章译文必须在这里按章取**，不能沿用上一次的 `translations`：
             // 那个表是「paraIndex -> 译文」，换章后 paraIndex 会撞上，于是新章每一段都显示
@@ -988,24 +998,36 @@ class NovelReaderActivity : AppCompatActivity() {
                 scrollAdapter.submit(loaded, style, textColor, bgColor)
                 // 换章/重排后一定要让 layout listener 再补刷一次进度条（防死循环的闸门要复位）
                 lastLayoutScrollItem = -1
-                val pos = if (keepPara == Int.MAX_VALUE) {
+                val pos = if (atLastPage) {
                     (scrollAdapter.itemCount - 1).coerceAtLeast(0)
                 } else {
-                    NovelScrollMapping.positionOf(loaded, keepPara)
+                    NovelScrollMapping.positionOf(loaded, anchor.paraIndex)
                 }
                 binding.novelScroll.scrollToPosition(pos)
+                // ⚠️ 段内比例要等这一段**量出高度**才换得出像素，所以 post 到布局之后再补一次滚动。
+                // 不做这一步：长段（整章一段的样本）每次重排都被吸回段首 —— 就是「位置跳变」。
+                if (anchor.fraction > 0f && !atLastPage) {
+                    binding.novelScroll.post {
+                        if (token != loadToken) return@post
+                        val v = (binding.novelScroll.layoutManager as? LinearLayoutManager)
+                            ?.findViewByPosition(pos)
+                        if (v != null && v.height > 0) {
+                            binding.novelScroll.scrollBy(0, (v.height * anchor.fraction).roundToInt())
+                        }
+                    }
+                }
             } else {
                 pageAdapter.submit(loaded, style, textColor, bgColor)
-                val page = if (keepPara == Int.MAX_VALUE) {
-                    loaded.pages.lastIndex.coerceAtLeast(0)
-                } else if (atLastPage) {
+                val page = if (atLastPage) {
                     loaded.pages.lastIndex.coerceAtLeast(0)
                 } else {
-                    repository.pageOfParagraph(loaded.pages, keepPara)
+                    // ⚠️ 用 anchor 版而不是 `pageOfParagraph`：后者给的是「含该段的**第一页**」，
+                    // 段跨页时那是段首所在的页，会把读者从段中间拽回段首
+                    NovelAnchors.pageOf(loaded.pages, loaded.displayTexts, anchor)
                 }
                 binding.novelPager.setCurrentItem(page, false)
                 onPaged(page)
-                NovelDebug.log("loadChapter submit pages=${pageAdapter.itemCount} gotoPage=$page")
+                NovelDebug.log("loadChapter submit pages=${pageAdapter.itemCount} gotoPage=$page anchor=$anchor")
             }
             refreshOverlay()
             refreshTranslationChrome()
@@ -1077,7 +1099,7 @@ class NovelReaderActivity : AppCompatActivity() {
                 // 无论成败都要刷新：失败也要让面板的「失败」状态与原因立刻出来
                 refreshChapterStats()
                 if (!result.isEmpty && ch == chapterIndex) {
-                    refreshTranslations(keepPara = pendingParaIndex)
+                    refreshTranslations(anchor = pendingAnchor)
                 }
                 if (result.isEmpty) {
                     showOverlayToast(
@@ -1141,8 +1163,8 @@ class NovelReaderActivity : AppCompatActivity() {
     private fun targetLang(): String = CustomPreference.getInstance(this).getString("Target_Language", "zh")
 
     private fun onPaged(position: Int) {
-        val pages = content?.pages ?: return
-        pendingParaIndex = pages.getOrNull(position)?.segments?.firstOrNull()?.paraIndex ?: 0
+        val c = content ?: return
+        pendingAnchor = NovelAnchors.ofPage(c.pages, c.displayTexts, position)
         refreshOverlay()
         // ⚠️ **翻页必须重算浮层**：判据是「当前页有没有译文」，翻到别的页当然会变。
         // 早先这里只刷进度条，于是翻译/三态按钮停在上一次 `loadChapter` 时的状态（用户报的
@@ -1158,16 +1180,26 @@ class NovelReaderActivity : AppCompatActivity() {
         if (first == RecyclerView.NO_POSITION) return
         val c = content ?: return
         val para = NovelScrollMapping.paraIndexOf(c, first) ?: return
-        val moved = para != pendingParaIndex
-        pendingParaIndex = para
+        // ⚠️ 锚点必须带**段内比例**（首可见项已经滚过多少）：段可以长到跨屏，
+        // 只记段号的话重排后会回到段顶 —— 长段/整章一段的样本里就是"跳回章节开头"
+        val v = lm.findViewByPosition(first)
+        val scrolledPx = if (v != null) -v.top else 0
+        val anchor = NovelAnchors.ofScroll(para, scrolledPx, v?.height ?: 0)
+        val moved = anchor.paraIndex != pendingAnchor.paraIndex
+        pendingAnchor = anchor
         refreshOverlay()
         // 三态按钮的判据是「当前屏幕有没有译文」—— 滚到有/没译文的区域必须跟着变。
         // ⚠️ 只在**首可见段真的变了**时算：判据要遍历可见段（滚动回调是每帧一次的）
         if (moved) refreshTranslationChrome()
     }
 
-    /** 译文到达后：重新分页（译文比原文长）+ 保持位置。 */
-    private fun refreshTranslations(keepPara: Int = pendingParaIndex) {
+    /**
+     * 译文到达后：重新分页（译文比原文长）+ **回到同一个阅读位置**。
+     *
+     * ⚠️ `anchor` 默认取当前锚点而不是只取段号：重排之后段内位置也要落回原处，
+     * 否则每翻一批译文读者就被弹一次（长段尤其明显，见 [NovelAnchor]）。
+     */
+    private fun refreshTranslations(anchor: NovelAnchor = pendingAnchor) {
         val b = book ?: return
         val ch = chapterIndex
         lifecycleScope.launch {
@@ -1183,7 +1215,7 @@ class NovelReaderActivity : AppCompatActivity() {
                 return@launch
             }
             translations = map
-            loadChapter(chapterIndex, keepPara = keepPara)
+            loadChapter(chapterIndex, anchor = anchor)
         }
     }
 
@@ -1504,7 +1536,7 @@ class NovelReaderActivity : AppCompatActivity() {
                 return@launch
             }
             refreshChapterStats()
-            refreshTranslations(keepPara = pendingParaIndex)
+            refreshTranslations(anchor = pendingAnchor)
         }
     }
 
@@ -1538,7 +1570,7 @@ class NovelReaderActivity : AppCompatActivity() {
                 }
                 done += group.size
                 // 每批上屏一次：选十几段时要能看到逐批出译文，而不是最后一起蹦出来
-                refreshTranslations(keepPara = pendingParaIndex)
+                refreshTranslations(anchor = pendingAnchor)
             }
             showOverlay(null)
             refreshChapterStats()
@@ -1579,7 +1611,7 @@ class NovelReaderActivity : AppCompatActivity() {
     private fun cycleDisplayMode() {
         val next = NovelDisplayModeCodec.next(NovelPanelStyle.displayMode(prefs))
         NovelPanelStyle.setDisplayMode(prefs, next)
-        loadChapter(chapterIndex, keepPara = pendingParaIndex)
+        loadChapter(chapterIndex, anchor = pendingAnchor)
         showOverlayToast(NovelPanelStyle.displayModeLabel(this, next), error = false)
     }
 
@@ -1730,7 +1762,7 @@ class NovelReaderActivity : AppCompatActivity() {
                     // ⚠️ 上下翻页 ↔ 左右翻页 用的是同一个分页表（尺寸没变），但仍要重走一遍
                     // loadChapter：滚动模式与翻页模式之间条目结构不同，必须重新提交
                     applyReaderMode()
-                    loadChapter(chapterIndex, keepPara = pendingParaIndex)
+                    loadChapter(chapterIndex, anchor = pendingAnchor)
                     updateAutoTurn()
                 },
                 onAnimation = { a -> NovelPanelStyle.setAnimation(prefs, a); animationMode = a; applyAnimation() },
@@ -1743,28 +1775,28 @@ class NovelReaderActivity : AppCompatActivity() {
                 },
                 onFontSize = { sp ->
                     NovelPanelStyle.setFontSizeSp(prefs, sp)
-                    loadChapter(chapterIndex, keepPara = pendingParaIndex)
+                    loadChapter(chapterIndex, anchor = pendingAnchor)
                 },
                 onLineSpacing = { v ->
                     NovelPanelStyle.setLineSpacingStep(prefs, v, NovelPanelStyle.fontSizeSp(prefs))
-                    loadChapter(chapterIndex, keepPara = pendingParaIndex)
+                    loadChapter(chapterIndex, anchor = pendingAnchor)
                 },
                 onParagraphSpacing = { v ->
                     NovelPanelStyle.setParagraphSpacingDp(prefs, v, NovelPanelStyle.fontSizeSp(prefs))
-                    loadChapter(chapterIndex, keepPara = pendingParaIndex)
+                    loadChapter(chapterIndex, anchor = pendingAnchor)
                 },
-                onPadding = { v -> NovelPanelStyle.setPaddingDp(prefs, v); loadChapter(chapterIndex, keepPara = pendingParaIndex) },
+                onPadding = { v -> NovelPanelStyle.setPaddingDp(prefs, v); loadChapter(chapterIndex, anchor = pendingAnchor) },
                 onResetTypography = {
                     NovelPanelStyle.resetTypography(prefs)
-                    loadChapter(chapterIndex, keepPara = pendingParaIndex)
+                    loadChapter(chapterIndex, anchor = pendingAnchor)
                 },
                 onKeepParagraphsWhole = { v ->
                     NovelPanelStyle.setKeepParagraphsWhole(prefs, v)
                     // 改的是分页规则 → 必须重排（页表变了）
-                    loadChapter(chapterIndex, keepPara = pendingParaIndex)
+                    loadChapter(chapterIndex, anchor = pendingAnchor)
                 },
-                onTopPadding = { v -> NovelPanelStyle.setTopPaddingDp(prefs, v); loadChapter(chapterIndex, keepPara = pendingParaIndex) },
-                onBottomPadding = { v -> NovelPanelStyle.setBottomPaddingDp(prefs, v); loadChapter(chapterIndex, keepPara = pendingParaIndex) },
+                onTopPadding = { v -> NovelPanelStyle.setTopPaddingDp(prefs, v); loadChapter(chapterIndex, anchor = pendingAnchor) },
+                onBottomPadding = { v -> NovelPanelStyle.setBottomPaddingDp(prefs, v); loadChapter(chapterIndex, anchor = pendingAnchor) },
                 onAutoTurn = { enabled, interval ->
                     prefs.edit().putBoolean(KEY_AUTO_TURN, enabled).putInt(KEY_INTERVAL, interval).apply()
                     autoTurnEnabled = enabled
@@ -1833,7 +1865,7 @@ class NovelReaderActivity : AppCompatActivity() {
             runCatching { translator().clearChapter(b, chapterIndex) }
             translations = emptyMap()
             refreshChapterStats()
-            loadChapter(chapterIndex, keepPara = pendingParaIndex)
+            loadChapter(chapterIndex, anchor = pendingAnchor)
             showOverlayToast(getString(R.string.novel_translate_cleared_chapter), error = false)
         }
     }
@@ -1863,7 +1895,7 @@ class NovelReaderActivity : AppCompatActivity() {
                 .onFailure { LogCollector.w(TAG, "清空译文失败", it) }
             translations = emptyMap()
             refreshChapterStats()
-            loadChapter(chapterIndex, keepPara = pendingParaIndex)
+            loadChapter(chapterIndex, anchor = pendingAnchor)
             toast(R.string.novel_translate_cleared)
         }
     }
@@ -1916,7 +1948,7 @@ class NovelReaderActivity : AppCompatActivity() {
         val b = book ?: return
         val updated = b.copy(
             lastReadChapter = chapterIndex,
-            lastReadParaIndex = pendingParaIndex,
+            lastReadParaIndex = pendingAnchor.paraIndex,
             lastReadPage = if (isScrollMode()) 0 else currentPage(),
         )
         book = updated
