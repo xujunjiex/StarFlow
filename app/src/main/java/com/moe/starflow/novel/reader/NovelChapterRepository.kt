@@ -87,7 +87,12 @@ class NovelChapterRepository {
     }
 
     /**
-     * 某章**有多少段**（章行显示的"分母"）。
+     * 某章**有多少段可翻译**（章行显示的"分母"）。
+     *
+     * ⚠️ 口径必须是**可翻译段**（TEXT 且非空白），不能是"所有段落"：短行（`……`）与图片
+     * 按设计永远不翻译，把它们算进分母的话，含这类段的章**永远达不到**"已翻完"。
+     * 同理，分母也不能用「数据库里这一章有几行」（那是按批惰性写的）—— 见
+     * `NovelChapterTranslator.ensureChapterRows`。
      *
      * ⚠️ 未翻译的章在数据库里**没有任何行**，`chapterStats` 里也就没有它 —— 这正是
      * 「只有翻过的章显示段数」那个 bug 的根因。所以分母必须自己解析出来：懒解析 + 缓存，
@@ -96,7 +101,7 @@ class NovelChapterRepository {
     suspend fun paragraphCountOf(book: ImportedNovel, chapterIndex: Int): Int {
         val key = "${bookKey(book)}:$chapterIndex:${NovelParagraphSplitter.SPLIT_VERSION}"
         paraCounts[key]?.let { return it }
-        val n = paragraphsOf(book, chapterIndex).size
+        val n = paragraphsOf(book, chapterIndex).count { it.isTranslatable() }
         paraCounts[key] = n
         return n
     }

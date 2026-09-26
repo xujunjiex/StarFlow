@@ -107,6 +107,7 @@ class NovelChapterTranslator(
         translatorName: String,
         sourceLang: String,
         targetLang: String,
+        state: Int = NovelParagraphTranslation.STATE_TRANSLATING,
     ): List<NovelParagraphTranslation> {
         val now = System.currentTimeMillis()
         return paragraphs
@@ -119,7 +120,7 @@ class NovelChapterTranslator(
                     paraIndex = p.index,
                     sourceText = p.originalText,
                     translatedText = "",
-                    state = NovelParagraphTranslation.STATE_TRANSLATING,
+                    state = state,
                     translatorName = translatorName,
                     sourceLang = sourceLang,
                     targetLang = targetLang,
@@ -127,6 +128,31 @@ class NovelChapterTranslator(
                     updatedAt = now,
                 )
             }
+    }
+
+    /**
+     * 把该章**所有可翻译段**先落成 IDLE 行（`insertIgnore`：已有行一个字段都不动）。
+     *
+     * ⚠️ 这是「本章翻完了吗」的**分母**来源。SQL 那边是 `COUNT(*)`，而行是**按批惰性写的** ——
+     * 只写这一批的话，分母退化成"已经尝试过的段数"，于是翻了几段就把整章标成「已翻译」
+     * （用户报的「某一章没翻完却显示已经全部翻译完成」就是这个）。补齐之后
+     * `success >= total` 才真的等于「全章可翻译段都翻完了」。
+     *
+     * 每批调一次也不贵：行已存在时这一句 `INSERT OR IGNORE` 什么都不写。
+     */
+    private suspend fun ensureChapterRows(
+        book: ImportedNovel,
+        chapterIndex: Int,
+        paragraphs: List<NovelParagraph>,
+        translatorName: String,
+        sourceLang: String,
+        targetLang: String,
+    ) {
+        val rows = translatingRows(
+            book, chapterIndex, paragraphs, translatorName, sourceLang, targetLang,
+            state = NovelParagraphTranslation.STATE_IDLE,
+        )
+        if (rows.isNotEmpty()) dao.insertIgnore(rows)
     }
 
     private suspend fun persist(
@@ -213,6 +239,10 @@ class NovelChapterTranslator(
         }
         if (mine.isEmpty()) return NovelBatchResult(emptyMap())
 
+        // ⚠️ 先把整章的可翻译段落补齐成 IDLE 行（见 ensureChapterRows 的说明）：
+        // 章徽章/筛选/目录的分母是 `COUNT(*)`，只写这一批的话分母会退化成"翻过的段数"，
+        // 于是翻了几段就把整章标成「已翻译」—— 用户报的「没翻完却显示全部完成」。
+        ensureChapterRows(book, chapterIndex, paragraphs, translatorName, sourceLang, targetLang)
         markTranslatingBatch(book, chapterIndex, mine, translatorName, sourceLang, targetLang)
         val result = engine.translateBatch(paragraphs, mine.map { it.index }, sourceLang, targetLang)
         val got = result.translations

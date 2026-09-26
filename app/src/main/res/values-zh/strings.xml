@@ -1378,7 +1378,7 @@
     <string name="novel_style_bottom_padding">下间距</string>
     <string name="novel_translate_failed_reason">翻译失败：%1$s</string>
     <string name="novel_translate_hint_running">正在翻译第 %1$d 章，双击暂停</string>
-    <string name="novel_translate_quota_used">增量配额已用完</string>
+    <string name="novel_translate_window_done">已向后翻完 %1$d 批 · 翻页继续</string>
     <string name="novel_translate_pending_batches">翻译本章</string>
     <string name="novel_translate_clear_chapter">清空本章译文</string>
     <string name="novel_translate_clear_chapter_confirm">只清空**本章**的译文，其它章不受影响。确定？</string>
@@ -1434,6 +1434,9 @@
     <string name="novel_action_both_n">翻译+重翻 %1$d 段</string>
     <string name="novel_translate_selected_done">已翻 %1$d 段</string>
     <string name="novel_queue_translating">正在翻译第 %1$d 章…</string>
+    <string name="novel_queue_translating_page">正在翻译 · 第 %1$d/%2$d 页</string>
+    <string name="novel_queue_translating_para">正在翻译 · 第 %1$d 段</string>
+    <string name="novel_translate_ahead_value">%1$d 批 = %2$d 段</string>
     <string name="novel_translate_failed_chapter_hint">第 %1$d 章：%2$s</string>
     <string name="novel_chapter_progress">已翻 %1$d / 共 %2$d 段</string>
     <string name="novel_read_progress">读到第 %1$d 章 / 共 %2$d 章</string>

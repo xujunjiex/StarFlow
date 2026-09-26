@@ -42,7 +42,12 @@ data class NovelQueueState(
  * - **手动**：不进队列。按钮点一次 = 从**当前页**第一段没翻的段起翻**一批**（见 [translateOneBatch]）
  * - **自动**：盯着**当前页**，只要本页还有没翻的段就一批批翻下去；本页翻完 → `DRAINED`，
  *   等用户翻到下一页再自动接上
- * - **增量**：在自动的基础上**不受当前页限制**，连续向后翻，直到**配额用尽**或**章末**
+ * - **增量**：在自动的基础上**不受当前页限制**，从**当前页第一段**起向后再翻
+ *   「向后批数 × 每批段数」段，到窗口边界或章末停下
+ *
+ * ⚠️ 增量是「从当前页第一段向后 X **段**」的**滑动窗口**，不是一次性额度 ——
+ * 做成"额度用完就永久停"的话用户翻页也毫无反应（用户明确要求"配额用完要根据翻页刷新"）。
+ * 窗口跟着当前页走，翻页即前移、自动接着翻。
  *
  * ⚠️ 增量是「向后 N **批**」，不是「向后 N 章」—— 这条曾经做错过一次，
  * 语义由 `NovelBatchPlannerTest` 与 `NovelTranslationQueueTest` 两处钉死。
@@ -120,7 +125,6 @@ class NovelTranslationQueue(
             return
         }
         job = scope.launch {
-            var remaining = quota
             var batchesDone = 0
             while (isActive) {
                 if (panelOpen) {
@@ -134,24 +138,40 @@ class NovelTranslationQueue(
                 val chapter = currentChapter()
                 val chapterParas = chapterParaIndexes(book, chapter)
                 val done = translatedIndexes(book, chapter) + failedAnchors
+                val page = currentPageParaIndexes()
+                val size = batchSize()
+
+                // ── 增量窗口（用户口径，别再改回"一次性额度"）──
+                // 窗口 = **当前页第一段**往后 X 段（X = 向后批数 × 每批段数）。
+                // ⚠️ 做成"窗口"而不是"一次性配额"：额度用完就永久停住的话，用户翻页也没反应；
+                // 窗口跟着当前页走，**翻页窗口自己就前移、自动接着翻**。
+                val windowStart = chapterParas.indexOf(page.firstOrNull() ?: chapterParas.firstOrNull())
+                    .takeIf { it >= 0 } ?: 0
+                val limitIdx = (windowStart + quota.remaining * size).coerceAtMost(chapterParas.size)
+                val aheadLimitPara = chapterParas.getOrNull(limitIdx) ?: Int.MAX_VALUE
+                // 窗口内还剩多少批（面板/芯片上的"剩 N 批"）
+                val leftInWindow = chapterParas.subList(windowStart, limitIdx)
+                    .count { it !in done }
+                val remaining = if (mode == NovelTranslateMode.AHEAD) {
+                    (leftInWindow + size - 1) / size
+                } else {
+                    null
+                }
+
                 val anchor = NovelBatchPlanner.anchorForMode(
                     mode = mode,
-                    pageParaIndexes = currentPageParaIndexes(),
+                    pageParaIndexes = page,
                     chapterParaIndexes = chapterParas,
                     translated = done,
+                    aheadLimitPara = aheadLimitPara,
                 )
                 if (anchor == null) {
-                    // 自动：当前页翻完（等翻页）；增量：本章翻完（不越到下一章）
+                    // 自动：当前页翻完（等翻页）；增量：窗口翻完或本章翻完（不越到下一章）
                     _state.value = drainState(chapter, batchesDone, mode, remaining)
                     delay(DRAINED_POLL_MS)
                     continue
                 }
-                if (mode == NovelTranslateMode.AHEAD && remaining.exhausted) {
-                    _state.value = drainState(chapter, batchesDone, mode, remaining)
-                    delay(DRAINED_POLL_MS)
-                    continue
-                }
-                val batch = NovelBatchPlanner.nextBatch(chapterParas, anchor, done, batchSize())
+                val batch = NovelBatchPlanner.nextBatch(chapterParas, anchor, done, size)
                 if (batch.isEmpty()) {
                     _state.value = drainState(chapter, batchesDone, mode, remaining)
                     delay(DRAINED_POLL_MS)
@@ -159,7 +179,7 @@ class NovelTranslationQueue(
                 }
 
                 _state.value = NovelQueueState(
-                    NovelQueuePhase.WAITING_LOCK, chapter, batch, batchesDone, remaining.remaining,
+                    NovelQueuePhase.WAITING_LOCK, chapter, batch, batchesDone, remaining,
                 )
                 if (!acquireLockWithWait()) {
                     LogCollector.w(TAG, "等待翻译锁超时，本轮跳过 ch=$chapter anchor=$anchor")
@@ -168,7 +188,7 @@ class NovelTranslationQueue(
                 }
                 try {
                     _state.value = NovelQueueState(
-                        NovelQueuePhase.TRANSLATING, chapter, batch, batchesDone, remaining.remaining,
+                        NovelQueuePhase.TRANSLATING, chapter, batch, batchesDone, remaining,
                     )
                     val result = translator.translateBatch(
                         book = book,
@@ -188,7 +208,6 @@ class NovelTranslationQueue(
                         continue
                     }
                     batchesDone += 1
-                    if (mode == NovelTranslateMode.AHEAD) remaining = remaining.consume()
                     onBatchSettled(chapter, result)
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
@@ -210,12 +229,13 @@ class NovelTranslationQueue(
         chapter: Int,
         batchesDone: Int,
         mode: NovelTranslateMode,
-        remaining: NovelQuota,
+        /** 增量：窗口内还剩几批；自动/手动 null。 */
+        remaining: Int?,
     ) = NovelQueueState(
         phase = NovelQueuePhase.DRAINED,
         chapterIndex = chapter,
         batchesDone = batchesDone,
-        remaining = if (mode == NovelTranslateMode.AHEAD) remaining.remaining else null,
+        remaining = if (mode == NovelTranslateMode.AHEAD) remaining else null,
     )
 
     /**

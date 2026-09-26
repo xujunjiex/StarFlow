@@ -99,6 +99,31 @@ class NovelBatchPlannerTest {
         assertEquals(0, q.consume().remaining)
     }
 
+    /**
+     * **增量窗口的右边界**（用户口径）：从当前页起往后「向后批数 × 每批段数」段之内才翻。
+     * 越界的段留给用户翻页之后（窗口跟着当前页前移）。
+     */
+    @Test
+    fun `增量锚点不越过窗口右边界`() {
+        val chapter = (0..9).toList()
+        val page = listOf(0, 1)
+        val done = setOf(0, 1)
+        assertEquals(
+            "边界 3：段 2 还在窗口内",
+            2,
+            NovelBatchPlanner.anchorForMode(NovelTranslateMode.AHEAD, page, chapter, done, aheadLimitPara = 3),
+        )
+        assertNull(
+            "边界 2：段 2 已经出窗口 → 停下等翻页",
+            NovelBatchPlanner.anchorForMode(NovelTranslateMode.AHEAD, page, chapter, done, aheadLimitPara = 2),
+        )
+        assertEquals(
+            "不给边界（默认）时行为同以前：一路向后",
+            2,
+            NovelBatchPlanner.anchorForMode(NovelTranslateMode.AHEAD, page, chapter, done),
+        )
+    }
+
     /** 设置范围外的值要被夹回区间：0 会让增量一批都不翻（用户以为功能坏了）。 */
     @Test
     fun `配额范围 2 到 10`() {

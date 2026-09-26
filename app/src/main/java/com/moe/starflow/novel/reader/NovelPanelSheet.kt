@@ -407,9 +407,16 @@ class NovelPanelSheet(
         val sbAhead = view.findViewById<SeekBar>(R.id.sb_ahead)
         val tvAhead = view.findViewById<TextView>(R.id.tv_ahead_value)
         sbAhead.progress = state.aheadBatches.coerceIn(NovelQuota.MIN, NovelQuota.MAX)
-        tvAhead.text = "${state.aheadBatches}"
+        tvAhead.text = aheadLabel(view, state.aheadBatches, state.batchSize)
         sbAhead.setOnSeekBarChangeListener(slider {
-            tvAhead.text = "${sbAhead.progress}"
+            // ⚠️ 文案要**实时换算成段落数**（用户要求）：批数本身说明不了向后翻多少内容，
+            // "3 批 × 每批 5 段 = 15 段"才是用户能对上号的数字。
+            // 每批段数直接读兄弟滑块（它就排在下面几行，读 View 比记一份状态更不容易走错）
+            tvAhead.text = aheadLabel(
+                view,
+                sbAhead.progress,
+                view.findViewById<SeekBar>(R.id.sb_batch).progress,
+            )
             cb.onAheadBatches(sbAhead.progress)
         })
 
@@ -420,6 +427,8 @@ class NovelPanelSheet(
         sbBatch.setOnSeekBarChangeListener(slider {
             tvBatch.text = "${sbBatch.progress}"
             cb.onBatchSize(sbBatch.progress)
+            // 每批段数变了 → 增量那行的「= 多少段」跟着变（走唯一的派生出口）
+            refreshDerivedUi(view)
         })
         applyAheadRowVisibility(view, translateMode)
 
@@ -599,6 +608,12 @@ class NovelPanelSheet(
             sbPara.max = max.coerceAtLeast(min + 1)
             if (sbPara.progress < min) sbPara.progress = min
             view.findViewById<TextView>(R.id.tv_para_spacing_value).text = "${sbPara.progress} dp"
+
+            // ③ 增量行：批数 × 每批段数 = 向后翻多少**段**（改任一个滑块都要跟着变）
+            val sbAhead = view.findViewById<SeekBar>(R.id.sb_ahead)
+            val sbBatch = view.findViewById<SeekBar>(R.id.sb_batch)
+            view.findViewById<TextView>(R.id.tv_ahead_value).text =
+                aheadLabel(view, sbAhead.progress, sbBatch.progress)
         } finally {
             syncing = false
         }
@@ -752,6 +767,15 @@ class NovelPanelSheet(
         view.findViewById<TextView>(valueId).text = label
     }
 
+    /**
+     * 增量「向后批数」的文案：**换算成段落数**显示。
+     *
+     * 「批量」是内部概念，用户要的是"向后翻多少内容" —— 批数 × 每批段数才是能对上号的数。
+     * 所以改批数或改每批段数都要重算（[refreshDerivedUi] 是唯一出口）。
+     */
+    private fun aheadLabel(view: View, batches: Int, batchSize: Int): String =
+        view.context.getString(R.string.novel_translate_ahead_value, batches, batches * batchSize)
+
     private fun reapplySegments(view: View) {
         selection.forEach { (containerId, selectedId) ->
             val container = view.findViewById<ViewGroup>(containerId)
@@ -885,7 +909,10 @@ class NovelPanelSheet(
             applyAheadRowVisibility(view, s.translateMode)
 
             applySlider(view, R.id.sb_debounce, R.id.tv_debounce_value, s.debounceMs, "${s.debounceMs} ms")
-            applySlider(view, R.id.sb_ahead, R.id.tv_ahead_value, s.aheadBatches, "${s.aheadBatches}")
+            applySlider(
+                view, R.id.sb_ahead, R.id.tv_ahead_value, s.aheadBatches,
+                aheadLabel(view, s.aheadBatches, s.batchSize),
+            )
             applySlider(view, R.id.sb_batch, R.id.tv_batch_value, s.batchSize, "${s.batchSize}")
 
             view.findViewById<TextView>(R.id.tv_rotate_value).text = s.rotateLabel

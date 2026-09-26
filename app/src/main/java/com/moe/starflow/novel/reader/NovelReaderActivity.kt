@@ -45,6 +45,7 @@ import com.moe.starflow.novel.translate.NovelParagraphSplitter
 import com.moe.starflow.novel.translate.NovelQuota
 import com.moe.starflow.novel.translate.NovelTranslateMode
 import com.moe.starflow.novel.translate.NovelQueuePhase
+import com.moe.starflow.novel.translate.NovelQueueState
 import com.moe.starflow.novel.translate.NovelTranslationEngine
 import com.moe.starflow.novel.translate.NovelTranslationQueue
 import com.moe.starflow.novel.translate.TranslationTextApiAdapter
@@ -1474,10 +1475,16 @@ class NovelReaderActivity : AppCompatActivity() {
         else -> android.R.drawable.ic_menu_gallery
     }
 
-    private fun hasFailedChapter(chapterIndex: Int): Boolean {
-        val st = chapterStats[chapterIndex] ?: return false
-        return st.total > 0 && st.success < st.total
-    }
+    /**
+     * 本章有没有**真的翻译失败**的段（右下角感叹号）。
+     *
+     * ⚠️ 判据必须是**失败明细**（`failures` 表里真的 FAILED 的行），不能是
+     * 「success < total」：后者在"翻了一部分"时为真 —— 于是只要开了自动翻译，感叹号就一直挂着；
+     * 而且面板「失败」筛选 tab 用的是 `chapterFailures`，两处判据不一致会让用户看到
+     * "有感叹号但列表里没有失败的章"。
+     */
+    private fun hasFailedChapter(chapterIndex: Int): Boolean =
+        chapterFailures[chapterIndex].orEmpty().isNotEmpty()
 
     /**
      * 右下角翻译按钮（语义**与漫画 `ReaderTranslationController.onTranslateButtonClick` 逐条对齐**）：
@@ -1615,14 +1622,16 @@ class NovelReaderActivity : AppCompatActivity() {
         showOverlayToast(NovelPanelStyle.displayModeLabel(this, next), error = false)
     }
 
-    /** 失败页点感叹号：小气泡说明（不弹窗，与漫画一致）。 */
+    /**
+     * 失败页点感叹号：小气泡说明（不弹窗，与漫画一致）。
+     *
+     * ⚠️ 显示**原始失败原因**（`failCode` 里存的就是异常链/模型返回原文），不是一句进度 ——
+     * 具体哪几段失败、都写什么，面板章行展开里有全量明细。
+     */
     private fun showFailBubble() {
-        val st = chapterStats[chapterIndex]
-        val msg = if (st != null) {
-            getString(R.string.novel_chapter_partial, st.success, st.total)
-        } else {
-            getString(R.string.reader_translate_failed)
-        }
+        val rows = chapterFailures[chapterIndex].orEmpty()
+        val msg = rows.firstOrNull()?.failCode?.take(120)
+            ?: getString(R.string.reader_translate_failed)
         TranslationStatusOverlay.getInstance(this).show(
             getString(R.string.reader_translate_failed_page_hint, chapterIndex + 1, msg)
         )
@@ -1638,30 +1647,44 @@ class NovelReaderActivity : AppCompatActivity() {
                 pushPanelState()
                 when (st.phase) {
                     NovelQueuePhase.TRANSLATING -> showOverlay(
-                        getString(R.string.novel_queue_translating, st.chapterIndex + 1),
-                        autoDismiss = false,
+                        queuePositionText(st), autoDismiss = false,
                     )
                     NovelQueuePhase.WAITING_LOCK -> showOverlay(
                         getString(R.string.novel_translate_busy), autoDismiss = false
                     )
                     NovelQueuePhase.DRAINED -> {
                         showOverlay(null)
-                        // ⚠️ **自动模式翻完当前页什么也不弹**：那是正常状态（等翻页），
-                        // 每翻完一页弹一次「已翻完」会让用户以为翻译老在暂停/卡住。
-                        // 只有「增量配额用尽」和「本章翻完」值得说一句。
-                        val quota = st.remaining
-                        when {
-                            quota != null && quota <= 0 ->
-                                showOverlayToast(getString(R.string.novel_translate_quota_used), error = false)
-                            st.batchesDone > 0 ->
-                                showOverlayToast(getString(R.string.novel_chapter_done), error = false)
-                            else -> Unit
+                        // ⚠️ **DRAINED 不等于"翻完了"，别在这里喊完成**（用户报的
+                        // 「某一章没翻完却显示已经全部翻译完成」就是这里）：走到 DRAINED 有四种原因 ——
+                        // 手动/自动翻完当前页、增量翻完窗口、本章真的翻完、**以及一批失败被跳过**。
+                        // 只有增量值得说一句，而且要说清"翻页就能接着翻"。
+                        if (st.remaining != null) {
+                            showOverlayToast(
+                                getString(R.string.novel_translate_window_done, st.batchesDone),
+                                error = false,
+                            )
                         }
                     }
                     NovelQueuePhase.IDLE -> showOverlay(null)
                 }
             }
         }
+    }
+
+    /**
+     * 状态芯片文案：**显示正在翻到哪一页 / 哪一段，不是第几章**（用户要求）。
+     *
+     * 增量模式会一直往后翻，只写"第 N 章"等于什么都没说 —— 用户在等着看它翻到哪一页了。
+     * 翻页模式给「第 X/Y 页」，滚动模式没有「页」就给段号。
+     */
+    private fun queuePositionText(st: NovelQueueState): String {
+        val para = st.batchParaIndexes.firstOrNull()
+        val c = content
+        if (para != null && !isScrollMode() && c != null && c.pages.isNotEmpty()) {
+            val page = NovelAnchors.pageOf(c.pages, c.displayTexts, NovelAnchor(para))
+            return getString(R.string.novel_queue_translating_page, page + 1, c.pages.size)
+        }
+        return getString(R.string.novel_queue_translating_para, (para ?: 0) + 1)
     }
 
     private fun statusOverlayEnabled(): Boolean =

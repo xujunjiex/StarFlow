@@ -212,6 +212,38 @@ class NovelTranslationQueueTest {
         q.stop()
     }
 
+    /**
+     * **增量窗口跟着当前页走**（用户口径）：额度用完不是终点 —— 用户翻页后窗口前移，
+     * 自动接着往后翻。做成"一次性额度"的话翻页也毫无反应（用户报的"配额用完就不动了"）。
+     */
+    @Test
+    fun `增量窗口用完后再翻页会接着往后翻`() = runTest {
+        val t = FakeTranslator()
+        val translated = mutableSetOf<Int>()
+        var page = listOf(0, 1)
+        val q = queue(backgroundScope, t, translated, page = { page }, chapterSize = 30, batchSize = 2)
+
+        q.start(
+            book(), NovelTranslateMode.AHEAD, quota = NovelQuota.of(2), currentChapter = { 0 },
+        ) { _, r -> translated += r.translations.keys }
+        advanceTimeBy(10_000)
+
+        assertEquals("本页一批 + 窗口内向后一批（2 批 × 2 段 = 4 段）", listOf(listOf(0, 1), listOf(2, 3)), t.batches)
+        advanceTimeBy(60_000)
+        assertEquals("窗口内翻完就停，不越界继续往后", 2, t.batches.size)
+
+        page = listOf(10, 11)
+        advanceTimeBy(10_000)
+        assertEquals(
+            "翻页 → 窗口前移（10 起往后 4 段），接着翻两批",
+            listOf(listOf(10, 11), listOf(12, 13)),
+            t.batches.drop(2),
+        )
+        advanceTimeBy(60_000)
+        assertEquals("新窗口翻完又停下，不会一路翻到章末", 4, t.batches.size)
+        q.stop()
+    }
+
     /** 没有可翻的段（页内全翻完）→ 停在 DRAINED，而不是空转刷状态。 */
     @Test
     fun `没有待翻的段时停在 DRAINED`() = runTest {

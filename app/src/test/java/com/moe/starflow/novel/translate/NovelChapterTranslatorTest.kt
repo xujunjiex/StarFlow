@@ -152,6 +152,28 @@ class NovelChapterTranslatorTest {
     // ===== 失败路径 =====
 
     /**
+     * **分母**必须是「整章可翻译段数」，不是"这一批写了几行"。
+     *
+     * 回归（用户报的「某一章没翻完却显示已经全部翻译完成」）：章徽章/筛选/目录的判据是
+     * `success >= total`，而 `total` 是 `COUNT(*)`。行是**按批惰性写的** —— 只翻一批时
+     * `total == success`，于是刚点了「翻译本章」的一章立刻被标成「已翻译」。
+     * 修法是在翻每一批之前先把整章的可翻译段落补齐成 IDLE 行（`ensureChapterRows`）。
+     */
+    @Test
+    fun `翻一批后本章分母立刻是整章可翻译段数`() = runBlocking {
+        val t = translatorFor(FakeTranslator())
+
+        t.translateBatch(book, 0, paragraphs, listOf(0), "ja", "zh", "fake")
+
+        val stat = t.chapterStats(book)[0]
+        assertEquals("分母 = 段 0 + 段 2（段 1 是 SKIP，不算）", 2, stat?.total)
+        assertEquals("只翻了一段", 1, stat?.success)
+        val idle = dao.forChapter(1, "5000", 0, SPLIT_VERSION)
+            .filter { it.state == NovelParagraphTranslation.STATE_IDLE }
+        assertEquals("没翻的那段是 IDLE（待翻），不是缺行", listOf(2), idle.map { it.paraIndex })
+    }
+
+    /**
      * 失败必须写 FAILED 且**译文为空**（不是空串成功）。
      * 空串一旦被当成成功，该段永远显示空白且再也不会被重试。
      */

@@ -54,7 +54,9 @@ class NovelChapterStateAdapter(
         set(value) {
             if (field == value) return
             field = value
-            notifyItemRangeChanged(0, itemCount)
+            // ⚠️ 必须 rebuild 而不是只 notifyItemRangeChanged：`done` 与「已完成」筛选都
+            // 拿 totals 当分母，分母到齐后要重算可见列表
+            rebuild()
         }
 
     /** 某章段数还不知道时问宿主一次（宿主解析完会推回来）。 */
@@ -126,7 +128,7 @@ class NovelChapterStateAdapter(
     /** 章行是否命中当前状态标签。 */
     private fun passesFilter(index: Int): Boolean {
         val st = stats[index]
-        val done = st != null && st.total > 0 && st.success >= st.total
+        val done = isDone(index)
         val failed = failures[index].orEmpty().isNotEmpty()
         val running = st != null && st.success > 0 && !done
         return when (filterKey) {
@@ -140,9 +142,19 @@ class NovelChapterStateAdapter(
     /** 当前过滤后的章号列表（只读）。 */
     fun visibleIndexes(): List<Int> = visible
 
+    /**
+     * 这一章的**分母**：只认宿主解析出来的真实可翻译段数。
+     *
+     * ⚠️ 别退回 `st.total`（数据库里这一章的行数）：行是**按批惰性写的**，
+     * 只翻了一部分时 `success >= total` 也成立 —— 那正是「某一章没翻完却显示已经全部
+     * 翻译完成」的判据来源。拿不到分母时按"未完成"显示，等宿主推回来再重算。
+     */
+    private fun totalOf(index: Int): Int = totals[index] ?: 0
+
     private fun isDone(index: Int): Boolean {
         val st = stats[index] ?: return false
-        return st.total > 0 && st.success >= st.total
+        val total = totalOf(index)
+        return total > 0 && st.success >= total
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH =
@@ -167,12 +179,13 @@ class NovelChapterStateAdapter(
         }
 
         val badge = item.findViewById<TextView>(R.id.tv_state_badge)
-        val done = st != null && st.total > 0 && st.success >= st.total
+        val total = totalOf(index)
+        val done = isDone(index)
         val started = st != null && st.success > 0
         badge.setText(
             when {
                 done -> item.context.getString(R.string.novel_chapter_done)
-                started -> item.context.getString(R.string.novel_chapter_partial, st!!.success, st.total)
+                started -> item.context.getString(R.string.novel_chapter_partial, st!!.success, total)
                 else -> item.context.getString(R.string.novel_chapter_unread)
             }
         )
@@ -189,8 +202,8 @@ class NovelChapterStateAdapter(
         // 这一行借的是「失败原因」那一格来显示段落进度 —— 章没有失败原因可言，
         // 空着反而让行高和漫画面板对不齐
         //
-        // ⚠️ 分母优先取宿主解析出来的**真实段数**，其次才是数据库统计（未翻的章没有统计行）
-        val total = totals[index] ?: st?.total ?: 0
+        // ⚠️ 分母只认宿主解析出来的**真实可翻译段数**（见 [totalOf]）：数据库里的行数是
+        // 按批惰性写的，拿它当分母会让"刚翻了几段"的章看起来像翻完了
         if (total == 0) onNeedTotal?.invoke(index)
         val failed = failures[index].orEmpty()
         item.findViewById<TextView>(R.id.tv_fail_message).apply {

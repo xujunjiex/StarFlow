@@ -91,7 +91,11 @@ class NovelPanelSyncTest {
         val autoChecked = v.findViewById<RadioButton>(R.id.translate_mode_auto).isChecked
         assertEquals(false, autoChecked)
         assertEquals("3", v.findViewById<TextView>(R.id.tv_batch_value).text)
-        assertEquals("5", v.findViewById<TextView>(R.id.tv_ahead_value).text)
+        // 增量行显示的是**换算后的段数**（"5 批 = 15 段"），不是光秃秃的批数
+        assertEquals(
+            v.context.getString(R.string.novel_translate_ahead_value, 5, 15),
+            v.findViewById<TextView>(R.id.tv_ahead_value).text,
+        )
         assertEquals("500 ms", v.findViewById<TextView>(R.id.tv_debounce_value).text)
         assertEquals(false, v.findViewById<Switch>(R.id.sw_keep_paragraphs).isChecked)
 
@@ -116,7 +120,11 @@ class NovelPanelSyncTest {
 
         assertTrue("增量模式要自动选中", v.findViewById<RadioButton>(R.id.translate_mode_incremental).isChecked)
         assertEquals("7", v.findViewById<TextView>(R.id.tv_batch_value).text)
-        assertEquals("9", v.findViewById<TextView>(R.id.tv_ahead_value).text)
+        assertEquals(
+            "9 批 × 每批 7 段",
+            v.context.getString(R.string.novel_translate_ahead_value, 9, 63),
+            v.findViewById<TextView>(R.id.tv_ahead_value).text,
+        )
         assertEquals(9, v.findViewById<SeekBar>(R.id.sb_ahead).progress)
         assertEquals("900 ms", v.findViewById<TextView>(R.id.tv_debounce_value).text)
         assertTrue("段落完整开关要跟着变", v.findViewById<Switch>(R.id.sw_keep_paragraphs).isChecked)

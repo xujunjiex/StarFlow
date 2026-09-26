@@ -27,19 +27,25 @@ object NovelBatchPlanner {
      *
      * @param pageParaIndexes 当前页显示的段（按顺序）
      * @param chapterParaIndexes 整章的段（按顺序）—— 增量模式在页内翻完后从这里继续**向后**找
+     * @param aheadLimitPara 增量窗口的右边界（**不含**）：只在这个段号之前往后找。
+     *   窗口 = 当前页第一段往后「向后批数 × 每批段数」段（见 [NovelTranslationQueue]）——
+     *   翻页时窗口自己前移，所以"额度用完"不是终点，翻页就能接着翻
      */
     fun anchorForMode(
         mode: NovelTranslateMode,
         pageParaIndexes: List<Int>,
         chapterParaIndexes: List<Int>,
         translated: Set<Int>,
+        aheadLimitPara: Int = Int.MAX_VALUE,
     ): Int? {
         anchorOnPage(pageParaIndexes, translated)?.let { return it }
         if (mode != NovelTranslateMode.AHEAD) return null
         // ⚠️ 增量只**向后**：页内翻完后取「本页之后第一段没翻的」，
         // **不回头**去补本页之前的段（那与"向后翻译"相反），也不越到下一章（章末即停 → null）。
         val lastOnPage = pageParaIndexes.maxOrNull() ?: return null
-        return chapterParaIndexes.firstOrNull { it > lastOnPage && it !in translated }
+        return chapterParaIndexes.firstOrNull {
+            it > lastOnPage && it < aheadLimitPara && it !in translated
+        }
     }
 
     /**
@@ -62,11 +68,17 @@ object NovelBatchPlanner {
 }
 
 /**
- * 增量模式的**批配额**：开了增量就允许自动往后翻这么多批，翻完即停。
+ * 增量模式的**窗口宽度**：从当前页第一段往后「这么多批」。
+ *
+ * ⚠️ 它不是"一次性额度"：窗口跟着**当前页**走，翻页窗口就前移、接着往后翻
+ * （用户口径：「配额用完要根据用户翻页来刷新」）。窗口右边界 = 当前页第一段 + 批数 × 每批段数。
  *
  * ⚠️ 那个数字是**批**的个数（默认 5，范围 2–10），不是章数。
  */
 data class NovelQuota(val remaining: Int) {
+
+    /** 窗口宽度（批）。 */
+    val batches: Int get() = remaining
 
     val exhausted: Boolean get() = remaining <= 0
 
