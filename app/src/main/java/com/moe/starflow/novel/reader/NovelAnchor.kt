@@ -16,6 +16,15 @@ package com.moe.starflow.novel.reader
  */
 data class NovelAnchor(val paraIndex: Int = 0, val fraction: Float = 0f) {
     val isStart: Boolean get() = paraIndex <= 0 && fraction <= 0f
+
+    /**
+     * 本锚点在「这段的显示文本」里对应的字符位置。
+     *
+     * 文本长度变了（原文↔译文）也得用它换算 —— 比例是"这一段的大致位置"，
+     * 换算出来的字符位置就是重排后要定位、要**分页**的地方。
+     */
+    fun charOffsetOf(textLength: Int): Int =
+        if (textLength <= 1) 0 else ((textLength - 1) * fraction.coerceIn(0f, 1f)).toInt()
 }
 
 object NovelAnchors {
@@ -47,7 +56,7 @@ object NovelAnchors {
     fun pageOf(pages: List<NovelPage>, displayTexts: Map<Int, String>, anchor: NovelAnchor): Int {
         if (pages.isEmpty()) return 0
         val len = displayTexts[anchor.paraIndex]?.length ?: 0
-        val target = if (len <= 1) 0 else ((len - 1) * anchor.fraction.coerceIn(0f, 1f)).toInt()
+        val target = anchor.charOffsetOf(len)
         var firstPageWithPara = -1
         pages.forEachIndexed { i, page ->
             for (s in page.segments) {

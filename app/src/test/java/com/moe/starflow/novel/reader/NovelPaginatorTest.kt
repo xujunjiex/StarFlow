@@ -83,6 +83,34 @@ class NovelPaginatorTest {
     }
 
     /**
+     * **强制分页点**：指定的那一行必须出现在某一页的**顶部**。
+     *
+     * 带位重排（译文到达后重排）靠它把锚点钉在页首：不强制时锚点可能落在页尾，
+     * 译文比原文短时它会被挤到**上一页** —— 读者看到的就是「翻译完回到前一页」（用户报的）。
+     */
+    @Test
+    fun `强制分页点让指定行落在页首`() {
+        // 一段 100 字、每行 10 字 = 10 行、每行 100px；一页 400px = 4 行
+        val paras = listOf(textPara(0, "字".repeat(100)))
+        val m = measured(paras, charsPerLine = 10, lineHeightPx = 100f)
+
+        val natural = NovelPaginator.paginateByLines(paras, m.starts, m.heights, 0f, 400f)
+        assertEquals("自然分页：每页 4 行", listOf(0, 4, 8), natural.map { it.segments.first().lineStart })
+
+        // 强制第 5 行（下标 5）另起一页
+        val forced = NovelPaginator.paginateByLines(paras, m.starts, m.heights, 0f, 400f, true, 0 to 5)
+        val page = forced.first { p -> p.segments.any { it.lineStart == 5 } }
+        assertEquals("第 5 行必须是这一页的第一行", 5, page.segments.first().lineStart)
+        assertFullCoverage(paras, forced)
+        assertLineCoverage(forced)
+
+        // 已经落在页首的行强制分页不该改变页表（幂等：每次重排都传同一个锚点）
+        val again = NovelPaginator.paginateByLines(paras, m.starts, m.heights, 0f, 400f, true, 0 to 4)
+        assertEquals("第 4 行本来就在页首", natural.map { it.segments.first().lineStart },
+            again.map { it.segments.first().lineStart })
+    }
+
+    /**
      * 行区间必须**首尾相接**地覆盖整段 —— 行区间是渲染的唯一几何来源，
      * 这里断了的话画出来就少一行或多一行。
      */

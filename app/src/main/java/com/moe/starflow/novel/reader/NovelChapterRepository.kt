@@ -125,6 +125,8 @@ class NovelChapterRepository {
      * 加载一章并分页。
      *
      * @param translations 本章译文 `paraIndex -> 译文`；决定每段显示原文还是译文
+     * @param anchor 阅读锚点：**它会被强制放在页首**（带位重排用，见 [NovelAnchors.pageOf]）。
+     *   传 null = 不强制分页（滚动模式、跳到章末）。⚠️ 它必须进缓存键，否则换了锚点会命中旧页表
      */
     suspend fun load(
         book: ImportedNovel,
@@ -134,6 +136,7 @@ class NovelChapterRepository {
         style: NovelTextStyle,
         widthPx: Int,
         heightPx: Int,
+        anchor: NovelAnchor? = null,
     ): ChapterContent = withContext(Dispatchers.IO) {
         val title = chaptersOf(book).getOrNull(chapterIndex)?.title.orEmpty()
         val paras = paragraphsOf(book, chapterIndex)
@@ -153,14 +156,16 @@ class NovelChapterRepository {
             "${style.paddingPx}:${style.topPaddingPx}:${style.bottomPaddingPx}:" +
             // ⚠️ 整段保护必须进缓存键：关掉自动排版后同一章会重排出**不同的页表**，
             // 不进键就会命中旧页表、开关看起来"没生效"
-            "${style.keepParagraphsWhole}:$widthPx:$heightPx"
+            "${style.keepParagraphsWhole}:$widthPx:$heightPx:" +
+            // ⚠️ 锚点也要进键：同一个锚点在不同阅读位置会切出不同的页表（页首那刀）
+            "${anchor?.paraIndex}:${anchor?.fraction}"
 
         content.get(key) ?: ChapterContent(
             chapterIndex = chapterIndex,
             title = title,
             paragraphs = paras,
             displayTexts = displayTexts,
-            pages = NovelPaginator.paginate(displayParas, style, widthPx, heightPx),
+            pages = NovelPaginator.paginate(displayParas, style, widthPx, heightPx, anchor),
         ).also { content.put(key, it) }
     }
 

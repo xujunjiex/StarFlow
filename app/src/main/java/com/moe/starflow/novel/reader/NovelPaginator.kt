@@ -47,6 +47,14 @@ object NovelPaginator {
         paragraphSpacingPx: Float,
         pageHeightPx: Float,
         keepParagraphsWhole: Boolean = true,
+        /**
+         * **强制分页点**：`(可见段下标, 段内行号)` —— 这一行必须出现在某一页的**顶部**。
+         *
+         * 带位重排（译文到达后重排）用：`pageOf` 只能给到"含锚点的页"，锚点可能落在页尾，
+         * 于是读者看到的画面会往章节开头方向挪最多一屏（用户报的「翻译完回到前一页」）。
+         * 在这里切开，锚点就**正好在页首** —— 重排前后看到的内容完全一致。
+         */
+        forceBreak: Pair<Int, Int>? = null,
     ): List<NovelPage> {
         val visible = paragraphs.filter { it.type != NovelParagraphType.SKIP }
         if (visible.isEmpty()) return emptyList()
@@ -74,11 +82,15 @@ object NovelPaginator {
             val lineCount = starts.size
             // 整段真实高度 = 各行高度之和 = `StaticLayout.height`（includePad=false）
             val wholeHeight = heights.sum()
+            // 这一段里要强制分页的行（-1 = 没有）
+            val breakLine = forceBreak?.takeIf { it.first == vi }?.second ?: -1
 
             // ── 整段优先：整段放不下就整段挪到下一页 ──
             // ⚠️ 不做这一步的话，段落会被从中间切开：同一段落在两页上各显示半截，
             // 翻译也只能按半段来（"句子中断"），读者看到的是半句话。
             if (keepParagraphsWhole && wholeHeight <= pageHeight) {
+                // 整段放在这一页，但它自己就是强制分页点 → 先收掉当前页
+                if (breakLine == 0 && current.isNotEmpty()) flush()
                 val gap = if (current.isNotEmpty()) paragraphSpacingPx else 0f
                 if (usedPx + gap + wholeHeight > pageHeight) flush()
                 val gapNow = if (current.isNotEmpty()) paragraphSpacingPx else 0f
@@ -91,11 +103,17 @@ object NovelPaginator {
             var lineIdx = 0
             var firstChunkOfPara = true
             while (lineIdx < lineCount) {
+                // 强制分页行要出现在页首：先把当前页收掉，下一轮从空页开始放这一行
+                if (lineIdx == breakLine && current.isNotEmpty()) {
+                    flush()
+                    continue
+                }
                 val gap = if (firstChunkOfPara && current.isNotEmpty()) paragraphSpacingPx else 0f
                 // 本页扣掉段间距后还能放几行 —— 逐行累加**真实行高**，与绘制端逐行累加同一批数
                 var take = 0
                 var taken = 0f
                 while (lineIdx + take < lineCount &&
+                    !(lineIdx + take == breakLine && take > 0) &&
                     usedPx + gap + taken + heights[lineIdx + take] <= pageHeight
                 ) {
                     taken += heights[lineIdx + take]
@@ -144,6 +162,8 @@ object NovelPaginator {
         style: NovelTextStyle,
         widthPx: Int,
         heightPx: Int,
+        /** 阅读锚点（带位重排）：它必须落在**页首**，见 [paginateByLines] 的 `forceBreak`。 */
+        anchor: NovelAnchor? = null,
     ): List<NovelPage> {
         val visible = paragraphs.filter { it.type != NovelParagraphType.SKIP }
         if (visible.isEmpty() || widthPx <= 0 || heightPx <= 0) return emptyList()
@@ -157,9 +177,20 @@ object NovelPaginator {
             FloatArray(l.lineCount) { (l.getLineBottom(it) - l.getLineTop(it)).toFloat() }
         }
 
+        // 锚点 → (可见段下标, 段内行号)：锚点的字符位置落在哪一行，那一行就要另起一页。
+        // ⚠️ 行号由**同一份 layout** 反查（`getLineForOffset`），与 `lineStarts/lineHeights`
+        // 同源，不会出现"切在行中间"。
+        val forceBreak = anchor?.let { a ->
+            val vi = visible.indexOfFirst { it.index == a.paraIndex }
+            if (vi < 0) return@let null
+            val len = visible[vi].originalText.length
+            val off = a.charOffsetOf(len).coerceIn(0, (len - 1).coerceAtLeast(0))
+            vi to layouts[vi].getLineForOffset(off)
+        }
+
         return paginateByLines(
             visible, lineStarts, lineHeights, style.paragraphSpacingPx, contentHeight,
-            style.keepParagraphsWhole,
+            style.keepParagraphsWhole, forceBreak,
         )
     }
 }

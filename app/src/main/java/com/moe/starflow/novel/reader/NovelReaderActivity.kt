@@ -996,7 +996,13 @@ class NovelReaderActivity : AppCompatActivity() {
             }
             translations = map
 
-            val loaded = repository.load(b, index, translations, NovelPanelStyle.displayMode(prefs), style, w, h)
+            // ⚠️ 分页模式把锚点交给分页器：**锚点必须落在页首**。不给这一步的话，`pageOf`
+            // 只能给到"含锚点的那一页"，锚点可能落在页尾 —— 译文比原文短时它会被挤到上一页，
+            // 读者看到的就是「翻译完回到前一页」（用户报的）。滚动模式不用页，不传。
+            val pageAnchor = if (isScrollMode() || atLastPage) null else anchor
+            val loaded = repository.load(
+                b, index, translations, NovelPanelStyle.displayMode(prefs), style, w, h, pageAnchor,
+            )
             if (token != loadToken) {
                 NovelDebug.log("loadChapter#$token DISCARDED (latest=$loadToken)")
                 return@launch
