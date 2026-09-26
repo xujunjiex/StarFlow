@@ -1,8 +1,8 @@
 <!--
   显示三态之一：**原文**。
-  「A」= 原始文字（不做任何转换的那一份）。
-  ⚠️ 三枚图标必须**互相可辨**，也不能跟翻译按钮的 `ic_reader_translate`（A + 文 并排）撞脸 ——
-  它们在同一个浮层组里并排显示，撞脸就等于没换（用户当场指出来了）。
+  一套三件（原文 / 译文 / 双语）自绘，替换原来借的 android.R.drawable.ic_menu_* 老系统图标
+  （相机/图库/眼睛那套，与阅读器其它图标不是一种风格）。
+  语义：一整块文字 = 原始文本。
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
@@ -11,6 +11,5 @@
     android:viewportHeight="24">
     <path
         android:fillColor="#FF000000"
-        android:fillType="evenOdd"
-        android:pathData="M12,2.6L20.8,21.4h-2.9l-1.6,-4.1H7.7L6.1,21.4H3.2zM10.4,14.6h3.2l-1.6,-4.2z" />
+        android:pathData="M4,4.6h16v2.1H4zM4,8.5h16v2.1H4zM4,12.4h16v2.1H4zM4,16.3h9v2.1H4z" />
 </vector>
