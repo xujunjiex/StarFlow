@@ -270,8 +270,10 @@ class NovelReaderActivity : AppCompatActivity() {
         // 且常驻状态芯片（系统窗口）会一直盖在别的应用上
         queue?.stop()
         queueRunning = false
-        // 退出阅读器 = 暂停并**回退手动**（用户明确要求）：回来时不会自己接着翻
-        NovelPanelStyle.setTranslateMode(prefs, NovelTranslateMode.MANUAL)
+        // 退出阅读器**只暂停，不改模式**：用户说的是「退出阅读器自动暂停」——
+        // 回来时 `onStart → restartQueueIfNeeded()` 会按**原来那个模式**接着翻。
+        // ⚠️ 早先这里顺手把模式也回退成手动了（多做的），结果是「切个后台/息屏回来，
+        // 自动翻译就没了，还得重新选」—— 那才是"老是暂停"的来源。
         TranslationStatusOverlay.getInstance(this@NovelReaderActivity).dismiss()
     }
 
