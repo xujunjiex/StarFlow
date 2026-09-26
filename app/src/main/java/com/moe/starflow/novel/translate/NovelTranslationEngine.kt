@@ -92,9 +92,7 @@ class NovelTranslationEngine(private val translator: NovelTextTranslator) {
         targetLang: String,
         batchSize: Int = NovelTranslationBatch.DEFAULT_BATCH_PARAGRAPHS,
     ): Flow<NovelChapterProgress> = callbackFlow {
-        val units = paragraphs
-            .filter { it.type == NovelParagraphType.TEXT && it.originalText.isNotBlank() }
-            .map { NovelUnit(it.index, it.originalText) }
+        val units = asUnits(paragraphs)
 
         if (units.isEmpty()) {
             trySend(NovelChapterProgress(chapterIndex, emptyMap(), isComplete = true))
@@ -108,23 +106,7 @@ class NovelTranslationEngine(private val translator: NovelTextTranslator) {
         val worker = launch {
             var doneCount = 0
             for (batch in batches) {
-                val prompt = buildPromptText(units, batch)
-                var parsed = requestAndParse(prompt, batch, sourceLang, targetLang)
-
-                // 整批失败 → 逐段重试一次（内容审查常只针对其中一段）
-                if (parsed.isEmpty() && batch.size > 1) {
-                    LogCollector.w(TAG, "整批失败（${batch.size} 段），降级逐段重试")
-                    for (pi in batch) {
-                        parsed = parsed + requestAndParse(
-                            buildPromptText(units, listOf(pi)),
-                            listOf(pi),
-                            sourceLang,
-                            targetLang,
-                        )
-                    }
-                }
-
-                accumulated.putAll(parsed)
+                accumulated.putAll(requestBatch(units, batch, sourceLang, targetLang))
                 doneCount += batch.size
                 trySend(
                     NovelChapterProgress(
@@ -139,6 +121,60 @@ class NovelTranslationEngine(private val translator: NovelTextTranslator) {
             close()
         }
         awaitClose { worker.cancel() }
+    }
+
+    /**
+     * 翻**一批**（[paraIndexes] 指定的段，来自 `NovelBatchPlanner.nextBatch`）。
+     *
+     * ⚠️ 与 [translateChapter] 的唯一区别：**它只发一次请求，翻完就返回**。
+     * 队列靠「一批一批地要」实现「点一次翻一批」和「增量配额 x 批」——
+     * 这里若偷偷把整章翻完，上面两个功能就都没法计数了（`NovelTranslationEngineBatchTest` 盯着这条）。
+     */
+    suspend fun translateBatch(
+        paragraphs: List<NovelParagraph>,
+        paraIndexes: List<Int>,
+        sourceLang: String,
+        targetLang: String,
+    ): Map<Int, String> {
+        if (paraIndexes.isEmpty()) return emptyMap()
+        val units = asUnits(paragraphs)
+        val present = units.mapTo(HashSet()) { it.paraIndex }
+        val batch = paraIndexes.filter { it in present }
+        if (batch.isEmpty()) return emptyMap()
+        return requestBatch(units, batch, sourceLang, targetLang)
+    }
+
+    /** 只保留可翻译的段（TEXT 且非空白），并绑死 `paraIndex`（见 [NovelUnit] 的说明）。 */
+    private fun asUnits(paragraphs: List<NovelParagraph>): List<NovelUnit> = paragraphs
+        .filter { it.type == NovelParagraphType.TEXT && it.originalText.isNotBlank() }
+        .map { NovelUnit(it.index, it.originalText) }
+
+    /**
+     * 发一批并解析；整批失败时**降级逐段重试一次**（内容审查常只针对其中一段）。
+     *
+     * 只重试一次，不做无限重试 —— 内容性失败重试多少次都是同样的结果，
+     * 只会把额度烧光并让用户以为卡住了。
+     */
+    private suspend fun requestBatch(
+        units: List<NovelUnit>,
+        batch: List<Int>,
+        sourceLang: String,
+        targetLang: String,
+    ): Map<Int, String> {
+        val parsed = requestAndParse(buildPromptText(units, batch), batch, sourceLang, targetLang)
+        if (parsed.isNotEmpty() || batch.size <= 1) return parsed
+
+        LogCollector.w(TAG, "整批失败（${batch.size} 段），降级逐段重试")
+        var out = parsed
+        for (pi in batch) {
+            out = out + requestAndParse(
+                buildPromptText(units, listOf(pi)),
+                listOf(pi),
+                sourceLang,
+                targetLang,
+            )
+        }
+        return out
     }
 
     private fun buildPromptText(units: List<NovelUnit>, batch: List<Int>): String =
