@@ -44,6 +44,14 @@ object NovelTextRenderer {
      */
     const val COLOR_ACTIVE_BATCH = 0x2EFFB300
 
+    /**
+     * 高亮底（选中 / 正在翻译）的**圆角半径**（dp）。
+     *
+     * 分页与滚动两种模式共用一个值：同一段东西在两个模式下的"高亮"必须是同一个观感。
+     * 高亮还要求**铺满整行**（左右边距也填上），别只铺正文列 —— 那看着像被两侧裁了一刀。
+     */
+    const val HIGHLIGHT_CORNER_DP = 8f
+
     fun build(text: String, style: NovelTextStyle, contentWidth: Int, color: Int = COLOR_MAIN): StaticLayout {
         val paint = TextPaint(TextPaint.ANTI_ALIAS_FLAG).apply {
             textSize = style.fontSizePx

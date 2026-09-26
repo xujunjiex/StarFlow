@@ -107,6 +107,14 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
         /** 已经真正设到底色上的颜色（切选中态/切背景都要比它，别比 [backgroundColor]）。 */
         private var appliedBg: Int = backgroundColor
 
+        /** 高亮底：铺满整行 + 圆角（与分页模式同一个观感）。 */
+        private val highlightBg = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = NovelTextRenderer.HIGHLIGHT_CORNER_DP * resources.displayMetrics.density
+        }
+
+        /** 平铺的普通阅读底色。 */
+        private val plainBg = android.graphics.drawable.ColorDrawable(backgroundColor)
+
         fun bind(
             text: String,
             style: NovelTextStyle,
@@ -134,11 +142,18 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
                 active -> NovelTextRenderer.COLOR_ACTIVE_BATCH
                 else -> backgroundColor
             }
-            // ⚠️ 底色变了才调 setBackgroundColor：它内部会 requestLayout，
-            // 而 bind 是在布局过程中被调的 —— 每次都调会触发"布局中再次请求布局"的第二遍布局
+            // ⚠️ 底色变了才动 background：setBackground/setBackgroundColor 内部都会 requestLayout，
+            // 而 bind 是在布局过程中被调的 —— 每次都设会触发"布局中再次请求布局"的第二遍布局
             if (appliedBg != want) {
                 appliedBg = want
-                setBackgroundColor(want)
+                if (want == backgroundColor) {
+                    plainBg.color = want
+                    background = plainBg
+                } else {
+                    // 高亮：圆角 + 铺满整行（item 本身是 MATCH_PARENT，边距也被填上）
+                    highlightBg.setColor(want)
+                    background = highlightBg
+                }
             }
             requestLayout()
             invalidate()

@@ -51,6 +51,9 @@ class NovelPageView(context: Context) : View(context) {
         color = NovelTextRenderer.COLOR_ACTIVE_BATCH
     }
 
+    /** 高亮底与滚动模式共用的圆角半径。 */
+    private val hlRadiusPx by lazy { NovelTextRenderer.HIGHLIGHT_CORNER_DP * resources.displayMetrics.density }
+
     fun bind(
         content: ChapterContent,
         page: NovelPage,
@@ -150,8 +153,10 @@ class NovelPageView(context: Context) : View(context) {
 
         // 正文画在「正文框」内。分页已经按同一份几何保证放得下，这一刀只是最后一道兜底
         // （排版模型若被改错，宁可少画一行也不能画到框外）—— 真被切到时 [reportOverflow] 会报出来。
+        // ⚠️ 横向**不裁**（裁到正文列）：高亮底要铺满整行（左右边距也填上，见下），
+        // 而文字本来就只画在正文列里（layout 的宽度就是正文列宽），裁横向没有意义。
         canvas.save()
-        canvas.clipRect(padding, boxTop, widthF - padding, boxBottom)
+        canvas.clipRect(0f, boxTop, widthF, boxBottom)
 
         var y = boxTop
         for ((i, seg) in p.segments.withIndex()) {
@@ -170,7 +175,9 @@ class NovelPageView(context: Context) : View(context) {
                 else -> null
             }
             if (hl != null) {
-                canvas.drawRect(padding, y, widthF - padding, y + (bottom - top), hl)
+                // ⚠️ **铺满整行**（左右边距也填上）+ 圆角（用户要求）：只铺正文列的话
+                // 高亮像被两侧裁了一刀，和滚动模式的 item 底色也不是一个样子
+                canvas.drawRoundRect(0f, y, widthF, y + (bottom - top), hlRadiusPx, hlRadiusPx, hl)
             }
 
             // 只画 [from, to) 这几行：整份 layout 一起画会把区间外的行也画出来，
