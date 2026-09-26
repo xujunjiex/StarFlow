@@ -157,6 +157,21 @@
         android:padding="6dp"
         android:background="@drawable/bg_reader_translate_group">
 
+        <!-- 选择模式下的动作说明（「翻译 3 段」/「重翻 2 段」/「翻译+重翻 3 段」）。
+             ⚠️ 必须**文字**说清三种语义：按钮只有两个图标（翻译 / 刷新），
+             「重翻」和「翻译+重翻」用图标区分不出来。非选择模式下 GONE。 -->
+        <TextView
+            android:id="@+id/tv_translate_action"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:layout_marginEnd="2dp"
+            android:gravity="center_vertical"
+            android:maxLines="1"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp"
+            android:visibility="gone" />
+
         <FrameLayout
             android:id="@+id/btn_toggle_translate"
             android:layout_width="40dp"

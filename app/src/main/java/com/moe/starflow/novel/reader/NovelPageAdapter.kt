@@ -34,6 +34,9 @@ class NovelPageAdapter : RecyclerView.Adapter<NovelPageAdapter.VH>() {
     private var textColor: Int = NovelPageAdapter.DEFAULT_TEXT_COLOR
     private var backgroundColor: Int = android.graphics.Color.WHITE
 
+    /** 选择模式里被选中的段（高亮底）。 */
+    private var selected: Set<Int> = emptySet()
+
     class VH(val curl: CurlPageView, val page: NovelPageView) : RecyclerView.ViewHolder(curl)
 
     fun submit(content: ChapterContent, style: NovelTextStyle, textColor: Int, backgroundColor: Int) {
@@ -54,6 +57,13 @@ class NovelPageAdapter : RecyclerView.Adapter<NovelPageAdapter.VH>() {
         if (this.textColor == textColor && this.backgroundColor == backgroundColor) return
         this.textColor = textColor
         this.backgroundColor = backgroundColor
+        notifyItemRangeChanged(0, itemCount)
+    }
+
+    /** 选择模式的选中集变化（只重画，不重排 —— 见 [NovelPageView.bind] 的排版输入闸门）。 */
+    fun setSelected(sel: Set<Int>) {
+        if (selected == sel) return
+        selected = sel
         notifyItemRangeChanged(0, itemCount)
     }
 
@@ -94,7 +104,7 @@ class NovelPageAdapter : RecyclerView.Adapter<NovelPageAdapter.VH>() {
             "bindPage pos=$position segs=${page.segments.size} " +
                 "p0=${page.segments.firstOrNull()?.let { s -> NovelDebug.brief(c.displayOf(s.paraIndex)) }}"
         )
-        holder.page.bind(c, page, style, textColor)
+        holder.page.bind(c, page, style, textColor, selected)
     }
 
     companion object {

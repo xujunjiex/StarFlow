@@ -24,6 +24,15 @@ object NovelTextRenderer {
      */
     const val COLOR_MAIN = 0xFF111111.toInt()
 
+    /**
+     * **选择模式**的选中底色。
+     *
+     * ⚠️ 半透明（约 18% alpha）：白色/米黄/黑三种阅读背景下都要看得出选中，
+     * 实色会把正文压得看不清。分页与滚动两种模式共用同一个值，否则同一段东西
+     * 在两个模式下的"选中"长得不一样。
+     */
+    const val COLOR_SELECTION = 0x2E55AEEA
+
     fun build(text: String, style: NovelTextStyle, contentWidth: Int, color: Int = COLOR_MAIN): StaticLayout {
         val paint = TextPaint(TextPaint.ANTI_ALIAS_FLAG).apply {
             textSize = style.fontSizePx

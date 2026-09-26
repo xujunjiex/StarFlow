@@ -26,6 +26,9 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
     private var textColor: Int = NovelPageAdapter.DEFAULT_TEXT_COLOR
     private var backgroundColor: Int = android.graphics.Color.WHITE
 
+    /** 选择模式里被选中的段（item 底色）。 */
+    private var selected: Set<Int> = emptySet()
+
     class VH(val view: ParagraphView) : RecyclerView.ViewHolder(view)
 
     fun submit(content: ChapterContent, style: NovelTextStyle, textColor: Int, backgroundColor: Int) {
@@ -49,6 +52,17 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
         notifyItemRangeChanged(0, itemCount)
     }
 
+    /** 选择模式的选中集变化（[ParagraphView.bind] 自带「没变就 return」的闸门）。 */
+    fun setSelected(sel: Set<Int>) {
+        if (selected == sel) return
+        selected = sel
+        notifyItemRangeChanged(0, itemCount)
+    }
+
+    /** item 下标 → 段号（选择模式命中用；越界返回 null）。 */
+    fun paraIndexAt(position: Int): Int? =
+        content?.let { NovelScrollMapping.paraIndexOf(it, position) }
+
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
         val v = ParagraphView(parent.context)
         v.layoutParams = RecyclerView.LayoutParams(
@@ -63,7 +77,10 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
         val c = content ?: return
         val para = NovelScrollMapping.visibleParagraphs(c).getOrNull(position) ?: return
         NovelDebug.log("bindPara pos=$position paraIndex=${para.index} text=${NovelDebug.brief(c.displayOf(para.index))}")
-        holder.view.bind(c.displayOf(para.index), style, textColor, backgroundColor)
+        holder.view.bind(
+            c.displayOf(para.index), style, textColor, backgroundColor,
+            selected = para.index in selected,
+        )
     }
 
     /** 一段的自绘 View。 */
@@ -73,21 +90,36 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
         private var style: NovelTextStyle = NovelPageView.DEFAULT_STYLE
         private var textColor: Int = NovelPageAdapter.DEFAULT_TEXT_COLOR
         private var backgroundColor: Int = android.graphics.Color.WHITE
+        private var selected: Boolean = false
 
-        fun bind(text: String, style: NovelTextStyle, textColor: Int, backgroundColor: Int) {
-            if (this.text == text && this.style == style &&
-                this.textColor == textColor && this.backgroundColor == backgroundColor
+        /** 已经真正设到底色上的颜色（切选中态/切背景都要比它，别比 [backgroundColor]）。 */
+        private var appliedBg: Int = backgroundColor
+
+        fun bind(
+            text: String,
+            style: NovelTextStyle,
+            textColor: Int,
+            backgroundColor: Int,
+            selected: Boolean = false,
+        ) {
+            if (this.text == text && this.style == style && this.textColor == textColor &&
+                this.backgroundColor == backgroundColor && this.selected == selected
             ) {
                 return
             }
             this.text = text
             this.style = style
             this.textColor = textColor
+            this.backgroundColor = backgroundColor
+            this.selected = selected
+            // 选中态：**半透明**蓝压在同一段文字下 —— 深浅两种阅读背景下都要看得出选中、
+            // 又不能把字盖住（实色会看不清正文）
+            val want = if (selected) NovelTextRenderer.COLOR_SELECTION else backgroundColor
             // ⚠️ 底色变了才调 setBackgroundColor：它内部会 requestLayout，
             // 而 bind 是在布局过程中被调的 —— 每次都调会触发"布局中再次请求布局"的第二遍布局
-            if (this.backgroundColor != backgroundColor) {
-                this.backgroundColor = backgroundColor
-                setBackgroundColor(backgroundColor)
+            if (appliedBg != want) {
+                appliedBg = want
+                setBackgroundColor(want)
             }
             requestLayout()
             invalidate()

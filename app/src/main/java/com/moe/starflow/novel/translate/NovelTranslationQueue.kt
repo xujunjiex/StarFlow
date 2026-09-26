@@ -231,7 +231,33 @@ class NovelTranslationQueue(
             ?: return NovelBatchResult(emptyMap(), "没有待翻译的段落了")
         val batch = NovelBatchPlanner.nextBatch(chapterParas, anchor, done, batchSize())
         if (batch.isEmpty()) return NovelBatchResult(emptyMap(), "没有待翻译的段落了")
+        return runBatch(book, chapterIndex, batch)
+    }
 
+    /**
+     * 翻**指定的这几段**（选择模式：长按多选后翻译 / 重翻）。
+     *
+     * ⚠️ 与 [translateOneBatch] 的关键区别：**不经过规划器**。选中的段原样送出 ——
+     * 规划器会把「已有译文」的段当成已完成而跳过，那样**重翻就永远翻不动**。
+     *
+     * ⚠️ 一次调用 = 一次请求。按「每批段数」拆批由调用方做（只有它知道面板怎么设置的），
+     * 这样「选 20 段、每批 3 段」就是 7 次请求、7 次上屏。
+     */
+    suspend fun translateExact(
+        book: ImportedNovel,
+        chapterIndex: Int,
+        paraIndexes: List<Int>,
+    ): NovelBatchResult {
+        if (paraIndexes.isEmpty()) return NovelBatchResult(emptyMap())
+        return runBatch(book, chapterIndex, paraIndexes)
+    }
+
+    /** 一批（已确定段号）的实际请求：抢锁 → 翻 → 落库（在 [NovelBatchTranslator] 里）。 */
+    private suspend fun runBatch(
+        book: ImportedNovel,
+        chapterIndex: Int,
+        batch: List<Int>,
+    ): NovelBatchResult {
         _state.value = NovelQueueState(NovelQueuePhase.WAITING_LOCK, chapterIndex, batch)
         if (!acquireLockWithWait()) return NovelBatchResult(emptyMap(), "翻译引擎被占用（别的翻译正在跑）")
         try {

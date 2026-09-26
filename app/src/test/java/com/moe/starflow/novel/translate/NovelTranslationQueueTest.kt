@@ -180,6 +180,38 @@ class NovelTranslationQueueTest {
         q.stop()
     }
 
+    /**
+     * **重翻**（长按多选 → 重新翻译）：已经在译文表里的段**照样送出去**。
+     *
+     * 这条路刻意不经过 `NovelBatchPlanner` —— 规划器把「已有译文」当成已完成而跳过，
+     * 用了它重翻就永远翻不动（用户看到的是"点了重翻但什么都没变"）。
+     */
+    @Test
+    fun `按段翻译不跳过已有译文的段`() = runTest {
+        val t = FakeTranslator()
+        val translated = mutableSetOf(0, 1, 5)
+        val q = queue(backgroundScope, t, translated, page = { listOf(0, 1) }, chapterSize = 6, batchSize = 3)
+
+        val got = q.translateExact(book(), 0, listOf(0, 1, 4))
+
+        assertEquals(mapOf(0 to "译0", 1 to "译1", 4 to "译4"), got.translations)
+        assertEquals("选谁翻谁、一次请求", listOf(listOf(0, 1, 4)), t.batches)
+        q.stop()
+    }
+
+    /** 空选择不发请求（白抢一次锁、白烧一次额度）。 */
+    @Test
+    fun `空选择不发请求`() = runTest {
+        val t = FakeTranslator()
+        val q = queue(backgroundScope, t, mutableSetOf(), page = { listOf(0) }, chapterSize = 3, batchSize = 3)
+
+        val got = q.translateExact(book(), 0, emptyList())
+
+        assertTrue(got.isEmpty)
+        assertTrue(t.batches.isEmpty())
+        q.stop()
+    }
+
     /** 没有可翻的段（页内全翻完）→ 停在 DRAINED，而不是空转刷状态。 */
     @Test
     fun `没有待翻的段时停在 DRAINED`() = runTest {

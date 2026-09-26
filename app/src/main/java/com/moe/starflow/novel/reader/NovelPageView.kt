@@ -2,6 +2,7 @@ package com.moe.starflow.novel.reader
 
 import android.content.Context
 import android.graphics.Canvas
+import android.graphics.Paint
 import android.text.StaticLayout
 import android.view.View
 
@@ -23,6 +24,9 @@ class NovelPageView(context: Context) : View(context) {
     private var style: NovelTextStyle = DEFAULT_STYLE
     private var textColor: Int = NovelPageAdapter.DEFAULT_TEXT_COLOR
 
+    /** 选择模式里被选中的段（高亮底）。 */
+    private var selected: Set<Int> = emptySet()
+
     /** 与 `page.segments` 一一对应的排版结果（空文本/未布局时为 null）。 */
     private var layouts: List<StaticLayout?> = emptyList()
 
@@ -32,16 +36,70 @@ class NovelPageView(context: Context) : View(context) {
     /** 越界只报一次（onDraw 每帧都会跑，不设闸门会刷爆日志）。 */
     private var overflowReported = false
 
-    fun bind(content: ChapterContent, page: NovelPage, style: NovelTextStyle, textColor: Int) {
+    /**
+     * 选择模式的高亮底（颜色定义在 [NovelTextRenderer.COLOR_SELECTION]，与滚动模式共用）。
+     */
+    private val selectionPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = NovelTextRenderer.COLOR_SELECTION
+    }
+
+    fun bind(
+        content: ChapterContent,
+        page: NovelPage,
+        style: NovelTextStyle,
+        textColor: Int,
+        selected: Set<Int> = emptySet(),
+    ) {
+        // ⚠️ 排版输入没变就别作废已排好的 layout：选择模式每点一下都会重绑，
+        // 全页重建 StaticLayout 是白烧的（而且会闪）
+        if (this.content !== content || this.page !== page ||
+            this.style != style || this.textColor != textColor
+        ) {
+            laidOutWidth = -1
+            layouts = emptyList()
+            overflowReported = false
+        }
         this.content = content
         this.page = page
         this.style = style
         this.textColor = textColor
-        // 宽度要等布局完成才知道，这里只作废旧排版；真正的排版在 onDraw 里按需做一次
-        laidOutWidth = -1
-        layouts = emptyList()
-        overflowReported = false
+        this.selected = selected
         invalidate()
+    }
+
+    /** 只换选中态（不重排）。 */
+    fun setSelected(sel: Set<Int>) {
+        if (selected == sel) return
+        selected = sel
+        invalidate()
+    }
+
+    /**
+     * 页内命中：本 View 坐标 [y] 落在哪一段上（选择模式用）。
+     *
+     * ⚠️ 几何必须与 [onDraw] **同一套走法**（逐段累加真实行高、段间距只补在段之间），
+     * 否则选中的段和手指点的段会对不上。
+     * 段与段之间的空隙归**上一段**（空隙只有段间距几十像素，归给"空白"太容易误退出）；
+     * 正文上下之外的区域返回 null = 真正的空白（点它退出选择模式）。
+     */
+    fun paraIndexAt(y: Float): Int? {
+        val p = page ?: return null
+        if (y < style.topPaddingPx) return null
+        ensureLayouts()
+        var top = style.topPaddingPx
+        var prev: Int? = null
+        for ((i, seg) in p.segments.withIndex()) {
+            val layout = layouts.getOrNull(i) ?: continue
+            val from = seg.lineStart.coerceIn(0, layout.lineCount)
+            val to = seg.lineEnd.coerceIn(from, layout.lineCount)
+            if (to <= from) continue
+            val bottom = top + (layout.getLineBottom(to - 1) - layout.getLineTop(from))
+            if (y < top) return prev ?: seg.paraIndex
+            if (y < bottom) return seg.paraIndex
+            prev = seg.paraIndex
+            top = bottom + if (i != p.segments.lastIndex) style.paragraphSpacingPx else 0f
+        }
+        return null
     }
 
     /**
@@ -86,6 +144,11 @@ class NovelPageView(context: Context) : View(context) {
             if (to <= from) continue
             val top = layout.getLineTop(from).toFloat()
             val bottom = layout.getLineBottom(to - 1).toFloat()
+
+            // 选中高亮画在文字**下面**（同一个矩形范围，逐段累加的高度）
+            if (seg.paraIndex in selected) {
+                canvas.drawRect(padding, y, widthF - padding, y + (bottom - top), selectionPaint)
+            }
 
             // 只画 [from, to) 这几行：整份 layout 一起画会把区间外的行也画出来，
             // 而本页的高度记账只算了这几行。

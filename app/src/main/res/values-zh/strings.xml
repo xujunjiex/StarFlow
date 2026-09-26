@@ -1427,6 +1427,12 @@
     <string name="novel_translate_batch">每批段数</string>
     <string name="novel_style_hint">改动会立即重新排版</string>
     <string name="novel_page_indicator">%1$s · %2$d/%3$d</string>
+    <string name="novel_select_hint">点段落选择 · 点空白处完成</string>
+    <string name="novel_select_not_translatable">图片和过短的行不翻译</string>
+    <string name="novel_action_translate_n">翻译 %1$d 段</string>
+    <string name="novel_action_retranslate_n">重翻 %1$d 段</string>
+    <string name="novel_action_both_n">翻译+重翻 %1$d 段</string>
+    <string name="novel_translate_selected_done">已翻 %1$d 段</string>
     <string name="novel_queue_translating">正在翻译第 %1$d 章…</string>
     <string name="novel_translate_failed_chapter_hint">第 %1$d 章：%2$s</string>
     <string name="novel_chapter_progress">已翻 %1$d / 共 %2$d 段</string>

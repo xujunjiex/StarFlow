@@ -12,6 +12,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -193,6 +194,15 @@ class NovelReaderActivity : AppCompatActivity() {
      */
     private var lastLayoutScrollItem = -1
 
+    /**
+     * **选择模式**（长按正文进入）里选中的段号，按选中顺序。
+     *
+     * 这是文本阅读器唯一的「重翻」入口（用户明确要求：不要像漫画那样让翻译按钮凭缓存命中
+     * 变成重翻，而是长按多选任意段落来翻/重翻）。退出方式见 [exitSelection]。
+     */
+    private val selectedPara = linkedSetOf<Int>()
+    private var selecting = false
+
     private val tapDetector by lazy {
         GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
@@ -200,9 +210,7 @@ class NovelReaderActivity : AppCompatActivity() {
                 return true
             }
 
-            override fun onLongPress(e: MotionEvent) {
-                lastInteractionMs = SystemClock.elapsedRealtime()
-            }
+            override fun onLongPress(e: MotionEvent) = handleLongPress(e.x, e.y)
         })
     }
 
@@ -300,8 +308,7 @@ class NovelReaderActivity : AppCompatActivity() {
     override fun onStop() {
         super.onStop()
         autoTurnJob?.cancel()
-        autoTurnJob = null
-        // 切后台必须暂停队列：lifecycleScope 不因 onStop 取消，否则翻译会在后台整段跑，
+        autoTurnJob = null        // 切后台必须暂停队列：lifecycleScope 不因 onStop 取消，否则翻译会在后台整段跑，
         // 且常驻状态芯片（系统窗口）会一直盖在别的应用上
         queue?.stop()
         queueRunning = false
@@ -310,6 +317,8 @@ class NovelReaderActivity : AppCompatActivity() {
         // ⚠️ 早先这里顺手把模式也回退成手动了（多做的），结果是「切个后台/息屏回来，
         // 自动翻译就没了，还得重新选」—— 那才是"老是暂停"的来源。
         TranslationStatusOverlay.getInstance(this@NovelReaderActivity).dismiss()
+        // 离开阅读器清掉选择集：它是「长按多选」的临时状态，回到阅读器时不该还亮着
+        exitSelection()
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -375,6 +384,20 @@ class NovelReaderActivity : AppCompatActivity() {
     // ===== chrome（与漫画逐项对齐） =====
 
     private fun setupOverlays() {
+        // 返回键：选择模式下先退出选择（与「点空白处退出」同一件事），否则才退出阅读器。
+        // `isEnabled=false` → 转发一次 → 再打开，是为了把"退出阅读器"这个默认行为交回系统，
+        // 不自己 finish（自绘返回会漏掉系统的一些收尾）。
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                if (selecting) {
+                    exitSelection()
+                    return
+                }
+                isEnabled = false
+                onBackPressedDispatcher.onBackPressed()
+                isEnabled = true
+            }
+        })
         binding.btnBack.setOnClickListener { finish() }
         binding.btnMenu.setOnClickListener { showMenu() }
         binding.btnPrev.setOnClickListener { gotoChapter(chapterIndex - 1) }
@@ -558,6 +581,23 @@ class NovelReaderActivity : AppCompatActivity() {
         val w = target.width.toFloat()
         val h = target.height.toFloat()
         if (w <= 0f || h <= 0f) return
+        // 选择模式：点段落 = 加/减选，点空白 = 退出。九宫格（翻页 / 显隐 chrome）**让位** ——
+        // 选段过程中误翻页是最烦的一种；chrome 上的按钮是独立视图，照常可点。
+        if (selecting) {
+            val para = paragraphAt(x, y)
+            when {
+                para == null -> exitSelection()
+                !isTranslatablePara(para) ->
+                    showOverlayToast(getString(R.string.novel_select_not_translatable), error = false)
+                else -> {
+                    if (!selectedPara.add(para)) selectedPara.remove(para)
+                    // 取消到一段不剩 = 已经没有选择了，直接退出选择模式（不留一个空的选择态）
+                    if (selectedPara.isEmpty()) selecting = false
+                    refreshSelectionUi()
+                }
+            }
+            return
+        }
         if (consumeChromeOrMenuTap(x, y, w, h)) return
         when {
             // 连续滚动：点上下半屏 = 上一段 / 下一段
@@ -580,6 +620,71 @@ class NovelReaderActivity : AppCompatActivity() {
             return true
         }
         return false
+    }
+
+    // ===== 选择模式（长按多选 → 翻译 / 重翻） =====
+
+    /**
+     * 长按正文 = 进入选择模式并选中手指下那一段。
+     *
+     * ⚠️ 文本翻译的重翻**只有这一个入口**（用户明确要求）：不要学漫画用「缓存命中 → 按钮变重翻」，
+     * 那样"点一下会发生什么"取决于看不见的译文状态。
+     */
+    private fun handleLongPress(x: Float, y: Float) {
+        lastInteractionMs = SystemClock.elapsedRealtime()
+        val para = paragraphAt(x, y)
+        if (para == null) return
+        if (!isTranslatablePara(para)) {
+            showOverlayToast(getString(R.string.novel_select_not_translatable), error = false)
+            return
+        }
+        if (!selecting) {
+            selecting = true
+            selectedPara.clear()
+            showOverlayToast(getString(R.string.novel_select_hint), error = false)
+        }
+        if (!selectedPara.add(para)) selectedPara.remove(para)
+        if (selectedPara.isEmpty()) selecting = false
+        refreshSelectionUi()
+    }
+
+    /** 手指下的段号（翻页模式看页内行区间，滚动模式看 item）。 */
+    private fun paragraphAt(x: Float, y: Float): Int? {
+        if (isScrollMode()) {
+            val rv = binding.novelScroll
+            val child = rv.findChildViewUnder(x, y) ?: return null
+            return scrollAdapter.paraIndexAt(rv.getChildAdapterPosition(child))
+        }
+        val rv = binding.novelPager.getChildAt(0) as? RecyclerView ?: return null
+        val child = rv.findChildViewUnder(x, y) ?: return null
+        val vh = rv.findContainingViewHolder(child) as? NovelPageAdapter.VH ?: return null
+        // 页 View 铺满 item，所以只需要把 y 转成页内坐标
+        return vh.page.paraIndexAt(y - child.top)
+    }
+
+    private fun isTranslatablePara(paraIndex: Int): Boolean =
+        content?.paragraphs?.firstOrNull { it.index == paraIndex }?.isTranslatable() == true
+
+    /**
+     * 退出选择模式并清空选择。
+     *
+     * 会退出的场合：点空白处、返回键、切章、开面板、切阅读模式、离开阅读器。
+     * ⚠️ **翻页/换页不退**：选完几段要翻到别页再看看是正常操作，而且译文到达后
+     * `refreshTranslations → loadChapter` 也会走一遍翻页路径，在那里清会让选择凭空消失。
+     */
+    private fun exitSelection() {
+        if (!selecting && selectedPara.isEmpty()) return
+        selecting = false
+        selectedPara.clear()
+        refreshSelectionUi()
+    }
+
+    /** 选择态变化后刷新正文高亮与右下浮层。 */
+    private fun refreshSelectionUi() {
+        val sel = selectedPara.toSet()
+        pageAdapter.setSelected(sel)
+        scrollAdapter.setSelected(sel)
+        refreshTranslationChrome()
     }
 
     // ===== 翻页 / 翻段 / 切章 =====
@@ -692,6 +797,8 @@ class NovelReaderActivity : AppCompatActivity() {
             toast(R.string.novel_last_chapter)
             return
         }
+        // 选择集是按**段号**记的，换章后段号会撞上别的段 —— 必须先清
+        exitSelection()
         persistProgress()
         loadChapter(index, keepPara = if (atLastPage) Int.MAX_VALUE else 0, atLastPage = atLastPage)
     }
@@ -716,6 +823,8 @@ class NovelReaderActivity : AppCompatActivity() {
     private fun applyReaderMode() {
         val mode = NovelPanelStyle.readerMode(prefs)
         val scroll = mode == NovelPanelStyle.READER_SCROLL
+        // 阅读模式换了 → 选中的段在两套视图上表达方式也不同，直接清掉，别留个看不见的选择
+        exitSelection()
         binding.novelPager.visibility = if (scroll) View.GONE else View.VISIBLE
         binding.novelScroll.visibility = if (scroll) View.VISIBLE else View.GONE
         // 进度条两种模式都用：翻页模式是「章内页进度」，连续滚动是「章内段进度」
@@ -1035,6 +1144,10 @@ class NovelReaderActivity : AppCompatActivity() {
         val pages = content?.pages ?: return
         pendingParaIndex = pages.getOrNull(position)?.segments?.firstOrNull()?.paraIndex ?: 0
         refreshOverlay()
+        // ⚠️ **翻页必须重算浮层**：判据是「当前页有没有译文」，翻到别的页当然会变。
+        // 早先这里只刷进度条，于是翻译/三态按钮停在上一次 `loadChapter` 时的状态（用户报的
+        // 「三态这块问题相当多」有这一半）。
+        refreshTranslationChrome()
     }
 
     /** 滚动模式下把当前可见段同步到「待续读段落」。 */
@@ -1044,8 +1157,13 @@ class NovelReaderActivity : AppCompatActivity() {
         val first = lm.findFirstVisibleItemPosition()
         if (first == RecyclerView.NO_POSITION) return
         val c = content ?: return
-        pendingParaIndex = NovelScrollMapping.paraIndexOf(c, first) ?: return
+        val para = NovelScrollMapping.paraIndexOf(c, first) ?: return
+        val moved = para != pendingParaIndex
+        pendingParaIndex = para
         refreshOverlay()
+        // 三态按钮的判据是「当前屏幕有没有译文」—— 滚到有/没译文的区域必须跟着变。
+        // ⚠️ 只在**首可见段真的变了**时算：判据要遍历可见段（滚动回调是每帧一次的）
+        if (moved) refreshTranslationChrome()
     }
 
     /** 译文到达后：重新分页（译文比原文长）+ 保持位置。 */
@@ -1223,25 +1341,97 @@ class NovelReaderActivity : AppCompatActivity() {
 
     // ===== 翻译浮层组 =====
 
-    /** 同步翻译浮层组：本章有任何译文 → 出现三态按钮；翻译失败 → 出现感叹号。 */
+    /**
+     * 同步翻译浮层组（判据全部收敛在 [NovelTranslateChrome] 里，这个函数只负责画）。
+     *
+     * ### 判据（用户口径，别再改错）
+     * - **翻译按钮**：当前页还有没翻的可翻译段才显示；本页都翻过了就只剩三态。
+     *   滚动模式没有「页」，按**整章**还有没有没翻的段判（否则滚一屏就忽隐忽现）。
+     * - **三态按钮**：当前页（滚动模式 = 当前屏幕）有译文才显示 ——
+     *   没译文时点了看不出任何变化。
+     * - **图标不再看「有没有译文」**：漫画那套「缓存命中 → 变重翻图标」在文本翻译里**不要**
+     *   （用户明确要求）。重翻走长按多选，按钮语义由**选择集**决定。
+     */
     private fun refreshTranslationChrome() {
         if (chromeHidden) {
             binding.translateGroup.visibility = View.GONE
             return
         }
-        binding.translateGroup.visibility = View.VISIBLE
-        // 三态切换按钮按**页**显示：当前页只要有一段有译文就出现（与漫画按页显示同一套逻辑）。
-        // 整章级判据会让"翻到还没翻译的那页"也显示按钮，点了看不出任何变化。
-        val pageTranslated = currentPageParaIndexes().any { translations.containsKey(it) }
-        val translated = translations.isNotEmpty()
-        val failed = hasFailedChapter(chapterIndex)
-        binding.btnToggleTranslate.visibility = if (pageTranslated) View.VISIBLE else View.GONE
-        binding.btnFailTranslate.visibility = if (failed) View.VISIBLE else View.GONE
-        binding.ivTranslate.setImageResource(
-            if (translated) R.drawable.ic_refresh else R.drawable.ic_reader_translate
-        )
-        if (pageTranslated) {
+        val translated = chromeTranslated()
+        val selectedUntranslated = selectedPara.count { !translations.containsKey(it) }
+        val selectedTranslated = selectedPara.count { translations.containsKey(it) }
+        val action = if (selectedPara.isNotEmpty()) {
+            NovelTranslateChrome.actionForSelection(selectedUntranslated, selectedTranslated)
+        } else {
+            NovelTranslateChrome.actionFor(chromeUntranslated())
+        }
+        val showToggle = NovelTranslateChrome.showToggle(translated)
+        val showFail = hasFailedChapter(chapterIndex)
+
+        // 三块都不可用时整组收掉：留一个空的黑胶囊在右下角更奇怪
+        binding.translateGroup.visibility =
+            if (action != null || showToggle || showFail) View.VISIBLE else View.GONE
+
+        binding.btnTranslate.visibility = if (action != null) View.VISIBLE else View.GONE
+        if (action != null) {
+            binding.ivTranslate.setImageResource(
+                when (action) {
+                    // 「翻译」用翻译图标；重翻与"翻+重翻"都含重翻动作 → 刷新图标
+                    NovelTranslateAction.TRANSLATE -> R.drawable.ic_reader_translate
+                    NovelTranslateAction.RETRANSLATE,
+                    NovelTranslateAction.TRANSLATE_AND_RETRANSLATE,
+                    -> R.drawable.ic_refresh
+                }
+            )
+            val label = actionLabel(action, selectedPara.size)
+            binding.btnTranslate.contentDescription = label
+            // 选择模式下按钮左边显示动作 + 段数：只有两个图标，区分不出「重翻」和「翻译+重翻」。
+            // ⚠️ 判据是**选中集非空**（不是 selecting）：取消到一段不剩时按钮已经退回普通语义，
+            // 显示「翻译 0 段」就自相矛盾了
+            val showLabel = selectedPara.isNotEmpty()
+            binding.tvTranslateAction.visibility = if (showLabel) View.VISIBLE else View.GONE
+            if (showLabel) binding.tvTranslateAction.text = label
+        } else {
+            binding.tvTranslateAction.visibility = View.GONE
+        }
+
+        binding.btnToggleTranslate.visibility = if (showToggle) View.VISIBLE else View.GONE
+        binding.btnFailTranslate.visibility = if (showFail) View.VISIBLE else View.GONE
+        if (showToggle) {
             binding.ivToggleTranslate.setImageResource(displayModeIcon(NovelPanelStyle.displayMode(prefs)))
+        }
+    }
+
+    /** 动作文案（也当按钮的 contentDescription 用，读屏能听出"这一下会干什么"）。 */
+    private fun actionLabel(action: NovelTranslateAction, count: Int): String = getString(
+        when (action) {
+            NovelTranslateAction.TRANSLATE -> R.string.novel_action_translate_n
+            NovelTranslateAction.RETRANSLATE -> R.string.novel_action_retranslate_n
+            NovelTranslateAction.TRANSLATE_AND_RETRANSLATE -> R.string.novel_action_both_n
+        },
+        count,
+    )
+
+    /** 浮层判据：当前视野里**还没译文**的可翻译段数（滚动模式按整章 —— 见 [refreshTranslationChrome]）。 */
+    private fun chromeUntranslated(): Int {
+        if (!isScrollMode()) return translatableOnScreen().count { !translations.containsKey(it) }
+        val c = content ?: return 0
+        return c.paragraphs.count { it.isTranslatable() && !translations.containsKey(it.index) }
+    }
+
+    /** 浮层判据：当前视野里已有译文的段数（三态按钮的显示条件）。 */
+    private fun chromeTranslated(): Int = translatableOnScreen().count { translations.containsKey(it) }
+
+    /**
+     * 当前视野里**可翻译**的段号：翻页模式 = 本页各 segment 的段号，滚动模式 = 可见段。
+     *
+     * ⚠️ 必须滤掉图片与短行（[isTranslatable]）：它们**按设计永远不翻译**，
+     * 算进「待翻译」的话含 `……` 的一页永远判不出「整页翻完了」，翻译按钮就常驻且点了没反应。
+     */
+    private fun translatableOnScreen(): List<Int> {
+        val c = content ?: return emptyList()
+        return currentPageParaIndexes().filter { pi ->
+            c.paragraphs.firstOrNull { it.index == pi }?.isTranslatable() == true
         }
     }
 
@@ -1264,6 +1454,12 @@ class NovelReaderActivity : AppCompatActivity() {
      * - **双击**：取消在途翻译并**回退手动**
      */
     private fun onTranslateButtonClick() {
+        // 选择模式：单击就是**按选择翻**（翻译 / 重翻 / 翻译+重翻）——
+        // 意图已经由选择集说清了，不走下面那套「双击=取消」的判定
+        if (selecting && selectedPara.isNotEmpty()) {
+            translateSelectionNow()
+            return
+        }
         val now = SystemClock.elapsedRealtime()
         val isDouble = now - lastTranslateClickMs <= DOUBLE_CLICK_MS
         lastTranslateClickMs = if (isDouble) 0L else now
@@ -1286,13 +1482,11 @@ class NovelReaderActivity : AppCompatActivity() {
     /** 手动：从当前页锚点翻**一批**（走队列的同一套规则）。 */
     private fun translateOneBatchNow() {
         val b = book ?: return
-        // 队列可能还没建过（手动模式是默认模式）——这里补一次，否则点了没有任何反应
-        val t = runCatching { translator() }.getOrNull()
-        if (t == null) {
+        val q = queueOrNull()
+        if (q == null) {
             toast(R.string.novel_translate_need_config)
             return
         }
-        val q = ensureQueue(t)
         showOverlay(getString(R.string.reader_translate_in_progress), autoDismiss = false)
         lifecycleScope.launch {
             val result = runCatching { q.translateOneBatch(b, chapterIndex) }.getOrNull()
@@ -1312,6 +1506,59 @@ class NovelReaderActivity : AppCompatActivity() {
             refreshChapterStats()
             refreshTranslations(keepPara = pendingParaIndex)
         }
+    }
+
+    /**
+     * 翻**选中的这些段**（长按多选 → 翻译 / 重翻 / 翻译+重翻）。
+     *
+     * ⚠️ 按「每批段数」（面板里的设置）**拆成多次请求**（用户要求）：一次塞几十段
+     * 既容易超上下文，也看不到逐批上屏的效果。
+     * ⚠️ 选中里**已有译文的段照样重发**（这正是重翻）—— 队列的 `translateExact`
+     * 刻意不经过规划器，规划器会把有译文的段当已完成跳过。
+     */
+    private fun translateSelectionNow() {
+        val b = book ?: return
+        val wanted = selectedPara.sorted()
+        if (wanted.isEmpty()) return
+        val q = queueOrNull()
+        if (q == null) {
+            toast(R.string.novel_translate_need_config)
+            return
+        }
+        val chunk = NovelPanelStyle.batchSize(prefs).coerceAtLeast(1)
+        showOverlay(getString(R.string.reader_translate_in_progress), autoDismiss = false)
+        lifecycleScope.launch {
+            var failed: String? = null
+            var done = 0
+            for (group in wanted.chunked(chunk)) {
+                val r = runCatching { q.translateExact(b, chapterIndex, group) }.getOrNull()
+                if (r == null || r.isEmpty) {
+                    failed = r?.error ?: getString(R.string.reader_translate_failed)
+                    break
+                }
+                done += group.size
+                // 每批上屏一次：选十几段时要能看到逐批出译文，而不是最后一起蹦出来
+                refreshTranslations(keepPara = pendingParaIndex)
+            }
+            showOverlay(null)
+            refreshChapterStats()
+            if (failed != null) {
+                showOverlayToast(getString(R.string.novel_translate_failed_reason, failed), error = true)
+            } else {
+                showOverlayToast(getString(R.string.novel_translate_selected_done, done), error = false)
+            }
+        }
+    }
+
+    /**
+     * 取（必要时创建）翻译队列。
+     *
+     * ⚠️ 手动模式是**默认模式**，队列从没被创建过 —— 少了这句兜底，点翻译按钮会一点反应都没有
+     * （曾经就是「翻译本章点了没作用」的根因）。引擎没配好返回 null，由调用方提示。
+     */
+    private fun queueOrNull(): NovelTranslationQueue? {
+        val t = runCatching { translator() }.getOrNull() ?: return null
+        return ensureQueue(t)
     }
 
     /**
@@ -1554,6 +1801,8 @@ class NovelReaderActivity : AppCompatActivity() {
                     // 既浪费额度也可能翻错；要重新选模式才会继续
                     queue?.setPanelOpen(true)
                     showOverlay(null)
+                    // 面板一开就退出选择模式：那套浮层被面板挡住，留着只会让状态对不上
+                    exitSelection()
                     refreshChapterStats()
                     if (NovelPanelStyle.translateMode(prefs) != NovelTranslateMode.MANUAL) {
                         pauseToManual(getString(R.string.reader_translate_paused_to_manual))

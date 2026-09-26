@@ -1425,8 +1425,15 @@
     <string name="novel_back">Back</string>
     <string name="novel_prev_chapter">Previous chapter</string>
     <string name="novel_next_chapter">Next chapter</string>
-    <string name="novel_translate_batch">Paragraphs per batch</string>    <string name="novel_style_hint">Layout is rebuilt immediately</string>
+    <string name="novel_translate_batch">Paragraphs per batch</string>
+    <string name="novel_style_hint">Layout is rebuilt immediately</string>
     <string name="novel_page_indicator">%1$s · %2$d/%3$d</string>
+    <string name="novel_select_hint">Tap paragraphs to select · tap a blank area to finish</string>
+    <string name="novel_select_not_translatable">Images and very short lines are not translated</string>
+    <string name="novel_action_translate_n">Translate %1$d</string>
+    <string name="novel_action_retranslate_n">Retranslate %1$d</string>
+    <string name="novel_action_both_n">Translate + retranslate %1$d</string>
+    <string name="novel_translate_selected_done">Translated %1$d paragraphs</string>
     <string name="novel_queue_translating">Translating chapter %1$d…</string>
     <string name="novel_translate_failed_chapter_hint">Chapter %1$d: %2$s</string>
     <string name="novel_chapter_progress">%1$d of %2$d paragraphs</string>
