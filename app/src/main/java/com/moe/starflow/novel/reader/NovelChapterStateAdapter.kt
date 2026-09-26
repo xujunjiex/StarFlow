@@ -20,24 +20,48 @@ class NovelChapterStateAdapter(
     private val onJump: (Int) -> Unit,
 ) : RecyclerView.Adapter<NovelChapterStateAdapter.VH>() {
 
-    /** 章节目录（标题来源）。 */
+    /**
+     * ⚠️ 三个 setter 都要**先比再刷**：宿主现在会在换章/翻页/译文到达时推全量状态
+     * （见 `NovelPanelSheet.notifyHostState`），值没变还照刷的话，一次翻页就要重绑整张章列表 ——
+     * 上千章的书上是实打实的卡顿。
+     */
     var chapters: List<NovelChapterMeta> = emptyList()
-        set(value) { field = value; rebuild() }
+        set(value) {
+            if (field == value) return
+            field = value
+            rebuild()
+        }
 
     /** 章状态（翻译进度）。 */
     var stats: Map<Int, NovelChapterStat> = emptyMap()
-        set(value) { field = value; rebuild() }
+        set(value) {
+            if (field == value) return
+            field = value
+            rebuild()
+        }
 
     var currentChapter: Int = -1
-        set(value) { field = value; notifyItemRangeChanged(0, itemCount) }
+        set(value) {
+            if (field == value) return
+            field = value
+            notifyItemRangeChanged(0, itemCount)
+        }
 
     /** 过滤：false = 全部；true = 只看「没翻完」的章。 */
     var failuresOnly: Boolean = false
-        set(value) { field = value; rebuild() }
+        set(value) {
+            if (field == value) return
+            field = value
+            rebuild()
+        }
 
     /** 面板深浅（随阅读背景切换），行内文字配色跟随。 */
     var dark = false
-        set(value) { field = value; notifyItemRangeChanged(0, itemCount) }
+        set(value) {
+            if (field == value) return
+            field = value
+            notifyItemRangeChanged(0, itemCount)
+        }
 
     class VH(item: View) : RecyclerView.ViewHolder(item)
 

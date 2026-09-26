@@ -1375,7 +1375,6 @@
     <string name="novel_style_line_spacing">Line spacing</string>
     <string name="novel_style_paragraph_spacing">Paragraph spacing</string>
     <string name="novel_style_padding">Side margin</string>
-    <string name="novel_style_vertical_padding">Top/bottom space</string>
     <string name="novel_style_top_padding">Top space</string>
     <string name="novel_style_bottom_padding">Bottom space</string>
     <string name="novel_style_reset">Reset to defaults</string>

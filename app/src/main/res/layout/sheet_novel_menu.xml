@@ -461,13 +461,8 @@
                 <Switch android:id="@+id/sw_auto_turn" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
             </LinearLayout>
             <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000"/>
-            <LinearLayout android:id="@+id/btn_toc" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:padding="12dp" android:gravity="center_vertical" android:clickable="true">
-                <TextView android:id="@+id/tv_toc_label" android:layout_width="0dp" android:layout_height="wrap_content"
-                    android:layout_weight="1" android:text="@string/novel_toc" android:textSize="14sp" android:textColor="#333333"/>
-                <TextView android:id="@+id/tv_toc_value" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:textSize="12sp" android:textColor="#888888"/>
-            </LinearLayout>
-            <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000"/>
+            <!-- ⚠️ 这里曾经有「目录」一行：已删除（用户要求）。开目录走顶部常显的章节胶囊
+                 （`tv_page_indicator` 可点）或音量键，不必在设置里再放一个入口 -->
             <LinearLayout android:id="@+id/btn_settings" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:padding="12dp" android:gravity="center_vertical" android:clickable="true">
                 <TextView android:id="@+id/tv_settings_label" android:layout_width="0dp" android:layout_height="wrap_content"
                     android:layout_weight="1" android:text="@string/reader_settings" android:textSize="14sp" android:textColor="#333333"/>

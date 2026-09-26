@@ -928,7 +928,6 @@ class NovelReaderActivity : AppCompatActivity() {
         (supportFragmentManager.findFragmentByTag(NovelPanelSheet.TAG) as? NovelPanelSheet)
             ?.notifyHostState(
                 currentChapter = chapterIndex,
-                tocLabel = getString(R.string.novel_chapter_label, chapterIndex + 1) + " / " + chapterCount,
                 stats = chapterStats,
             )
     }
@@ -1207,7 +1206,6 @@ class NovelReaderActivity : AppCompatActivity() {
                 autoTurn = autoTurnEnabled,
                 intervalSec = autoTurnIntervalSec,
                 rotateLabel = rotateLabel(),
-                tocLabel = getString(R.string.novel_chapter_label, chapterIndex + 1) + " / " + chapterCount,
                 isDarkPanel = NovelPanelStyle.isDarkBackground(bgMode),
                 translateMode = NovelPanelStyle.translateMode(prefs),
                 debounceMs = NovelPanelStyle.debounceMs(prefs),
@@ -1256,7 +1254,6 @@ class NovelReaderActivity : AppCompatActivity() {
                     updateAutoTurn()
                 },
                 onRotate = { updateRotateMode((rotateMode + 1) % 3, persist = true) },
-                onOpenToc = { openToc() },
                 onSettings = {
                     returnedFromSettings = true
                     startActivity(

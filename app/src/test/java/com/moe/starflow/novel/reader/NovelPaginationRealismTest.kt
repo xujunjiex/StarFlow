@@ -53,19 +53,31 @@ class NovelPaginationRealismTest {
         return File(url.toURI())
     }
 
+    /**
+     * ⚠️ 每本书必须给**不同**的 `id`/`addedAt`：`NovelChapterRepository` 的缓存键是
+     * `"${id}:${addedAt}"`，全都填 1 会让后面的样本直接命中前一个样本的缓存 ——
+     * 那一刻起，「epub 也能分页」测的其实是 `long-en.txt`（页数一模一样就是信号）。
+     */
     private fun novelOf(name: String, format: NovelFormat) = ImportedNovel(
-        id = 1,
+        id = name.hashCode().toLong(),
         title = name,
         localRoot = fixture(name).absolutePath,
         format = format,
         chapterCount = 0, // 由 chaptersOf 现取，避免手写数字与样本脱节
-        addedAt = 1L,
+        addedAt = name.length.toLong(),
     )
 
-    /** 长样本清单：格式 → 文件名。每一章的每一页都要经得起检查。 */
+    /**
+     * 长样本清单：格式 → 文件名。每一章的每一页都要经得起检查。
+     *
+     * ⚠️ 正文样本必须是**被翻译的那一侧语言**（英文/日文/韩文，见 [语言样本守卫]）：
+     * 拿中文样本测「翻译成中文」等于什么都没测 —— 模型原样返回就能过。
+     * 后两条 epub/zip 样本守的是**格式**路径（那两条链路的样本仍是中文，语言覆盖由 TXT 三条负责）。
+     */
     private val longFixtures = listOf(
-        NovelFormat.TXT to "long-utf8.txt",
-        NovelFormat.TXT to "long-gbk.txt",
+        NovelFormat.TXT to "long-en.txt",
+        NovelFormat.TXT to "long-ja.txt",
+        NovelFormat.TXT to "long-ko.txt",
         NovelFormat.EPUB to "long.epub",
         NovelFormat.ZIP_HTML to "long-html-pack.zip",
     )
@@ -93,7 +105,7 @@ class NovelPaginationRealismTest {
     @Test
     fun `相邻页的第一段显示文本必须不同`() = runBlocking {
         val repo = NovelChapterRepository()
-        val book = novelOf("long-utf8.txt", NovelFormat.TXT)
+        val book = novelOf("long-en.txt", NovelFormat.TXT)
         val c = repo.load(book, 0, emptyMap(), NovelDisplayMode.TRANSLATED, DEVICE_STYLE, DEVICE_W, DEVICE_H)
         assertTrue("页数太少，测不出翻页：${c.pages.size}", c.pages.size > 3)
 
@@ -110,6 +122,36 @@ class NovelPaginationRealismTest {
     }
 
     /**
+     * **语言样本守卫**：正文样本必须是被翻译的那一侧语言，不能是中文。
+     *
+     * ⚠️ 这条守的是「测试有效性」而不是代码：小说要做的是外文 → 中文，中文样本既测不出
+     * 断行差异（中文逐字换行、英文按词换行、日文有禁则），也测不出翻译是否真的发生。
+     */
+    @Test
+    fun `语言样本守卫：长样本是英日韩文而不是中文`() {
+        val samples = mapOf(
+            "long-en.txt" to { s: String -> s.count { it in 'a'..'z' || it in 'A'..'Z' } },
+            "long-ja.txt" to { s: String -> s.count { it in '぀'..'ヿ' } },
+            "long-ko.txt" to { s: String -> s.count { it in '가'..'힣' } },
+        )
+        for ((name, count) in samples) {
+            val text = fixture(name).readText()
+            // 汉字占比：日文里本来就有汉字，但必须混着假名；纯中文样本要卡住
+            val han = text.count { it in '一'..'鿿' }
+            val ratio = count(text).toDouble() / text.length
+            println("LANG $name ratio=${"%.2f".format(ratio)} han=${"%.2f".format(han.toDouble() / text.length)}")
+            assertTrue(
+                "$name 的特征字符占比只有 ${"%.2f".format(ratio)} —— 样本不像${name}对应的语言",
+                ratio > 0.3,
+            )
+            assertTrue(
+                "$name 的汉字占比 ${"%.2f".format(han.toDouble() / text.length)} 过高 —— 又变回中文样本了",
+                han.toDouble() / text.length < 0.5,
+            )
+        }
+    }
+
+    /**
      * 样本自身的体量下限。
      *
      * 上面两条断言都建立在「样本足够长」之上；这条直接守住文件体量，
@@ -118,9 +160,16 @@ class NovelPaginationRealismTest {
      */
     @Test
     fun `长样本文件本身的体量必须够大`() {
-        for (name in listOf("long-utf8.txt", "long-gbk.txt", "long.epub", "long-html-pack.zip", "single-paragraph.txt")) {
+        // 文本样本按字节卡（UTF-8 下就是长度）
+        for (name in listOf("long-en.txt", "long-ja.txt", "long-ko.txt", "single-paragraph.txt")) {
             val size = fixture(name).length()
-            assertTrue("$name 只有 $size 字节，太短了：请用 gen_novel_fixtures.py --repo 重新生成", size > 20_000)
+            assertTrue("$name 只有 $size 字节，太短了：请用 tools/gen_novel_fixtures.py --repo 重新生成", size > 20_000)
+        }
+        // ⚠️ 打包样本（zip/epub）**不能套用同一个字节阈值**：正文被 deflate 压过，
+        // 高重复的样本能压到十分之一以下 —— 字节数在这里不是长度的度量。
+        // 它们的长度由上面那条「每一章都要能分出多页」保证（那是在解压后的正文上跑的）。
+        for (name in listOf("long.epub", "long-html-pack.zip")) {
+            assertTrue("$name 缺失或为空", fixture(name).length() > 2_000)
         }
     }
 

@@ -52,7 +52,6 @@ class NovelPanelState(
     val autoTurn: Boolean = false,
     val intervalSec: Int = 5,
     val rotateLabel: String = "",
-    val tocLabel: String = "",
     val isDarkPanel: Boolean = false,
     val translateMode: Int = NovelPanelStyle.MODE_MANUAL,
     val debounceMs: Int = 500,
@@ -79,7 +78,6 @@ class NovelPanelCallbacks(
     val onBottomPadding: (Int) -> Unit = {},
     val onAutoTurn: (Boolean, Int) -> Unit,
     val onRotate: () -> Unit,
-    val onOpenToc: () -> Unit,
     val onSettings: () -> Unit,
     val onTranslateMode: (Int) -> Unit = {},
     val onDebounceMs: (Int) -> Unit = {},
@@ -440,8 +438,6 @@ class NovelPanelSheet(
             cb.onAutoTurn(swAutoTurn.isChecked, interval)
         }
 
-        view.findViewById<TextView>(R.id.tv_toc_value).text = state.tocLabel
-        view.findViewById<View>(R.id.btn_toc).setOnClickListener { dismiss(); cb.onOpenToc() }
         view.findViewById<View>(R.id.btn_settings).setOnClickListener { dismiss(); cb.onSettings() }
 
         // 连续滚动下没有「翻页动画」这个概念（滚动即翻页）：置灰
@@ -570,7 +566,7 @@ class NovelPanelSheet(
         listOf(
             R.id.tv_mode_label, R.id.tv_animation_label, R.id.tv_background_label,
             R.id.tv_translate_mode_label,
-            R.id.tv_rotate_label, R.id.tv_auto_turn_label, R.id.tv_toc_label, R.id.tv_settings_label,
+            R.id.tv_rotate_label, R.id.tv_auto_turn_label, R.id.tv_settings_label,
             R.id.tv_translator_model_row,
             R.id.tv_source_lang_value, R.id.tv_target_lang_value,
             R.id.tv_debounce_label, R.id.tv_ahead_label, R.id.tv_batch_label,
@@ -580,7 +576,7 @@ class NovelPanelSheet(
             R.id.tv_top_padding_label, R.id.tv_bottom_padding_label,
         ).forEach { view.findViewById<TextView>(it).setTextColor(labelColor) }
         listOf(
-            R.id.tv_rotate_value, R.id.tv_interval_value, R.id.tv_toc_value,
+            R.id.tv_rotate_value, R.id.tv_interval_value,
             R.id.tv_source_caption, R.id.tv_target_caption,
             R.id.tv_debounce_value, R.id.tv_ahead_value, R.id.tv_batch_value,
             R.id.tv_display_value, R.id.tv_font_size_value,
@@ -760,22 +756,20 @@ class NovelPanelSheet(
     }
 
     /**
-     * 外部刷新入口：**宿主状态一变就推全量**（当前章 / 目录标签 / 章状态）。
+     * 外部刷新入口：**宿主状态一变就推全量**（当前章 + 章状态）。
      *
      * ⚠️ 面板是**打开那一刻的快照**，宿主不推就没有第二条路能刷新它。
      * ⚠️ 刻意做成**一个函数推全部**：早先是「每个字段一个推送方法」（只有 stats），
-     * 于是「在面板里点某一章跳过去」之后，高亮和目录标签一直停在旧值 ——
+     * 于是「在面板里点某一章跳过去」之后行高亮一直停在旧值 ——
      * 加字段时忘了加推送是默认结果。**新增任何依赖宿主的面板字段，都必须加到这篇里。**
      */
     fun notifyHostState(
         currentChapter: Int,
-        tocLabel: String,
         stats: Map<Int, NovelChapterStat>,
     ) {
         liveStats = stats
         chapterAdapter.stats = stats
         chapterAdapter.currentChapter = currentChapter
-        view?.findViewById<TextView>(R.id.tv_toc_value)?.text = tocLabel
         updateSummary()
     }
 
