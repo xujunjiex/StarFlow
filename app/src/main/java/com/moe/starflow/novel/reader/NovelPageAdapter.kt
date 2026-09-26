@@ -8,9 +8,14 @@ import com.moe.starflow.mangaimport.reader.CurlPageView
 /**
  * 分页模式：一页一个 item。
  *
- * 用 `notifyItemRangeChanged` 而不是 `notifyDataSetChanged` 刷新译文：后者是
- * structure-changed 事件，`ViewPager2` 会重建全部页面并把当前页弹回第一页
- * （漫画的 Webtoon 模式踩过这个坑）。
+ * ### 关于 `notifyDataSetChanged` 的一个纠正（实测过，别再照旧注释改）
+ * 这里原本写着「`notifyDataSetChanged` 是 structure-changed 事件，ViewPager2 会重建全部页面
+ * 并把当前页弹回第一页」。**实测不成立**：ViewPager2 的 `DataSetChangeObserver` 把
+ * `onChanged` / `onItemRangeChanged/Inserted/Removed/Moved` 全部当成同一件事，
+ * `notifyItemRangeChanged` 与 `notifyDataSetChanged` 在它眼里完全等价；页数不变时两者都
+ * **保持当前页**。真正的坑只有一条：**页数缩到当前页号以下**（重排后页变少）时，
+ * LinearLayoutManager 找不到锚点项 → 位置重置到第 0 页。所以刷新页表后**必须紧跟一次
+ * `setCurrentItem`**（`loadChapter` 就是这么做的，另有 `snapPagerToAnchor` 兜底）。
  *
  * ### item 是 [CurlPageView] 包着 [NovelPageView]
  * 外层用**漫画那同一个** [CurlPageView] 是为了「仿真」翻页动画：折页效果靠它

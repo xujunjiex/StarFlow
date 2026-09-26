@@ -160,7 +160,6 @@ class NovelReaderActivity : AppCompatActivity() {
     private var queueMode: NovelTranslateMode? = null
     private var queueRunning = false
 
-    /** 段落号 → 页码的请求：改排版/译文到达后重新分页时用它把位置找回来。 */
     /**
      * 当前阅读锚点（段号 + **段内比例**），见 [NovelAnchor]。
      *
@@ -169,6 +168,20 @@ class NovelReaderActivity : AppCompatActivity() {
      * 所有"重新加载但保持位置"的路径都传它；[persistProgress] 只存段号（断点续读的既有格式）。
      */
     private var pendingAnchor = NovelAnchor(0)
+
+    /**
+     * **带位重排**期间用的逻辑锚点（见 [onPaged]）。
+     *
+     * ⚠️ 这是「翻译之后位置一直往回跑」的修法：`NovelAnchors.pageOf` 只能给到**页**，
+     * 而落位后 [onPaged] 会把锚点重取成"这一页的页首" —— 页首永远比逻辑位置靠前，
+     * 于是每重排一批就后退最多一屏，**误差逐批累积、单向走**（实测 5 批丢掉一半位置）。
+     * 所以带位重排期间必须把锚点**钉在逻辑位置上**，只有用户真的自己导航才允许重取。
+     *
+     * 清除时机只能是**用户真导航**（滑动/点按翻页/拖进度条/切章）——
+     * 不能靠"落地后清"：ViewPager2 会在同一帧末再补派发一次 `onPageSelected`，
+     * 那次会把锚点又打回页首。
+     */
+    private var carryAnchor: NovelAnchor? = null
 
     /** 最近一次分页用的视口尺寸（px）。尺寸变了必须重排，否则页边界对不上真实视口。 */
     private var pagedWidth = 0
@@ -295,7 +308,7 @@ class NovelReaderActivity : AppCompatActivity() {
             runCatching { translator().resetStale(loaded) }
                 .onFailure { LogCollector.w(TAG, "清理残留翻译状态失败", it) }
             refreshChapterStats()
-            refreshTranslations(anchor = pendingAnchor)
+            refreshTranslations()
         }
     }
 
@@ -512,6 +525,8 @@ class NovelReaderActivity : AppCompatActivity() {
 
         override fun onPageScrollStateChanged(state: Int) {
             pagerScrollState = state
+            // 用户开始拖动 = 真的在导航 → 松掉带位锚点（之后的位置按他停下的那一页算）
+            if (state == ViewPager2.SCROLL_STATE_DRAGGING) carryAnchor = null
             // 滚动/吸附结束：把三个 transformer 留在页面上的 alpha/位移/折叠全部复位。
             // 漫画是靠 onPageSelected → notifyItemChanged → onBindViewHolder 里的
             // resetItemTransform 达到同样效果的；这里直接复位，省一次重绑。
@@ -709,6 +724,8 @@ class NovelReaderActivity : AppCompatActivity() {
 
     /** 翻页；越界则切章（本章末页往后 → 下一章首页，反之上一章末页）。 */
     private fun turnPage(delta: Int) {
+        // 用户点按翻页 = 真的在导航 → 松掉带位锚点
+        carryAnchor = null
         val pages = content?.pages ?: return
         if (pages.isEmpty()) {
             gotoChapter(chapterIndex + if (delta > 0) 1 else -1)
@@ -761,6 +778,8 @@ class NovelReaderActivity : AppCompatActivity() {
             seekScrollTo(NovelScrollProgress.fractionOfStep(page))
             return
         }
+        // 用户拖进度条 = 真的在导航 → 松掉带位锚点
+        carryAnchor = null
         val p = page.coerceIn(0, pages.lastIndex.coerceAtLeast(0))
         binding.novelPager.setCurrentItem(p, false)
         onPaged(p)
@@ -808,6 +827,8 @@ class NovelReaderActivity : AppCompatActivity() {
         }
         // 选择集是按**段号**记的，换章后段号会撞上别的段 —— 必须先清
         exitSelection()
+        // 换章：位置由目标章自己决定，不许带上上一章的带位锚点
+        carryAnchor = null
         persistProgress()
         loadChapter(index, atLastPage = atLastPage)
     }
@@ -834,6 +855,8 @@ class NovelReaderActivity : AppCompatActivity() {
         val scroll = mode == NovelPanelStyle.READER_SCROLL
         // 阅读模式换了 → 选中的段在两套视图上表达方式也不同，直接清掉，别留个看不见的选择
         exitSelection()
+        // 模式换了，页/段坐标系都不一样了：带位锚点作废
+        carryAnchor = null
         binding.novelPager.visibility = if (scroll) View.GONE else View.VISIBLE
         binding.novelScroll.visibility = if (scroll) View.VISIBLE else View.GONE
         // 进度条两种模式都用：翻页模式是「章内页进度」，连续滚动是「章内段进度」
@@ -1027,7 +1050,12 @@ class NovelReaderActivity : AppCompatActivity() {
                     NovelAnchors.pageOf(loaded.pages, loaded.displayTexts, anchor)
                 }
                 binding.novelPager.setCurrentItem(page, false)
+                // 带位重排：把逻辑锚点钉住（见 [carryAnchor]），落位后 onPaged 不许重取
+                carryAnchor = anchor
                 onPaged(page)
+                // ⚠️ 布局稳定后**再校一次**：页数缩水到当前页号以下时 ViewPager2 会把位置
+                // 重置到第 0 页（实测），紧随的 setCurrentItem 通常能兜住，这里再兜一层。
+                binding.novelPager.post { if (token == loadToken) snapPagerToAnchor(anchor) }
                 NovelDebug.log("loadChapter submit pages=${pageAdapter.itemCount} gotoPage=$page anchor=$anchor")
             }
             refreshOverlay()
@@ -1100,7 +1128,7 @@ class NovelReaderActivity : AppCompatActivity() {
                 // 无论成败都要刷新：失败也要让面板的「失败」状态与原因立刻出来
                 refreshChapterStats()
                 if (!result.isEmpty && ch == chapterIndex) {
-                    refreshTranslations(anchor = pendingAnchor)
+                    refreshTranslations()
                 }
                 if (result.isEmpty) {
                     showOverlayToast(
@@ -1165,7 +1193,10 @@ class NovelReaderActivity : AppCompatActivity() {
 
     private fun onPaged(position: Int) {
         val c = content ?: return
-        pendingAnchor = NovelAnchors.ofPage(c.pages, c.displayTexts, position)
+        // ⚠️ 带位重排（译文到达/改排版）期间**不许**把锚点重取成页首：页首比逻辑位置靠前，
+        // 每批退一点、逐批累积，用户看到的就是"位置一直往回跑"（见 [carryAnchor]）。
+        // 用户自己翻开这一页时才重取（那时 carryAnchor 已经被清掉）。
+        pendingAnchor = carryAnchor ?: NovelAnchors.ofPage(c.pages, c.displayTexts, position)
         refreshOverlay()
         // ⚠️ **翻页必须重算浮层**：判据是「当前页有没有译文」，翻到别的页当然会变。
         // 早先这里只刷进度条，于是翻译/三态按钮停在上一次 `loadChapter` 时的状态（用户报的
@@ -1197,10 +1228,12 @@ class NovelReaderActivity : AppCompatActivity() {
     /**
      * 译文到达后：重新分页（译文比原文长）+ **回到同一个阅读位置**。
      *
-     * ⚠️ `anchor` 默认取当前锚点而不是只取段号：重排之后段内位置也要落回原处，
-     * 否则每翻一批译文读者就被弹一次（长段尤其明显，见 [NovelAnchor]）。
+     * ⚠️ 取锚点必须在**读译文之后**（而不是调用时捕获）：中间隔着一次 IO，几百毫秒里
+     * 用户/自动翻页都可能已经落位，用旧锚点会把读者**拽回上一处**（跳变的第二种机制）。
+     * ⚠️ 位置本身是 `(段号, 段内比例)` 而不是段号：段可以跨好几页，只按段号会落回段首
+     * （见 [NovelAnchor]）。
      */
-    private fun refreshTranslations(anchor: NovelAnchor = pendingAnchor) {
+    private fun refreshTranslations() {
         val b = book ?: return
         val ch = chapterIndex
         lifecycleScope.launch {
@@ -1216,7 +1249,7 @@ class NovelReaderActivity : AppCompatActivity() {
                 return@launch
             }
             translations = map
-            loadChapter(chapterIndex, anchor = anchor)
+            loadChapter(chapterIndex, anchor = pendingAnchor)
         }
     }
 
@@ -1543,7 +1576,7 @@ class NovelReaderActivity : AppCompatActivity() {
                 return@launch
             }
             refreshChapterStats()
-            refreshTranslations(anchor = pendingAnchor)
+            refreshTranslations()
         }
     }
 
@@ -1577,7 +1610,7 @@ class NovelReaderActivity : AppCompatActivity() {
                 }
                 done += group.size
                 // 每批上屏一次：选十几段时要能看到逐批出译文，而不是最后一起蹦出来
-                refreshTranslations(anchor = pendingAnchor)
+                refreshTranslations()
             }
             showOverlay(null)
             refreshChapterStats()
@@ -1586,6 +1619,23 @@ class NovelReaderActivity : AppCompatActivity() {
             } else {
                 showOverlayToast(getString(R.string.novel_translate_selected_done, done), error = false)
             }
+        }
+    }
+
+    /**
+     * 把 pager 拉回锚点所在的页（重排后的二次校正）。
+     *
+     * ⚠️ 只在**算出来的页与当前页不同**时才动：`setCurrentItem` 会触发 `onPageSelected` →
+     * `onPaged`，无条件调用等于和 ViewPager2 自己的定位互相打架。
+     */
+    private fun snapPagerToAnchor(anchor: NovelAnchor) {
+        val c = content ?: return
+        if (c.pages.isEmpty()) return
+        val want = NovelAnchors.pageOf(c.pages, c.displayTexts, anchor)
+        val cur = binding.novelPager.currentItem
+        if (cur != want) {
+            NovelDebug.log("snapPager 校正：anchor=$anchor 当前页=$cur 校正到=$want")
+            binding.novelPager.setCurrentItem(want, false)
         }
     }
 

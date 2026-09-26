@@ -70,8 +70,7 @@ class NovelAnchorTest {
         assertTrue("空页表不崩", NovelAnchors.pageOf(emptyList(), texts, NovelAnchor(0, 0.5f)) == 0)
     }
 
-    /** 滚动锚点：滚过这一段多少 = 比例；拿不到高度时退回段顶。 */
-    @Test
+    /** 滚动锚点：滚过这一段多少 = 比例；拿不到高度时退回段顶。 */    @Test
     fun `滚动锚点按段内已滚过的比例算`() {
         assertEquals(NovelAnchor(7, 0f), NovelAnchors.ofScroll(7, scrolledIntoItemPx = 0, itemHeightPx = 800))
         assertEquals(NovelAnchor(7, 0.5f), NovelAnchors.ofScroll(7, scrolledIntoItemPx = 400, itemHeightPx = 800))
@@ -85,5 +84,38 @@ class NovelAnchorTest {
             NovelAnchor(7, 0f),
             NovelAnchors.ofScroll(7, scrolledIntoItemPx = 100, itemHeightPx = 0),
         )
+    }
+
+    /**
+     * **为什么带位重排期间必须把锚点钉住**（用户报的「翻译之后位置一直往回跑」）。
+     *
+     * `pageOf` 只能给到**页**（向下取整到页边界），落位后再用 `ofPage` 把"这一页的页首"
+     * 当成新锚点 —— 页首永远比逻辑位置靠前，于是每重排一批就后退最多一屏，
+     * 而下一批又从被取整的位置起算：**误差不抵消，逐批累积、单向后退**。
+     *
+     * 这条测试钉住「重取只会更靠前」这个事实；`NovelReaderActivity.carryAnchor` 就是
+     * 据此在带位重排期间拒绝重取，只有用户自己导航才允许。
+     */
+    @Test
+    fun `落位后按页首重取锚点只会往回退`() {
+        // 整章一段、300 字，被切成 3 页（每页 100 字）
+        val texts = mapOf(0 to "x".repeat(300))
+        val pages = listOf(
+            NovelPage(listOf(PageSegment(0, 0, 100, 0, 3))),
+            NovelPage(listOf(PageSegment(0, 100, 200, 3, 6))),
+            NovelPage(listOf(PageSegment(0, 200, 300, 6, 9))),
+        )
+        var anchor = NovelAnchor(0, 0.5f)          // 逻辑位置：150 字处
+        val seen = mutableListOf(anchor.fraction)
+
+        // 模拟「重排 → 落位到包含它的那一页 → 把页首当成新锚点」重复几轮
+        repeat(3) {
+            val page = NovelAnchors.pageOf(pages, texts, anchor)
+            anchor = NovelAnchors.ofPage(pages, texts, page)
+            seen += anchor.fraction
+        }
+
+        assertTrue("每轮都更靠前：$seen", seen == seen.sortedDescending())
+        assertTrue("三轮之后已经退到段首附近：$seen", seen.last() <= seen.first() - 0.3f)
     }
 }
