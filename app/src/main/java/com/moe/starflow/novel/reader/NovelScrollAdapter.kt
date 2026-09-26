@@ -96,9 +96,13 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
         override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
             val w = MeasureSpec.getSize(widthMeasureSpec)
             val contentWidth = (w - 2 * style.paddingPx).toInt().coerceAtLeast(1)
+            // ⚠️ 条目高度 = 正文高度 + **段间距**。以前这里还加了 `2 × style.paddingPx` ——
+            // 那是**左右**边距（16~64dp），被当成上下留白来用，于是滚动模式下段间距被撑得极大、
+            // 拖「段间距」滑块几乎看不出变化（用户报的「不受段落面板控制」就是这个）。
+            // 首项顶部 / 末项底部的留白由列表自己的 paddingTop/paddingBottom 负责。
             val h = if (text.isEmpty()) 0
             else NovelTextRenderer.build(text, style, contentWidth).height +
-                (2 * style.paddingPx).toInt() + style.paragraphSpacingPx.toInt()
+                style.paragraphSpacingPx.toInt()
             setMeasuredDimension(w, h)
         }
 
@@ -111,7 +115,7 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
                 style = style,
                 contentWidth = (width - 2 * style.paddingPx).toInt().coerceAtLeast(1),
                 x = style.paddingPx,
-                y = style.paddingPx,
+                y = 0f,
                 color = textColor,
             )
         }
