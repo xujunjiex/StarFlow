@@ -1,17 +1,23 @@
 <!--
-  显示三态之一：**双语**（原文 + 译文对照）。
-  画成上下两块文字：**上一块是两行等宽细行（原文），下一块是一行粗行 + 一行细行（译文）** ——
-  粗行代表"换成译文了"，与 `ic_display_original` 的纯文本块一眼可分。
+  显示三态之一：**双语**（原文与译文并存）。
+  「两份叠起来的文本」：后一份是实心页、前一份是带正文行的空页 ——
+  既不与「原文」的 A、也不与「译文」的文、更不与翻译按钮的 A+文 撞脸。
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
+    <!-- 后面那一份（露出右上角） -->
     <path
         android:fillColor="#FF000000"
-        android:pathData="M4,3.6h16v1.7H4zM4,7.1h16v1.7H4z" />
+        android:pathData="M10.6,2.6h6.2a2.2,2.2 0 0 1 2.2,2.2v10.6h-2.1V4.7h-6.3z" />
+    <!-- 前面那一份：页框（evenOdd 挖空）+ 正文行 -->
     <path
         android:fillColor="#FF000000"
-        android:pathData="M4,13.2h16v2.7H4zM4,17.7h9v1.7H4z" />
+        android:fillType="evenOdd"
+        android:pathData="M6.8,6.4h9.1a2.2,2.2 0 0 1 2.2,2.2v10.6a2.2,2.2 0 0 1 -2.2,2.2H6.8a2.2,2.2 0 0 1 -2.2,-2.2V8.6a2.2,2.2 0 0 1 2.2,-2.2zM6.8,8.2a0.4,0.4 0 0 0 -0.4,0.4v10.6a0.4,0.4 0 0 0 0.4,0.4h9.1a0.4,0.4 0 0 0 0.4,-0.4V8.6a0.4,0.4 0 0 0 -0.4,-0.4z" />
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M7.7,10.4h7.6v1.5H7.7zM7.7,13.5h7.6v1.5H7.7zM7.7,16.6h4.7v1.5H7.7z" />
 </vector>

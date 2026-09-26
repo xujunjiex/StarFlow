@@ -1,15 +1,27 @@
 <!--
   显示三态之一：**译文**。
-  用通行的「翻译」字形（与 `ic_reader_translate` 同一份 path）：这一态是"文字已换成译文"，
-  最直观的就是翻译符号本身。⚠️ 与翻译按钮的图标同形但**场景不同** ——
-  这颗按钮在浮层组最左、只管显示态，不触发翻译。
+  「文」= 已转成目标语言的文字（与「原文」的 A 一眼可分）。
+  ⚠️ 不能再用翻译按钮那个「A + 文」并排字形 —— 两颗按钮在同一浮层组里并排，
+  同形就是"图标重复"（用户当场指出来了）。
 -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
+    <!-- 亠：点 + 横 -->
     <path
         android:fillColor="#FF000000"
-        android:pathData="M12.87,15.07l-2.54,-2.51 0.03,-0.03c1.74,-1.94 2.98,-4.17 3.71,-6.53L17,6V4h-7V2H8v2H1v1.99h11.17C11.5,7.92 10.44,9.75 9,11.35 8.07,10.32 7.3,9.19 6.69,8h-2c0.73,1.63 1.73,3.17 2.98,4.56l-5.09,5.02L4,19l5,-5 3.11,3.11 0.76,-2.04zM18.5,10h-2L12,22h2l1.12,-3h4.75L21,22h2l-4.5,-12zM16.88,17l1.62,-4.33L20.12,17h-3.24z" />
+        android:pathData="M12,2.4l1.5,1.5 -1.5,1.5 -1.5,-1.5z" />
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M6.6,7.2h10.8v2.1H6.6z" />
+    <!-- 撇（左下） -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M10.9,10.8l2.1,0.8 -5.3,9.7 -2.1,-0.8z" />
+    <!-- 捺（右下） -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M12.6,11.3l2.1,-0.6 5.6,8.6 -2,1.3z" />
 </vector>
