@@ -12,6 +12,20 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 
+/**
+ * 一批的结果：译文表 + **失败原因**（原始报错文本，直接给用户看）。
+ *
+ * ⚠️ 失败原因**不能吞**：以前只回一句"模型没返回译文"，用户问"为什么没返回"时无从查起 ——
+ * HTTP 状态码、异常类型、模型到底回了什么，全都没留下来。
+ */
+data class NovelBatchResult(
+    val translations: Map<Int, String>,
+    /** null = 成功。否则是给人看的原始原因（异常类型 + message / 模型返回了什么）。 */
+    val error: String? = null,
+) {
+    val isEmpty: Boolean get() = translations.isEmpty()
+}
+
 /** 一章的翻译进度快照（累积：每次 emit 带上目前已拿到的全部译文）。 */
 data class NovelChapterProgress(
     val chapterIndex: Int,
@@ -106,7 +120,7 @@ class NovelTranslationEngine(private val translator: NovelTextTranslator) {
         val worker = launch {
             var doneCount = 0
             for (batch in batches) {
-                accumulated.putAll(requestBatch(units, batch, sourceLang, targetLang))
+                accumulated.putAll(requestBatch(units, batch, sourceLang, targetLang).translations)
                 doneCount += batch.size
                 trySend(
                     NovelChapterProgress(
@@ -135,12 +149,12 @@ class NovelTranslationEngine(private val translator: NovelTextTranslator) {
         paraIndexes: List<Int>,
         sourceLang: String,
         targetLang: String,
-    ): Map<Int, String> {
-        if (paraIndexes.isEmpty()) return emptyMap()
+    ): NovelBatchResult {
+        if (paraIndexes.isEmpty()) return NovelBatchResult(emptyMap())
         val units = asUnits(paragraphs)
         val present = units.mapTo(HashSet()) { it.paraIndex }
         val batch = paraIndexes.filter { it in present }
-        if (batch.isEmpty()) return emptyMap()
+        if (batch.isEmpty()) return NovelBatchResult(emptyMap())
         return requestBatch(units, batch, sourceLang, targetLang)
     }
 
@@ -160,11 +174,17 @@ class NovelTranslationEngine(private val translator: NovelTextTranslator) {
         batch: List<Int>,
         sourceLang: String,
         targetLang: String,
-    ): Map<Int, String> {
-        val parsed = requestAndParse(buildPromptText(units, batch), batch, sourceLang, targetLang)
-        if (parsed.isNotEmpty() || batch.size <= 1) return parsed
+    ): NovelBatchResult {
+        var lastError: String? = null
+        val parsed = requestAndParse(
+            buildPromptText(units, batch), batch, sourceLang, targetLang,
+            onError = { lastError = it },
+        )
+        if (parsed.isNotEmpty() || batch.size <= 1) {
+            return NovelBatchResult(parsed, if (parsed.isEmpty()) lastError else null)
+        }
 
-        LogCollector.w(TAG, "整批失败（${batch.size} 段），降级逐段重试")
+        LogCollector.w(TAG, "整批失败（${batch.size} 段），降级逐段重试：$lastError")
         var out = parsed
         for (pi in batch) {
             out = out + requestAndParse(
@@ -172,9 +192,10 @@ class NovelTranslationEngine(private val translator: NovelTextTranslator) {
                 listOf(pi),
                 sourceLang,
                 targetLang,
+                onError = { lastError = it },
             )
         }
-        return out
+        return NovelBatchResult(out, if (out.isEmpty()) lastError else null)
     }
 
     private fun buildPromptText(units: List<NovelUnit>, batch: List<Int>): String =
@@ -185,9 +206,27 @@ class NovelTranslationEngine(private val translator: NovelTextTranslator) {
         batch: List<Int>,
         sourceLang: String,
         targetLang: String,
+        onError: (String) -> Unit = {},
     ): Map<Int, String> {
-        val reply = requestOnce(prompt, sourceLang, targetLang) ?: return emptyMap()
-        return NovelTranslationBatch.parseTolerant(reply, batch)
+        val reply = requestOnce(prompt, sourceLang, targetLang, onError) ?: return emptyMap()
+        val parsed = NovelTranslationBatch.parseTolerant(reply, batch)
+        if (parsed.isEmpty()) {
+            // 请求成功但解析不出编号 —— 用户要的就是"模型到底回了什么"
+            onError("返回内容无法解析为编号段落：${reply.trim().take(120)}")
+        }
+        return parsed
+    }
+
+    /**
+     * 异常 → 给人看的**原始原因**（保留异常类型与整条 cause 链）。
+     *
+     * ⚠️ 别只写「翻译失败」：用户要的是"为什么" —— HTTP 429/401、超时、证书、模型名不存在
+     * 都长得一样但处置完全不同。
+     */
+    private fun describe(e: Throwable): String {
+        val chain = generateSequence(e) { it.cause }.take(4)
+            .joinToString(" ← ") { "${it.javaClass.simpleName}: ${it.message.orEmpty()}" }
+        return chain.ifBlank { e.javaClass.simpleName }
     }
 
     /** 一次请求；失败/取消返回 null。 */
@@ -195,14 +234,26 @@ class NovelTranslationEngine(private val translator: NovelTextTranslator) {
         prompt: String,
         sourceLang: String,
         targetLang: String,
+        onError: (String) -> Unit = {},
     ): String? = withContext(Dispatchers.IO) {
         suspendCancellableCoroutine { cont ->
             var resumed = false
             translator.translate(prompt, sourceLang, targetLang) { result ->
                 if (resumed) return@translate
                 resumed = true
-                if (cont.isActive) {
-                    cont.resume(if (result is TranslationResult.Success) result.translatedText else null)
+                when (result) {
+                    is TranslationResult.Success -> {
+                        if (cont.isActive) {
+                            if (result.translatedText.isBlank()) onError("返回为空（HTTP 200 但内容为空）")
+                            cont.resume(result.translatedText.takeIf { it.isNotBlank() })
+                        }
+                    }
+                    is TranslationResult.Error -> {
+                        val why = describe(result.error)
+                        LogCollector.w(TAG, "请求失败：$why")
+                        onError(why)
+                        if (cont.isActive) cont.resume(null)
+                    }
                 }
             }
             cont.invokeOnCancellation {

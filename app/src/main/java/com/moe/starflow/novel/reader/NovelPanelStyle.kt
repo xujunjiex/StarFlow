@@ -113,9 +113,9 @@ object NovelPanelStyle {
     const val LINE_SPACING_MAX = 22
     const val LINE_SPACING_DEFAULT = 15
 
-    /** 段间距 dp。**下限是动态算出来的**（见 [minParagraphSpacingDp]），这里的 MAX 是硬上限。 */
+    /** 段间距 dp（默认 25，用户明确要求）。**下限是动态算出来的**（见 [minParagraphSpacingDp]）。 */
     const val PARA_SPACING_MAX = 48
-    const val PARA_SPACING_DEFAULT = 18
+    const val PARA_SPACING_DEFAULT = 25
 
     /** 段落间距与行间距的最小倍数关系：段距给的空隙至少是行间空隙的 1.2 倍。 */
     private const val PARA_OVER_LINE_RATIO = 1.2f

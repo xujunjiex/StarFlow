@@ -313,7 +313,7 @@
                 <!-- 两个按钮：**不带图标**、紧凑胶囊（用户要求：图标+大按钮又丑又占地方） -->
                 <!-- 两个按钮：**不带图标**、**等宽平分一行**（用户要求：靠左挤在一起太拥挤） -->
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:layout_marginTop="10dp">
+                    android:orientation="horizontal" android:layout_marginTop="10dp" android:layout_marginBottom="14dp">
                     <TextView android:id="@+id/btn_translate_action" android:layout_width="0dp"
                         android:layout_weight="1" android:layout_height="wrap_content" android:gravity="center"
                         android:paddingTop="7dp" android:paddingBottom="7dp"
@@ -327,7 +327,8 @@
                         android:textSize="12sp" android:textColor="#FFFFFF" android:clickable="true"/>
                 </LinearLayout>
 
-                <HorizontalScrollView android:layout_width="match_parent" android:layout_height="wrap_content" android:scrollbars="none">
+                <HorizontalScrollView android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp" android:scrollbars="none">
                     <LinearLayout android:id="@+id/translate_filter_row" android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:orientation="horizontal"/>
                 </HorizontalScrollView>

@@ -1377,6 +1377,7 @@
     <string name="novel_style_padding">Side margin</string>
     <string name="novel_style_top_padding">Top space</string>
     <string name="novel_style_bottom_padding">Bottom space</string>
+    <string name="novel_translate_failed_reason">Translation failed: %1$s</string>
     <string name="novel_translate_hint_running">Translating chapter %1$d — double-tap to pause</string>
     <string name="novel_translate_quota_used">Ahead quota used up</string>
     <string name="novel_translate_pending_batches">Translate chapter</string>

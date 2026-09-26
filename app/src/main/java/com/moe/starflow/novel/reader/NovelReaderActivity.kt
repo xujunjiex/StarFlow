@@ -867,11 +867,20 @@ class NovelReaderActivity : AppCompatActivity() {
             quota = NovelQuota.of(NovelPanelStyle.aheadBatches(prefs)),
             // 每轮重新求值：切章不重启队列，锚点自动跟上
             currentChapter = { chapterIndex },
-            onBatchSettled = { ch, got ->
+            onBatchSettled = { ch, result ->
                 // 无论成败都要刷新：失败也要让面板的「失败」状态与原因立刻出来
                 refreshChapterStats()
-                if (got.isNotEmpty() && ch == chapterIndex) {
+                if (!result.isEmpty && ch == chapterIndex) {
                     refreshTranslations(keepPara = pendingParaIndex)
+                }
+                if (result.isEmpty) {
+                    showOverlayToast(
+                        getString(
+                            R.string.novel_translate_failed_reason,
+                            result.error ?: getString(R.string.reader_translate_failed),
+                        ),
+                        error = true,
+                    )
                 }
             },
         )
@@ -996,21 +1005,41 @@ class NovelReaderActivity : AppCompatActivity() {
     }
 
     /**
-     * 把**章级状态**推给正在显示的面板（没开就什么都不做）。
+     * 宿主状态的**唯一构造出口**（面板就是它的纯函数渲染，见 [NovelPanelHostState]）。
      *
-     * ⚠️ **宿主 → 面板只有一个出口**，而且必须一次推全（当前章 / 目录标签 / 章状态）。
-     * 早先是「每个字段一个推送方法」（只有 stats 那一个），所以「在面板里点某一章跳过去」
-     * 之后高亮与目录标签一直停在旧值 —— 新增宿主字段时忘了加推送就是**默认结果**。
-     * 挂在 [updateChapterTocLabel] 上是刻意的：换章、翻页、译文到达、重算统计都会走到那里。
+     * ⚠️ 新增任何「宿主能改、面板要显示」的状态，都加到这里 —— 漏了就是那一处 UI 不同步。
+     */
+    private fun hostStateToPanel() = NovelPanelHostState(
+        chapterIndex = chapterIndex,
+        chapterCount = chapterCount,
+        chapterStats = chapterStats,
+        chapterTotals = chapterTotals.toMap(),
+        chapterFailures = chapterFailures,
+        translateMode = NovelPanelStyle.translateMode(prefs),
+        translating = queueRunning,
+        displayMode = NovelPanelStyle.displayMode(prefs),
+        readerMode = NovelPanelStyle.readerMode(prefs),
+        animation = animationMode,
+        background = bgMode,
+        autoTurn = autoTurnEnabled,
+        intervalSec = autoTurnIntervalSec,
+        debounceMs = NovelPanelStyle.debounceMs(prefs),
+        aheadBatches = NovelPanelStyle.aheadBatches(prefs),
+        batchSize = NovelPanelStyle.batchSize(prefs),
+        rotateLabel = rotateLabel(),
+        keepParagraphsWhole = NovelPanelStyle.keepParagraphsWhole(prefs),
+        isDarkPanel = NovelPanelStyle.isDarkBackground(bgMode),
+    )
+
+    /**
+     * 把**整份宿主状态**推给正在显示的面板（没开就什么都不做）。
+     *
+     * 挂在 [updateChapterTocLabel] 与队列状态流上：换章、翻页、译文到达、重算统计、
+     * 翻译跑/停都会走到，所以面板不会停在打开那一刻。
      */
     private fun pushPanelState() {
         (supportFragmentManager.findFragmentByTag(NovelPanelSheet.TAG) as? NovelPanelSheet)
-            ?.notifyHostState(
-                currentChapter = chapterIndex,
-                stats = chapterStats,
-                totals = chapterTotals.toMap(),
-                failures = chapterFailures,
-            )
+            ?.renderHostState(hostStateToPanel())
     }
 
     private fun chapterTitle(index: Int): String {
@@ -1154,12 +1183,18 @@ class NovelReaderActivity : AppCompatActivity() {
         val q = ensureQueue(t)
         showOverlay(getString(R.string.reader_translate_in_progress), autoDismiss = false)
         lifecycleScope.launch {
-            val got = runCatching { q.translateOneBatch(b, chapterIndex) }.getOrNull().orEmpty()
+            val result = runCatching { q.translateOneBatch(b, chapterIndex) }.getOrNull()
             showOverlay(null)
-            if (got.isEmpty()) {
+            if (result == null || result.isEmpty) {
                 // 失败也要刷面板：不然「失败」状态和原因要等下次开面板才看得到
                 refreshChapterStats()
-                showOverlayToast(getString(R.string.reader_translate_failed), error = true)
+                showOverlayToast(
+                    getString(
+                        R.string.novel_translate_failed_reason,
+                        result?.error ?: getString(R.string.reader_translate_failed),
+                    ),
+                    error = true,
+                )
                 return@launch
             }
             refreshChapterStats()
@@ -1206,6 +1241,8 @@ class NovelReaderActivity : AppCompatActivity() {
     private fun observeQueue(q: NovelTranslationQueue) {
         lifecycleScope.launch {
             q.state.collect { st ->
+                // 队列状态一变就把整份状态推给面板（否则面板不知道"正在翻/停了"）
+                pushPanelState()
                 when (st.phase) {
                     NovelQueuePhase.TRANSLATING -> showOverlay(
                         getString(R.string.novel_queue_translating, st.chapterIndex + 1),

@@ -111,7 +111,7 @@ class NovelTranslationQueue(
         mode: NovelTranslateMode,
         quota: NovelQuota = NovelQuota.of(NovelQuota.DEFAULT),
         currentChapter: () -> Int,
-        onBatchSettled: suspend (Int, Map<Int, String>) -> Unit,
+        onBatchSettled: suspend (Int, NovelBatchResult) -> Unit,
     ) {
         job?.cancel()
         failedAnchors.clear()
@@ -170,7 +170,7 @@ class NovelTranslationQueue(
                     _state.value = NovelQueueState(
                         NovelQueuePhase.TRANSLATING, chapter, batch, batchesDone, remaining.remaining,
                     )
-                    val got = translator.translateBatch(
+                    val result = translator.translateBatch(
                         book = book,
                         chapterIndex = chapter,
                         paragraphs = paragraphsOf(book, chapter),
@@ -179,23 +179,26 @@ class NovelTranslationQueue(
                         targetLang = targetLang(),
                         translatorName = translatorName(),
                     )
-                    if (got.isEmpty()) {
-                        // 内容性失败（空章 / 模型回空）：记账跳过，别死循环重试
-                        LogCollector.w(TAG, "第 $chapter 章一批（${batch.size} 段）没拿到译文，跳过")
+                    if (result.isEmpty) {
+                        // 内容性失败（空响应 / 解析不出编号）：记账跳过，别死循环重试
+                        LogCollector.w(TAG, "第 $chapter 章一批（${batch.size} 段）失败：${result.error}")
                         failedAnchors += anchor
-                        // 也要通知宿主：面板要立刻显示这一批失败了
-                        onBatchSettled(chapter, emptyMap())
+                        // 也要通知宿主：面板要立刻显示这一批失败了（带原始原因）
+                        onBatchSettled(chapter, result)
                         continue
                     }
                     batchesDone += 1
                     if (mode == NovelTranslateMode.AHEAD) remaining = remaining.consume()
-                    onBatchSettled(chapter, got)
+                    onBatchSettled(chapter, result)
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     LogCollector.e(TAG, "第 $chapter 章翻译失败", e)
                     failedAnchors += anchor
-                    onBatchSettled(chapter, emptyMap())
+                    onBatchSettled(
+                        chapter,
+                        NovelBatchResult(emptyMap(), "${e.javaClass.simpleName}: ${e.message.orEmpty()}"),
+                    )
                 } finally {
                     OcrLock.release()
                 }
@@ -220,17 +223,17 @@ class NovelTranslationQueue(
      *
      * 与队列共用同一套锚点/成批规则（[NovelBatchPlanner]）—— 两条路各写一套迟早会不一致。
      */
-    suspend fun translateOneBatch(book: ImportedNovel, chapterIndex: Int): Map<Int, String> {
+    suspend fun translateOneBatch(book: ImportedNovel, chapterIndex: Int): NovelBatchResult {
         val chapterParas = chapterParaIndexes(book, chapterIndex)
         val done = translatedIndexes(book, chapterIndex)
         val anchor = NovelBatchPlanner.anchorOnPage(currentPageParaIndexes(), done)
             ?: chapterParas.firstOrNull { it !in done && it !in failedAnchors }
-            ?: return emptyMap()
+            ?: return NovelBatchResult(emptyMap(), "没有待翻译的段落了")
         val batch = NovelBatchPlanner.nextBatch(chapterParas, anchor, done, batchSize())
-        if (batch.isEmpty()) return emptyMap()
+        if (batch.isEmpty()) return NovelBatchResult(emptyMap(), "没有待翻译的段落了")
 
         _state.value = NovelQueueState(NovelQueuePhase.WAITING_LOCK, chapterIndex, batch)
-        if (!acquireLockWithWait()) return emptyMap()
+        if (!acquireLockWithWait()) return NovelBatchResult(emptyMap(), "翻译引擎被占用（别的翻译正在跑）")
         try {
             _state.value = NovelQueueState(NovelQueuePhase.TRANSLATING, chapterIndex, batch)
             return translator.translateBatch(

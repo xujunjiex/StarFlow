@@ -38,7 +38,7 @@ interface NovelBatchTranslator {
         sourceLang: String,
         targetLang: String,
         translatorName: String,
-    ): Map<Int, String>
+    ): NovelBatchResult
 }
 
 class NovelChapterTranslator(
@@ -205,16 +205,17 @@ class NovelChapterTranslator(
         sourceLang: String,
         targetLang: String,
         translatorName: String,
-    ): Map<Int, String> {
-        if (paraIndexes.isEmpty()) return emptyMap()
+    ): NovelBatchResult {
+        if (paraIndexes.isEmpty()) return NovelBatchResult(emptyMap())
         val wanted = paraIndexes.toSet()
         val mine = paragraphs.filter {
             it.index in wanted && it.type == NovelParagraphType.TEXT && it.originalText.isNotBlank()
         }
-        if (mine.isEmpty()) return emptyMap()
+        if (mine.isEmpty()) return NovelBatchResult(emptyMap())
 
         markTranslatingBatch(book, chapterIndex, mine, translatorName, sourceLang, targetLang)
-        val got = engine.translateBatch(paragraphs, mine.map { it.index }, sourceLang, targetLang)
+        val result = engine.translateBatch(paragraphs, mine.map { it.index }, sourceLang, targetLang)
+        val got = result.translations
         persist(
             book = book,
             chapterIndex = chapterIndex,
@@ -232,12 +233,14 @@ class NovelChapterTranslator(
                 chapterIndex = chapterIndex,
                 splitVersion = splitVersion,
                 paraIndexes = missed,
-                failCode = FAIL_CODE_EMPTY,
+                // ⚠️ failCode 存**原始原因**（异常类型 + message 整条链 / 模型到底回了什么），
+                // 不是一句"失败"：用户在章行展开里看到的就是它，含糊的文案等于没报错。
+                failCode = result.error ?: FAIL_CODE_EMPTY,
                 now = System.currentTimeMillis(),
             )
-            LogCollector.w(TAG, "第 $chapterIndex 章有 ${missed.size} 段没拿到译文，标记 FAILED")
+            LogCollector.w(TAG, "第 $chapterIndex 章有 ${missed.size} 段没拿到译文：${result.error}")
         }
-        return got
+        return result
     }
 
     /** 失败明细（章行展开显示原因用），按章分组。 */

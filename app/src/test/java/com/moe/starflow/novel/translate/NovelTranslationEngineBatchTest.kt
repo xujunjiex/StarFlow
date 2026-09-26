@@ -41,7 +41,7 @@ class NovelTranslationEngineBatchTest {
 
         val got = engine.translateBatch(paras, listOf(1, 2), "en", "zh")
 
-        assertEquals(mapOf(1 to "译1", 2 to "译2"), got)
+        assertEquals(mapOf(1 to "译1", 2 to "译2"), got.translations)
         assertEquals("一批只发一次请求", 1, fake.prompts.size)
     }
 
@@ -51,7 +51,7 @@ class NovelTranslationEngineBatchTest {
         val fake = FakeTranslator()
         val engine = NovelTranslationEngine(fake)
 
-        assertEquals(emptyMap<Int, String>(), engine.translateBatch(emptyList(), emptyList(), "en", "zh"))
+        assertEquals(emptyMap<Int, String>(), engine.translateBatch(emptyList(), emptyList(), "en", "zh").translations)
         assertEquals(0, fake.prompts.size)
     }
 
@@ -94,7 +94,67 @@ class NovelTranslationEngineBatchTest {
             listOf(para(0, "a"), para(1, "b")), listOf(0, 1), "en", "zh",
         )
 
-        assertEquals(mapOf(0 to "译0", 1 to "译1"), got)
+        assertEquals(mapOf(0 to "译0", 1 to "译1"), got.translations)
         assertEquals("整批 1 次 + 逐段 2 次", 3, calls.size)
+    }
+
+    /**
+     * **报错要带原始原因**（用户明确要求）：HTTP 状态码、异常类型、模型到底回了什么。
+     *
+     * ⚠️ 以前失败只回一句「模型没返回译文」，用户问"为什么没返回"时无从查起 ——
+     * 引擎把 `TranslationResult.Error` 的异常**整条 cause 链**都丢掉了。
+     */
+    @Test
+    fun `请求异常时把原始报错带出来`() = runBlocking {
+        val failing = object : NovelTextTranslator {
+            override fun translate(
+                prompt: String,
+                sourceLang: String,
+                targetLang: String,
+                callback: (TranslationResult) -> Unit,
+            ) {
+                callback(
+                    TranslationResult.Error(
+                        java.io.IOException("HTTP 429 Too Many Requests", java.io.IOException("quota exceeded")),
+                    ),
+                )
+            }
+        }
+
+        val result = NovelTranslationEngine(failing).translateBatch(
+            listOf(para(0, "a")), listOf(0), "en", "zh",
+        )
+
+        assertEquals(true, result.isEmpty)
+        val why = result.error.orEmpty()
+        assertEquals(true, why.contains("HTTP 429"))
+        assertEquals("cause 链也要在", true, why.contains("quota exceeded"))
+    }
+
+    /**
+     * 请求成功但**返回为空** → 报错要说清是"空返回"，而不是笼统一句「模型没返回译文」。
+     *
+     * ⚠️ 注意别用「模型回了一段废话」当反例：`parseTolerant` 的按位置兜底会把单段废话
+     * 当成译文接受（条数一致时无法区分），那是既有的容错设计，不是 bug。
+     */
+    @Test
+    fun `返回为空时报错说明是空返回`() = runBlocking {
+        val empty = object : NovelTextTranslator {
+            override fun translate(
+                prompt: String,
+                sourceLang: String,
+                targetLang: String,
+                callback: (TranslationResult) -> Unit,
+            ) {
+                callback(TranslationResult.Success(""))
+            }
+        }
+
+        val result = NovelTranslationEngine(empty).translateBatch(
+            listOf(para(0, "a")), listOf(0), "en", "zh",
+        )
+
+        assertEquals(true, result.isEmpty)
+        assertEquals(true, result.error.orEmpty().contains("返回为空"))
     }
 }

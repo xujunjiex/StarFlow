@@ -157,6 +157,10 @@ class NovelPanelSheet(
     /** 各分段容器当前选中项（容器Id → 选中segmentId），供主题切换后重画。 */
     private val selection = mutableMapOf<Int, Int>()
 
+    /** 各分段容器的格子 id 与点击回调 —— [renderHostState] 靠它们把宿主状态「重选」回去。 */
+    private val segIds = mutableMapOf<Int, List<Int>>()
+    private val segPicks = mutableMapOf<Int, (Int) -> Unit>()
+
     /** 背景 glyph 分段（不 tint 图标，只用选中容器高亮）——行为与漫画面板一致。 */
     private val bgSegIds = setOf(
         R.id.seg_bg_default, R.id.seg_bg_light, R.id.seg_bg_dark, R.id.seg_bg_white, R.id.seg_bg_black,
@@ -705,6 +709,8 @@ class NovelPanelSheet(
     ) {
         val container = view.findViewById<ViewGroup>(containerId)
         val selectedId = segments.firstOrNull { it.second }?.first ?: segments[0].first
+        segIds[containerId] = segments.map { it.first }
+        segPicks[containerId] = onPick
         selection[containerId] = selectedId
         segments.forEach { (id, selected) ->
             val cell = container.findViewById<View>(id)
@@ -717,6 +723,19 @@ class NovelPanelSheet(
                 onPick(id)
             }
         }
+    }
+
+    /** 程序化重选某个分段（宿主改了状态后由 [renderHostState] 调；点回调不会被触发）。 */
+    private fun applySeg(view: View, containerId: Int, checkedId: Int) {
+        val ids = segIds[containerId] ?: return
+        val pick = segPicks[containerId] ?: return
+        setupSeg(view, containerId, ids.map { it to (it == checkedId) }, pick)
+    }
+
+    /** 程序化设滑块（含数值文本）——同样不回环。 */
+    private fun applySlider(view: View, barId: Int, valueId: Int, progress: Int, label: String) {
+        view.findViewById<SeekBar>(barId).progress = progress
+        view.findViewById<TextView>(valueId).text = label
     }
 
     private fun reapplySegments(view: View) {
@@ -792,24 +811,78 @@ class NovelPanelSheet(
     private var chapterTotals: Map<Int, Int> = emptyMap()
 
     /**
-     * 外部刷新入口：**宿主状态一变就推全量**（当前章 + 章状态）。
+     * **宿主状态的唯一渲染入口**：把 [NovelPanelHostState] 整份画到控件上。
      *
-     * ⚠️ 面板是**打开那一刻的快照**，宿主不推就没有第二条路能刷新它。
-     * ⚠️ 刻意做成**一个函数推全部**：早先是「每个字段一个推送方法」（只有 stats），
-     * 于是「在面板里点某一章跳过去」之后行高亮一直停在旧值 ——
-     * 加字段时忘了加推送是默认结果。**新增任何依赖宿主的面板字段，都必须加到这篇里。**
+     * ⚠️ 面板是「打开那一刻的快照」，宿主不推就没有第二条路能刷新它 ——
+     * 所以这里必须覆盖**所有**依赖宿主的状态。以前是每个字段一个推送方法，
+     * 漏一个就有一处 UI 永远不跟着变（用户反复报的那类问题）。
+     * 程序化改控件期间的 `syncing` 保证不会把回调又打回宿主。
      */
-    fun notifyHostState(
-        currentChapter: Int,
-        stats: Map<Int, NovelChapterStat>,
-        totals: Map<Int, Int> = emptyMap(),
-        failures: Map<Int, List<NovelFailureRow>> = emptyMap(),
-    ) {
-        chapterTotals = totals
-        chapterAdapter.stats = stats
-        chapterAdapter.totals = chapterTotals
-        chapterAdapter.failures = failures
-        chapterAdapter.currentChapter = currentChapter
+    fun renderHostState(s: NovelPanelHostState) {
+        val view = view ?: return
+        if (s.isDarkPanel != darkPanel) {
+            darkPanel = s.isDarkPanel
+            applyPanelTheme(view, view.findViewById(R.id.sheet_root) ?: view)
+        }
+        syncing = true
+        try {
+            chapterTotals = s.chapterTotals
+            chapterAdapter.stats = s.chapterStats
+            chapterAdapter.totals = s.chapterTotals
+            chapterAdapter.failures = s.chapterFailures
+            chapterAdapter.currentChapter = s.chapterIndex
+
+            applySeg(
+                view, R.id.seg_mode,
+                when (s.readerMode) {
+                    NovelPanelStyle.READER_VERTICAL -> R.id.seg_mode_vertical
+                    NovelPanelStyle.READER_SCROLL -> R.id.seg_mode_scroll
+                    else -> R.id.seg_mode_paged
+                },
+            )
+            applySeg(
+                view, R.id.seg_animation,
+                when (s.animation) {
+                    NovelPanelStyle.ANIM_NONE -> R.id.seg_anim_none
+                    NovelPanelStyle.ANIM_COVER -> R.id.seg_anim_advanced
+                    NovelPanelStyle.ANIM_SIMULATION -> R.id.seg_anim_simulation
+                    else -> R.id.seg_anim_default
+                },
+            )
+            applySeg(
+                view, R.id.seg_background,
+                when (s.background) {
+                    1 -> R.id.seg_bg_light
+                    2 -> R.id.seg_bg_dark
+                    3 -> R.id.seg_bg_white
+                    4 -> R.id.seg_bg_black
+                    else -> R.id.seg_bg_default
+                },
+            )
+
+            reapplyingMode = true
+            translateMode = s.translateMode
+            when (s.translateMode) {
+                NovelTranslateMode.AUTO -> view.findViewById<RadioButton>(R.id.translate_mode_auto).isChecked = true
+                NovelTranslateMode.AHEAD -> view.findViewById<RadioButton>(R.id.translate_mode_incremental).isChecked = true
+                NovelTranslateMode.MANUAL -> view.findViewById<RadioButton>(R.id.translate_mode_manual).isChecked = true
+            }
+            reapplyingMode = false
+            applyAheadRowVisibility(view, s.translateMode)
+
+            applySlider(view, R.id.sb_debounce, R.id.tv_debounce_value, s.debounceMs, "${s.debounceMs} ms")
+            applySlider(view, R.id.sb_ahead, R.id.tv_ahead_value, s.aheadBatches, "${s.aheadBatches}")
+            applySlider(view, R.id.sb_batch, R.id.tv_batch_value, s.batchSize, "${s.batchSize}")
+
+            view.findViewById<TextView>(R.id.tv_display_value).text =
+                NovelPanelStyle.displayModeLabel(requireContext(), s.displayMode)
+            view.findViewById<TextView>(R.id.tv_rotate_value).text = s.rotateLabel
+            view.findViewById<TextView>(R.id.tv_interval_value).text = "${s.intervalSec} s"
+            view.findViewById<Switch>(R.id.sw_auto_turn).isChecked = s.autoTurn
+            view.findViewById<Switch>(R.id.sw_keep_paragraphs).isChecked = s.keepParagraphsWhole
+        } finally {
+            syncing = false
+        }
     }
 
     private fun setupTranslateFilter(view: View) {

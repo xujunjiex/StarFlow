@@ -31,10 +31,10 @@ class NovelTranslationQueueTest {
             sourceLang: String,
             targetLang: String,
             translatorName: String,
-        ): Map<Int, String> {
+        ): NovelBatchResult {
             batches += paraIndexes
-            if (failAll) return emptyMap()
-            return paraIndexes.associateWith { "译$it" }
+            if (failAll) return NovelBatchResult(emptyMap(), "fake 失败")
+            return NovelBatchResult(paraIndexes.associateWith { "译$it" })
         }
     }
 
@@ -72,7 +72,7 @@ class NovelTranslationQueueTest {
         val translated = mutableSetOf<Int>()
         val q = queue(backgroundScope, t, translated, page = { listOf(0, 1) }, chapterSize = 6, batchSize = 2)
 
-        q.start(book(), NovelTranslateMode.AUTO, currentChapter = { 0 }) { _, got -> translated += got.keys }
+        q.start(book(), NovelTranslateMode.AUTO, currentChapter = { 0 }) { _, r -> translated += r.translations.keys }
         advanceTimeBy(5_000)
 
         assertEquals("只翻当前页那一批", listOf(listOf(0, 1)), t.batches)
@@ -86,7 +86,7 @@ class NovelTranslationQueueTest {
         val translated = mutableSetOf<Int>()
         val q = queue(backgroundScope, t, translated, page = { listOf(0, 1, 2) }, chapterSize = 6, batchSize = 1)
 
-        q.start(book(), NovelTranslateMode.AUTO, currentChapter = { 0 }) { _, got -> translated += got.keys }
+        q.start(book(), NovelTranslateMode.AUTO, currentChapter = { 0 }) { _, r -> translated += r.translations.keys }
         advanceTimeBy(5_000)
 
         assertEquals(listOf(listOf(0), listOf(1), listOf(2)), t.batches)
@@ -102,7 +102,7 @@ class NovelTranslationQueueTest {
 
         q.start(
             book(), NovelTranslateMode.AHEAD, quota = NovelQuota.of(2), currentChapter = { 0 },
-        ) { _, got -> translated += got.keys }
+        ) { _, r -> translated += r.translations.keys }
         advanceTimeBy(60_000)
 
         assertEquals(listOf(listOf(0, 1), listOf(2, 3)), t.batches)
@@ -118,7 +118,7 @@ class NovelTranslationQueueTest {
 
         q.start(
             book(), NovelTranslateMode.AHEAD, quota = NovelQuota.of(9), currentChapter = { 0 },
-        ) { _, got -> translated += got.keys }
+        ) { _, r -> translated += r.translations.keys }
         advanceTimeBy(60_000)
 
         assertEquals(listOf(listOf(4)), t.batches)
@@ -132,12 +132,12 @@ class NovelTranslationQueueTest {
         val translated = mutableSetOf<Int>()
         val q = queue(backgroundScope, t, translated, page = { listOf(2, 3) }, chapterSize = 20, batchSize = 2)
 
-        q.start(book(), NovelTranslateMode.MANUAL, currentChapter = { 0 }) { _, got -> translated += got.keys }
+        q.start(book(), NovelTranslateMode.MANUAL, currentChapter = { 0 }) { _, r -> translated += r.translations.keys }
         advanceTimeBy(5_000)
         assertTrue("手动模式队列不该自己翻", t.batches.isEmpty())
 
         val got = q.translateOneBatch(book(), 0)
-        assertEquals(mapOf(2 to "译2", 3 to "译3"), got)
+        assertEquals(mapOf(2 to "译2", 3 to "译3"), got.translations)
         assertEquals(listOf(listOf(2, 3)), t.batches)
         q.stop()
     }
@@ -150,7 +150,7 @@ class NovelTranslationQueueTest {
         val q = queue(backgroundScope, t, translated, page = { listOf(0, 1) }, chapterSize = 6, batchSize = 2)
 
         q.setPanelOpen(true)
-        q.start(book(), NovelTranslateMode.AUTO, currentChapter = { 0 }) { _, got -> translated += got.keys }
+        q.start(book(), NovelTranslateMode.AUTO, currentChapter = { 0 }) { _, r -> translated += r.translations.keys }
         advanceTimeBy(5_000)
         assertTrue("面板开着时不该翻", t.batches.isEmpty())
 
@@ -170,7 +170,7 @@ class NovelTranslationQueueTest {
         val translated = mutableSetOf<Int>()
         val q = queue(backgroundScope, t, translated, page = { listOf(0, 1) }, chapterSize = 6, batchSize = 2)
 
-        q.start(book(), NovelTranslateMode.AUTO, currentChapter = { 0 }) { _, got -> translated += got.keys }
+        q.start(book(), NovelTranslateMode.AUTO, currentChapter = { 0 }) { _, r -> translated += r.translations.keys }
         advanceTimeBy(5_000)
         val afterFirst = t.batches.size
 
@@ -187,7 +187,7 @@ class NovelTranslationQueueTest {
         val translated = mutableSetOf(0, 1)
         val q = queue(backgroundScope, t, translated, page = { listOf(0, 1) }, chapterSize = 6, batchSize = 2)
 
-        q.start(book(), NovelTranslateMode.AUTO, currentChapter = { 0 }) { _, got -> translated += got.keys }
+        q.start(book(), NovelTranslateMode.AUTO, currentChapter = { 0 }) { _, r -> translated += r.translations.keys }
         advanceTimeBy(5_000)
 
         assertTrue(t.batches.isEmpty())
