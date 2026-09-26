@@ -143,6 +143,12 @@ class NovelPanelSheet(
     // 之后再改 A 就没人重算了。所以：**任何控件改完都更新这里的字段，然后统一调
     // [refreshDerivedUi]**，不给「顺手在某处再补一句」留口子。
 
+    /** 四个 Tab 的 View（顺序 = 面板顺序），主题重喷时要靠它重放 [setTab]。 */
+    private var tabViews: List<View> = emptyList()
+
+    /** 当前选中的 Tab View —— [reapplyTabs] 判定选中态用（`show()` 里记）。 */
+    private var currentTab: View? = null
+
     /** 当前阅读模式（0 左右 / 1 上下 / 2 滚动）。 */
     private var curReaderMode = NovelPanelStyle.READER_PAGED
 
@@ -232,11 +238,14 @@ class NovelPanelSheet(
             view.findViewById<View>(R.id.tab_more) to view.findViewById<View>(R.id.panel_more),
         )
         fun show(selected: View, panel: View) {
+            // 记下选中项：主题重喷时 [reapplyTabs] 要靠它把选中态原样重放
+            currentTab = selected
             panels.forEach { (tv, p) ->
                 setTab(tv, tv === selected)
                 p.visibility = if (p === panel) View.VISIBLE else View.GONE
             }
         }
+        tabViews = panels.map { it.first }
         panels.forEach { (tv, p) -> tv.setOnClickListener { show(tv, p) } }
         show(panels[0].first, panels[0].second)
 
@@ -434,16 +443,18 @@ class NovelPanelSheet(
         view.findViewById<View>(R.id.btn_translate_action).setOnClickListener { cb.onTranslateNow() }
         // ⚠️ 清空**必须二次确认**：用户明确要求"不要点击就直接清空"（以前一点就清整本）
         view.findViewById<View>(R.id.btn_translate_clear).setOnClickListener {
-            AlertDialog.Builder(requireContext())
+            val dlg = AlertDialog.Builder(requireContext())
                 .setTitle(R.string.novel_translate_clear_chapter)
                 .setMessage(R.string.novel_translate_clear_chapter_confirm)
                 .setNegativeButton(R.string.user_cancel, null)
                 .setPositiveButton(R.string.novel_translate_clear_ok) { _, _ -> cb.onClearChapter() }
-                .show()
+                .create()
+            dlg.show()
+            applyDialogTheme(dlg)
         }
         // 下载：三选（译文 / 原文 / 双语），与漫画「更多」页同一套交互
         view.findViewById<View>(R.id.btn_download).setOnClickListener {
-            AlertDialog.Builder(requireContext())
+            val dlg = AlertDialog.Builder(requireContext())
                 .setTitle(R.string.novel_download_title)
                 .setItems(
                     arrayOf(
@@ -452,7 +463,9 @@ class NovelPanelSheet(
                         getString(R.string.novel_download_bilingual),
                     ),
                 ) { _, which -> cb.onDownload(which) }
-                .show()
+                .create()
+            dlg.show()
+            applyDialogTheme(dlg)
         }
 
         val rv = view.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rv_translate_chapters)
@@ -621,6 +634,11 @@ class NovelPanelSheet(
             R.id.tv_style_hint,
         ).forEach { view.findViewById<TextView>(it).setTextColor(subColor) }
         reapplySegments(view)
+        // ⚠️ Tab 图标与筛选 chip 原来**只在创建/点击时**着色，主题重喷漏了它们 ——
+        // 表现就是「切了阅读背景，有几处颜色不跟着变，关掉面板再打开才正常」。
+        // 这两句是那个 bug 的修复点，新增控件组时也要在这里补一句（NovelPanelThemeTest 会拦）
+        reapplyTabs()
+        refreshFilterChipStyle(view.findViewById<ViewGroup>(R.id.translate_filter_row))
         chapterAdapter.dark = darkPanel
         // Switch 配色（避免与面板背景重叠/看不清）
         val swTrack = if (dark) 0xFF3A4046.toInt() else 0xFFCFD8DC.toInt()
@@ -669,9 +687,24 @@ class NovelPanelSheet(
         } else {
             sel?.visibility = View.GONE
         }
-        icon?.setColorFilter(
+        // ⚠️ 用 imageTintList 而不是 setColorFilter：单色图标观感一致，但 tint 的颜色
+        // 能读回来（`imageTintList?.defaultColor`），setColorFilter 读不回来 ——
+        // NovelPanelThemeTest 就是靠这个断言「Tab 图标跟着深浅变了」。
+        icon?.imageTintList = ColorStateList.valueOf(
             if (active) 0xFF55AEEA.toInt() else if (darkPanel) 0xFFB8BCC2.toInt() else 0xFF777777.toInt()
         )
+    }
+
+    /**
+     * 主题变了就把**所有** Tab 重放一遍（含当前选中那个）。
+     *
+     * ⚠️ 这就是「切背景后面板有几处颜色不跟着变」的根因之一：Tab 图标原来只在
+     * [show]（创建 + 点击 tab）里着色，切背景改了 [darkPanel] 之后没人重放 ——
+     * 未选中的 Tab 还是旧灰阶、选中的还是旧的 `ic_tab_sel`，点一次任意 Tab 才自愈。
+     */
+    private fun reapplyTabs() {
+        val selected = currentTab ?: return
+        tabViews.forEach { setTab(it, it === selected) }
     }
 
     private fun setSegEnabled(container: ViewGroup, enabled: Boolean) {
@@ -902,16 +935,21 @@ class NovelPanelSheet(
 
     private fun setChipStyle(tv: TextView, selected: Boolean) {
         val radius = 10f * resources.displayMetrics.density
+        // ⚠️ 底色走 backgroundTintList 而不是 GradientDrawable.setColor：
+        // 观感完全一样（不透明底片 + SRC_IN 叠加），但 tint 的颜色能读回来
+        // （`backgroundTintList?.defaultColor`），程序化 GradientDrawable 读不回来。
         tv.background = android.graphics.drawable.GradientDrawable().apply {
             cornerRadius = radius
-            setColor(
-                when {
-                    !selected -> 0
-                    darkPanel -> 0xFF2E3A45.toInt()
-                    else -> 0xFFE4E4E6.toInt()
-                }
-            )
+            // 底片必须不透明，否则 tint 叠上去还是透明的
+            setColor(0xFFFFFFFF.toInt())
         }
+        tv.backgroundTintList = ColorStateList.valueOf(
+            when {
+                !selected -> 0
+                darkPanel -> 0xFF2E3A45.toInt()
+                else -> 0xFFE4E4E6.toInt()
+            }
+        )
         tv.setTextColor(
             when {
                 !selected -> if (darkPanel) 0xFF9A9A9F.toInt() else 0xFF888888.toInt()
@@ -986,6 +1024,17 @@ class NovelPanelSheet(
             .setPositiveButton(R.string.user_known, null)
             .create()
         dlg.show()
+        applyDialogTheme(dlg)
+    }
+
+    /**
+     * 弹窗统一上深色主题（与 [showHintDialog] 同一套）。
+     *
+     * ⚠️ **新加弹窗必须过这里**：`AlertDialog` 默认跟系统主题走，小说阅读器的面板深浅
+     * 是跟**阅读背景**走的、与全局主题无关 —— 漏了这一句，浅色系统主题下切到深色背景，
+     * 弹窗就是白底白字/白底黑字的突兀块（「清空本章」和「下载」以前就是这样）。
+     */
+    private fun applyDialogTheme(dlg: AlertDialog) {
         dlg.window?.setBackgroundDrawableResource(if (darkPanel) R.drawable.bg_dialog_dark else R.drawable.bg_dialog_white)
         if (darkPanel) recolorDark(dlg.window?.decorView)
     }
