@@ -17,19 +17,19 @@ class NovelTranslationQueueTest {
 
     @Test
     fun `手动模式窗口为空`() {
-        assertTrue(NovelQueueWindow.forMode(mode = 0, current = 3, ahead = 5, chapterCount = 20).isEmpty())
+        assertTrue(NovelQueueWindow.forMode(mode = NovelTranslateMode.MANUAL, current = 3, ahead = 5, chapterCount = 20).isEmpty())
     }
 
     @Test
     fun `自动当前章只含当前章`() {
-        assertEquals(listOf(3), NovelQueueWindow.forMode(mode = 1, current = 3, ahead = 5, chapterCount = 20))
+        assertEquals(listOf(3), NovelQueueWindow.forMode(mode = NovelTranslateMode.AUTO, current = 3, ahead = 5, chapterCount = 20))
     }
 
     @Test
     fun `自动后续 N 章从当前章起算`() {
         assertEquals(
             listOf(3, 4, 5, 6, 7),
-            NovelQueueWindow.forMode(mode = 2, current = 3, ahead = 5, chapterCount = 20),
+            NovelQueueWindow.forMode(mode = NovelTranslateMode.AHEAD, current = 3, ahead = 5, chapterCount = 20),
         )
     }
 
@@ -37,19 +37,19 @@ class NovelTranslationQueueTest {
     fun `窗口在书末被截断`() {
         assertEquals(
             listOf(18, 19),
-            NovelQueueWindow.forMode(mode = 2, current = 18, ahead = 5, chapterCount = 20),
+            NovelQueueWindow.forMode(mode = NovelTranslateMode.AHEAD, current = 18, ahead = 5, chapterCount = 20),
         )
     }
 
     @Test
     fun `ahead 小于 1 时至少含当前章`() {
-        assertEquals(listOf(3), NovelQueueWindow.forMode(mode = 2, current = 3, ahead = 0, chapterCount = 20))
+        assertEquals(listOf(3), NovelQueueWindow.forMode(mode = NovelTranslateMode.AHEAD, current = 3, ahead = 0, chapterCount = 20))
     }
 
     @Test
     fun `当前章越界返回空窗口`() {
-        assertTrue(NovelQueueWindow.forMode(mode = 2, current = -1, ahead = 5, chapterCount = 20).isEmpty())
-        assertTrue(NovelQueueWindow.forMode(mode = 1, current = 20, ahead = 5, chapterCount = 20).isEmpty())
+        assertTrue(NovelQueueWindow.forMode(mode = NovelTranslateMode.AHEAD, current = -1, ahead = 5, chapterCount = 20).isEmpty())
+        assertTrue(NovelQueueWindow.forMode(mode = NovelTranslateMode.AUTO, current = 20, ahead = 5, chapterCount = 20).isEmpty())
     }
 
     // ===== 挑下一个待翻章 =====

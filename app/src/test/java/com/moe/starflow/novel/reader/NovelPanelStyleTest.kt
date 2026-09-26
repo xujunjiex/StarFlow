@@ -10,6 +10,8 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
+import com.moe.starflow.novel.translate.NovelQuota
+import com.moe.starflow.novel.translate.NovelTranslateMode
 
 /**
  * 阅读模式取值的迁移。
@@ -162,5 +164,52 @@ class NovelPanelStyleTest {
             "恢复默认后上下间距必须仍然相等",
             NovelPanelStyle.topPaddingDp(prefs), NovelPanelStyle.bottomPaddingDp(prefs),
         )
+    }
+
+    // ===== 翻译：批段数 / 增量配额 / 模式（用户明确要求的口径） =====
+
+    /** 每批段数：默认 **3**，范围 1–10（原来是 8 / 1–20）。 */
+    @Test
+    fun `批段数默认 3 且范围 1 到 10`() {
+        assertEquals(3, NovelPanelStyle.batchSize(prefs))
+        NovelPanelStyle.setBatchSize(prefs, 99)
+        assertEquals("上限必须是 10", NovelPanelStyle.BATCH_MAX, NovelPanelStyle.batchSize(prefs))
+        NovelPanelStyle.setBatchSize(prefs, 0)
+        assertEquals("下限必须是 1", NovelPanelStyle.BATCH_MIN, NovelPanelStyle.batchSize(prefs))
+    }
+
+    /**
+     * 增量配额：默认 **5**，范围 **2–10**。
+     *
+     * ⚠️ 单位是**批**不是章：旧键 `novel_translate_ahead` 存的是章数（默认 3），
+     * 换成新键 `novel_translate_ahead_batches` 就是为了不让「3 章」被当成「3 批」读进来。
+     */
+    @Test
+    fun `增量配额默认 5 且范围 2 到 10`() {
+        assertEquals(5, NovelPanelStyle.aheadBatches(prefs))
+        NovelPanelStyle.setAheadBatches(prefs, 99)
+        assertEquals(NovelQuota.MAX, NovelPanelStyle.aheadBatches(prefs))
+        NovelPanelStyle.setAheadBatches(prefs, 0)
+        assertEquals(NovelQuota.MIN, NovelPanelStyle.aheadBatches(prefs))
+    }
+
+    /** 旧键留在盘上也不该被当成批数读进来。 */
+    @Test
+    fun `旧的章数键不影响新的批配额`() {
+        prefs.edit().putInt("novel_translate_ahead", 9).commit()
+        assertEquals("新键缺失时必须用默认 5，而不是旧键的 9", 5, NovelPanelStyle.aheadBatches(prefs))
+    }
+
+    /** 翻译模式对外是枚举、底层仍是 0/1/2 —— 老用户存的「自动」不能被读成手动。 */
+    @Test
+    fun `翻译模式存取与默认值`() {
+        assertEquals(NovelTranslateMode.MANUAL, NovelPanelStyle.translateMode(prefs))
+        NovelPanelStyle.setTranslateMode(prefs, NovelTranslateMode.AHEAD)
+        assertEquals(NovelTranslateMode.AHEAD, NovelPanelStyle.translateMode(prefs))
+        NovelPanelStyle.setTranslateMode(prefs, NovelTranslateMode.AUTO)
+        assertEquals(NovelTranslateMode.AUTO, NovelPanelStyle.translateMode(prefs))
+        // 旧盘上的 int 值仍要能读出来（1=自动 2=增量）
+        prefs.edit().putInt("novel_translate_mode", 2).commit()
+        assertEquals(NovelTranslateMode.AHEAD, NovelPanelStyle.translateMode(prefs))
     }
 }

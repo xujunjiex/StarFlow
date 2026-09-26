@@ -1390,7 +1390,7 @@
     <string name="novel_translate_mode_auto_ahead">自动（后续 N 章）</string>
     <string name="novel_translate_debounce">启动延迟</string>
     <string name="novel_translate_debounce_value">%1$d 毫秒</string>
-    <string name="novel_translate_ahead">后续章数</string>
+    <string name="novel_translate_ahead">向后翻译批数</string>
     <string name="novel_translate_ahead_value">%1$d</string>
     <string name="novel_translate_action">翻译本章</string>
     <string name="novel_translate_clear">清空本书译文</string>

@@ -1391,7 +1391,7 @@
     <string name="novel_translate_mode_auto_ahead">Auto (next N chapters)</string>
     <string name="novel_translate_debounce">Start delay</string>
     <string name="novel_translate_debounce_value">%1$d ms</string>
-    <string name="novel_translate_ahead">Chapters ahead</string>
+    <string name="novel_translate_ahead">Batches ahead</string>
     <string name="novel_translate_ahead_value">%1$d</string>
     <string name="novel_translate_action">Translate this chapter</string>
     <string name="novel_translate_clear">Clear translations of this book</string>

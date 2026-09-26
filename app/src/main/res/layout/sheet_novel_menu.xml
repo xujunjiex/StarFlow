@@ -228,7 +228,7 @@
                         android:progressTint="#55AEEA" android:progressBackgroundTint="#55AEEA"/>
                 </LinearLayout>
 
-                <!-- 向后翻译章数：仅增量模式显示（小说按「章」而不是「页」推进） -->
+                <!-- 向后翻译**批数**：仅增量模式显示（批 = 每批段数指定的连续段，不跨章） -->
                 <LinearLayout android:id="@+id/row_ahead_chapters" android:layout_width="match_parent"
                     android:layout_height="wrap_content" android:orientation="vertical"
                     android:layout_marginTop="2dp" android:visibility="gone">
@@ -239,16 +239,16 @@
                             android:layout_weight="1" android:layout_height="wrap_content"
                             android:text="@string/novel_translate_ahead" android:textSize="12sp" android:textColor="#888888"/>
                         <TextView android:id="@+id/tv_ahead_value" android:layout_width="wrap_content"
-                            android:layout_height="wrap_content" android:text="3" android:textSize="12sp" android:textColor="#55AEEA"/>
+                            android:layout_height="wrap_content" android:text="5" android:textSize="12sp" android:textColor="#55AEEA"/>
                     </LinearLayout>
 
                     <SeekBar android:id="@+id/sb_ahead" android:layout_width="match_parent"
-                        android:layout_height="wrap_content" android:min="1" android:max="10"
+                        android:layout_height="wrap_content" android:min="2" android:max="10"
                         android:layout_marginTop="2dp" android:thumbTint="#55AEEA"
                         android:progressTint="#55AEEA" android:progressBackgroundTint="#55AEEA"/>
                 </LinearLayout>
 
-                <!-- 每批段数：小说段落长，批次比漫画小 -->
+                <!-- 每批段数：一次翻译请求翻多少段（默认 3，范围 1–10） -->
                 <LinearLayout android:id="@+id/row_batch" android:layout_width="match_parent"
                     android:layout_height="wrap_content" android:orientation="vertical"
                     android:layout_marginTop="2dp">
@@ -259,11 +259,11 @@
                             android:layout_weight="1" android:layout_height="wrap_content"
                             android:text="@string/novel_translate_batch" android:textSize="12sp" android:textColor="#888888"/>
                         <TextView android:id="@+id/tv_batch_value" android:layout_width="wrap_content"
-                            android:layout_height="wrap_content" android:text="8" android:textSize="12sp" android:textColor="#55AEEA"/>
+                            android:layout_height="wrap_content" android:text="3" android:textSize="12sp" android:textColor="#55AEEA"/>
                     </LinearLayout>
 
                     <SeekBar android:id="@+id/sb_batch" android:layout_width="match_parent"
-                        android:layout_height="wrap_content" android:min="1" android:max="20"
+                        android:layout_height="wrap_content" android:min="1" android:max="10"
                         android:layout_marginTop="2dp" android:thumbTint="#55AEEA"
                         android:progressTint="#55AEEA" android:progressBackgroundTint="#55AEEA"/>
                 </LinearLayout>

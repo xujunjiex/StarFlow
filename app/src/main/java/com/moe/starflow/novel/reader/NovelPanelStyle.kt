@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.content.res.Configuration
 import com.moe.starflow.R
+import com.moe.starflow.novel.translate.NovelQuota
+import com.moe.starflow.novel.translate.NovelTranslateMode
 
 /**
  * 小说阅读器的偏好读写。**收敛成一处**，避免键名散落各处写错。
@@ -322,25 +324,44 @@ object NovelPanelStyle {
 
     // ===== 翻译 =====
 
-    const val MODE_MANUAL = 0
-    const val MODE_AUTO_CHAPTER = 1
-    const val MODE_AUTO_AHEAD = 2
+    /** 每批段数：默认 3，范围 1–10（用户明确要求：一次翻一批）。 */
+    const val BATCH_MIN = 1
+    const val BATCH_MAX = 10
+    const val BATCH_DEFAULT = 3
 
     const val DEBOUNCE_MIN = 200
     const val DEBOUNCE_MAX = 2000
-    const val AHEAD_MIN = 1
-    const val AHEAD_MAX = 10
 
     private const val KEY_TRANSLATE_MODE = "novel_translate_mode"
     private const val KEY_DEBOUNCE = "novel_translate_debounce"
-    private const val KEY_AHEAD = "novel_translate_ahead"
+
+    /**
+     * ⚠️ 新键，**不复用**旧的 `novel_translate_ahead`：那个存的是**章数**（默认 3、范围 1–10），
+     * 直接读过来会被当成「向后翻 3 批」，语义完全不同。
+     */
+    private const val KEY_AHEAD_BATCHES = "novel_translate_ahead_batches"
     private const val KEY_BATCH = "novel_translate_batch"
 
-    fun translateMode(prefs: SharedPreferences): Int =
-        prefs.getInt(KEY_TRANSLATE_MODE, MODE_MANUAL).coerceIn(0, 2)
+    /**
+     * 翻译模式。**底层仍存 0/1/2 的 int**（键没变，老用户的「自动」不会被读成手动，
+     * 也不会因为 `getString` 读 int 键而抛 ClassCastException），对外只暴露枚举。
+     */
+    fun translateMode(prefs: SharedPreferences): NovelTranslateMode =
+        when (prefs.getInt(KEY_TRANSLATE_MODE, 0).coerceIn(0, 2)) {
+            1 -> NovelTranslateMode.AUTO
+            2 -> NovelTranslateMode.AHEAD
+            else -> NovelTranslateMode.MANUAL
+        }
 
-    fun setTranslateMode(prefs: SharedPreferences, v: Int) =
-        prefs.edit().putInt(KEY_TRANSLATE_MODE, v.coerceIn(0, 2)).apply()
+    fun setTranslateMode(prefs: SharedPreferences, mode: NovelTranslateMode) =
+        prefs.edit().putInt(
+            KEY_TRANSLATE_MODE,
+            when (mode) {
+                NovelTranslateMode.MANUAL -> 0
+                NovelTranslateMode.AUTO -> 1
+                NovelTranslateMode.AHEAD -> 2
+            },
+        ).apply()
 
     fun debounceMs(prefs: SharedPreferences): Int =
         prefs.getInt(KEY_DEBOUNCE, 500).coerceIn(DEBOUNCE_MIN, DEBOUNCE_MAX)
@@ -348,25 +369,19 @@ object NovelPanelStyle {
     fun setDebounceMs(prefs: SharedPreferences, v: Int) =
         prefs.edit().putInt(KEY_DEBOUNCE, v.coerceIn(DEBOUNCE_MIN, DEBOUNCE_MAX)).apply()
 
-    fun aheadChapters(prefs: SharedPreferences): Int =
-        prefs.getInt(KEY_AHEAD, 3).coerceIn(AHEAD_MIN, AHEAD_MAX)
+    /** 增量模式下自动向后翻的**批**数：默认 5，范围 2–10。 */
+    fun aheadBatches(prefs: SharedPreferences): Int =
+        prefs.getInt(KEY_AHEAD_BATCHES, NovelQuota.DEFAULT).coerceIn(NovelQuota.MIN, NovelQuota.MAX)
 
-    fun setAheadChapters(prefs: SharedPreferences, v: Int) =
-        prefs.edit().putInt(KEY_AHEAD, v.coerceIn(AHEAD_MIN, AHEAD_MAX)).apply()
+    fun setAheadBatches(prefs: SharedPreferences, v: Int) =
+        prefs.edit().putInt(KEY_AHEAD_BATCHES, v.coerceIn(NovelQuota.MIN, NovelQuota.MAX)).apply()
 
-    /** 每批段数。小说段落长，批次比漫画小。 */
-    fun batchSize(prefs: SharedPreferences): Int = prefs.getInt(KEY_BATCH, 8).coerceIn(1, 20)
+    /** 每批段数：默认 3，范围 1–10。 */
+    fun batchSize(prefs: SharedPreferences): Int =
+        prefs.getInt(KEY_BATCH, BATCH_DEFAULT).coerceIn(BATCH_MIN, BATCH_MAX)
 
     fun setBatchSize(prefs: SharedPreferences, v: Int) =
-        prefs.edit().putInt(KEY_BATCH, v.coerceIn(1, 20)).apply()
-
-    fun modeLabel(context: Context, mode: Int): String = context.getString(
-        when (mode) {
-            MODE_AUTO_CHAPTER -> R.string.novel_translate_mode_auto_chapter
-            MODE_AUTO_AHEAD -> R.string.novel_translate_mode_auto_ahead
-            else -> R.string.novel_translate_mode_manual
-        }
-    )
+        prefs.edit().putInt(KEY_BATCH, v.coerceIn(BATCH_MIN, BATCH_MAX)).apply()
 
     fun displayModeLabel(context: Context, mode: NovelDisplayMode): String = context.getString(
         when (mode) {

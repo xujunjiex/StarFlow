@@ -22,6 +22,8 @@ import com.moe.starflow.data.NovelChapterStat
 import com.moe.starflow.manga.config.OcrEngineGroup
 import com.moe.starflow.mangaimport.translate.ReaderTranslationInfo
 import com.moe.starflow.novel.model.NovelChapterMeta
+import com.moe.starflow.novel.translate.NovelQuota
+import com.moe.starflow.novel.translate.NovelTranslateMode
 import com.moe.starflow.translate.CustomLocale
 import com.moe.starflow.translate.LanguageSelectionDialog
 import com.moe.starflow.translate.TranslateTools
@@ -53,10 +55,10 @@ class NovelPanelState(
     val intervalSec: Int = 5,
     val rotateLabel: String = "",
     val isDarkPanel: Boolean = false,
-    val translateMode: Int = NovelPanelStyle.MODE_MANUAL,
+    val translateMode: NovelTranslateMode = NovelTranslateMode.MANUAL,
     val debounceMs: Int = 500,
-    val aheadChapters: Int = 3,
-    val batchSize: Int = 8,
+    val aheadBatches: Int = NovelQuota.DEFAULT,
+    val batchSize: Int = NovelPanelStyle.BATCH_DEFAULT,
     val chapterCount: Int = 0,
     val currentChapter: Int = 0,
     val chapters: List<NovelChapterMeta> = emptyList(),
@@ -79,9 +81,9 @@ class NovelPanelCallbacks(
     val onAutoTurn: (Boolean, Int) -> Unit,
     val onRotate: () -> Unit,
     val onSettings: () -> Unit,
-    val onTranslateMode: (Int) -> Unit = {},
+    val onTranslateMode: (NovelTranslateMode) -> Unit = {},
     val onDebounceMs: (Int) -> Unit = {},
-    val onAheadChapters: (Int) -> Unit = {},
+    val onAheadBatches: (Int) -> Unit = {},
     val onBatchSize: (Int) -> Unit = {},
     val onTranslateNow: () -> Unit = {},
     val onClearBook: () -> Unit = {},
@@ -139,7 +141,7 @@ class NovelPanelSheet(
         R.id.seg_bg_default, R.id.seg_bg_light, R.id.seg_bg_dark, R.id.seg_bg_white, R.id.seg_bg_black,
     )
 
-    private var translateMode = NovelPanelStyle.MODE_MANUAL
+    private var translateMode = NovelTranslateMode.MANUAL
     private var reapplyingMode = false
     private var currentFilterKey = 0
 
@@ -346,20 +348,21 @@ class NovelPanelSheet(
         val rbAuto = view.findViewById<RadioButton>(R.id.translate_mode_auto)
         val rbAhead = view.findViewById<RadioButton>(R.id.translate_mode_incremental)
         translateMode = state.translateMode
-        when (translateMode) {            NovelPanelStyle.MODE_AUTO_CHAPTER -> rbAuto.isChecked = true
-            NovelPanelStyle.MODE_AUTO_AHEAD -> rbAhead.isChecked = true
-            else -> rbManual.isChecked = true
+        when (translateMode) {
+            NovelTranslateMode.AUTO -> rbAuto.isChecked = true
+            NovelTranslateMode.AHEAD -> rbAhead.isChecked = true
+            NovelTranslateMode.MANUAL -> rbManual.isChecked = true
         }
         rbManual.setOnCheckedChangeListener { _, c ->
-            if (c && !reapplyingMode) { translateMode = NovelPanelStyle.MODE_MANUAL; cb.onTranslateMode(translateMode) }
+            if (c && !reapplyingMode) { translateMode = NovelTranslateMode.MANUAL; cb.onTranslateMode(translateMode) }
             applyAheadRowVisibility(view, translateMode)
         }
         rbAuto.setOnCheckedChangeListener { _, c ->
-            if (c && !reapplyingMode) { translateMode = NovelPanelStyle.MODE_AUTO_CHAPTER; cb.onTranslateMode(translateMode) }
+            if (c && !reapplyingMode) { translateMode = NovelTranslateMode.AUTO; cb.onTranslateMode(translateMode) }
             applyAheadRowVisibility(view, translateMode)
         }
         rbAhead.setOnCheckedChangeListener { _, c ->
-            if (c && !reapplyingMode) { translateMode = NovelPanelStyle.MODE_AUTO_AHEAD; cb.onTranslateMode(translateMode) }
+            if (c && !reapplyingMode) { translateMode = NovelTranslateMode.AHEAD; cb.onTranslateMode(translateMode) }
             applyAheadRowVisibility(view, translateMode)
         }
 
@@ -375,11 +378,11 @@ class NovelPanelSheet(
 
         val sbAhead = view.findViewById<SeekBar>(R.id.sb_ahead)
         val tvAhead = view.findViewById<TextView>(R.id.tv_ahead_value)
-        sbAhead.progress = state.aheadChapters.coerceIn(NovelPanelStyle.AHEAD_MIN, NovelPanelStyle.AHEAD_MAX)
-        tvAhead.text = "${state.aheadChapters}"
+        sbAhead.progress = state.aheadBatches.coerceIn(NovelQuota.MIN, NovelQuota.MAX)
+        tvAhead.text = "${state.aheadBatches}"
         sbAhead.setOnSeekBarChangeListener(slider {
             tvAhead.text = "${sbAhead.progress}"
-            cb.onAheadChapters(sbAhead.progress)
+            cb.onAheadBatches(sbAhead.progress)
         })
 
         val sbBatch = view.findViewById<SeekBar>(R.id.sb_batch)
@@ -459,9 +462,9 @@ class NovelPanelSheet(
     }
 
     /** 向后翻译章数滑块只在「增量」模式显示（与漫画面板的 row_ahead_pages 同义）。 */
-    private fun applyAheadRowVisibility(view: View, mode: Int) {
+    private fun applyAheadRowVisibility(view: View, mode: NovelTranslateMode) {
         view.findViewById<View>(R.id.row_ahead_chapters).visibility =
-            if (mode == NovelPanelStyle.MODE_AUTO_AHEAD) View.VISIBLE else View.GONE
+            if (mode == NovelTranslateMode.AHEAD) View.VISIBLE else View.GONE
     }
 
     /**

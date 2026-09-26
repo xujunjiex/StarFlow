@@ -37,6 +37,7 @@ import com.moe.starflow.novel.data.ImportedNovel
 import com.moe.starflow.novel.data.NovelStore
 import com.moe.starflow.novel.translate.NovelChapterTranslator
 import com.moe.starflow.novel.translate.NovelParagraphSplitter
+import com.moe.starflow.novel.translate.NovelTranslateMode
 import com.moe.starflow.novel.translate.NovelQueuePhase
 import com.moe.starflow.novel.translate.NovelTranslationEngine
 import com.moe.starflow.novel.translate.NovelTranslationQueue
@@ -124,7 +125,8 @@ class NovelReaderActivity : AppCompatActivity() {
 
     /** 队列最近一次是按哪一章 / 哪个模式起的（重复调用时用来短路，省掉一次无谓重启）。 */
     private var queueChapter = -1
-    private var queueMode = -1
+    /** 队列最近一次的模式（与 [queueChapter] 一起做「重复调用短路」）。 */
+    private var queueMode: NovelTranslateMode? = null
     private var queueRunning = false
 
     /** 段落号 → 页码的请求：改排版/译文到达后重新分页时用它把位置找回来。 */
@@ -820,7 +822,7 @@ class NovelReaderActivity : AppCompatActivity() {
     private fun restartQueueIfNeeded(force: Boolean = false) {
         val b = book ?: return
         val mode = NovelPanelStyle.translateMode(prefs)
-        if (mode == NovelPanelStyle.MODE_MANUAL) {
+        if (mode == NovelTranslateMode.MANUAL) {
             queue?.stop()
             queueRunning = false
             return
@@ -853,7 +855,7 @@ class NovelReaderActivity : AppCompatActivity() {
         q.start(
             book = b,
             mode = mode,
-            aheadCount = NovelPanelStyle.aheadChapters(prefs),
+            aheadCount = NovelPanelStyle.aheadBatches(prefs),
             debounceMs = NovelPanelStyle.debounceMs(prefs),
             // 每轮重新求值：切章不重启队列，窗口自动跟上
             currentChapter = { chapterIndex },
@@ -1209,7 +1211,7 @@ class NovelReaderActivity : AppCompatActivity() {
                 isDarkPanel = NovelPanelStyle.isDarkBackground(bgMode),
                 translateMode = NovelPanelStyle.translateMode(prefs),
                 debounceMs = NovelPanelStyle.debounceMs(prefs),
-                aheadChapters = NovelPanelStyle.aheadChapters(prefs),
+                aheadBatches = NovelPanelStyle.aheadBatches(prefs),
                 batchSize = NovelPanelStyle.batchSize(prefs),
                 chapterCount = chapterCount,
                 currentChapter = chapterIndex,
@@ -1263,14 +1265,14 @@ class NovelReaderActivity : AppCompatActivity() {
                 },
                 onTranslateMode = { m ->
                     NovelPanelStyle.setTranslateMode(prefs, m)
-                    if (m == NovelPanelStyle.MODE_MANUAL) {
+                    if (m == NovelTranslateMode.MANUAL) {
                         queue?.stop()
                         showOverlay(null)
                     }
                     refreshTranslationChrome()
                 },
                 onDebounceMs = { ms -> NovelPanelStyle.setDebounceMs(prefs, ms) },
-                onAheadChapters = { n -> NovelPanelStyle.setAheadChapters(prefs, n) },
+                onAheadBatches = { n -> NovelPanelStyle.setAheadBatches(prefs, n) },
                 onBatchSize = { n -> NovelPanelStyle.setBatchSize(prefs, n) },
                 onTranslateNow = { onTranslateButtonClick() },
                 onClearBook = { clearBookTranslations() },

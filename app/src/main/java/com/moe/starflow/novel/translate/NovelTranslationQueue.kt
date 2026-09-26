@@ -20,12 +20,12 @@ import kotlinx.coroutines.launch
  */
 object NovelQueueWindow {
 
-    /** 与 `NovelPanelStyle.MODE_*` 对应：0 手动 / 1 自动当前章 / 2 自动后续 N 章。 */
-    fun forMode(mode: Int, current: Int, ahead: Int, chapterCount: Int): List<Int> {
+    /** 窗口只对「自动 / 增量」有意义；手动不进队列（[NovelTranslateMode.MANUAL] 返回空窗口）。 */
+    fun forMode(mode: NovelTranslateMode, current: Int, ahead: Int, chapterCount: Int): List<Int> {
         if (current !in 0 until chapterCount) return emptyList()
         return when (mode) {
-            1 -> listOf(current)
-            2 -> {
+            NovelTranslateMode.AUTO -> listOf(current)
+            NovelTranslateMode.AHEAD -> {
                 val n = ahead.coerceAtLeast(1)
                 (current until (current + n)).filter { it in 0 until chapterCount }
             }
@@ -112,7 +112,7 @@ class NovelTranslationQueue(
      */
     fun start(
         book: ImportedNovel,
-        mode: Int,
+        mode: NovelTranslateMode,
         aheadCount: Int,
         debounceMs: Int,
         currentChapter: () -> Int,
@@ -120,7 +120,7 @@ class NovelTranslationQueue(
     ) {
         job?.cancel()
         sessionFailed = mutableSetOf()
-        if (mode == 0) {
+        if (mode == NovelTranslateMode.MANUAL) {
             _state.value = NovelQueueState()
             return
         }
