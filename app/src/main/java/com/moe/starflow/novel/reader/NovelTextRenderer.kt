@@ -33,6 +33,17 @@ object NovelTextRenderer {
      */
     const val COLOR_SELECTION = 0x2E55AEEA
 
+    /**
+     * **正在翻译 / 刚翻完**的那几段的底色。
+     *
+     * 用途（用户要求）：译文到达后必须重排，位置总有轻微偏移；高亮让用户一眼看出
+     * "刚翻的是哪几段"，从而在偏移后仍能对上原来读的地方。手动/自动/增量都要有。
+     *
+     * ⚠️ 与 [COLOR_SELECTION] 用**不同色相**（选择=蓝，翻译=琥珀），
+     * 两者同时出现时不能混成一块分不清。
+     */
+    const val COLOR_ACTIVE_BATCH = 0x2EFFB300
+
     fun build(text: String, style: NovelTextStyle, contentWidth: Int, color: Int = COLOR_MAIN): StaticLayout {
         val paint = TextPaint(TextPaint.ANTI_ALIAS_FLAG).apply {
             textSize = style.fontSizePx

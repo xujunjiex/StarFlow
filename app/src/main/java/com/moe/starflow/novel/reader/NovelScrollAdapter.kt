@@ -29,6 +29,9 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
     /** 选择模式里被选中的段（item 底色）。 */
     private var selected: Set<Int> = emptySet()
 
+    /** 正在翻译 / 刚翻完的段（琥珀底色）。 */
+    private var activeBatch: Set<Int> = emptySet()
+
     class VH(val view: ParagraphView) : RecyclerView.ViewHolder(view)
 
     fun submit(content: ChapterContent, style: NovelTextStyle, textColor: Int, backgroundColor: Int) {
@@ -59,6 +62,13 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
         notifyItemRangeChanged(0, itemCount)
     }
 
+    /** 「正在翻译」高亮变化。 */
+    fun setActiveBatch(sel: Set<Int>) {
+        if (activeBatch == sel) return
+        activeBatch = sel
+        notifyItemRangeChanged(0, itemCount)
+    }
+
     /** item 下标 → 段号（选择模式命中用；越界返回 null）。 */
     fun paraIndexAt(position: Int): Int? =
         content?.let { NovelScrollMapping.paraIndexOf(it, position) }
@@ -80,6 +90,7 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
         holder.view.bind(
             c.displayOf(para.index), style, textColor, backgroundColor,
             selected = para.index in selected,
+            active = para.index in activeBatch,
         )
     }
 
@@ -91,6 +102,7 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
         private var textColor: Int = NovelPageAdapter.DEFAULT_TEXT_COLOR
         private var backgroundColor: Int = android.graphics.Color.WHITE
         private var selected: Boolean = false
+        private var active: Boolean = false
 
         /** 已经真正设到底色上的颜色（切选中态/切背景都要比它，别比 [backgroundColor]）。 */
         private var appliedBg: Int = backgroundColor
@@ -101,9 +113,11 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
             textColor: Int,
             backgroundColor: Int,
             selected: Boolean = false,
+            active: Boolean = false,
         ) {
             if (this.text == text && this.style == style && this.textColor == textColor &&
-                this.backgroundColor == backgroundColor && this.selected == selected
+                this.backgroundColor == backgroundColor && this.selected == selected &&
+                this.active == active
             ) {
                 return
             }
@@ -112,9 +126,14 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
             this.textColor = textColor
             this.backgroundColor = backgroundColor
             this.selected = selected
-            // 选中态：**半透明**蓝压在同一段文字下 —— 深浅两种阅读背景下都要看得出选中、
-            // 又不能把字盖住（实色会看不清正文）
-            val want = if (selected) NovelTextRenderer.COLOR_SELECTION else backgroundColor
+            this.active = active
+            // 底色优先级：**选中 > 正在翻译 > 阅读背景**。
+            // 「正在翻译」用半透明琥珀：深浅两种背景下都看得见，又不盖住正文
+            val want = when {
+                selected -> NovelTextRenderer.COLOR_SELECTION
+                active -> NovelTextRenderer.COLOR_ACTIVE_BATCH
+                else -> backgroundColor
+            }
             // ⚠️ 底色变了才调 setBackgroundColor：它内部会 requestLayout，
             // 而 bind 是在布局过程中被调的 —— 每次都调会触发"布局中再次请求布局"的第二遍布局
             if (appliedBg != want) {

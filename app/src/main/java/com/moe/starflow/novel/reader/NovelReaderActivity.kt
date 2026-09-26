@@ -183,6 +183,16 @@ class NovelReaderActivity : AppCompatActivity() {
      */
     private var carryAnchor: NovelAnchor? = null
 
+    /**
+     * **正在翻译 / 刚翻完**的那几段（琥珀高亮底）。
+     *
+     * 用户要求：译文到达必须重排，位置总有轻微偏移；把这一批高亮出来，用户偏移后还能一眼
+     * 找到刚翻的是哪几段。手动 / 自动 / 增量都要有。
+     *
+     * ⚠️ 一批翻完**不清**（不清才找得到"刚翻完的内容"），只在换章 / 清空译文 / 换阅读模式时清。
+     */
+    private var activeBatch: Set<Int> = emptySet()
+
     /** 最近一次分页用的视口尺寸（px）。尺寸变了必须重排，否则页边界对不上真实视口。 */
     private var pagedWidth = 0
     private var pagedHeight = 0
@@ -711,6 +721,12 @@ class NovelReaderActivity : AppCompatActivity() {
         refreshTranslationChrome()
     }
 
+    /** 「正在翻译 / 刚翻完」的高亮刷新（两种阅读模式各自的视图都要落到）。 */
+    private fun refreshActiveHighlight() {
+        pageAdapter.setActiveBatch(activeBatch)
+        scrollAdapter.setActiveBatch(activeBatch)
+    }
+
     // ===== 翻页 / 翻段 / 切章 =====
 
     private fun isScrollMode(): Boolean =
@@ -827,8 +843,10 @@ class NovelReaderActivity : AppCompatActivity() {
         }
         // 选择集是按**段号**记的，换章后段号会撞上别的段 —— 必须先清
         exitSelection()
-        // 换章：位置由目标章自己决定，不许带上上一章的带位锚点
+        // 换章：位置由目标章自己决定，不许带上上一章的带位锚点；高亮同理
         carryAnchor = null
+        activeBatch = emptySet()
+        refreshActiveHighlight()
         persistProgress()
         loadChapter(index, atLastPage = atLastPage)
     }
@@ -857,6 +875,8 @@ class NovelReaderActivity : AppCompatActivity() {
         exitSelection()
         // 模式换了，页/段坐标系都不一样了：带位锚点作废
         carryAnchor = null
+        // 高亮换成另一套视图（新建/复用的 item 都靠它落到正确底色）
+        refreshActiveHighlight()
         binding.novelPager.visibility = if (scroll) View.GONE else View.VISIBLE
         binding.novelScroll.visibility = if (scroll) View.VISIBLE else View.GONE
         // 进度条两种模式都用：翻页模式是「章内页进度」，连续滚动是「章内段进度」
@@ -1507,11 +1527,17 @@ class NovelReaderActivity : AppCompatActivity() {
         }
     }
 
-    /** 三态图标与漫画一致（相机=译文 / 相册=双语 / 眼睛=原文）。 */
+    /**
+     * 三态图标（**自绘**，在 `res/drawable/ic_display_*.xml`）。
+     *
+     * ⚠️ 原来借的是 `android.R.drawable.ic_menu_*`（相机/图库/眼睛那套老系统图标），
+     * 与阅读器其它图标不是一种风格，用户明确要求换掉。三个态各一个自绘图标，
+     * 由调用方统一 tint 成白色（浮层组是固定深色底）。
+     */
     private fun displayModeIcon(mode: NovelDisplayMode): Int = when (mode) {
-        NovelDisplayMode.TRANSLATED -> android.R.drawable.ic_menu_camera
-        NovelDisplayMode.ORIGINAL -> android.R.drawable.ic_menu_view
-        else -> android.R.drawable.ic_menu_gallery
+        NovelDisplayMode.TRANSLATED -> R.drawable.ic_display_translated
+        NovelDisplayMode.ORIGINAL -> R.drawable.ic_display_original
+        NovelDisplayMode.BILINGUAL -> R.drawable.ic_display_bilingual
     }
 
     /**
@@ -1701,6 +1727,16 @@ class NovelReaderActivity : AppCompatActivity() {
             q.state.collect { st ->
                 // 队列状态一变就把整份状态推给面板（否则面板不知道"正在翻/停了"）
                 pushPanelState()
+                // 「正在翻译」高亮：手动/自动/增量都走队列，所以在这一处统一接
+                // （TRANSLATING / WAITING_LOCK 时高亮这一批；DRAINED 后**保留**，
+                //  用户正是靠它找"刚翻完的是哪几段"）
+                if (st.batchParaIndexes.isNotEmpty()) {
+                    val next = st.batchParaIndexes.toSet()
+                    if (next != activeBatch) {
+                        activeBatch = next
+                        refreshActiveHighlight()
+                    }
+                }
                 when (st.phase) {
                     NovelQueuePhase.TRANSLATING -> showOverlay(
                         queuePositionText(st), autoDismiss = false,
@@ -1943,6 +1979,8 @@ class NovelReaderActivity : AppCompatActivity() {
         lifecycleScope.launch {
             runCatching { translator().clearChapter(b, chapterIndex) }
             translations = emptyMap()
+            // 译文都没了，"刚翻的是哪几段"也就无从谈起
+            activeBatch = emptySet()
             refreshChapterStats()
             loadChapter(chapterIndex, anchor = pendingAnchor)
             showOverlayToast(getString(R.string.novel_translate_cleared_chapter), error = false)

@@ -42,6 +42,9 @@ class NovelPageAdapter : RecyclerView.Adapter<NovelPageAdapter.VH>() {
     /** 选择模式里被选中的段（高亮底）。 */
     private var selected: Set<Int> = emptySet()
 
+    /** 正在翻译 / 刚翻完的段（琥珀高亮底）。 */
+    private var activeBatch: Set<Int> = emptySet()
+
     class VH(val curl: CurlPageView, val page: NovelPageView) : RecyclerView.ViewHolder(curl)
 
     fun submit(content: ChapterContent, style: NovelTextStyle, textColor: Int, backgroundColor: Int) {
@@ -69,6 +72,13 @@ class NovelPageAdapter : RecyclerView.Adapter<NovelPageAdapter.VH>() {
     fun setSelected(sel: Set<Int>) {
         if (selected == sel) return
         selected = sel
+        notifyItemRangeChanged(0, itemCount)
+    }
+
+    /** 「正在翻译」高亮变化（只重画）。 */
+    fun setActiveBatch(sel: Set<Int>) {
+        if (activeBatch == sel) return
+        activeBatch = sel
         notifyItemRangeChanged(0, itemCount)
     }
 
@@ -109,7 +119,7 @@ class NovelPageAdapter : RecyclerView.Adapter<NovelPageAdapter.VH>() {
             "bindPage pos=$position segs=${page.segments.size} " +
                 "p0=${page.segments.firstOrNull()?.let { s -> NovelDebug.brief(c.displayOf(s.paraIndex)) }}"
         )
-        holder.page.bind(c, page, style, textColor, selected)
+        holder.page.bind(c, page, style, textColor, selected, activeBatch)
     }
 
     companion object {

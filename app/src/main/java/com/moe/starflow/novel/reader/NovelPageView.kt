@@ -27,6 +27,9 @@ class NovelPageView(context: Context) : View(context) {
     /** 选择模式里被选中的段（高亮底）。 */
     private var selected: Set<Int> = emptySet()
 
+    /** 正在翻译 / 刚翻完的段（琥珀高亮底，让用户在重排偏移后仍能找到）。 */
+    private var activeBatch: Set<Int> = emptySet()
+
     /** 与 `page.segments` 一一对应的排版结果（空文本/未布局时为 null）。 */
     private var layouts: List<StaticLayout?> = emptyList()
 
@@ -43,12 +46,18 @@ class NovelPageView(context: Context) : View(context) {
         color = NovelTextRenderer.COLOR_SELECTION
     }
 
+    /** 「正在翻译 / 刚翻完」的高亮底（颜色与滚动模式共用）。 */
+    private val activeBatchPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = NovelTextRenderer.COLOR_ACTIVE_BATCH
+    }
+
     fun bind(
         content: ChapterContent,
         page: NovelPage,
         style: NovelTextStyle,
         textColor: Int,
         selected: Set<Int> = emptySet(),
+        activeBatch: Set<Int> = emptySet(),
     ) {
         // ⚠️ 排版输入没变就别作废已排好的 layout：选择模式每点一下都会重绑，
         // 全页重建 StaticLayout 是白烧的（而且会闪）
@@ -64,6 +73,7 @@ class NovelPageView(context: Context) : View(context) {
         this.style = style
         this.textColor = textColor
         this.selected = selected
+        this.activeBatch = activeBatch
         invalidate()
     }
 
@@ -71,6 +81,13 @@ class NovelPageView(context: Context) : View(context) {
     fun setSelected(sel: Set<Int>) {
         if (selected == sel) return
         selected = sel
+        invalidate()
+    }
+
+    /** 只换「正在翻译」高亮（不重排）。 */
+    fun setActiveBatch(sel: Set<Int>) {
+        if (activeBatch == sel) return
+        activeBatch = sel
         invalidate()
     }
 
@@ -145,9 +162,15 @@ class NovelPageView(context: Context) : View(context) {
             val top = layout.getLineTop(from).toFloat()
             val bottom = layout.getLineBottom(to - 1).toFloat()
 
-            // 选中高亮画在文字**下面**（同一个矩形范围，逐段累加的高度）
-            if (seg.paraIndex in selected) {
-                canvas.drawRect(padding, y, widthF - padding, y + (bottom - top), selectionPaint)
+            // 高亮底画在文字**下面**（同一个矩形范围，逐段累加的高度）。
+            // 选中优先于「正在翻译」：两者同时命中时得看得出是选中
+            val hl = when {
+                seg.paraIndex in selected -> selectionPaint
+                seg.paraIndex in activeBatch -> activeBatchPaint
+                else -> null
+            }
+            if (hl != null) {
+                canvas.drawRect(padding, y, widthF - padding, y + (bottom - top), hl)
             }
 
             // 只画 [from, to) 这几行：整份 layout 一起画会把区间外的行也画出来，

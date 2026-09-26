@@ -1,0 +1,15 @@
+<!--
+  显示三态之一：**原文**。
+  一套三件（原文 / 译文 / 双语）自绘，替换原来借的 android.R.drawable.ic_menu_* 老系统图标
+  （相机/图库/眼睛那套，与阅读器其它图标不是一种风格）。
+  语义：一整块文字 = 原始文本。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M4,4.6h16v2.1H4zM4,8.5h16v2.1H4zM4,12.4h16v2.1H4zM4,16.3h9v2.1H4z" />
+</vector>

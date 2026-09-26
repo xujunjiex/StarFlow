@@ -185,7 +185,7 @@
                 android:layout_width="22dp"
                 android:layout_height="22dp"
                 android:layout_gravity="center"
-                android:src="@drawable/ic_reader_translate"
+                android:src="@drawable/ic_display_bilingual"
                 app:tint="#FFFFFF"
                 android:contentDescription="@string/reader_toggle_desc"/>
         </FrameLayout>

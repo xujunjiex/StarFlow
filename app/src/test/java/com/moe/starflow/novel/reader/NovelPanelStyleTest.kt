@@ -39,6 +39,38 @@ class NovelPanelStyleTest {
         assertEquals(NovelPanelStyle.READER_SCROLL, NovelPanelStyle.readerMode(prefs))
     }
 
+    /**
+     * 双语模式的段间距要**放大**：一对「原文+译文」算一个段落块，
+     * 块之间拉开才能看出"这行译文属于哪段原文"（用户要求）。
+     */
+    @Test
+    fun `双语模式段间距被放大`() {
+        val ctx: Context = RuntimeEnvironment.getApplication()
+        NovelPanelStyle.setDisplayMode(prefs, NovelDisplayMode.TRANSLATED)
+        val one = NovelPanelStyle.textStyle(ctx, prefs).paragraphSpacingPx
+        NovelPanelStyle.setDisplayMode(prefs, NovelDisplayMode.BILINGUAL)
+        val two = NovelPanelStyle.textStyle(ctx, prefs).paragraphSpacingPx
+
+        assertEquals(one * NovelPanelStyle.BILINGUAL_PARA_SPACING_FACTOR, two, 0.01f)
+        assertTrue("必须明显更大，否则等于没改", two > one * 1.5f)
+    }
+
+    /**
+     * 默认行距 1.5× → 1.4× 的一次性迁移（用户要求"默认行间距缩小一点点"）。
+     *
+     * ⚠️ 只改常量对**已经用过的人无效**（prefs 里早存着旧默认值），所以要把
+     * "还停在旧默认值"的人一起挪过去；自己调过行距的必须原样保留。
+     */
+    @Test
+    fun `行距默认值缩小只挪没调过的人`() {
+        prefs.edit().putInt("novel_line_spacing", 15).commit()   // 旧默认值 = 没动过
+        assertEquals(14, NovelPanelStyle.lineSpacingStep(prefs))
+
+        prefs.edit().clear().commit()
+        prefs.edit().putInt("novel_line_spacing", 18).commit()   // 自己调过
+        assertEquals(18, NovelPanelStyle.lineSpacingStep(prefs))
+    }
+
     @Test
     fun `旧值 0 是分页，迁移后保持分页`() {
         prefs.edit().putInt("novel_reader_mode", 0).commit()

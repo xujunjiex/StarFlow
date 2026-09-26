@@ -111,7 +111,12 @@ object NovelPanelStyle {
     /** 行距倍率 ×10。范围 1.0× ~ 2.2×：再小中文会挤，再大就散架了。 */
     const val LINE_SPACING_MIN = 10
     const val LINE_SPACING_MAX = 22
-    const val LINE_SPACING_DEFAULT = 15
+
+    /** 默认 1.4×（用户要求"默认行间距缩小一点点"，原 1.5×）。 */
+    const val LINE_SPACING_DEFAULT = 14
+
+    /** 缩小默认之前的那一档 —— 迁移时用它认出"用户其实没动过行距"。 */
+    private const val LINE_SPACING_DEFAULT_LEGACY = 15
 
     /** 段间距 dp（默认 25，用户明确要求）。**下限是动态算出来的**（见 [minParagraphSpacingDp]）。 */
     const val PARA_SPACING_MAX = 48
@@ -139,8 +144,30 @@ object NovelPanelStyle {
     private const val KEY_READER_MODE = "novel_reader_mode"
     private const val READER_MODE_VERSION = 1
 
-    fun lineSpacingStep(prefs: SharedPreferences): Int =
-        prefs.getInt(KEY_LINE_SPACING, LINE_SPACING_DEFAULT).coerceIn(LINE_SPACING_MIN, LINE_SPACING_MAX)
+    /** 行距默认值变更的一次性迁移（见 [migrateLineSpacing]）。 */
+    private const val KEY_LINE_SPACING_VERSION = "novel_line_spacing_version"
+    private const val LINE_SPACING_VERSION = 1
+
+    fun lineSpacingStep(prefs: SharedPreferences): Int {
+        migrateLineSpacing(prefs)
+        return prefs.getInt(KEY_LINE_SPACING, LINE_SPACING_DEFAULT)
+            .coerceIn(LINE_SPACING_MIN, LINE_SPACING_MAX)
+    }
+
+    /**
+     * 默认行距 1.5× → 1.4× 的一次性迁移。
+     *
+     * ⚠️ **只改 [LINE_SPACING_DEFAULT] 对已经用过的人无效**：prefs 里早存着旧默认值，
+     * 他们会觉得"改了没反应"。所以这里把「还停在旧默认值」的人一起挪到新默认，
+     * 自己调过行距的（不等于旧默认）一律不动。
+     */
+    private fun migrateLineSpacing(prefs: SharedPreferences) {
+        if (prefs.getInt(KEY_LINE_SPACING_VERSION, 0) >= LINE_SPACING_VERSION) return
+        val cur = prefs.getInt(KEY_LINE_SPACING, LINE_SPACING_DEFAULT_LEGACY)
+        prefs.edit().putInt(KEY_LINE_SPACING_VERSION, LINE_SPACING_VERSION).apply {
+            if (cur == LINE_SPACING_DEFAULT_LEGACY) putInt(KEY_LINE_SPACING, LINE_SPACING_DEFAULT)
+        }.apply()
+    }
 
     fun lineSpacingLabel(step: Int): String = String.format(java.util.Locale.US, "%.1f×", step / 10f)
 
@@ -310,16 +337,33 @@ object NovelPanelStyle {
         val density = context.resources.displayMetrics.scaledDensity
         val densityDpi = context.resources.displayMetrics.density
         val fontSp = fontSizeSp(prefs)
+        // 双语模式下段间距要拉大一截：一段双语是「原文 + 换行 + 译文」两行，行间空隙就是普通
+        // 行距，段间距若只比它大一点点，读者分不清"这行译文属于上一行原文还是再上一段"
+        // （用户报的「好区分译文到底属于谁」）。一对双语算一个段落块，块之间留出明显空档。
+        val paraFactor = if (displayMode(prefs) == NovelDisplayMode.BILINGUAL) {
+            BILINGUAL_PARA_SPACING_FACTOR
+        } else {
+            1f
+        }
         return NovelTextStyle(
             fontSizePx = fontSp * density,
             lineSpacingMultiplier = lineSpacingStep(prefs) / 10f,
-            paragraphSpacingPx = paragraphSpacingDp(prefs, fontSp) * densityDpi,
+            paragraphSpacingPx = paragraphSpacingDp(prefs, fontSp) * densityDpi * paraFactor,
             paddingPx = paddingDp(prefs) * densityDpi,
             topPaddingPx = topPaddingDp(prefs) * densityDpi,
             bottomPaddingPx = bottomPaddingDp(prefs) * densityDpi,
             keepParagraphsWhole = keepParagraphsWhole(prefs),
         )
     }
+
+    /**
+     * 双语模式下段间距的放大倍率（见 [textStyle]）。
+     *
+     * 双语一段 = 原文行 + 译文行（行间只是一个普通行距），段与段之间按这个倍率拉开，
+     * 「译文属于谁」一眼可辨。⚠️ 只作用于**排版**（分页与绘制共用同一份 style），
+     * 不改用户设置里的那个 dp 值 —— 面板上显示的还是他设的数字。
+     */
+    const val BILINGUAL_PARA_SPACING_FACTOR = 1.8f
 
     /**
      * 正文文字颜色：跟随阅读背景深浅。
