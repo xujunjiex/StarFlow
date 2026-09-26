@@ -27,6 +27,18 @@ data class PageSegment(
     val lineEnd: Int,
 )
 
+/**
+ * 「哪些页已经翻译完了」—— 底部进度条的绿块就是它（与漫画 `ReaderProgressBar.setTranslatedPages` 同一套）。
+ *
+ * ⚠️ 判据是**整页的段都有译文**，不是「页里有译文」：半页译文不画绿，否则用户以为这页翻完了。
+ * ⚠️ 页边界会随字号 / 行距 / 边距变化 → 每次重排后都要**用新页表重算**，否则绿块停在旧位置，
+ * 用户以为译文丢了（`refreshOverlay` 每次 loadChapter 都会跑，所以改排版自然重算）。
+ */
+internal fun translatedPagesOf(pages: List<NovelPage>, translated: Set<Int>): Set<Int> =
+    pages.mapIndexedNotNull { i, page ->
+        i.takeIf { page.segments.isNotEmpty() && page.segments.all { it.paraIndex in translated } }
+    }.toSet()
+
 /** 一页 = 若干 segment（按显示顺序）。 */
 data class NovelPage(val segments: List<PageSegment>)
 

@@ -82,6 +82,15 @@ class NovelPanelCallbacks(
     val onRotate: () -> Unit,
     val onSettings: () -> Unit,
     val onTranslateMode: (NovelTranslateMode) -> Unit = {},
+
+    /**
+     * 宿主**此刻**的真实模式。
+     *
+     * ⚠️ 不能用 `state.translateMode`：那是构造面板那一刻的快照，而宿主在打开面板时会
+     * `pauseToManual()` 把模式回退成手动 —— 不回读的话面板会一直显示「自动」选中，
+     * 用户以为自动还在跑（漫画那份同样处理，见 `cb.currentTranslateMode()`）。
+     */
+    val currentTranslateMode: () -> NovelTranslateMode = { NovelTranslateMode.MANUAL },
     val onDebounceMs: (Int) -> Unit = {},
     val onAheadBatches: (Int) -> Unit = {},
     val onBatchSize: (Int) -> Unit = {},
@@ -347,7 +356,7 @@ class NovelPanelSheet(
         val rbManual = view.findViewById<RadioButton>(R.id.translate_mode_manual)
         val rbAuto = view.findViewById<RadioButton>(R.id.translate_mode_auto)
         val rbAhead = view.findViewById<RadioButton>(R.id.translate_mode_incremental)
-        translateMode = state.translateMode
+        translateMode = cb.currentTranslateMode()
         when (translateMode) {
             NovelTranslateMode.AUTO -> rbAuto.isChecked = true
             NovelTranslateMode.AHEAD -> rbAhead.isChecked = true

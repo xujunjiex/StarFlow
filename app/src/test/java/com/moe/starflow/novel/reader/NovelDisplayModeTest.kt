@@ -153,4 +153,46 @@ class NovelDisplayModeTest {
         assertEquals("超出末段时取末页", 2, repo.pageOfParagraph(pages, 100))
         assertEquals("空页表返回 0", 0, repo.pageOfParagraph(emptyList(), 3))
     }
+
+    // ===== 已翻译页（底部进度条绿块） =====
+
+    private fun seg(paraIndex: Int) = PageSegment(paraIndex, 0, 1, 0, 1)
+
+    /**
+     * 已翻译页 = **整页的段都有译文**；而且页边界一变（改字号/行距/边距）必须**重算**。
+     *
+     * ⚠️ 不重算的话绿块会停在旧位置：用户改了字号，进度条上"翻到哪"就骗人了。
+     */
+    @Test
+    fun `已翻译页随页边界变化重算`() {
+        val translated = setOf(0, 1, 2, 3)
+        val wide = listOf(
+            NovelPage(listOf(seg(0), seg(1))),
+            NovelPage(listOf(seg(2), seg(3))),
+        )
+        val narrow = listOf(
+            NovelPage(listOf(seg(0))),
+            NovelPage(listOf(seg(1))),
+            NovelPage(listOf(seg(2))),
+            NovelPage(listOf(seg(3))),
+        )
+        assertEquals(setOf(0, 1), translatedPagesOf(wide, translated))
+        assertEquals("页变窄后每一页都各自成页", setOf(0, 1, 2, 3), translatedPagesOf(narrow, translated))
+    }
+
+    /** 半页译文**不算**这页翻好了：否则用户以为整页都翻完了。 */
+    @Test
+    fun `半页译文不画绿`() {
+        val wide = listOf(
+            NovelPage(listOf(seg(0), seg(1))),
+            NovelPage(listOf(seg(2), seg(3))),
+        )
+        assertEquals(setOf(0), translatedPagesOf(wide, setOf(0, 1, 2)))
+    }
+
+    /** 空页不算「已翻译」（否则进度条上会凭空多一段绿）。 */
+    @Test
+    fun `空页不画绿`() {
+        assertEquals(emptySet<Int>(), translatedPagesOf(listOf(NovelPage(emptyList())), setOf(0)))
+    }
 }

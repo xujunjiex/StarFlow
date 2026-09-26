@@ -76,6 +76,9 @@ class NovelReaderActivity : AppCompatActivity() {
         /** 上下 UI 显隐的淡入淡出时长（与漫画一致）。 */
         private const val CHROME_FADE_MS = 160L
 
+        /** 翻译按钮双击判定窗口（**与漫画同一个值**，语义也一致）。 */
+        private const val DOUBLE_CLICK_MS = 300L
+
         /** 视口尺寸变化后的重排防抖（尺寸是连续事件，见 [scheduleRepaginate]）。 */
         private const val REPAGINATE_DEBOUNCE_MS = 180L
 
@@ -118,6 +121,9 @@ class NovelReaderActivity : AppCompatActivity() {
     private var autoTurnEnabled = false
     private var autoTurnIntervalSec = 5
     private var autoTurnJob: Job? = null
+
+    /** 翻译按钮双击判定用的上次单击时刻（elapsedRealtime）。 */
+    private var lastTranslateClickMs = 0L
     private var lastInteractionMs = 0L
     private var rotateMode = 0
 
@@ -260,6 +266,8 @@ class NovelReaderActivity : AppCompatActivity() {
         // 且常驻状态芯片（系统窗口）会一直盖在别的应用上
         queue?.stop()
         queueRunning = false
+        // 退出阅读器 = 暂停并**回退手动**（用户明确要求）：回来时不会自己接着翻
+        NovelPanelStyle.setTranslateMode(prefs, NovelTranslateMode.MANUAL)
         TranslationStatusOverlay.getInstance(this@NovelReaderActivity).dismiss()
     }
 
@@ -823,19 +831,22 @@ class NovelReaderActivity : AppCompatActivity() {
     private fun restartQueueIfNeeded(force: Boolean = false) {
         val b = book ?: return
         val mode = NovelPanelStyle.translateMode(prefs)
+        // ⚠️ 手动模式**也要把队列建出来**：手动「翻一批」走的是队列的 `translateOneBatch`，
+        // 与自动/增量共用同一套锚点与成批规则（两条路各写一套迟早不一致）
+        val t = runCatching { translator() }.getOrNull()
+        if (t == null) {
+            if (mode != NovelTranslateMode.MANUAL) toast(R.string.novel_translate_need_config)
+            return
+        }
         if (mode == NovelTranslateMode.MANUAL) {
             queue?.stop()
             queueRunning = false
+            queueMode = NovelTranslateMode.MANUAL
             return
         }
         // 同一章的重复调用（译文到达 → 重排 → 又调一次）直接跳过：白重启一次队列会把
         // 防抖计时清零，正文越翻越慢
         if (!force && queueRunning && queueChapter == chapterIndex && queueMode == mode) return
-        val t = runCatching { translator() }.getOrNull()
-        if (t == null) {
-            toast(R.string.novel_translate_need_config)
-            return
-        }
         val q = queue ?: NovelTranslationQueue(
             scope = lifecycleScope,
             translator = t,
@@ -993,7 +1004,7 @@ class NovelReaderActivity : AppCompatActivity() {
         } else {
             val pages = content?.pages ?: return
             binding.novelProgress.setPage(currentPage(), pages.size)
-            binding.novelProgress.setTranslatedPages(translatedPagesOf(pages))
+            binding.novelProgress.setTranslatedPages(translatedPagesOf(pages, translations.keys))
         }
         updateChapterTocLabel()
     }
@@ -1066,49 +1077,60 @@ class NovelReaderActivity : AppCompatActivity() {
     }
 
     /**
-     * 右下角翻译按钮：
-     * - 本章还没译文 → 翻这一章
-     * - 已有译文 → 重翻这一章
+     * 右下角翻译按钮（语义**与漫画 `ReaderTranslationController.onTranslateButtonClick` 逐条对齐**）：
+     * - **单击**：手动模式空闲 → 从当前页第一段没翻的段起翻**一批**；
+     *   自动/增量在跑 → **只提示，绝不打断**（用户明确要求）
+     * - **双击**：取消在途翻译并**回退手动**
      */
     private fun onTranslateButtonClick() {
+        val now = SystemClock.elapsedRealtime()
+        val isDouble = now - lastTranslateClickMs <= DOUBLE_CLICK_MS
+        lastTranslateClickMs = if (isDouble) 0L else now
+
+        val mode = NovelPanelStyle.translateMode(prefs)
+        if (queueRunning && mode != NovelTranslateMode.MANUAL) {
+            if (!isDouble) {
+                showOverlayToast(
+                    getString(R.string.novel_translate_hint_running, chapterIndex + 1), error = false,
+                )
+                return
+            }
+            pauseToManual(getString(R.string.reader_translate_cancelled))
+            return
+        }
+        if (isDouble) return
+        translateOneBatchNow()
+    }
+
+    /** 手动：从当前页锚点翻**一批**（走队列的同一套规则）。 */
+    private fun translateOneBatchNow() {
         val b = book ?: return
-        val loaded = content ?: return
-        // 常驻芯片：翻完/失败时才收起（与漫画一致，中途不给"闪一下"的反馈）
+        val q = queue ?: return
         showOverlay(getString(R.string.reader_translate_in_progress), autoDismiss = false)
-        translationJob?.cancel()
-        translationJob = lifecycleScope.launch {
-            if (!OcrLock.tryAcquire()) {
-                showOverlay(null)
-                toast(R.string.novel_translate_busy)
+        lifecycleScope.launch {
+            val got = runCatching { q.translateOneBatch(b, chapterIndex) }.getOrNull().orEmpty()
+            showOverlay(null)
+            if (got.isEmpty()) {
+                showOverlayToast(getString(R.string.reader_translate_failed), error = true)
                 return@launch
             }
-            try {
-                translator().translateChapter(
-                    book = b,
-                    chapterIndex = chapterIndex,
-                    paragraphs = loaded.paragraphs,
-                    sourceLang = sourceLang(),
-                    targetLang = targetLang(),
-                    translatorName = "novel",
-                    batchSize = NovelPanelStyle.batchSize(prefs),
-                ).collect { progress ->
-                    refreshTranslations(keepPara = pendingParaIndex)
-                    if (progress.isComplete) {
-                        showOverlay(null)
-                        showOverlayToast(getString(R.string.reader_translate_done), error = false)
-                    }
-                }
-                refreshChapterStats()
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                LogCollector.e(TAG, "本章翻译失败", e)
-                showOverlay(null)
-                showOverlayToast(e.message ?: getString(R.string.reader_translate_failed), error = true)
-            } finally {
-                OcrLock.release()
-            }
+            refreshChapterStats()
+            refreshTranslations(keepPara = pendingParaIndex)
         }
+    }
+
+    /**
+     * 停止在途翻译并**回退手动**：面板打开 / 双击 / 退出阅读器都走这里。
+     *
+     * 与漫画 `pauseToManual` 同义 —— 回退之后不会自己接上，要用户重新选模式（用户明确要求）。
+     */
+    private fun pauseToManual(message: String? = null) {
+        queue?.stop()
+        queueRunning = false
+        NovelPanelStyle.setTranslateMode(prefs, NovelTranslateMode.MANUAL)
+        showOverlay(null)
+        message?.let { showOverlayToast(it, error = false) }
+        pushPanelState()
     }
 
     /** 三态循环：译文 → 原文 → 双语。 */
@@ -1302,18 +1324,24 @@ class NovelReaderActivity : AppCompatActivity() {
                 onDebounceMs = { ms -> NovelPanelStyle.setDebounceMs(prefs, ms) },
                 onAheadBatches = { n -> NovelPanelStyle.setAheadBatches(prefs, n) },
                 onBatchSize = { n -> NovelPanelStyle.setBatchSize(prefs, n) },
+                currentTranslateMode = { NovelPanelStyle.translateMode(prefs) },
                 onTranslateNow = { onTranslateButtonClick() },
                 onClearBook = { clearBookTranslations() },
                 onChapterJump = { ch -> gotoChapter(ch) },
                 onPanelOpened = {
-                    // 打开面板即暂停队列（用户在调设置），关闭后才恢复
+                    // 与漫画一致：面板一打开就**暂停并回退手动** —— 用户在看面板时若按旧设置继续翻，
+                    // 既浪费额度也可能翻错；要重新选模式才会继续
                     queue?.setPanelOpen(true)
                     showOverlay(null)
                     refreshChapterStats()
+                    if (NovelPanelStyle.translateMode(prefs) != NovelTranslateMode.MANUAL) {
+                        pauseToManual(getString(R.string.reader_translate_paused_to_manual))
+                    }
                 },
                 onPanelClosed = {
                     queue?.setPanelOpen(false)
-                    restartQueueIfNeeded()
+                    // 模式可能刚被面板改过（面板里选的是宿主真实模式），强制按新参数重启
+                    restartQueueIfNeeded(force = true)
                 },
                 onOpenApiConfig = {
                     startActivity(
