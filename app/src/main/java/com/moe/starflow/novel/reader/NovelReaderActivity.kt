@@ -36,6 +36,7 @@ import com.moe.starflow.mangaimport.reader.SimulationTransformer
 import com.moe.starflow.me.settings.SettingPageActivity
 import com.moe.starflow.novel.data.ImportedNovel
 import com.moe.starflow.novel.data.NovelStore
+import com.moe.starflow.novel.translate.NovelBatchTranslator
 import com.moe.starflow.novel.translate.NovelChapterTranslator
 import com.moe.starflow.novel.translate.NovelParagraphSplitter
 import com.moe.starflow.novel.translate.NovelQuota
@@ -844,8 +845,12 @@ class NovelReaderActivity : AppCompatActivity() {
             if (mode != NovelTranslateMode.MANUAL) toast(R.string.novel_translate_need_config)
             return
         }
+        // ⚠️ **先把队列建出来，再决定跑不跑**：手动「翻一批」走的是队列的
+        // `translateOneBatch` —— 早先手动分支直接 `return`，于是队列永远是 null，
+        // 「翻译本章」点了**一点反应都没有**（用户报的现象）。
+        val q = ensureQueue(t)
         if (mode == NovelTranslateMode.MANUAL) {
-            queue?.stop()
+            q.stop()
             queueRunning = false
             queueMode = NovelTranslateMode.MANUAL
             return
@@ -853,24 +858,6 @@ class NovelReaderActivity : AppCompatActivity() {
         // 同一章的重复调用（译文到达 → 重排 → 又调一次）直接跳过：白重启一次队列会把
         // 防抖计时清零，正文越翻越慢
         if (!force && queueRunning && queueChapter == chapterIndex && queueMode == mode) return
-        val q = queue ?: NovelTranslationQueue(
-            scope = lifecycleScope,
-            translator = t,
-            paragraphsOf = { book2, ch -> repository.paragraphsOf(book2, ch) },
-            sourceLang = { sourceLang() },
-            targetLang = { targetLang() },
-            translatorName = { "novel" },
-            batchSize = { NovelPanelStyle.batchSize(prefs) },
-            debounceMs = { NovelPanelStyle.debounceMs(prefs) },
-            currentPageParaIndexes = { currentPageParaIndexes() },
-            chapterParaIndexes = { book2, ch -> repository.paragraphsOf(book2, ch).map { it.index } },
-            translatedIndexes = { book2, ch -> translations.keys.toSet() },
-        ).also { it2 ->
-            queue = it2
-            // ⚠️ 队列是惰性创建的：观察必须挂在这里，挂在 onCreate 会对着 null 收流，
-            // 之后新建的队列永远没人听（状态浮层再也不更新）
-            observeQueue(it2)
-        }
 
         queueChapter = chapterIndex
         queueMode = mode
@@ -911,6 +898,25 @@ class NovelReaderActivity : AppCompatActivity() {
         if (last < first) return listOf(visible[first.coerceAtMost(visible.size - 1)].index)
         return (first..last).map { visible[it].index }
     }
+
+    /** 惰性创建队列 + 挂观察（观察必须挂在这里，挂在 onCreate 会对着 null 收流）。 */
+    private fun ensureQueue(t: NovelBatchTranslator): NovelTranslationQueue =
+        queue ?: NovelTranslationQueue(
+            scope = lifecycleScope,
+            translator = t,
+            paragraphsOf = { book2, ch -> repository.paragraphsOf(book2, ch) },
+            sourceLang = { sourceLang() },
+            targetLang = { targetLang() },
+            translatorName = { "novel" },
+            batchSize = { NovelPanelStyle.batchSize(prefs) },
+            debounceMs = { NovelPanelStyle.debounceMs(prefs) },
+            currentPageParaIndexes = { currentPageParaIndexes() },
+            chapterParaIndexes = { book2, ch -> repository.paragraphsOf(book2, ch).map { it.index } },
+            translatedIndexes = { book2, ch -> translations.keys.toSet() },
+        ).also {
+            queue = it
+            observeQueue(it)
+        }
 
     private fun sourceLang(): String = CustomPreference.getInstance(this).getString("Source_Language", "auto")
 
@@ -1136,7 +1142,13 @@ class NovelReaderActivity : AppCompatActivity() {
     /** 手动：从当前页锚点翻**一批**（走队列的同一套规则）。 */
     private fun translateOneBatchNow() {
         val b = book ?: return
-        val q = queue ?: return
+        // 队列可能还没建过（手动模式是默认模式）——这里补一次，否则点了没有任何反应
+        val t = runCatching { translator() }.getOrNull()
+        if (t == null) {
+            toast(R.string.novel_translate_need_config)
+            return
+        }
+        val q = ensureQueue(t)
         showOverlay(getString(R.string.reader_translate_in_progress), autoDismiss = false)
         lifecycleScope.launch {
             val got = runCatching { q.translateOneBatch(b, chapterIndex) }.getOrNull().orEmpty()
@@ -1199,7 +1211,17 @@ class NovelReaderActivity : AppCompatActivity() {
                     )
                     NovelQueuePhase.DRAINED -> {
                         showOverlay(null)
-                        showOverlayToast(getString(R.string.reader_translate_queue_drained), error = false)
+                        // ⚠️ **自动模式翻完当前页什么也不弹**：那是正常状态（等翻页），
+                        // 每翻完一页弹一次「已翻完」会让用户以为翻译老在暂停/卡住。
+                        // 只有「增量配额用尽」和「本章翻完」值得说一句。
+                        val quota = st.remaining
+                        when {
+                            quota != null && quota <= 0 ->
+                                showOverlayToast(getString(R.string.novel_translate_quota_used), error = false)
+                            st.batchesDone > 0 ->
+                                showOverlayToast(getString(R.string.novel_chapter_done), error = false)
+                            else -> Unit
+                        }
                     }
                     NovelQueuePhase.IDLE -> showOverlay(null)
                 }

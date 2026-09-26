@@ -460,8 +460,6 @@ class NovelPanelSheet(
         chapterAdapter.stats = state.chapterStats
         chapterAdapter.onNeedTotal = { cb.onNeedChapterTotal(it) }
         chapterAdapter.currentChapter = state.currentChapter
-        liveStats = state.chapterStats
-        updateSummary()
         setupTranslateFilter(view)
 
         // ---- 更多：旋转 / 自动翻页 / 目录 / 设置 ----
@@ -779,26 +777,9 @@ class NovelPanelSheet(
 
     // ===== 翻译汇总 / 过滤 =====
 
-    /**
-     * 宿主推来的**最新**章状态。
-     *
-     * ⚠️ 不能读 `state.chapterStats`：那是**打开面板那一刻的快照**。汇总曾经读的是它，
-     * 于是「面板开着时译文在涨，汇总数字却一动不动」—— 同一份数据在面板里存了两份
-     * （快照一份、adapter 一份），读错一份就白推了。
-     */
-    private var liveStats: Map<Int, NovelChapterStat> = emptyMap()
 
     /** 每章总段数（章行的分母），见 `NovelChapterStateAdapter.totals`。 */
     private var chapterTotals: Map<Int, Int> = emptyMap()
-
-    private fun updateSummary() {
-        val total = state.chapterCount
-        val done = liveStats.count { (_, s) -> s.total > 0 && s.success >= s.total }
-        val partial = liveStats.count { (_, s) -> s.success > 0 && s.success < s.total }
-        val failed = liveStats.count { (_, s) -> s.total > 0 && s.success < s.total }
-        view?.findViewById<TextView>(R.id.tv_translate_summary)?.text =
-            getString(R.string.novel_translate_summary, total, done, partial, failed)
-    }
 
     /**
      * 外部刷新入口：**宿主状态一变就推全量**（当前章 + 章状态）。
@@ -815,12 +796,10 @@ class NovelPanelSheet(
         failures: Map<Int, List<NovelFailureRow>> = emptyMap(),
     ) {
         chapterTotals = totals
-        liveStats = stats
         chapterAdapter.stats = stats
         chapterAdapter.totals = chapterTotals
         chapterAdapter.failures = failures
         chapterAdapter.currentChapter = currentChapter
-        updateSummary()
     }
 
     private fun setupTranslateFilter(view: View) {
