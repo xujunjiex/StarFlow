@@ -34,7 +34,6 @@ class NovelPanelSyncTest {
     private fun state(
         chapter: Int = 0,
         mode: NovelTranslateMode = NovelTranslateMode.MANUAL,
-        display: NovelDisplayMode = NovelDisplayMode.TRANSLATED,
         readerMode: Int = NovelPanelStyle.READER_PAGED,
         animation: Int = NovelPanelStyle.ANIM_SLIDE,
         background: Int = 0,
@@ -55,7 +54,6 @@ class NovelPanelSyncTest {
         chapterTotals = totals,
         chapterFailures = failures,
         translateMode = mode,
-        displayMode = display,
         readerMode = readerMode,
         animation = animation,
         background = background,
@@ -73,7 +71,7 @@ class NovelPanelSyncTest {
         val activity = Robolectric.buildActivity(AppCompatActivity::class.java).setup().get()
         val state = NovelPanelState(chapters = emptyList())
         val callbacks = NovelPanelCallbacks(
-            onReaderMode = {}, onAnimation = {}, onBackground = {}, onDisplayMode = {},
+            onReaderMode = {}, onAnimation = {}, onBackground = {},
             onLineSpacing = {}, onParagraphSpacing = {}, onPadding = {},
             onAutoTurn = { _, _ -> }, onRotate = {}, onSettings = {},
         )
@@ -102,7 +100,6 @@ class NovelPanelSyncTest {
             state(
                 chapter = 2,
                 mode = NovelTranslateMode.AHEAD,
-                display = NovelDisplayMode.BILINGUAL,
                 readerMode = NovelPanelStyle.READER_SCROLL,
                 animation = NovelPanelStyle.ANIM_SIMULATION,
                 autoTurn = true,
@@ -126,10 +123,6 @@ class NovelPanelSyncTest {
         assertTrue("自动翻页开关要跟着变", v.findViewById<Switch>(R.id.sw_auto_turn).isChecked)
         assertEquals("8 s", v.findViewById<TextView>(R.id.tv_interval_value).text)
         assertEquals("横屏", v.findViewById<TextView>(R.id.tv_rotate_value).text)
-        assertEquals(
-            NovelPanelStyle.displayModeLabel(v.context, NovelDisplayMode.BILINGUAL),
-            v.findViewById<TextView>(R.id.tv_display_value).text,
-        )
         // 增量模式才显示配额行
         assertEquals(android.view.View.VISIBLE, v.findViewById<android.view.View>(R.id.row_ahead_chapters).visibility)
     }

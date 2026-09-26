@@ -70,36 +70,30 @@ class TxtChapterSplitterTest {
         assertEquals(1, TxtChapterSplitter.split(text).size)
     }
 
-    // ===== 兜底切分 =====
+    // ===== 无章节标记：整本一章 =====
 
+    /**
+     * ⚠️ 用户明确要求：**没有章节标记就按一章算**。
+     *
+     * 以前按每 8000 字切一节、起名「第1节」「第2节」… —— 目录会变成一串"第N节"
+     * （和真正的"章"混在一起更莫名其妙），而且把「续读定位」切碎成十几段。
+     */
     @Test
-    fun `无章节标记时按字数兜底切分且标题为第N节`() {
-        val body = "这是一段很长的正文。".repeat(2000)   // 20000 字
+    fun `无章节标记时整本算一章`() {
+        val body = "这是一段很长的正文。".repeat(2000)   // 20000 字，远超原来的 8000 兜底阈值
         val chapters = TxtChapterSplitter.split(body)
-        assertTrue("应切出多节，实际 ${chapters.size}", chapters.size >= 2)
-        assertTrue(chapters[0].title.startsWith("第"))
-        assertTrue(chapters[0].title.endsWith("节"))
+        assertEquals("只应有一章", 1, chapters.size)
+        assertEquals(0, chapters[0].charStart)
+        assertEquals(body.length, chapters[0].charEnd)
+        assertEquals("标题留空，由 UI 显示「第1章」", "", chapters[0].title)
     }
 
     @Test
-    fun `兜底切点落在换行处不从句子中间切开`() {
-        val sb = StringBuilder()
-        repeat(600) { sb.append("第").append(it).append("行内容，凑字数用。\n") }
-        val text = sb.toString()
+    fun `无标记的单行超长文本也只有一章`() {
+        val text = "字".repeat(30000)
         val chapters = TxtChapterSplitter.split(text)
-        assertTrue(chapters.size >= 2)
-        val boundary = chapters[0].charEnd
-        assertTrue(
-            "切点 $boundary 不在换行处",
-            boundary == text.length || text[boundary - 1] == '\n',
-        )
-    }
-
-    @Test
-    fun `兜底切分不产生空节`() {
-        val chapters = TxtChapterSplitter.split("字".repeat(30000))   // 单行超长，无换行可回退
-        assertTrue(chapters.isNotEmpty())
-        assertTrue("不该有空节", chapters.all { it.charEnd > it.charStart })
+        assertEquals(1, chapters.size)
+        assertEquals(text.length, chapters[0].charEnd)
     }
 
     // ===== 覆盖率硬约束 =====

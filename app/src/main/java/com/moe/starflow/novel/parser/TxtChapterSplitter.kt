@@ -21,14 +21,8 @@ data class TxtChapter(val title: String, val charStart: Int, val charEnd: Int)
  */
 object TxtChapterSplitter {
 
-    /** 无章节标记时每节的目标字数。 */
-    const val FALLBACK_CHARS_PER_CHAPTER = 8000
-
     /** 章节标题最长字符数。超出视为正文里偶然出现的「第N章」表述，不当作标题。 */
     private const val MAX_TITLE_LEN = 40
-
-    /** 兜底切点最多往前回退的比例（防止极端长行导致空节或死循环）。 */
-    private const val MAX_BACKTRACK = FALLBACK_CHARS_PER_CHAPTER / 4
 
     /** 首个章节标记之前的内容若达到这个字数，单独成节（标题为 [PREFACE_TITLE]）。 */
     private const val PREFACE_TITLE = "前言"
@@ -47,7 +41,7 @@ object TxtChapterSplitter {
     fun split(text: String): List<TxtChapter> {
         if (text.isBlank()) return emptyList()
         val starts = findChapterStarts(text)
-        return if (starts.isEmpty()) fallbackSplit(text) else buildFromStarts(text, starts)
+        return if (starts.isEmpty()) wholeBook(text) else buildFromStarts(text, starts)
     }
 
     /**
@@ -94,22 +88,12 @@ object TxtChapterSplitter {
         return out
     }
 
-    /** 无章节标记：按 [FALLBACK_CHARS_PER_CHAPTER] 字切，切点回退到最近的换行。 */
-    private fun fallbackSplit(text: String): List<TxtChapter> {
-        val out = mutableListOf<TxtChapter>()
-        var pos = 0
-        var section = 1
-        while (pos < text.length) {
-            var end = (pos + FALLBACK_CHARS_PER_CHAPTER).coerceAtMost(text.length)
-            if (end < text.length) {
-                val nl = text.lastIndexOf('\n', end)
-                // 回退量有上限：宁可硬切，也不让某节短到几乎没有内容（极端长行时会触发）
-                if (nl > pos + MAX_BACKTRACK) end = nl + 1
-            }
-            out.add(TxtChapter("第${section}节", pos, end))
-            pos = end
-            section++
-        }
-        return out
-    }
+    /**
+     * 无章节标记：**整本作为一章**（标题留空，UI 会显示「第1章」）。
+     *
+     * ⚠️ 曾经按每 8000 字切一节、起名「第1节」「第2节」…（用户明确否掉）：
+     * 一本书没有章标记就按一章算；8000 字一切只会让目录变成一串"第N节"，
+     * 和真正的"章"混在一起更莫名其妙，而且会把「续读定位」切碎成十几段。
+     */
+    private fun wholeBook(text: String): List<TxtChapter> = listOf(TxtChapter("", 0, text.length))
 }

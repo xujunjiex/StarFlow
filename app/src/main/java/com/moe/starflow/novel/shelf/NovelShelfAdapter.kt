@@ -125,6 +125,35 @@ class NovelShelfAdapter(
     private companion object {
         const val TYPE_CARD = 0
         const val TYPE_ROW = 1
+
+        /**
+         * 小说书架的封面比漫画**小一截**（用户要求：封面别那么大、卡片别那么长）。
+         *
+         * 复用漫画那份卡片/行布局是为了两个书架长得一样，但漫画封面是「一页图」、
+         * 小说封面只是装饰 —— 同一个尺寸在小说这边会显得又大又空，
+         * 所以尺寸在这里按小说自己的口径压一档（布局本身不动，两个书架共用）。
+         */
+        const val CARD_COVER_DP = 128
+        const val ROW_THUMB_W_DP = 80
+        const val ROW_THUMB_H_DP = 108
+    }
+
+    private fun dp(v: View, value: Int): Int =
+        (value * v.resources.displayMetrics.density).toInt()
+
+    /** 把网格卡的封面外框压矮（外框没有 id，从 `iv_cover` 往上取一层）。 */
+    private fun shrinkCardCover(v: View) {
+        val frame = v.findViewById<View>(R.id.iv_cover)?.parent as? View ?: return
+        frame.layoutParams = (frame.layoutParams ?: return).apply { height = dp(v, CARD_COVER_DP) }
+    }
+
+    /** 把列表行的缩略图压小（等比收一点，保持竖版比例）。 */
+    private fun shrinkRowThumb(v: View) {
+        val thumb = v.findViewById<View>(R.id.thumb_frame) ?: return
+        thumb.layoutParams = (thumb.layoutParams ?: return).apply {
+            width = dp(v, ROW_THUMB_W_DP)
+            height = dp(v, ROW_THUMB_H_DP)
+        }
     }
 
     override fun getItemViewType(position: Int): Int =
@@ -132,9 +161,13 @@ class NovelShelfAdapter(
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder =
         if (viewType == TYPE_CARD) {
-            CardVH(ItemImportMangaCardBinding.inflate(LayoutInflater.from(parent.context), parent, false))
+            val vh = CardVH(ItemImportMangaCardBinding.inflate(LayoutInflater.from(parent.context), parent, false))
+            shrinkCardCover(vh.itemView)
+            vh
         } else {
-            RowVH(ItemImportMangaRowBinding.inflate(LayoutInflater.from(parent.context), parent, false))
+            val vh = RowVH(ItemImportMangaRowBinding.inflate(LayoutInflater.from(parent.context), parent, false))
+            shrinkRowThumb(vh.itemView)
+            vh
         }
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {

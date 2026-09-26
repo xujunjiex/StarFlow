@@ -29,7 +29,6 @@ data class NovelPanelHostState(
     val translateMode: NovelTranslateMode = NovelTranslateMode.MANUAL,
     /** 翻译是否在跑（在跑时单击按钮只提示）。 */
     val translating: Boolean = false,
-    val displayMode: NovelDisplayMode = NovelDisplayMode.TRANSLATED,
     val readerMode: Int = NovelPanelStyle.READER_PAGED,
     val animation: Int = NovelPanelStyle.ANIM_SLIDE,
     val background: Int = 0,

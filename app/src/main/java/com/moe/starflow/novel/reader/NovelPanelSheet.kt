@@ -45,7 +45,6 @@ class NovelPanelState(
     val readerMode: Int = NovelPanelStyle.READER_PAGED,
     val animation: Int = NovelPanelStyle.ANIM_SLIDE,
     val bg: Int = 0,
-    val displayMode: NovelDisplayMode = NovelDisplayMode.TRANSLATED,
     val fontSizeSp: Float = NovelPanelStyle.FONT_SIZE_DEFAULT,
     val lineSpacingStep: Int = NovelPanelStyle.LINE_SPACING_DEFAULT,
     val paragraphSpacingDp: Int = NovelPanelStyle.PARA_SPACING_DEFAULT,
@@ -72,7 +71,6 @@ class NovelPanelCallbacks(
     val onReaderMode: (Int) -> Unit,
     val onAnimation: (Int) -> Unit,
     val onBackground: (Int) -> Unit,
-    val onDisplayMode: (NovelDisplayMode) -> Unit,
     val onFontSize: (Float) -> Unit = {},
     val onLineSpacing: (Int) -> Unit,
     val onParagraphSpacing: (Int) -> Unit,
@@ -295,16 +293,6 @@ class NovelPanelSheet(
         }
 
         // ---- 样式：显示三态 + 行距/段距/边距 ----
-        val tvDisplay = view.findViewById<TextView>(R.id.tv_display_value)
-        tvDisplay.text = NovelPanelStyle.displayModeLabel(requireContext(), state.displayMode)
-        view.findViewById<View>(R.id.btn_display_mode).setOnClickListener {
-            val next = NovelDisplayModeCodec.next(
-                readDisplayFromLabel(tvDisplay.text.toString())
-            )
-            tvDisplay.text = NovelPanelStyle.displayModeLabel(requireContext(), next)
-            cb.onDisplayMode(next)
-        }
-
         // ---- 排版：恢复默认 / 字号 / 行距 / 段距 / 左右边距 / 上下间距 ----
         //
         // ⚠️ 每个滑块松手就回调一次，阅读器立刻重排并重画 —— 参数是**直接生效**的，
@@ -500,13 +488,6 @@ class NovelPanelSheet(
         return view
     }
 
-    /** 显示三态的值文本 → 枚举（面板只是个不含状态的循环按钮，从显示值反推）。 */
-    private fun readDisplayFromLabel(label: String): NovelDisplayMode = when (label) {
-        getString(R.string.novel_display_original) -> NovelDisplayMode.ORIGINAL
-        getString(R.string.novel_display_bilingual) -> NovelDisplayMode.BILINGUAL
-        else -> NovelDisplayMode.TRANSLATED
-    }
-
     /** 连续滚动下翻页动画不生效：即时置灰。 */
     private fun applyModeDependence(view: View, readerMode: Int) {
         setSegEnabled(view.findViewById<ViewGroup>(R.id.seg_animation), readerMode != NovelPanelStyle.READER_SCROLL)
@@ -624,7 +605,7 @@ class NovelPanelSheet(
             R.id.tv_translator_model_row,
             R.id.tv_source_lang_value, R.id.tv_target_lang_value,
             R.id.tv_debounce_label, R.id.tv_ahead_label, R.id.tv_batch_label,
-            R.id.tv_display_label, R.id.tv_font_size_label,
+            R.id.tv_font_size_label,
             R.id.tv_line_spacing_label, R.id.tv_para_spacing_label,
             R.id.tv_padding_label, R.id.tv_keep_paragraphs_label,
             R.id.tv_top_padding_label, R.id.tv_bottom_padding_label,
@@ -633,7 +614,7 @@ class NovelPanelSheet(
             R.id.tv_rotate_value, R.id.tv_interval_value,
             R.id.tv_source_caption, R.id.tv_target_caption,
             R.id.tv_debounce_value, R.id.tv_ahead_value, R.id.tv_batch_value,
-            R.id.tv_display_value, R.id.tv_font_size_value,
+            R.id.tv_font_size_value,
             R.id.tv_line_spacing_value, R.id.tv_para_spacing_value,
             R.id.tv_padding_value, R.id.tv_keep_paragraphs_hint,
             R.id.tv_top_padding_value, R.id.tv_bottom_padding_value,
@@ -874,8 +855,6 @@ class NovelPanelSheet(
             applySlider(view, R.id.sb_ahead, R.id.tv_ahead_value, s.aheadBatches, "${s.aheadBatches}")
             applySlider(view, R.id.sb_batch, R.id.tv_batch_value, s.batchSize, "${s.batchSize}")
 
-            view.findViewById<TextView>(R.id.tv_display_value).text =
-                NovelPanelStyle.displayModeLabel(requireContext(), s.displayMode)
             view.findViewById<TextView>(R.id.tv_rotate_value).text = s.rotateLabel
             view.findViewById<TextView>(R.id.tv_interval_value).text = "${s.intervalSec} s"
             view.findViewById<Switch>(R.id.sw_auto_turn).isChecked = s.autoTurn

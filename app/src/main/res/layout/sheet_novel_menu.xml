@@ -333,17 +333,7 @@
                         android:orientation="horizontal"/>
                 </HorizontalScrollView>
 
-                <!-- 显示内容（译文 / 原文 / 双语）：**从排版页搬到这里**（用户要求）。
-                     它是「翻译怎么显示」，和翻译设置是一类；样式跟着翻译页走 -->
-<!-- 与右下角浮层按钮同一份设置 -->
-                <LinearLayout android:id="@+id/btn_display_mode" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:padding="12dp" android:gravity="center_vertical" android:clickable="true">
-                    <TextView android:id="@+id/tv_display_label" android:layout_width="0dp" android:layout_height="wrap_content"
-                        android:layout_weight="1" android:text="@string/novel_display_label" android:textSize="14sp" android:textColor="#333333"/>
-                    <TextView android:id="@+id/tv_display_value" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                        android:textSize="12sp" android:textColor="#888888"/>
-                </LinearLayout>
-                <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000"/>
+                
                 <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000"/>
 
                 <!-- 章节列表（每章一行，状态徽章 + 点击跳章） -->

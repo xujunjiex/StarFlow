@@ -1017,7 +1017,6 @@ class NovelReaderActivity : AppCompatActivity() {
         chapterFailures = chapterFailures,
         translateMode = NovelPanelStyle.translateMode(prefs),
         translating = queueRunning,
-        displayMode = NovelPanelStyle.displayMode(prefs),
         readerMode = NovelPanelStyle.readerMode(prefs),
         animation = animationMode,
         background = bgMode,
@@ -1121,14 +1120,19 @@ class NovelReaderActivity : AppCompatActivity() {
             return
         }
         binding.translateGroup.visibility = View.VISIBLE
+        // 三态切换按钮按**页**显示：当前页只要有一段有译文就出现（与漫画按页显示同一套逻辑）。
+        // 整章级判据会让"翻到还没翻译的那页"也显示按钮，点了看不出任何变化。
+        val pageTranslated = currentPageParaIndexes().any { translations.containsKey(it) }
         val translated = translations.isNotEmpty()
         val failed = hasFailedChapter(chapterIndex)
-        binding.btnToggleTranslate.visibility = if (translated) View.VISIBLE else View.GONE
+        binding.btnToggleTranslate.visibility = if (pageTranslated) View.VISIBLE else View.GONE
         binding.btnFailTranslate.visibility = if (failed) View.VISIBLE else View.GONE
         binding.ivTranslate.setImageResource(
             if (translated) R.drawable.ic_refresh else R.drawable.ic_reader_translate
         )
-        if (translated) binding.ivToggleTranslate.setImageResource(displayModeIcon(NovelPanelStyle.displayMode(prefs)))
+        if (pageTranslated) {
+            binding.ivToggleTranslate.setImageResource(displayModeIcon(NovelPanelStyle.displayMode(prefs)))
+        }
     }
 
     /** 三态图标与漫画一致（相机=译文 / 相册=双语 / 眼睛=原文）。 */
@@ -1341,8 +1345,7 @@ class NovelReaderActivity : AppCompatActivity() {
                 readerMode = NovelPanelStyle.readerMode(prefs),
                 animation = animationMode,
                 bg = bgMode,
-                displayMode = NovelPanelStyle.displayMode(prefs),
-                fontSizeSp = fontSp,
+                        fontSizeSp = fontSp,
                 lineSpacingStep = NovelPanelStyle.lineSpacingStep(prefs),
                 paragraphSpacingDp = NovelPanelStyle.paragraphSpacingDp(prefs, fontSp),
                 paddingDp = NovelPanelStyle.paddingDp(prefs),
@@ -1372,8 +1375,13 @@ class NovelReaderActivity : AppCompatActivity() {
                     updateAutoTurn()
                 },
                 onAnimation = { a -> NovelPanelStyle.setAnimation(prefs, a); animationMode = a; applyAnimation() },
-                onBackground = { v -> NovelPanelStyle.setBackground(prefs, v); applyBackground(); refreshCurrentVisual() },
-                onDisplayMode = { m -> NovelPanelStyle.setDisplayMode(prefs, m); loadChapter(chapterIndex, keepPara = pendingParaIndex) },
+                onBackground = { v ->
+                    NovelPanelStyle.setBackground(prefs, v)
+                    applyBackground()
+                    refreshCurrentVisual()
+                    // ⚠️ 背景换了、面板里所有组件的配色都要跟着换 —— 不推的话得关掉再打开才对
+                    pushPanelState()
+                },
                 onFontSize = { sp ->
                     NovelPanelStyle.setFontSizeSp(prefs, sp)
                     loadChapter(chapterIndex, keepPara = pendingParaIndex)
