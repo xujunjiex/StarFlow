@@ -1392,6 +1392,7 @@
     <string name="novel_download_failed">导出失败：%1$s</string>
     <string name="novel_translate_filter_done">完成</string>
     <string name="novel_translate_filter_running">进行中</string>
+    <string name="novel_fail_translate_empty">模型没返回译文</string>
     <string name="novel_chapter_failed_hint">%1$d 段失败：%2$s</string>
     <string name="novel_chapter_failed_meta">第 %1$d 章 · %2$d 段失败</string>
     <string name="novel_style_reset">恢复默认</string>

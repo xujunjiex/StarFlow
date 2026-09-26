@@ -1393,6 +1393,7 @@
     <string name="novel_download_failed">Export failed: %1$s</string>
     <string name="novel_translate_filter_done">Done</string>
     <string name="novel_translate_filter_running">In progress</string>
+    <string name="novel_fail_translate_empty">Model returned nothing</string>
     <string name="novel_chapter_failed_hint">%1$d paragraphs failed: %2$s</string>
     <string name="novel_chapter_failed_meta">Chapter %1$d · %2$d failed</string>
     <string name="novel_style_reset">Reset to defaults</string>

@@ -19,6 +19,7 @@ import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.moe.starflow.R
 import com.moe.starflow.data.NovelChapterStat
+import com.moe.starflow.data.NovelFailureRow
 import com.moe.starflow.manga.config.OcrEngineGroup
 import com.moe.starflow.mangaimport.translate.ReaderTranslationInfo
 import com.moe.starflow.novel.model.NovelChapterMeta
@@ -98,7 +99,11 @@ class NovelPanelCallbacks(
     val onAheadBatches: (Int) -> Unit = {},
     val onBatchSize: (Int) -> Unit = {},
     val onTranslateNow: () -> Unit = {},
-    val onClearBook: () -> Unit = {},
+    /** 清空**本章**译文（面板里点确认后才回调）。 */
+    val onClearChapter: () -> Unit = {},
+
+    /** 下载：[NovelExportKind] 的序号（0 译文 / 1 原文 / 2 双语）。 */
+    val onDownload: (Int) -> Unit = {},
     val onChapterJump: (Int) -> Unit = {},
     val onPanelOpened: () -> Unit = {},
     val onPanelClosed: () -> Unit = {},
@@ -425,7 +430,28 @@ class NovelPanelSheet(
         }
 
         view.findViewById<View>(R.id.btn_translate_action).setOnClickListener { cb.onTranslateNow() }
-        view.findViewById<View>(R.id.btn_translate_clear).setOnClickListener { cb.onClearBook() }
+        // ⚠️ 清空**必须二次确认**：用户明确要求"不要点击就直接清空"（以前一点就清整本）
+        view.findViewById<View>(R.id.btn_translate_clear).setOnClickListener {
+            AlertDialog.Builder(requireContext())
+                .setTitle(R.string.novel_translate_clear_chapter)
+                .setMessage(R.string.novel_translate_clear_chapter_confirm)
+                .setNegativeButton(R.string.user_cancel, null)
+                .setPositiveButton(R.string.novel_translate_clear_ok) { _, _ -> cb.onClearChapter() }
+                .show()
+        }
+        // 下载：三选（译文 / 原文 / 双语），与漫画「更多」页同一套交互
+        view.findViewById<View>(R.id.btn_download).setOnClickListener {
+            AlertDialog.Builder(requireContext())
+                .setTitle(R.string.novel_download_title)
+                .setItems(
+                    arrayOf(
+                        getString(R.string.novel_download_translated),
+                        getString(R.string.novel_download_original),
+                        getString(R.string.novel_download_bilingual),
+                    ),
+                ) { _, which -> cb.onDownload(which) }
+                .show()
+        }
 
         val rv = view.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rv_translate_chapters)
         rv.layoutManager = LinearLayoutManager(requireContext())
@@ -582,7 +608,7 @@ class NovelPanelSheet(
         listOf(
             R.id.tv_mode_label, R.id.tv_animation_label, R.id.tv_background_label,
             R.id.tv_translate_mode_label,
-            R.id.tv_rotate_label, R.id.tv_auto_turn_label, R.id.tv_settings_label,
+            R.id.tv_rotate_label, R.id.tv_auto_turn_label, R.id.tv_settings_label, R.id.tv_download_label,
             R.id.tv_translator_model_row,
             R.id.tv_source_lang_value, R.id.tv_target_lang_value,
             R.id.tv_debounce_label, R.id.tv_ahead_label, R.id.tv_batch_label,
@@ -786,11 +812,13 @@ class NovelPanelSheet(
         currentChapter: Int,
         stats: Map<Int, NovelChapterStat>,
         totals: Map<Int, Int> = emptyMap(),
+        failures: Map<Int, List<NovelFailureRow>> = emptyMap(),
     ) {
         chapterTotals = totals
         liveStats = stats
         chapterAdapter.stats = stats
         chapterAdapter.totals = chapterTotals
+        chapterAdapter.failures = failures
         chapterAdapter.currentChapter = currentChapter
         updateSummary()
     }
@@ -798,9 +826,12 @@ class NovelPanelSheet(
     private fun setupTranslateFilter(view: View) {
         val row = view.findViewById<ViewGroup>(R.id.translate_filter_row)
         row.removeAllViews()
+        // 状态标签（与漫画面板的筛选项同一套 chip 样式）：按**状态**筛，不是只筛「没翻完」
         val options = listOf(
             0 to R.string.reader_translate_filter_all,
-            1 to R.string.novel_translate_filter_pending,
+            1 to R.string.novel_translate_filter_done,
+            2 to R.string.novel_translate_filter_running,
+            3 to R.string.reader_translate_filter_failed,
         )
         for ((key, label) in options) {
             val chip = TextView(requireContext()).apply {
@@ -818,7 +849,7 @@ class NovelPanelSheet(
     private fun applyFilter(key: Int, view: View) {
         currentFilterKey = key
         refreshFilterChipStyle(view.findViewById(R.id.translate_filter_row))
-        chapterAdapter.failuresOnly = key == 1
+        chapterAdapter.filterKey = key
     }
 
     private fun refreshFilterChipStyle(row: ViewGroup) {

@@ -24,6 +24,7 @@ import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.ViewPager2
 import com.moe.starflow.R
 import com.moe.starflow.data.NovelChapterStat
+import com.moe.starflow.data.NovelFailureRow
 import com.moe.starflow.data.TranslationHistoryDatabase
 import com.moe.starflow.databinding.ActivityNovelReaderBinding
 import com.moe.starflow.manga.OcrLock
@@ -107,6 +108,9 @@ class NovelReaderActivity : AppCompatActivity() {
     private var content: ChapterContent? = null
     private var translations: Map<Int, String> = emptyMap()
     private var chapterStats: Map<Int, NovelChapterStat> = emptyMap()
+
+    /** 失败明细（章行展开显示原因）；与 chapterStats 一起推给面板。 */
+    private var chapterFailures: Map<Int, List<NovelFailureRow>> = emptyMap()
     private var translationJob: Job? = null
 
     /** 滚动模式的「已翻译段」（进度条绿条），在 [loadChapter] 里随内容与译文一起重算。 */
@@ -952,6 +956,7 @@ class NovelReaderActivity : AppCompatActivity() {
         val b = book ?: return
         lifecycleScope.launch {
             chapterStats = runCatching { translator().chapterStats(b) }.getOrDefault(emptyMap())
+            chapterFailures = runCatching { translator().failuresOf(b) }.getOrDefault(emptyMap())
             // 这一句里已经把章级状态推给面板了（见 updateChapterTocLabel）
             updateChapterTocLabel()
         }
@@ -993,6 +998,7 @@ class NovelReaderActivity : AppCompatActivity() {
                 currentChapter = chapterIndex,
                 stats = chapterStats,
                 totals = chapterTotals.toMap(),
+                failures = chapterFailures,
             )
     }
 
@@ -1349,7 +1355,8 @@ class NovelReaderActivity : AppCompatActivity() {
                 onBatchSize = { n -> NovelPanelStyle.setBatchSize(prefs, n) },
                 currentTranslateMode = { NovelPanelStyle.translateMode(prefs) },
                 onTranslateNow = { onTranslateButtonClick() },
-                onClearBook = { clearBookTranslations() },
+                onClearChapter = { clearChapterTranslations() },
+                onDownload = { which -> exportNovel(which) },
                 onChapterJump = { ch -> gotoChapter(ch) },
                 onNeedChapterTotal = { ch -> ensureChapterTotal(ch) },
                 onPanelOpened = {
@@ -1376,6 +1383,38 @@ class NovelReaderActivity : AppCompatActivity() {
             )
         )
         sheet.show(supportFragmentManager, NovelPanelSheet.TAG)
+    }
+
+    /**
+     * 只清**本章**译文（用户明确要求：不要一点就清整本；面板里已二次确认）。
+     */
+    private fun clearChapterTranslations() {
+        val b = book ?: return
+        lifecycleScope.launch {
+            runCatching { translator().clearChapter(b, chapterIndex) }
+            translations = emptyMap()
+            refreshChapterStats()
+            loadChapter(chapterIndex, keepPara = pendingParaIndex)
+            showOverlayToast(getString(R.string.novel_translate_cleared_chapter), error = false)
+        }
+    }
+
+    /** 导出译文 / 原文 / 双语（0 译文 1 原文 2 双语）。 */
+    private fun exportNovel(which: Int) {
+        val b = book ?: return
+        val kind = when (which) {
+            1 -> NovelExport.Kind.ORIGINAL
+            2 -> NovelExport.Kind.BILINGUAL
+            else -> NovelExport.Kind.TRANSLATED
+        }
+        val t = runCatching { translator() }.getOrNull() ?: return
+        showOverlay(getString(R.string.novel_download_writing), autoDismiss = false)
+        lifecycleScope.launch {
+            val r = runCatching { NovelExport.exportBook(this@NovelReaderActivity, b, repository, t, kind) }
+            showOverlay(null)
+            r.onSuccess { showOverlayToast(getString(R.string.novel_download_done, it.absolutePath), error = false) }
+                .onFailure { showOverlayToast(getString(R.string.novel_download_failed, it.message.orEmpty()), error = true) }
+        }
     }
 
     private fun clearBookTranslations() {

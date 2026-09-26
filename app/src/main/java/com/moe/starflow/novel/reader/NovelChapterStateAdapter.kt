@@ -7,6 +7,7 @@ import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.moe.starflow.R
 import com.moe.starflow.data.NovelChapterStat
+import com.moe.starflow.data.NovelFailureRow
 import com.moe.starflow.novel.model.NovelChapterMeta
 
 /**
@@ -62,13 +63,28 @@ class NovelChapterStateAdapter(
             notifyItemRangeChanged(0, itemCount)
         }
 
-    /** 过滤：false = 全部；true = 只看「没翻完」的章。 */
-    var failuresOnly: Boolean = false
+    /**
+     * 状态标签过滤：0 全部 / 1 完成 / 2 进行中 / 3 失败（与面板上的 chip 一一对应）。
+     *
+     * ⚠️ 以前只有「全部 / 没翻完」两格，用户看不到"完成/进行中/失败"的分开视图。
+     */
+    var filterKey: Int = 0
         set(value) {
             if (field == value) return
             field = value
             rebuild()
         }
+
+    /** 每章的失败明细（章行展开显示「为什么失败」）。 */
+    var failures: Map<Int, List<NovelFailureRow>> = emptyMap()
+        set(value) {
+            if (field == value) return
+            field = value
+            notifyItemRangeChanged(0, itemCount)
+        }
+
+    /** 当前展开的**行下标**（同漫画：一次只展开一行）。 */
+    private var expandedIndex: Int? = null
 
     /** 面板深浅（随阅读背景切换），行内文字配色跟随。 */
     var dark = false
@@ -90,8 +106,23 @@ class NovelChapterStateAdapter(
 
     private fun rebuild() {
         val all = chapters.indices.toList()
-        visible = if (!failuresOnly) all else all.filter { !isDone(it) }
+        visible = if (filterKey == 0) all else all.filter { passesFilter(it) }
+        expandedIndex = null
         notifyDataSetChanged()
+    }
+
+    /** 章行是否命中当前状态标签。 */
+    private fun passesFilter(index: Int): Boolean {
+        val st = stats[index]
+        val done = st != null && st.total > 0 && st.success >= st.total
+        val failed = failures[index].orEmpty().isNotEmpty()
+        val running = st != null && st.success > 0 && !done
+        return when (filterKey) {
+            1 -> done
+            2 -> running
+            3 -> failed
+            else -> true
+        }
     }
 
     /** 当前过滤后的章号列表（只读）。 */
@@ -150,18 +181,55 @@ class NovelChapterStateAdapter(
         // ⚠️ 分母优先取宿主解析出来的**真实段数**，其次才是数据库统计（未翻的章没有统计行）
         val total = totals[index] ?: st?.total ?: 0
         if (total == 0) onNeedTotal?.invoke(index)
+        val failed = failures[index].orEmpty()
         item.findViewById<TextView>(R.id.tv_fail_message).apply {
-            text = if (total > 0) {
-                item.context.getString(R.string.novel_chapter_progress, st?.success ?: 0, total)
-            } else ""
+            // 有失败时**优先显示失败原因**（用户要的就是"为什么失败"），否则显示段落进度
+            text = when {
+                failed.isNotEmpty() -> item.context.getString(
+                    R.string.novel_chapter_failed_hint,
+                    failed.size,
+                    NovelFailCode.label(item.context, failed.first().failCode),
+                )
+                total > 0 -> item.context.getString(R.string.novel_chapter_progress, st?.success ?: 0, total)
+                else -> ""
+            }
             setTextColor(subColor)
             visibility = if (!text.isNullOrBlank()) View.VISIBLE else View.GONE
         }
 
-        // 章级别的详情展开没有意义（一章几百段），把「详情」按钮收起
-        item.findViewById<View>(R.id.btn_row_detail).visibility = View.GONE
-        item.findViewById<View>(R.id.detail_panel).visibility = View.GONE
+        // 有失败才给「详情」按钮；展开后逐条列出 段号 + 原因 + 原文前 20 字（与漫画同一套展开）
+        val expanded = expandedIndex == position
+        val btnDetail = item.findViewById<TextView>(R.id.btn_row_detail)
+        btnDetail.visibility = if (failed.isEmpty()) View.GONE else View.VISIBLE
+        btnDetail.setTextColor(accent)
+        btnDetail.text = item.context.getString(
+            if (expanded) R.string.reader_translate_collapse else R.string.reader_translate_row_detail,
+        )
+        val detail = item.findViewById<View>(R.id.detail_panel)
+        if (expanded && failed.isNotEmpty()) {
+            item.findViewById<TextView>(R.id.tv_detail_meta).apply {
+                text = item.context.getString(R.string.novel_chapter_failed_meta, index + 1, failed.size)
+                setTextColor(labelColor)
+            }
+            item.findViewById<TextView>(R.id.tv_detail_list).apply {
+                text = failed.joinToString("\n") {
+                    "#${it.paraIndex}  ${NovelFailCode.label(item.context, it.failCode)}  ${it.sourceText.take(20)}"
+                }
+                setTextColor(subColor)
+            }
+            item.findViewById<TextView>(R.id.tv_detail_collapse).setTextColor(accent)
+            detail.visibility = View.VISIBLE
+        } else {
+            detail.visibility = View.GONE
+        }
+        btnDetail.setOnClickListener {
+            val prev = expandedIndex
+            expandedIndex = if (expanded) null else position
+            if (prev != null) notifyItemChanged(prev)
+            notifyItemChanged(position)
+        }
 
-        item.setOnClickListener { onJump(index) }
+        // 点整行 = 跳章；展开态点行不跳（避免误触）
+        item.setOnClickListener { if (!expanded) onJump(index) }
     }
 }
