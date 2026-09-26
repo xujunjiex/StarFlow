@@ -1408,15 +1408,9 @@
     <string name="novel_display_original">Original</string>
     <string name="novel_display_bilingual">Bilingual</string>
     <string name="novel_translate_mode">Translation mode</string>
-    <string name="novel_translate_mode_manual">Manual</string>
-    <string name="novel_translate_mode_auto_chapter">Auto (current chapter)</string>
-    <string name="novel_translate_mode_auto_ahead">Auto (next N chapters)</string>
     <string name="novel_translate_debounce">Start delay</string>
     <string name="novel_translate_debounce_value">%1$d ms</string>
     <string name="novel_translate_ahead">Batches ahead</string>
-    <string name="novel_translate_ahead_value">%1$d</string>
-    <string name="novel_translate_action">Translate this chapter</string>
-    <string name="novel_translate_clear">Clear translations of this book</string>
     <string name="novel_translate_cleared">Translations cleared</string>
     <string name="novel_chapter_label">Chapter %1$d</string>
     <string name="novel_chapter_unread">Not translated</string>
@@ -1431,14 +1425,11 @@
     <string name="novel_back">Back</string>
     <string name="novel_prev_chapter">Previous chapter</string>
     <string name="novel_next_chapter">Next chapter</string>
-    <string name="novel_translate_batch">Paragraphs per batch</string>    <string name="novel_translate_summary">%1$d chapters · %2$d done · %3$d ongoing · %4$d failed</string>
-    <string name="novel_display_label">Show</string>
-    <string name="novel_style_hint">Layout is rebuilt immediately</string>
+    <string name="novel_translate_batch">Paragraphs per batch</string>    <string name="novel_style_hint">Layout is rebuilt immediately</string>
     <string name="novel_page_indicator">%1$s · %2$d/%3$d</string>
     <string name="novel_queue_translating">Translating chapter %1$d…</string>
     <string name="novel_translate_failed_chapter_hint">Chapter %1$d: %2$s</string>
     <string name="novel_chapter_progress">%1$d of %2$d paragraphs</string>
-    <string name="novel_translate_filter_pending">Untranslated</string>
     <string name="novel_read_progress">Reading chapter %1$d of %2$d</string>
     <string name="novel_delete_confirm_multi">Delete %1$d novels? Their local files and translations will be removed.</string>
     <string name="novel_cover_failed">Could not use that image as the cover.</string>
