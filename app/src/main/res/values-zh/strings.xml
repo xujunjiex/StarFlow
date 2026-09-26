@@ -1395,6 +1395,8 @@
     <string name="novel_fail_translate_empty">模型没返回译文</string>
     <string name="novel_chapter_failed_hint">%1$d 段失败：%2$s</string>
     <string name="novel_chapter_failed_meta">第 %1$d 章 · %2$d 段失败</string>
+    <string name="novel_style_keep_paragraphs">保持段落完整</string>
+    <string name="novel_style_keep_paragraphs_hint">一页放不下时，整段挪到下一页；关掉则按间距填满页面（段落可能被切断）</string>
     <string name="novel_style_reset">恢复默认</string>
     <string name="novel_style_reader_mode">阅读模式</string>
     <string name="novel_reader_mode_paged">左右翻页</string>

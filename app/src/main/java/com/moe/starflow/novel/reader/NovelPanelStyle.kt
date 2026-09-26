@@ -227,13 +227,18 @@ object NovelPanelStyle {
         maxOf(CHROME_TOP_DP, CHROME_BOTTOM_DP).coerceIn(VERTICAL_PADDING_MIN, VERTICAL_PADDING_MAX)
 
     /**
-     * **整段保护**：分页不在段落中间切断（放不下的段整段挪到下一页）。
+     * **保持段落完整**：分页不在段落中间切断（放不下的段整段挪到下一页）。
      *
-     * ⚠️ 这是**固定行为**，不再挂开关。曾经把它绑在「自动排版」上（关了按行填满），
-     * 现在自动排版已删除，取舍重新明确一次：句子被从中间切断，翻译也只能按半句来，
-     * 读者看到的是半句话 —— 宁可页面底部剩不到一段的空白，也不切句子。
+     * ⚠️ **默认关闭**（用户明确要求）：关掉时按间距值把页面填满，段落可能被切断；
+     * 代价是「底部可能剩不到一段的空白」，收益是「页面不留空」。开关就在排版面板里。
      */
-    const val KEEP_PARAGRAPHS_WHOLE = true
+    private const val KEY_KEEP_PARAGRAPHS_WHOLE = "novel_keep_paragraphs_whole"
+
+    fun keepParagraphsWhole(prefs: SharedPreferences): Boolean =
+        prefs.getBoolean(KEY_KEEP_PARAGRAPHS_WHOLE, false)
+
+    fun setKeepParagraphsWhole(prefs: SharedPreferences, v: Boolean) =
+        prefs.edit().putBoolean(KEY_KEEP_PARAGRAPHS_WHOLE, v).apply()
 
     // ===== 恢复默认 =====
 
@@ -241,6 +246,7 @@ object NovelPanelStyle {
     fun resetTypography(prefs: SharedPreferences) {
         val vertical = verticalPaddingDefaultDp()
         prefs.edit()
+            .putBoolean(KEY_KEEP_PARAGRAPHS_WHOLE, false)
             .putFloat(KEY_FONT_SIZE, FONT_SIZE_DEFAULT)
             .putInt(KEY_LINE_SPACING, LINE_SPACING_DEFAULT)
             .putInt(KEY_PARA_SPACING, PARA_SPACING_DEFAULT)
@@ -311,7 +317,7 @@ object NovelPanelStyle {
             paddingPx = paddingDp(prefs) * densityDpi,
             topPaddingPx = topPaddingDp(prefs) * densityDpi,
             bottomPaddingPx = bottomPaddingDp(prefs) * densityDpi,
-            keepParagraphsWhole = KEEP_PARAGRAPHS_WHOLE,
+            keepParagraphsWhole = keepParagraphsWhole(prefs),
         )
     }
 

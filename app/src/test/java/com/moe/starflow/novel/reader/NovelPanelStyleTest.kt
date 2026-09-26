@@ -200,6 +200,27 @@ class NovelPanelStyleTest {
         assertEquals("新键缺失时必须用默认 5，而不是旧键的 9", 5, NovelPanelStyle.aheadBatches(prefs))
     }
 
+    /**
+     * 保持段落完整：**默认关闭**（用户明确要求）—— 关掉时按间距把页面填满，
+     * 段落可能被切断；打开才做整段保护。
+     */
+    @Test
+    fun `保持段落完整默认关闭且可开关`() {
+        assertEquals(false, NovelPanelStyle.keepParagraphsWhole(prefs))
+        NovelPanelStyle.setKeepParagraphsWhole(prefs, true)
+        assertEquals(true, NovelPanelStyle.keepParagraphsWhole(prefs))
+        NovelPanelStyle.setKeepParagraphsWhole(prefs, false)
+        assertEquals(false, NovelPanelStyle.keepParagraphsWhole(prefs))
+    }
+
+    /** 恢复默认要把这个开关也关回去（否则「恢复默认」后排版还是整段保护）。 */
+    @Test
+    fun `恢复默认会关掉段落完整`() {
+        NovelPanelStyle.setKeepParagraphsWhole(prefs, true)
+        NovelPanelStyle.resetTypography(prefs)
+        assertEquals(false, NovelPanelStyle.keepParagraphsWhole(prefs))
+    }
+
     /** 翻译模式对外是枚举、底层仍是 0/1/2 —— 老用户存的「自动」不能被读成手动。 */
     @Test
     fun `翻译模式存取与默认值`() {

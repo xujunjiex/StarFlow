@@ -867,9 +867,12 @@ class NovelReaderActivity : AppCompatActivity() {
             quota = NovelQuota.of(NovelPanelStyle.aheadBatches(prefs)),
             // 每轮重新求值：切章不重启队列，锚点自动跟上
             currentChapter = { chapterIndex },
-            onBatchTranslated = { ch, _ ->
+            onBatchSettled = { ch, got ->
+                // 无论成败都要刷新：失败也要让面板的「失败」状态与原因立刻出来
                 refreshChapterStats()
-                if (ch == chapterIndex) refreshTranslations(keepPara = pendingParaIndex)
+                if (got.isNotEmpty() && ch == chapterIndex) {
+                    refreshTranslations(keepPara = pendingParaIndex)
+                }
             },
         )
         queueRunning = true
@@ -1154,6 +1157,8 @@ class NovelReaderActivity : AppCompatActivity() {
             val got = runCatching { q.translateOneBatch(b, chapterIndex) }.getOrNull().orEmpty()
             showOverlay(null)
             if (got.isEmpty()) {
+                // 失败也要刷面板：不然「失败」状态和原因要等下次开面板才看得到
+                refreshChapterStats()
                 showOverlayToast(getString(R.string.reader_translate_failed), error = true)
                 return@launch
             }
@@ -1312,6 +1317,7 @@ class NovelReaderActivity : AppCompatActivity() {
                 intervalSec = autoTurnIntervalSec,
                 rotateLabel = rotateLabel(),
                 isDarkPanel = NovelPanelStyle.isDarkBackground(bgMode),
+                keepParagraphsWhole = NovelPanelStyle.keepParagraphsWhole(prefs),
                 translateMode = NovelPanelStyle.translateMode(prefs),
                 debounceMs = NovelPanelStyle.debounceMs(prefs),
                 aheadBatches = NovelPanelStyle.aheadBatches(prefs),
@@ -1348,6 +1354,11 @@ class NovelReaderActivity : AppCompatActivity() {
                 onPadding = { v -> NovelPanelStyle.setPaddingDp(prefs, v); loadChapter(chapterIndex, keepPara = pendingParaIndex) },
                 onResetTypography = {
                     NovelPanelStyle.resetTypography(prefs)
+                    loadChapter(chapterIndex, keepPara = pendingParaIndex)
+                },
+                onKeepParagraphsWhole = { v ->
+                    NovelPanelStyle.setKeepParagraphsWhole(prefs, v)
+                    // 改的是分页规则 → 必须重排（页表变了）
                     loadChapter(chapterIndex, keepPara = pendingParaIndex)
                 },
                 onTopPadding = { v -> NovelPanelStyle.setTopPaddingDp(prefs, v); loadChapter(chapterIndex, keepPara = pendingParaIndex) },

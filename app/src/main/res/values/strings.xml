@@ -1396,6 +1396,8 @@
     <string name="novel_fail_translate_empty">Model returned nothing</string>
     <string name="novel_chapter_failed_hint">%1$d paragraphs failed: %2$s</string>
     <string name="novel_chapter_failed_meta">Chapter %1$d · %2$d failed</string>
+    <string name="novel_style_keep_paragraphs">Keep paragraphs whole</string>
+    <string name="novel_style_keep_paragraphs_hint">Move a paragraph to the next page when it does not fit; off = fill pages by spacing (paragraphs may split)</string>
     <string name="novel_style_reset">Reset to defaults</string>
     <string name="novel_style_reader_mode">Reading mode</string>
     <string name="novel_reader_mode_paged">Horizontal</string>

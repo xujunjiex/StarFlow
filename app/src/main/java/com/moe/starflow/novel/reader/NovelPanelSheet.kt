@@ -64,6 +64,7 @@ class NovelPanelState(
     val currentChapter: Int = 0,
     val chapters: List<NovelChapterMeta> = emptyList(),
     val chapterStats: Map<Int, NovelChapterStat> = emptyMap(),
+    val keepParagraphsWhole: Boolean = false,
 )
 
 /** 小说阅读器底部工具栏回调。 */
@@ -77,6 +78,9 @@ class NovelPanelCallbacks(
     val onParagraphSpacing: (Int) -> Unit,
     val onPadding: (Int) -> Unit,
     val onResetTypography: () -> Unit = {},
+
+    /** 保持段落完整（默认关：按间距填满页面）。 */
+    val onKeepParagraphsWhole: (Boolean) -> Unit = {},
     val onTopPadding: (Int) -> Unit = {},
     val onBottomPadding: (Int) -> Unit = {},
     val onAutoTurn: (Boolean, Int) -> Unit,
@@ -315,6 +319,12 @@ class NovelPanelSheet(
         val sbBottom = view.findViewById<SeekBar>(R.id.sb_bottom_padding)
         val tvBottomValue = view.findViewById<TextView>(R.id.tv_bottom_padding_value)
 
+        // 保持段落完整：默认关 —— 关掉时按间距把页面填满（段落可能被切断）
+        val swKeep = view.findViewById<Switch>(R.id.sw_keep_paragraphs)
+        swKeep.isChecked = state.keepParagraphsWhole
+        swKeep.setOnCheckedChangeListener { _, checked ->
+            if (!syncing) cb.onKeepParagraphsWhole(checked)
+        }
         view.findViewById<View>(R.id.btn_reset_typography).setOnClickListener {
             cb.onResetTypography()
             // ⚠️ 恢复默认是**宿主**在 prefs 上改的值，而面板持有的是打开面板那一刻的快照 ——
@@ -612,7 +622,7 @@ class NovelPanelSheet(
             R.id.tv_debounce_label, R.id.tv_ahead_label, R.id.tv_batch_label,
             R.id.tv_display_label, R.id.tv_font_size_label,
             R.id.tv_line_spacing_label, R.id.tv_para_spacing_label,
-            R.id.tv_padding_label,
+            R.id.tv_padding_label, R.id.tv_keep_paragraphs_label,
             R.id.tv_top_padding_label, R.id.tv_bottom_padding_label,
         ).forEach { view.findViewById<TextView>(it).setTextColor(labelColor) }
         listOf(
@@ -621,7 +631,7 @@ class NovelPanelSheet(
             R.id.tv_debounce_value, R.id.tv_ahead_value, R.id.tv_batch_value,
             R.id.tv_display_value, R.id.tv_font_size_value,
             R.id.tv_line_spacing_value, R.id.tv_para_spacing_value,
-            R.id.tv_padding_value,
+            R.id.tv_padding_value, R.id.tv_keep_paragraphs_hint,
             R.id.tv_top_padding_value, R.id.tv_bottom_padding_value,
             R.id.tv_style_hint,
         ).forEach { view.findViewById<TextView>(it).setTextColor(subColor) }
@@ -629,7 +639,7 @@ class NovelPanelSheet(
         chapterAdapter.dark = darkPanel
         // Switch 配色（避免与面板背景重叠/看不清）
         val swTrack = if (dark) 0xFF3A4046.toInt() else 0xFFCFD8DC.toInt()
-        listOf(R.id.sw_auto_turn).forEach { id ->
+        listOf(R.id.sw_auto_turn, R.id.sw_keep_paragraphs).forEach { id ->
             view.findViewById<Switch>(id).let {
                 it.thumbTintList = ColorStateList.valueOf(0xFF55AEEA.toInt())
                 it.trackTintList = ColorStateList.valueOf(swTrack)

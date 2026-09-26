@@ -102,13 +102,16 @@ class NovelTranslationQueue(
      *
      * @param quota 增量模式的批配额；手动/自动传什么都行
      * @param currentChapter 每轮**重新求值**（lambda 而非值）：切章不重启队列
+     * @param onBatchSettled **一批结束时**回调（成功给译文表，失败给空表）。
+     *   ⚠️ 失败**也必须调**：宿主靠它刷新统计与失败明细 —— 只报成功的话，
+     *   面板里的「失败」状态永远不出现（用户报的「失败的状态不会实时同步」）。
      */
     fun start(
         book: ImportedNovel,
         mode: NovelTranslateMode,
         quota: NovelQuota = NovelQuota.of(NovelQuota.DEFAULT),
         currentChapter: () -> Int,
-        onBatchTranslated: suspend (Int, Map<Int, String>) -> Unit,
+        onBatchSettled: suspend (Int, Map<Int, String>) -> Unit,
     ) {
         job?.cancel()
         failedAnchors.clear()
@@ -180,16 +183,19 @@ class NovelTranslationQueue(
                         // 内容性失败（空章 / 模型回空）：记账跳过，别死循环重试
                         LogCollector.w(TAG, "第 $chapter 章一批（${batch.size} 段）没拿到译文，跳过")
                         failedAnchors += anchor
+                        // 也要通知宿主：面板要立刻显示这一批失败了
+                        onBatchSettled(chapter, emptyMap())
                         continue
                     }
                     batchesDone += 1
                     if (mode == NovelTranslateMode.AHEAD) remaining = remaining.consume()
-                    onBatchTranslated(chapter, got)
+                    onBatchSettled(chapter, got)
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     LogCollector.e(TAG, "第 $chapter 章翻译失败", e)
                     failedAnchors += anchor
+                    onBatchSettled(chapter, emptyMap())
                 } finally {
                     OcrLock.release()
                 }
