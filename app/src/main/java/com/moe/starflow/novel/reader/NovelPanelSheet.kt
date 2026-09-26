@@ -420,6 +420,7 @@ class NovelPanelSheet(
         chapterAdapter.chapters = state.chapters
         chapterAdapter.stats = state.chapterStats
         chapterAdapter.currentChapter = state.currentChapter
+        liveStats = state.chapterStats
         updateSummary()
         setupTranslateFilter(view)
 
@@ -575,7 +576,7 @@ class NovelPanelSheet(
             R.id.tv_debounce_label, R.id.tv_ahead_label, R.id.tv_batch_label,
             R.id.tv_display_label, R.id.tv_font_size_label,
             R.id.tv_line_spacing_label, R.id.tv_para_spacing_label,
-            R.id.tv_padding_label, R.id.tv_vertical_padding_label,
+            R.id.tv_padding_label,
             R.id.tv_top_padding_label, R.id.tv_bottom_padding_label,
         ).forEach { view.findViewById<TextView>(it).setTextColor(labelColor) }
         listOf(
@@ -740,24 +741,41 @@ class NovelPanelSheet(
 
     // ===== 翻译汇总 / 过滤 =====
 
+    /**
+     * 宿主推来的**最新**章状态。
+     *
+     * ⚠️ 不能读 `state.chapterStats`：那是**打开面板那一刻的快照**。汇总曾经读的是它，
+     * 于是「面板开着时译文在涨，汇总数字却一动不动」—— 同一份数据在面板里存了两份
+     * （快照一份、adapter 一份），读错一份就白推了。
+     */
+    private var liveStats: Map<Int, NovelChapterStat> = emptyMap()
+
     private fun updateSummary() {
-        val list = state.chapterStats
         val total = state.chapterCount
-        val done = list.count { (_, s) -> s.total > 0 && s.success >= s.total }
-        val partial = list.count { (_, s) -> s.success > 0 && s.success < s.total }
-        val failed = list.count { (_, s) -> s.total > 0 && s.success < s.total }
+        val done = liveStats.count { (_, s) -> s.total > 0 && s.success >= s.total }
+        val partial = liveStats.count { (_, s) -> s.success > 0 && s.success < s.total }
+        val failed = liveStats.count { (_, s) -> s.total > 0 && s.success < s.total }
         view?.findViewById<TextView>(R.id.tv_translate_summary)?.text =
             getString(R.string.novel_translate_summary, total, done, partial, failed)
     }
 
     /**
-     * 外部刷新入口：翻译任务开始/完成后由宿主调用。
+     * 外部刷新入口：**宿主状态一变就推全量**（当前章 / 目录标签 / 章状态）。
      *
-     * ⚠️ 面板是**打开那一刻的快照**，宿主不推就没有第二条路能刷新它 ——
-     * 之前这个方法根本没被调用过，于是「面板开着时译文在涨，列表和汇总却一直停在打开时那一版」。
+     * ⚠️ 面板是**打开那一刻的快照**，宿主不推就没有第二条路能刷新它。
+     * ⚠️ 刻意做成**一个函数推全部**：早先是「每个字段一个推送方法」（只有 stats），
+     * 于是「在面板里点某一章跳过去」之后，高亮和目录标签一直停在旧值 ——
+     * 加字段时忘了加推送是默认结果。**新增任何依赖宿主的面板字段，都必须加到这篇里。**
      */
-    fun notifyTranslateChanged(stats: Map<Int, NovelChapterStat>) {
+    fun notifyHostState(
+        currentChapter: Int,
+        tocLabel: String,
+        stats: Map<Int, NovelChapterStat>,
+    ) {
+        liveStats = stats
         chapterAdapter.stats = stats
+        chapterAdapter.currentChapter = currentChapter
+        view?.findViewById<TextView>(R.id.tv_toc_value)?.text = tocLabel
         updateSummary()
     }
 

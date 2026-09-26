@@ -911,16 +911,26 @@ class NovelReaderActivity : AppCompatActivity() {
         val b = book ?: return
         lifecycleScope.launch {
             chapterStats = runCatching { translator().chapterStats(b) }.getOrDefault(emptyMap())
+            // 这一句里已经把章级状态推给面板了（见 updateChapterTocLabel）
             updateChapterTocLabel()
-            // 面板开着就必须把它一起刷新：面板是打开那一刻的快照，宿主不推它就永远停在旧状态
-            pushStatsToOpenPanel()
         }
     }
 
-    /** 把最新的章翻译状态推给正在显示的面板（没开就什么都不做）。 */
-    private fun pushStatsToOpenPanel() {
+    /**
+     * 把**章级状态**推给正在显示的面板（没开就什么都不做）。
+     *
+     * ⚠️ **宿主 → 面板只有一个出口**，而且必须一次推全（当前章 / 目录标签 / 章状态）。
+     * 早先是「每个字段一个推送方法」（只有 stats 那一个），所以「在面板里点某一章跳过去」
+     * 之后高亮与目录标签一直停在旧值 —— 新增宿主字段时忘了加推送就是**默认结果**。
+     * 挂在 [updateChapterTocLabel] 上是刻意的：换章、翻页、译文到达、重算统计都会走到那里。
+     */
+    private fun pushPanelState() {
         (supportFragmentManager.findFragmentByTag(NovelPanelSheet.TAG) as? NovelPanelSheet)
-            ?.notifyTranslateChanged(chapterStats)
+            ?.notifyHostState(
+                currentChapter = chapterIndex,
+                tocLabel = getString(R.string.novel_chapter_label, chapterIndex + 1) + " / " + chapterCount,
+                stats = chapterStats,
+            )
     }
 
     private fun chapterTitle(index: Int): String {
@@ -929,6 +939,7 @@ class NovelReaderActivity : AppCompatActivity() {
         return getString(R.string.novel_chapter_label, index + 1)
     }
 
+    /** 章内页码/滚动进度相关的显示 + 推给面板。 */
     private fun updateChapterTocLabel() {
         // 顶部胶囊：章名 + 章内进度。章是小说最主要的定位单位，必须常显
         val label = chapterTitle(chapterIndex)
@@ -941,6 +952,7 @@ class NovelReaderActivity : AppCompatActivity() {
             else getString(R.string.novel_page_indicator, label, currentPage() + 1, pages.size)
         }
         binding.tvPageIndicator.text = text
+        pushPanelState()
     }
 
     private fun refreshOverlay() {
@@ -1058,7 +1070,6 @@ class NovelReaderActivity : AppCompatActivity() {
                     }
                 }
                 refreshChapterStats()
-                pushStatsToOpenPanel()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {

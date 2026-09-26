@@ -413,15 +413,10 @@
                         android:min="16" android:max="64" android:layout_marginTop="2dp"
                         android:thumbTint="#55AEEA" android:progressTint="#55AEEA" android:progressBackgroundTint="#55AEEA"/>
 
-                    <!-- 上下间距：正文与屏幕上下边缘之间留出的空间。
-                         顶部三件浮层与底部胶囊压在屏幕上下 —— 不留空间正文会被压在 UI 底下 -->
-                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:orientation="horizontal" android:paddingTop="10dp" android:gravity="center_vertical">
-                        <TextView android:id="@+id/tv_vertical_padding_label" android:layout_width="0dp" android:layout_height="wrap_content"
-                            android:layout_weight="1" android:text="@string/novel_style_vertical_padding" android:textSize="13sp" android:textColor="#333333"/>
-                    </LinearLayout>
-
-                    <LinearLayout android:id="@+id/row_top_padding" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:paddingTop="6dp">
+                    <!-- 上/下间距：正文与屏幕上下边缘之间留出的空间。
+                         顶部三件浮层与底部胶囊压在屏幕上下 —— 不留空间正文会被压在 UI 底下。
+                         ⚠️ 不要再加「上下间距」这类分组标题：滑块自己就叫上间距/下间距 -->
+                    <LinearLayout android:id="@+id/row_top_padding" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:paddingTop="10dp">
                         <TextView android:id="@+id/tv_top_padding_label" android:layout_width="0dp" android:layout_height="wrap_content"
                             android:layout_weight="1" android:text="@string/novel_style_top_padding" android:textSize="13sp" android:textColor="#333333"/>
                         <TextView android:id="@+id/tv_top_padding_value" android:layout_width="wrap_content" android:layout_height="wrap_content"
