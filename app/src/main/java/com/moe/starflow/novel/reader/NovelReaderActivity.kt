@@ -957,6 +957,28 @@ class NovelReaderActivity : AppCompatActivity() {
         }
     }
 
+    /** 每章总段数（章行分母）缓存 + 在途去重：同一个章只解析一次。 */
+    private val chapterTotals = mutableMapOf<Int, Int>()
+    private val pendingTotalFetches = mutableSetOf<Int>()
+
+    /**
+     * 章行要某章的段数：解析一次并回推（懒解析：章行一次只显示几行）。
+     *
+     * ⚠️ 未翻译的章在数据库里没有统计行，分母只能从**正文**解析 —— 这就是
+     * 「只有翻过的章显示段数」的修法。
+     */
+    private fun ensureChapterTotal(index: Int) {
+        val b = book ?: return
+        if (chapterTotals.containsKey(index) || !pendingTotalFetches.add(index)) return
+        lifecycleScope.launch {
+            val n = runCatching { repository.paragraphCountOf(b, index) }.getOrDefault(0)
+            pendingTotalFetches.remove(index)
+            if (n <= 0) return@launch
+            chapterTotals[index] = n
+            pushPanelState()
+        }
+    }
+
     /**
      * 把**章级状态**推给正在显示的面板（没开就什么都不做）。
      *
@@ -970,6 +992,7 @@ class NovelReaderActivity : AppCompatActivity() {
             ?.notifyHostState(
                 currentChapter = chapterIndex,
                 stats = chapterStats,
+                totals = chapterTotals.toMap(),
             )
     }
 
@@ -1328,6 +1351,7 @@ class NovelReaderActivity : AppCompatActivity() {
                 onTranslateNow = { onTranslateButtonClick() },
                 onClearBook = { clearBookTranslations() },
                 onChapterJump = { ch -> gotoChapter(ch) },
+                onNeedChapterTotal = { ch -> ensureChapterTotal(ch) },
                 onPanelOpened = {
                     // 与漫画一致：面板一打开就**暂停并回退手动** —— 用户在看面板时若按旧设置继续翻，
                     // 既浪费额度也可能翻错；要重新选模式才会继续

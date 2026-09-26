@@ -69,6 +69,9 @@ class NovelChapterRepository {
     /** 书的身份键：书籍 id 会被复用，必须带 addedAt 指纹。 */
     private fun bookKey(book: ImportedNovel) = "${book.id}:${book.addedAt}"
 
+    /** 段数缓存（与段落缓存分开：章行要段数要得很频繁，不值得每次取整个列表）。 */
+    private val paraCounts = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
     /**
      * 取书的章节目录（带缓存）。文件丢失/损坏时返回空表 —— 由调用方展示「文件丢失」提示，
      * 而不是在这里崩。
@@ -81,6 +84,21 @@ class NovelChapterRepository {
             .getOrDefault(emptyList())
         chapterLists.put(key, list)
         list
+    }
+
+    /**
+     * 某章**有多少段**（章行显示的"分母"）。
+     *
+     * ⚠️ 未翻译的章在数据库里**没有任何行**，`chapterStats` 里也就没有它 —— 这正是
+     * 「只有翻过的章显示段数」那个 bug 的根因。所以分母必须自己解析出来：懒解析 + 缓存，
+     * 章行一次只显示几行，不必预先解析整本（上千章的书会卡死）。
+     */
+    suspend fun paragraphCountOf(book: ImportedNovel, chapterIndex: Int): Int {
+        val key = "${bookKey(book)}:$chapterIndex:${NovelParagraphSplitter.SPLIT_VERSION}"
+        paraCounts[key]?.let { return it }
+        val n = paragraphsOf(book, chapterIndex).size
+        paraCounts[key] = n
+        return n
     }
 
     /** 读章原文段落（带缓存）。读不到时返回空表。 */

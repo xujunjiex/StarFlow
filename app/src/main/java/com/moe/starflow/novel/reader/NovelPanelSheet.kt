@@ -91,6 +91,9 @@ class NovelPanelCallbacks(
      * 用户以为自动还在跑（漫画那份同样处理，见 `cb.currentTranslateMode()`）。
      */
     val currentTranslateMode: () -> NovelTranslateMode = { NovelTranslateMode.MANUAL },
+
+    /** 某章有多少段（章行的分母）：宿主懒解析后回推。 */
+    val onNeedChapterTotal: (Int) -> Unit = {},
     val onDebounceMs: (Int) -> Unit = {},
     val onAheadBatches: (Int) -> Unit = {},
     val onBatchSize: (Int) -> Unit = {},
@@ -429,6 +432,7 @@ class NovelPanelSheet(
         rv.adapter = chapterAdapter
         chapterAdapter.chapters = state.chapters
         chapterAdapter.stats = state.chapterStats
+        chapterAdapter.onNeedTotal = { cb.onNeedChapterTotal(it) }
         chapterAdapter.currentChapter = state.currentChapter
         liveStats = state.chapterStats
         updateSummary()
@@ -758,6 +762,9 @@ class NovelPanelSheet(
      */
     private var liveStats: Map<Int, NovelChapterStat> = emptyMap()
 
+    /** 每章总段数（章行的分母），见 `NovelChapterStateAdapter.totals`。 */
+    private var chapterTotals: Map<Int, Int> = emptyMap()
+
     private fun updateSummary() {
         val total = state.chapterCount
         val done = liveStats.count { (_, s) -> s.total > 0 && s.success >= s.total }
@@ -778,9 +785,12 @@ class NovelPanelSheet(
     fun notifyHostState(
         currentChapter: Int,
         stats: Map<Int, NovelChapterStat>,
+        totals: Map<Int, Int> = emptyMap(),
     ) {
+        chapterTotals = totals
         liveStats = stats
         chapterAdapter.stats = stats
+        chapterAdapter.totals = chapterTotals
         chapterAdapter.currentChapter = currentChapter
         updateSummary()
     }

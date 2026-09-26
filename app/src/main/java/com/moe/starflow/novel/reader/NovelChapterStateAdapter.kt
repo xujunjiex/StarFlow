@@ -32,6 +32,21 @@ class NovelChapterStateAdapter(
             rebuild()
         }
 
+    /**
+     * 每章的**总段数**（分母）。由宿主推来（懒解析 + 缓存）。
+     *
+     * ⚠️ 未翻译的章在 `stats` 里根本没有条目，只靠 stats 就会「只有翻过的章显示段数」。
+     */
+    var totals: Map<Int, Int> = emptyMap()
+        set(value) {
+            if (field == value) return
+            field = value
+            notifyItemRangeChanged(0, itemCount)
+        }
+
+    /** 某章段数还不知道时问宿主一次（宿主解析完会推回来）。 */
+    var onNeedTotal: ((Int) -> Unit)? = null
+
     /** 章状态（翻译进度）。 */
     var stats: Map<Int, NovelChapterStat> = emptyMap()
         set(value) {
@@ -129,9 +144,15 @@ class NovelChapterStateAdapter(
 
         // 这一行借的是「失败原因」那一格来显示段落进度 —— 章没有失败原因可言，
         // 空着反而让行高和漫画面板对不齐
+        // 这一行借的是「失败原因」那一格来显示段落进度 —— 章没有失败原因可言，
+        // 空着反而让行高和漫画面板对不齐
+        //
+        // ⚠️ 分母优先取宿主解析出来的**真实段数**，其次才是数据库统计（未翻的章没有统计行）
+        val total = totals[index] ?: st?.total ?: 0
+        if (total == 0) onNeedTotal?.invoke(index)
         item.findViewById<TextView>(R.id.tv_fail_message).apply {
-            text = if (st != null) {
-                item.context.getString(R.string.novel_chapter_progress, st.success, st.total)
+            text = if (total > 0) {
+                item.context.getString(R.string.novel_chapter_progress, st?.success ?: 0, total)
             } else ""
             setTextColor(subColor)
             visibility = if (!text.isNullOrBlank()) View.VISIBLE else View.GONE
