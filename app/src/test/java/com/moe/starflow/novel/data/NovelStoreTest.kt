@@ -152,4 +152,50 @@ class NovelStoreTest {
     fun `translationKey 就是 addedAt`() {
         assertEquals("100", novel(1, 100).translationKey)
     }
+
+    /**
+     * **回归**：可空字段往返之后不能变成字符串 `"null"`。
+     *
+     * 写侧是 `put(k, v ?: JSONObject.NULL)`，而 Android 的 `optString` 走 `JSON.toString(obj)`
+     * → `String.valueOf(JSONObject.NULL)` → 拿到的是**字面量 "null"**（四字符，`ifBlank` 判不出）。
+     * 后果是必现的：退出阅读器就会 `update` → save，此后 `coverPath` 变成 `File("null")`
+     * 找不到 —— **已导入的书封面永久消失**，作者栏显示成「null」。
+     */
+    @Test
+    fun `可空字段往返后仍是 null 而不是字符串 null`() {
+        NovelStore.save(ctx, listOf(novel(1, 100).copy(author = null, coverPath = null)))
+
+        val got = NovelStore.load(ctx).single()
+
+        assertEquals(null, got.author)
+        assertEquals("封面路径不能变成 File(\"null\")", null, got.coverPath)
+    }
+
+    /** 非空值往返不能丢（别为了修 null 把正常值也吞掉）。 */
+    @Test
+    fun `非空的可空字段往返后不丢`() {
+        NovelStore.save(ctx, listOf(novel(1, 100).copy(author = "某作者", coverPath = "/covers/1.jpg")))
+
+        val got = NovelStore.load(ctx).single()
+
+        assertEquals("某作者", got.author)
+        assertEquals("/covers/1.jpg", got.coverPath)
+    }
+
+    /**
+     * 整份清单解析不了时，原始串必须另存一份 —— 否则这次 save 会把用户仅剩的清单原地抹掉。
+     * （`load()` 返回空表 → 书架空 → 下一次 add/update 的 save 覆写。）
+     */
+    @Test
+    fun `清单整体损坏时先备份原始串再覆盖`() {
+        ctx.getSharedPreferences("novel_shelf", Context.MODE_PRIVATE)
+            .edit().putString("imported_novel_list", "{坏掉的 json").commit()
+
+        NovelStore.save(ctx, listOf(novel(1, 100)))
+
+        val backup = ctx.getSharedPreferences("novel_shelf", Context.MODE_PRIVATE)
+            .getString("novels_broken_backup", null)
+        assertEquals("{坏掉的 json", backup)
+        assertEquals(1, NovelStore.load(ctx).size)
+    }
 }

@@ -15,7 +15,6 @@ import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import com.moe.starflow.R
-import com.moe.starflow.data.TranslationHistoryDatabase
 import com.moe.starflow.databinding.FragmentNovelShelfBinding
 import com.moe.starflow.mangaimport.data.ImportFormat
 import com.moe.starflow.mangaimport.ui.DisplayMode
@@ -134,6 +133,10 @@ class NovelShelfFragment : Fragment() {
         showSelectionUi(false, 0)
 
         observeImportTasks()
+        // 进书架顺手清理孤儿译文行（清单里已不存在的小说）：删除是异步的，进程被杀 / 崩溃会让
+        // 那几条 DELETE 永远不执行 —— 孤儿行虽不会串到新书，但白占一整本书的原文 + 译文。
+        // 进程级作用域 + 幂等，与漫画侧 ImportMangaFragment.purgeOrphanTranslations 同一套做法。
+        NovelImportManager.purgeOrphanTranslations(requireContext())
         refresh()
     }
 
@@ -262,6 +265,7 @@ class NovelShelfFragment : Fragment() {
                     NovelImportFailureReason.UNREADABLE -> R.string.novel_import_reason_unreadable
                     NovelImportFailureReason.NO_TEXT_CHAPTER -> R.string.novel_import_reason_no_text_chapter
                     NovelImportFailureReason.EMPTY -> R.string.novel_import_reason_empty
+                    NovelImportFailureReason.TOO_LARGE -> R.string.novel_import_reason_too_large
                     NovelImportFailureReason.ENCRYPTED -> R.string.novel_import_reason_encrypted
                     NovelImportFailureReason.UNKNOWN -> R.string.novel_import_reason_unknown
                 }
@@ -371,32 +375,21 @@ class NovelShelfFragment : Fragment() {
             )
             .setPositiveButton(R.string.confirm) { _, _ ->
                 val ctx = requireContext()
-                viewLifecycleOwner.lifecycleScope.launch {
-                    withContext(Dispatchers.IO) { picked.forEach { deleteNovelFilesAndStore(ctx, it) } }
-                    adapter.exitSelection()
-                    refresh()
-                }
+                adapter.exitSelection()
+                // ⚠️ 删除必须走**进程级**作用域（NovelImportManager.deleteNovels）：旧实现整段跑在
+                // viewLifecycleOwner.lifecycleScope 里 —— 确认后立刻切 tab / 旋转 / 退出书架会把协程
+                // 取消掉，而清单是**同步**删的（书架上看不出来），译文记录那条 DELETE 就永远不执行，
+                // 每段的原文/译文/失败码永久留在库里。与漫画侧 ShelfCleanup 是同一套做法。
+                NovelImportManager.deleteNovels(ctx, picked)
+                refresh()
             }
             .setNegativeButton(R.string.cancel, null)
             .show()
     }
 
     /**
-     * 删除一本书：清单、本地文件、译文记录三处都要清。
-     *
-     * ⚠️ 译文要按 (id, key) **成对**删：书籍 id 会被复用，只按 id 删可能误伤用户随后
-     * 导入的、复用同一 id 的新书。
+     * 重命名（单选）：改名不改身份 —— `addedAt` 才是译文指纹，标题变了已翻的译文照旧。
      */
-    private suspend fun deleteNovelFilesAndStore(ctx: Context, novel: ImportedNovel) {
-        NovelStore.remove(ctx, novel.id)
-        runCatching { NovelImporter.deleteBookFiles(ctx, novel.id) }
-        runCatching {
-            TranslationHistoryDatabase.getInstance(ctx)
-                .novelParagraphTranslationDao()
-                .deleteForNovelScoped(novel.id, novel.translationKey)
-        }.onFailure { LogCollector.w(TAG, "删除译文记录失败 id=${novel.id}", it) }
-    }
-
     private fun renameSelected() {
         val novel = selectedNovels().firstOrNull() ?: return
         val input = EditText(requireContext()).apply {

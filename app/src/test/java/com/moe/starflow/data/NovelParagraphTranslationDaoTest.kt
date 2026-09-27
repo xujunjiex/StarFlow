@@ -135,6 +135,91 @@ class NovelParagraphTranslationDaoTest {
         )
     }
 
+    /**
+     * `markFailed` **不能盖掉已有译文**（`AND state != 2`）。
+     *
+     * 触发路径是真实的：长按多选 → 重翻时 `translateExact` 会把**已有译文**的段重新送出去
+     * （这正是重翻），这次若失败而 SUCCESS 行被翻成 FAILED，`loadTranslations` 只收 SUCCESS ——
+     * 用户**原有的译文会静默消失**，表现是「点了重翻，译文反而没了」。
+     */
+    @Test
+    fun `markFailed 不覆盖已有译文`() = runBlocking {
+        dao.upsert(row(0, 0, state = NovelParagraphTranslation.STATE_SUCCESS, text = "原有译文"))
+
+        dao.markFailed(NOVEL_ID, KEY, 0, SPLIT_VERSION, listOf(0), "HTTP 429", 2L)
+
+        val r = dao.forChapter(NOVEL_ID, KEY, 0, SPLIT_VERSION).single()
+        assertEquals(NovelParagraphTranslation.STATE_SUCCESS, r.state)
+        assertEquals("原有译文", r.translatedText)
+    }
+
+    /** 失败要能盖在 IDLE / TRANSLATING 上 —— 否则失败状态永远显示不出来。 */
+    @Test
+    fun `markFailed 能标记未成功与翻译中的行`() = runBlocking {
+        dao.upsert(row(0, 0, state = NovelParagraphTranslation.STATE_IDLE))
+        dao.upsert(row(0, 1, state = NovelParagraphTranslation.STATE_TRANSLATING))
+
+        dao.markFailed(NOVEL_ID, KEY, 0, SPLIT_VERSION, listOf(0, 1), "HTTP 429", 2L)
+
+        val rows = dao.forChapter(NOVEL_ID, KEY, 0, SPLIT_VERSION)
+        assertTrue(rows.all { it.state == NovelParagraphTranslation.STATE_FAILED })
+        assertTrue("失败原因要原样存下来", rows.all { it.failCode == "HTTP 429" })
+    }
+
+    /** 空集合守卫：空列表不能生成 `IN ()`（SQLite 语法错 → 运行时崩）。 */
+    @Test
+    fun `markFailed 空列表是安全的空操作`() = runBlocking {
+        dao.upsert(row(0, 0, state = NovelParagraphTranslation.STATE_IDLE))
+
+        dao.markFailed(NOVEL_ID, KEY, 0, SPLIT_VERSION, emptyList(), "x", 2L)
+
+        assertEquals(
+            NovelParagraphTranslation.STATE_IDLE,
+            dao.forChapter(NOVEL_ID, KEY, 0, SPLIT_VERSION).single().state,
+        )
+    }
+
+    /**
+     * `markTranslatingRows` 是 **UPDATE**：行已经由「补齐分母」建好了，
+     * 而 `INSERT OR IGNORE` 对已存在的行是空操作 —— 那样只有该章第一批能被标上，
+     * 第二批起「翻译中」永远写不进库（`resetStale` 于是变成空操作）。
+     */
+    @Test
+    fun `markTranslatingRows 能把已存在的行标成翻译中`() = runBlocking {
+        dao.upsert(row(0, 0, state = NovelParagraphTranslation.STATE_IDLE))
+
+        dao.markTranslatingRows(NOVEL_ID, KEY, 0, SPLIT_VERSION, listOf(0), "引擎", 2L)
+
+        val r = dao.forChapter(NOVEL_ID, KEY, 0, SPLIT_VERSION).single()
+        assertEquals(NovelParagraphTranslation.STATE_TRANSLATING, r.state)
+        assertEquals("引擎", r.translatorName)
+    }
+
+    /** 已有译文的段不能被标回「翻译中」（重翻期间也不能让译文看起来丢了）。 */
+    @Test
+    fun `markTranslatingRows 不动已有译文`() = runBlocking {
+        dao.upsert(row(0, 0, state = NovelParagraphTranslation.STATE_SUCCESS, text = "原有译文"))
+
+        dao.markTranslatingRows(NOVEL_ID, KEY, 0, SPLIT_VERSION, listOf(0), "引擎", 2L)
+
+        val r = dao.forChapter(NOVEL_ID, KEY, 0, SPLIT_VERSION).single()
+        assertEquals(NovelParagraphTranslation.STATE_SUCCESS, r.state)
+        assertEquals("原有译文", r.translatedText)
+    }
+
+    /** 重试开始时要清掉旧的失败原因 —— 否则失败的章行会在重试期间继续挂着旧报错。 */
+    @Test
+    fun `markTranslatingRows 清掉旧的失败原因`() = runBlocking {
+        dao.upsert(row(0, 0, state = NovelParagraphTranslation.STATE_FAILED))
+        dao.markFailed(NOVEL_ID, KEY, 0, SPLIT_VERSION, listOf(0), "HTTP 429", 1L)
+
+        dao.markTranslatingRows(NOVEL_ID, KEY, 0, SPLIT_VERSION, listOf(0), "引擎", 2L)
+
+        val r = dao.forChapter(NOVEL_ID, KEY, 0, SPLIT_VERSION).single()
+        assertEquals(NovelParagraphTranslation.STATE_TRANSLATING, r.state)
+        assertNull("旧的失败原因不该继续挂着", r.failCode)
+    }
+
     // ===== 聚合 =====
 
     @Test
@@ -168,10 +253,10 @@ class NovelParagraphTranslationDaoTest {
     // ===== 删除 =====
 
     @Test
-    fun `deleteChapter 只删该章`() = runBlocking {
+    fun `deleteForChapter 只删该章`() = runBlocking {
         dao.upsert(row(0, 0))
         dao.upsert(row(1, 0))
-        dao.deleteChapter(NOVEL_ID, KEY, 0)
+        dao.deleteForChapter(NOVEL_ID, KEY, 0)
         assertEquals(0, dao.forChapter(NOVEL_ID, KEY, 0, SPLIT_VERSION).size)
         assertEquals(1, dao.forChapter(NOVEL_ID, KEY, 1, SPLIT_VERSION).size)
     }

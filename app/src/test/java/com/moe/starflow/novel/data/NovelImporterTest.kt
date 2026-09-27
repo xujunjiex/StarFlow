@@ -1,7 +1,12 @@
 package com.moe.starflow.novel.data
 
+import android.content.ContentProvider
+import android.content.ContentValues
 import android.content.Context
+import android.database.Cursor
+import android.database.MatrixCursor
 import android.net.Uri
+import android.provider.DocumentsContract
 import com.moe.starflow.novel.model.NovelFormat
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -13,7 +18,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.Shadows
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowContentResolver
 import java.io.File
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -138,8 +145,22 @@ class NovelImporterTest {
 
     // ===== 失败清理 =====
 
+    /**
+     * 失败清理：半成品目录、**本次导入生成的封面**都要删掉，但**同 id 的漫画封面不能误删**。
+     *
+     * ⚠️ 这条以前是**假绿**：那个 zip 在格式判定那一步就失败了，`novel_7_*` 封面从来没被生成过，
+     * `none { … }` 恒真 —— 它连「小说封面带 novel_ 前缀，才不会被同 id 的漫画封面误删」这条
+     * 规则都没守住。所以这里手动摆一个**无前缀**的漫画封面（`MangaImporter` 的命名
+     * `covers/<id>_<ts>.jpg`）+ 真的用 [NovelImporter.placeholderCover] 造一个小说封面。
+     */
     @Test
-    fun `损坏的 epub 失败后清掉半成品目录与封面`() = runBlocking {
+    fun `导入失败后清掉半成品目录与小说封面但不碰漫画封面`() = runBlocking {
+        val covers = NovelStorageDir.coversDir(ctx).apply { mkdirs() }
+        val mangaCover = File(covers, "7_111.jpg").apply { writeBytes(ByteArray(4)) }
+        val novelCover = File(NovelImporter.placeholderCover(ctx, 7, "x"))
+        assertTrue("前提：占位封面必须带 novel_ 前缀", novelCover.name.startsWith("novel_7_"))
+        assertTrue("前提：两个封面都得先存在", mangaCover.exists() && novelCover.exists())
+
         val uri = zipUri("bad.epub", "mimetype" to "application/epub+zip".toByteArray())
         try {
             NovelImporter.importFile(ctx, uri, id = 7)
@@ -147,9 +168,120 @@ class NovelImporterTest {
             // 预期失败
         }
         assertFalse("半成品目录必须删掉", NovelStorageDir.bookDir(ctx, 7).exists())
+        assertFalse("本次导入生成的封面必须删掉", novelCover.exists())
+        assertTrue("同 id 的漫画封面（无前缀）不能被误删", mangaCover.exists())
+    }
+
+    // ===== 空文件 =====
+
+    /**
+     * ⚠️ 0 字节的 txt 以前会走「格式判定 → TXT → 0 章 → NO_TEXT_CHAPTER」，
+     * 用户看到的是「未找到可阅读的文本章节」，而「空文件」这条原因**永远不可达**（死代码）。
+     */
+    @Test
+    fun `0 字节文件报空文件原因`() = runBlocking {
+        var caught: Throwable? = null
+        try {
+            NovelImporter.importFile(ctx, uriOf("empty.txt", ByteArray(0)), id = 8)
+        } catch (e: Throwable) {
+            caught = e
+        }
+        assertNotNull("0 字节文件必须导入失败", caught)
+        assertEquals(NovelImporter.ERROR_EMPTY, (caught as? IllegalStateException)?.message)
+        assertEquals(NovelImportFailureReason.EMPTY, NovelImportManager.classify(caught!!))
+        assertFalse("失败后不能留下目录（否则书架上会留一张空卡片）", NovelStorageDir.bookDir(ctx, 8).exists())
         assertTrue(
-            "封面也必须清掉",
-            NovelStorageDir.coversDir(ctx).listFiles()?.none { it.name.startsWith("novel_7_") } ?: true,
+            "失败后也不能留下封面",
+            NovelStorageDir.coversDir(ctx).listFiles()?.none { it.name.startsWith("novel_8_") } ?: true,
+        )
+    }
+
+    /** 有内容、但一章都读不出来 → 仍是「无可读章节」，不能一并报成空文件。 */
+    @Test
+    fun `有内容但没有章节报无可读章节`() = runBlocking {
+        var caught: Throwable? = null
+        try {
+            NovelImporter.importFile(ctx, uriOf("blank.txt", " ".toByteArray()), id = 9)
+        } catch (e: Throwable) {
+            caught = e
+        }
+        assertEquals(
+            NovelImportFailureReason.NO_TEXT_CHAPTER,
+            NovelImportManager.classify(caught!!),
+        )
+    }
+
+    // ===== 路径安全（显示名是 provider 给的，不可信）=====
+
+    /**
+     * 假装成 DocumentsProvider：`DISPLAY_NAME` 里带路径分隔符。
+     *
+     * SAF 的显示名完全由 provider 决定，实现粗糙/恶意的 provider 返回 `../evil.txt` 时，
+     * 直接拼路径就能把文件写到 `novel_import/<id>/` 外面（能覆盖别的书、`covers/`、应用日志）。
+     */
+    private class NastyNameProvider(private val displayName: String) : ContentProvider() {
+        override fun onCreate(): Boolean = true
+        override fun getType(uri: Uri): String = "text/plain"
+        override fun insert(uri: Uri, values: ContentValues?): Uri? = null
+        override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int = 0
+        override fun update(
+            uri: Uri,
+            values: ContentValues?,
+            selection: String?,
+            selectionArgs: Array<out String>?,
+        ): Int = 0
+
+        override fun query(
+            uri: Uri,
+            projection: Array<out String>?,
+            selection: String?,
+            selectionArgs: Array<out String>?,
+            sortOrder: String?,
+        ): Cursor {
+            // ⚠️ DocumentFile 一次只查一列并按下标 0 取值，投影必须原样满足
+            val cols: Array<String> = if (projection.isNullOrEmpty()) {
+                arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+            } else {
+                Array(projection.size) { projection[it] }
+            }
+            val cursor = MatrixCursor(cols)
+            cursor.addRow(
+                cols.map { col ->
+                    when (col) {
+                        DocumentsContract.Document.COLUMN_DISPLAY_NAME -> displayName
+                        DocumentsContract.Document.COLUMN_SIZE -> 64L
+                        DocumentsContract.Document.COLUMN_LAST_MODIFIED -> 0L
+                        DocumentsContract.Document.COLUMN_MIME_TYPE -> "text/plain"
+                        else -> null
+                    }
+                }.toTypedArray()
+            )
+            return cursor
+        }
+    }
+
+    @Test
+    fun `显示名带路径分隔符时不会写出目标目录`() = runBlocking {
+        listOf("../evil.txt", "..\\evil.txt", "a/b/evil.txt").forEachIndexed { i, nasty ->
+            val id = 20L + i
+            val authority = "nasty$id"
+            ShadowContentResolver.registerProviderInternal(authority, NastyNameProvider(nasty))
+            val uri = Uri.parse("content://$authority/doc")
+            Shadows.shadowOf(ctx.contentResolver)
+                .registerInputStream(uri, "第一章 A\n\n正文一".byteInputStream())
+
+            val novel = NovelImporter.importFile(ctx, uri, id = id)
+            val bookDir = NovelStorageDir.bookDir(ctx, id).canonicalFile
+            val copied = File(novel.localRoot).canonicalFile
+            assertTrue(
+                "显示名「$nasty」把文件写到了目标目录外：${copied.path}",
+                copied.path.startsWith(bookDir.path + File.separator),
+            )
+            assertEquals("名字必须收敛成单段", "evil.txt", copied.name)
+        }
+        assertFalse(
+            "novel_import/ 下不该出现被挤出来的文件",
+            File(NovelStorageDir.root(ctx), "evil.txt").exists(),
         )
     }
 

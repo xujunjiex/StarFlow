@@ -196,6 +196,34 @@ interface NovelParagraphTranslationDao {
     suspend fun countFor(novelId: Long, novelKey: String): Int
 
     /**
+     * 把指定段标成「翻译中」。
+     *
+     * ⚠️ **必须是 UPDATE，不能靠 `insertIgnore` 建行**（真实踩过）：整章的行已经由
+     * 「补齐分母」那一步创建好了，`INSERT OR IGNORE` 对已存在的行是**空操作** ——
+     * 于是只有**该章的第一批**能被标上，第二批开始的每一批都标不上去
+     * （早先靠「先标记再补齐」的顺序绕过，对第二批起仍然无效）。
+     * UPDATE 与调用顺序无关，语义也更直白。
+     *
+     * `state != 2`：已有译文的段不动 —— 重翻时不能把拿到的译文弄丢。
+     * `failCode` 清空：这一段正在被重试，旧的失败原因不该继续挂着。
+     */
+    @Query(
+        "UPDATE novel_paragraph_translation SET state = 1, translatorName = :translatorName, " +
+            "failCode = NULL, updatedAt = :now " +
+            "WHERE novelId = :novelId AND novelKey = :novelKey AND chapterIndex = :chapterIndex " +
+            "AND splitVersion = :splitVersion AND paraIndex IN (:paraIndexes) AND state != 2"
+    )
+    suspend fun markTranslatingRows(
+        novelId: Long,
+        novelKey: String,
+        chapterIndex: Int,
+        splitVersion: Int,
+        paraIndexes: List<Int>,
+        translatorName: String,
+        now: Long,
+    )
+
+    /**
      * 把残留的「翻译中」重置为「未翻译」。
      *
      * ⚠️ 必要性：`STATE_TRANSLATING` 是在翻译**开始时**写库的，只有跑完才改成 SUCCESS。
@@ -210,12 +238,6 @@ interface NovelParagraphTranslationDao {
     )
     suspend fun resetTranslating(novelId: Long, novelKey: String)
 
-    @Query(
-        "DELETE FROM novel_paragraph_translation " +
-            "WHERE novelId = :novelId AND novelKey = :novelKey AND chapterIndex = :chapterIndex"
-    )
-    suspend fun deleteChapter(novelId: Long, novelKey: String, chapterIndex: Int)
-
     /**
      * 删除「某 id + 某指纹」的全部记录（顺带清同 id 下 key 为 NULL 的升级前残留）。
      *
@@ -227,6 +249,17 @@ interface NovelParagraphTranslationDao {
             "WHERE novelId = :novelId AND (novelKey = :novelKey OR novelKey IS NULL)"
     )
     suspend fun deleteForNovelScoped(novelId: Long, novelKey: String)
+
+    /**
+     * 按 id 删掉该书**全部**译文行（**不分指纹**）。
+     *
+     * ⚠️ 只给**孤儿清理**用（`allNovelIds()` 求差后得到的那几个 id）：那时手上只有 id，
+     * 拿不到指纹，而历史遗留行可能挂着旧指纹。用户主动删书仍然是
+     * [deleteForNovelScoped]（带指纹）—— 那条路必须防「id 被复用后误删新书」，
+     * 这条路的前提恰恰是「这个 id 已经不在书架上了」。
+     */
+    @Query("DELETE FROM novel_paragraph_translation WHERE novelId = :novelId")
+    suspend fun deleteForNovelId(novelId: Long)
 
     /** 全部出现过的 novelId（去重），供书架清理孤儿行。 */
     @Query("SELECT DISTINCT novelId FROM novel_paragraph_translation")

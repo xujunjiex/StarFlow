@@ -20,6 +20,14 @@ enum class NovelImportFailureReason {
     /** 空文件。 */
     EMPTY,
 
+    /**
+     * 超过读取上限（单文件 100MB / 单个压缩条目 8MB / 累计解压 200MB）。
+     *
+     * ⚠️ 必须有自己的一格：以前超限走 `ZipException → NOT_ARCHIVE`，用户拿到的提示是
+     * 「格式不支持或文件损坏」—— 那份文件其实好得很，只是太大，按这句话去查永远查不出结果。
+     */
+    TOO_LARGE,
+
     /** DRM 加密的 EPUB（加密条目指向正文文档）。 */
     ENCRYPTED,
 

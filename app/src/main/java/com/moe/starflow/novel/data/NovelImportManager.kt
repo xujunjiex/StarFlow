@@ -3,10 +3,12 @@ package com.moe.starflow.novel.data
 import android.content.Context
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
+import com.moe.starflow.data.TranslationHistoryDatabase
 import com.moe.starflow.mangaimport.data.ImportFormat
 import com.moe.starflow.mangaimport.data.ImportPhase
 import com.moe.starflow.mangaimport.data.ImportProgress
 import com.moe.starflow.mangaimport.data.ImportTask
+import com.moe.starflow.novel.parser.NovelReadLimits
 import com.moe.starflow.utils.LogCollector
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -203,15 +205,94 @@ object NovelImportManager {
         NovelImporter.deleteBookFiles(context, id)
     }
 
-    private fun classify(e: Throwable): NovelImportFailureReason = when {
+    /**
+     * 异常 → 失败原因。**只按 [NovelImporter] 里那几个常量比对**，不要在这里再写字符串字面量
+     * （两处各写一份，改一处就静默地全都落进 UNKNOWN）。
+     *
+     * ⚠️ 之所以还是按 message 比：抛出方是解析器（`EpubParser` / `FolderNovelParser`），
+     * 它们直接抛字面量 `"NO_TEXT_CHAPTER"` / `"ENCRYPTED"`（与常量取值一致，见这两个文件）。
+     */
+    internal fun classify(e: Throwable): NovelImportFailureReason = when {
         e is IllegalStateException && e.message == NovelImporter.ERROR_NO_TEXT_CHAPTER ->
             NovelImportFailureReason.NO_TEXT_CHAPTER
         e is IllegalStateException && e.message == NovelImporter.ERROR_ENCRYPTED ->
             NovelImportFailureReason.ENCRYPTED
-        // 空文件：能复制成功但解析出空
-        e is IllegalStateException && e.message == "EMPTY" -> NovelImportFailureReason.EMPTY
+        // 空文件：能复制成功但字节数为 0（由 NovelImporter 在格式判定前判出，见 importOne）
+        e is IllegalStateException && e.message == NovelImporter.ERROR_EMPTY ->
+            NovelImportFailureReason.EMPTY
+        // ⚠️ 必须排在 ZipException **之前**：TooLargeException 是它的子类，顺序反了就永远匹配不到
+        e is NovelReadLimits.TooLargeException -> NovelImportFailureReason.TOO_LARGE
         e is ZipException -> NovelImportFailureReason.NOT_ARCHIVE
         e is java.io.FileNotFoundException || e is SecurityException -> NovelImportFailureReason.UNREADABLE
         else -> NovelImportFailureReason.UNKNOWN
+    }
+
+    // ===== 书架删除（进程级，不随 View 销毁被取消）=====
+
+    /**
+     * 删除若干部小说：**清单同步落地**（书架立刻不再显示），本地文件与译文记录交给进程级作用域清。
+     *
+     * ⚠️ 为什么删除不能跑在 `viewLifecycleOwner.lifecycleScope` 里（旧实现的问题）：
+     * 确认删除后立刻切 tab / 旋转 / 退出书架，协程会随 View 一起被取消 —— 而清单是**同步**删的
+     * （书架上看不出来），DB 里那些段的原文 / 译文 / 失败码就永久留下，成了孤儿行。
+     * 与漫画侧 `mangaimport.data.ShelfCleanup` 是同一套做法（进程级作用域 + 兜异常）。
+     *
+     * ⚠️ 译文必须按 (id, 指纹) **成对**删：书籍 id 会被复用（`nextId` = 清单最大 id + 1），
+     * 而删除是异步的 —— 只按 id 删的话，用户完全可能在它落地前就导入了一本复用同 id 的新书
+     * 并翻了几章，把那本**新书**的译文删掉。
+     */
+    fun deleteNovels(context: Context, novels: List<ImportedNovel>) {
+        if (novels.isEmpty()) return
+        val app = context.applicationContext
+        // 清单先同步删：调用方紧接着的 refresh 必然看到「已删除」，不会闪回一张已经删掉的卡片
+        novels.forEach { NovelStore.remove(app, it.id) }
+        scope.launch {
+            try {
+                val dao = TranslationHistoryDatabase.getInstance(app).novelParagraphTranslationDao()
+                novels.forEach { n ->
+                    // ⚠️ 逐部兜异常：一部失败（外置存储被卸载、provider 抛 SecurityException）
+                    // 不该让后面的书连**文件**都不删。真删不掉的译文行还有 purgeOrphanTranslations 兜底。
+                    runCatching { NovelImporter.deleteBookFiles(app, n.id) }
+                        .onFailure { LogCollector.w(TAG, "删除书籍文件失败 id=${n.id}", it) }
+                    runCatching { dao.deleteForNovelScoped(n.id, n.translationKey) }
+                        .onFailure { LogCollector.w(TAG, "删除译文记录失败 id=${n.id}", it) }
+                }
+                LogCollector.i(TAG, "已删除 ${novels.size} 部小说: ${novels.map { it.id }}")
+            } catch (e: Exception) {
+                // 连库都没拿到（getInstance 失败）：清单已经同步删了，孤儿行等下次进书架清理
+                LogCollector.e(TAG, "删除译文记录失败: ${novels.map { it.id }}", e)
+            }
+        }
+    }
+
+    /**
+     * 清理**孤儿译文行**：库里出现过、但书架清单里已经没有的 novelId（进程级作用域，幂等）。
+     *
+     * 必要性：删除是异步的（见 [deleteNovels]），进程被杀 / 崩溃 / 中途异常都会让那几条 DELETE
+     * 永远不执行；孤儿行虽然不会串到新书（读取按 (id, 指纹) 过滤），但每行都带着原文与译文，
+     * 只会白占空间。与漫画侧 `ImportMangaFragment.purgeOrphanTranslations` 同构。
+     */
+    fun purgeOrphanTranslations(context: Context) {
+        val app = context.applicationContext
+        scope.launch {
+            try {
+                val db = TranslationHistoryDatabase.getInstance(app)
+                val dao = db.novelParagraphTranslationDao()
+                val validIds = NovelStore.load(app).map { it.id }.toSet()
+                dao.allNovelIds().filter { it !in validIds }.forEach { id ->
+                    try {
+                        // ⚠️ 逐个二次确认：本方法也是异步的，期间用户完全可能刚好导入了一本复用同 id 的
+                        // 新书（id = 清单最大 id + 1）。不再确认就按 id 删，会删掉那本新书的翻译行。
+                        if (NovelStore.load(app).any { it.id == id }) return@forEach
+                        dao.deleteForNovelId(id)
+                        LogCollector.i(TAG, "已清理孤儿译文 id=$id")
+                    } catch (e: Exception) {
+                        LogCollector.w(TAG, "清理孤儿译文失败 id=$id", e)
+                    }
+                }
+            } catch (e: Exception) {
+                LogCollector.w(TAG, "孤儿译文清理失败", e)
+            }
+        }
     }
 }

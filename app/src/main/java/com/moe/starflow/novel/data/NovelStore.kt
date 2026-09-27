@@ -93,14 +93,27 @@ object NovelStore {
         // 持久化会让「文件丢失」这种实时推导的结论变成过期缓存
     }
 
+    /**
+     * 读一个「可空字符串」字段。
+     *
+     * ⚠️ **不能写成 `optString(k, "").ifBlank { null }`**（真实踩过）：写侧用的是
+     * `put(k, v ?: JSONObject.NULL)`，而 Android 的 `optString` 走 `JSON.toString(obj)` →
+     * `String.valueOf(JSONObject.NULL)` → 拿到的是**字面量 "null"**（四字符，`ifBlank` 判不出）。
+     * 于是只要发生过一次 save→load 往返，`author` 就显示成「null」、`coverPath` 变成
+     * `File("null")` 找不到 → **已导入的书封面永久消失**（退出阅读器就会 update→save，
+     * 所以这是必现的）。这里显式判 JSON null。
+     */
+    private fun JSONObject.optNullableString(key: String): String? =
+        if (has(key) && !isNull(key)) optString(key, "").ifBlank { null } else null
+
     private fun JSONObject.toNovel(): ImportedNovel = ImportedNovel(
         id = getLong("id"),
         title = optString("title", ""),
-        author = optString("author", "").ifBlank { null },
+        author = optNullableString("author"),
         localRoot = getString("localRoot"),
         format = runCatching { NovelFormat.valueOf(optString("format", NovelFormat.TXT.name)) }
             .getOrDefault(NovelFormat.TXT),
-        coverPath = optString("coverPath", "").ifBlank { null },
+        coverPath = optNullableString("coverPath"),
         chapterCount = optInt("chapterCount", 0),
         addedAt = getLong("addedAt"),
         sizeBytes = optLong("sizeBytes", 0),

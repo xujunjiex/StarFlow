@@ -79,9 +79,13 @@ object NovelImporter {
         id: Long = nextId(context),
         onProgress: (ImportProgress) -> Unit = {},
     ): ImportedNovel = withContext(Dispatchers.IO) {
-        val displayName = runCatching { DocumentFile.fromSingleUri(context, uri)?.name }.getOrNull()
-            ?: fileNameOf(uri)
-            ?: "book_$id"
+        // ⚠️ 必须过一道 safeSegment：DISPLAY_NAME 由 DocumentsProvider 给，**不受我们控制**，
+        // 带 `/` 或 `\` 时直接拿去拼路径会把写入目标挪出 `novel_import/<id>/`
+        // （见 safeSegment 注释）。
+        val displayName = safeSegment(
+            runCatching { DocumentFile.fromSingleUri(context, uri)?.name }.getOrNull() ?: fileNameOf(uri),
+            "book_$id",
+        )
         val fallbackTitle = displayName.substringBeforeLast('.', displayName).ifBlank { "book_$id" }
         importOne(context, uri, id, displayName, fallbackTitle, onProgress)
     }
@@ -99,6 +103,36 @@ object NovelImporter {
             ?.substringAfterLast('/')
             ?.substringAfterLast('\\')
             ?.takeIf { it.isNotBlank() }
+
+    /**
+     * 把 SAF 给的显示名收敛成**单个路径段**。
+     *
+     * ⚠️ 为什么必须收敛：`DISPLAY_NAME` 来自 DocumentsProvider，**不是**可信输入。实现粗糙或恶意
+     * 的 provider 完全可以返回 `../evil.txt`、`a/b.txt` 这类名字，直接 `File(destDir, name)` 会
+     * 把写入目标挪出 `novel_import/<id>/` —— 越界后能覆盖**别的书**的目录、`covers/`，
+     * 甚至应用自己的日志文件（都在同一个 app 私有目录下）。
+     *
+     * 所以只取最后一个 `/`（或 `\`）之后的部分；为空则退回调用方给的生成名
+     * （宁可叫 `book_<id>`，也不能用一个来路不明的名字去写盘）。
+     */
+    private fun safeSegment(name: String?, fallback: String): String {
+        val seg = name.orEmpty().substringAfterLast('/').substringAfterLast('\\').trim()
+        return seg.ifBlank { fallback }
+    }
+
+    /**
+     * 目标文件必须落在 [destDir] **内部**（规范路径比较，`..` / `.` 也拦得住）。
+     *
+     * 这是纵深防御的第二道：名字已经收敛成单段（见 [safeSegment]），但 provider 的花样不受我们
+     * 控制，越界一律**抛异常**而不是静默写到别处 —— 静默写出去的后果是覆盖别人的数据，
+     * 而抛异常会被上层 catch 掉（`importOne` / `importDirectory` 都会清掉半成品目录再抛出）。
+     */
+    private fun resolveInside(destDir: File, name: String): File {
+        val dir = destDir.canonicalFile
+        val target = File(dir, name).canonicalFile
+        if (target.parentFile?.path != dir.path) throw IllegalStateException(ERROR_UNSAFE_NAME)
+        return target
+    }
 
     /**
      * 导入一个文件夹：**整个夹 = 一部小说**，夹内每个 txt 是一章（见 `FolderNovelParser`）。
@@ -131,8 +165,10 @@ object NovelImporter {
             var done = 0
             for (doc in wanted) {
                 coroutineContext.ensureActive()
-                val name = doc.name ?: continue
-                val target = File(destDir, name)
+                // ⚠️ provider 给的名字同样要收敛成单段，理由见 safeSegment
+                val name = safeSegment(doc.name, "")
+                if (name.isBlank()) continue
+                val target = resolveInside(destDir, name)
                 context.contentResolver.openInputStream(doc.uri)?.use { input ->
                     FileOutputStream(target).use { output -> copyStream(input, output) {} }
                 }
@@ -174,7 +210,7 @@ object NovelImporter {
         val destDir = NovelStorageDir.bookDir(context, id).apply { mkdirs() }
         try {
             // ===== 复制 =====
-            val dest = File(destDir, displayName)
+            val dest = resolveInside(destDir, displayName)
             val totalBytes = runCatching { DocumentFile.fromSingleUri(context, uri)?.length() }.getOrNull() ?: 0L
             onProgress(ImportProgress(ImportPhase.COPYING, totalBytes = totalBytes))
             context.contentResolver.openInputStream(uri)?.use { input ->
@@ -192,6 +228,12 @@ object NovelImporter {
                 }
             } ?: throw java.io.FileNotFoundException("无法打开: $uri")
             coroutineContext.ensureActive()
+
+            // ⚠️ 空文件必须在**格式判定之前**单独报出来：0 字节的 .txt 照样能通过格式判定
+            // （按扩展名判成 TXT）、解析出 0 章，最后落到 ERROR_NO_TEXT_CHAPTER ——
+            // 用户看到的是「未找到可阅读的文本章节」，而 EMPTY（「空文件」）永远不可达。
+            // 判据取**复制后的字节数**：源 provider 报的 length() 不可信（可能是 0 或 -1）。
+            if (dest.length() == 0L) throw IllegalStateException(ERROR_EMPTY)
 
             // ===== 解析 =====
             onProgress(ImportProgress(ImportPhase.SCANNING))
@@ -325,4 +367,13 @@ object NovelImporter {
     /** 与 `NovelImportManager` 的失败归类对齐的常量（避免两边字符串各写一份而漂移）。 */
     internal const val ERROR_NO_TEXT_CHAPTER = "NO_TEXT_CHAPTER"
     internal const val ERROR_ENCRYPTED = "ENCRYPTED"
+
+    /**
+     * 0 字节的源文件。⚠️ 必须真的有人抛它，否则 `NovelImportFailureReason.EMPTY`
+     * （「空文件」）与其文案就是死代码（见 [importOne] 里的判空）。
+     */
+    internal const val ERROR_EMPTY = "EMPTY"
+
+    /** 显示名越出目标目录（[resolveInside] 的第二道防线）。 */
+    internal const val ERROR_UNSAFE_NAME = "UNSAFE_NAME"
 }
