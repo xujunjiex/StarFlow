@@ -231,6 +231,7 @@ class NovelTranslationQueueTest {
         assertEquals("本页一批 + 窗口内向后一批（2 批 × 2 段 = 4 段）", listOf(listOf(0, 1), listOf(2, 3)), t.batches)
         advanceTimeBy(60_000)
         assertEquals("窗口内翻完就停，不越界继续往后", 2, t.batches.size)
+        assertEquals("窗口翻完 → 剩 0 批（不是负、也不是还剩一批）", 0, q.state.value.remaining)
 
         page = listOf(10, 11)
         advanceTimeBy(10_000)

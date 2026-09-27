@@ -122,7 +122,7 @@ interface NovelParagraphTranslationDao {
             "WHERE novelId = :novelId AND novelKey = :novelKey AND chapterIndex = :chapterIndex " +
             "AND splitVersion = :splitVersion AND paraIndex IN (:paraIndexes) AND state != 2"
     )
-    suspend fun markFailed(
+    suspend fun markFailedRows(
         novelId: Long,
         novelKey: String,
         chapterIndex: Int,
@@ -131,6 +131,25 @@ interface NovelParagraphTranslationDao {
         failCode: String,
         now: Long,
     )
+
+    /**
+     * 标失败（带**空集合守卫**）。
+     *
+     * ⚠️ `paraIndexes` 为空时 Room 会生成 `IN ()` —— SQLite 直接语法错、运行时崩。
+     * 之前只靠调用点自己判空，任何新调用方漏了就是一次崩溃。
+     */
+    suspend fun markFailed(
+        novelId: Long,
+        novelKey: String,
+        chapterIndex: Int,
+        splitVersion: Int,
+        paraIndexes: List<Int>,
+        failCode: String,
+        now: Long,
+    ) {
+        if (paraIndexes.isEmpty()) return
+        markFailedRows(novelId, novelKey, chapterIndex, splitVersion, paraIndexes, failCode, now)
+    }
 
     /** 失败明细（章行展开显示原因用）：只取 FAILED 行。 */
     @Query(

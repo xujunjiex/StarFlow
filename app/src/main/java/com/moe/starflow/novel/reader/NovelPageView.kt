@@ -80,20 +80,6 @@ class NovelPageView(context: Context) : View(context) {
         invalidate()
     }
 
-    /** 只换选中态（不重排）。 */
-    fun setSelected(sel: Set<Int>) {
-        if (selected == sel) return
-        selected = sel
-        invalidate()
-    }
-
-    /** 只换「正在翻译」高亮（不重排）。 */
-    fun setActiveBatch(sel: Set<Int>) {
-        if (activeBatch == sel) return
-        activeBatch = sel
-        invalidate()
-    }
-
     /**
      * 页内命中：本 View 坐标 [y] 落在哪一段上（选择模式用）。
      *

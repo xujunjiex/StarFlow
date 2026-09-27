@@ -59,7 +59,6 @@ class NovelPanelState(
     val debounceMs: Int = 500,
     val aheadBatches: Int = NovelQuota.DEFAULT,
     val batchSize: Int = NovelPanelStyle.BATCH_DEFAULT,
-    val chapterCount: Int = 0,
     val currentChapter: Int = 0,
     val chapters: List<NovelChapterMeta> = emptyList(),
     val chapterStats: Map<Int, NovelChapterStat> = emptyMap(),
@@ -846,7 +845,6 @@ class NovelPanelSheet(
 
 
     /** 每章总段数（章行的分母），见 `NovelChapterStateAdapter.totals`。 */
-    private var chapterTotals: Map<Int, Int> = emptyMap()
 
     /**
      * **宿主状态的唯一渲染入口**：把 [NovelPanelHostState] 整份画到控件上。
@@ -864,7 +862,6 @@ class NovelPanelSheet(
         }
         syncing = true
         try {
-            chapterTotals = s.chapterTotals
             chapterAdapter.stats = s.chapterStats
             chapterAdapter.totals = s.chapterTotals
             chapterAdapter.failures = s.chapterFailures

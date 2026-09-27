@@ -72,7 +72,9 @@ class NovelChapterTranslatorTest {
             val body = if (dropNumbering) {
                 matched.joinToString("\n\n") { (_, text) -> "T:$text" }
             } else {
-                matched.joinToString("\n") { (n, text) -> "[$n] T:$text" }
+                // ⚠️ **逆序**回包：按请求顺序回的话「按键位对应」和「按位置对应」结果完全相同，
+                // 改成位置映射也能过 —— 那是假绿（译文静默错位是最怕的一种错）
+                matched.reversed().joinToString("\n") { (n, text) -> "[$n] T:$text" }
             }
             callback(TranslationResult.Success(body))
         }
@@ -186,6 +188,31 @@ class NovelChapterTranslatorTest {
         assertTrue(rows.all { it.state == NovelParagraphTranslation.STATE_FAILED })
         assertTrue(rows.all { it.translatedText.isEmpty() })
         assertTrue(rows.all { it.failCode != null })
+    }
+
+    /**
+     * **失败原因必须带上原始报错**：用户要的不是"失败了"，是"为什么失败"
+     * （`failCode` 会原样显示在面板章行的展开里）。
+     */
+    @Test
+    fun `失败时 failCode 带出原始报错`() = runBlocking {
+        val boom = object : NovelTextTranslator {
+            override fun translate(
+                prompt: String,
+                sourceLang: String,
+                targetLang: String,
+                callback: (TranslationResult) -> Unit,
+            ) {
+                callback(TranslationResult.Error(java.io.IOException("HTTP 429 Too Many Requests")))
+            }
+        }
+        val t = NovelChapterTranslator(dao, NovelTranslationEngine(boom), SPLIT_VERSION)
+
+        t.translateBatch(book, 0, paragraphs, listOf(0), "ja", "zh", "boom")
+
+        val row = dao.forChapter(1, "5000", 0, SPLIT_VERSION).first { it.paraIndex == 0 }
+        assertEquals(NovelParagraphTranslation.STATE_FAILED, row.state)
+        assertTrue("failCode 要含原始报错，实际=${row.failCode}", row.failCode.orEmpty().contains("HTTP 429"))
     }
 
     /** 整批被拒（内容审查等）时会降级为逐段重试，把其余段落救回来。 */

@@ -1410,7 +1410,6 @@
     <string name="novel_translate_debounce">启动延迟</string>
     <string name="novel_translate_debounce_value">%1$d 毫秒</string>
     <string name="novel_translate_ahead">向后翻译批数</string>
-    <string name="novel_translate_cleared">已清空本书译文</string>
     <string name="novel_chapter_label">第 %1$d 章</string>
     <string name="novel_chapter_unread">未翻译</string>
     <string name="novel_chapter_partial">%1$d/%2$d</string>

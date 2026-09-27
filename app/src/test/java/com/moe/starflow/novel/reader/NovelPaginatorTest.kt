@@ -106,6 +106,28 @@ class NovelPaginatorTest {
     }
 
     /**
+     * **倒着填也要尊重「保持段落完整」**：开着这个开关时，锚点之前那一页不能把段落从中间切开
+     * （正向分页有这条规则，倒着填漏掉的话，同一本书前后两半的排版规则就不一致了）。
+     */
+    @Test
+    fun `倒着填时整段优先仍然生效`() {
+        // 三段各 2 行、行高 100px；一页 300px → 装得下一段 + 另一段的一行，但不是整段
+        val paras = (0 until 3).map { textPara(it, "字".repeat(20)) }
+        val m = measured(paras, charsPerLine = 10, lineHeightPx = 100f)
+        val style = NovelTextStyle(50f, 1f, 0f, 0f, keepParagraphsWhole = true)
+
+        // 锚点 = 第 3 段（下标 2）的第 0 行 → 前两段要倒着填
+        val pages = NovelPaginator.paginateAround(paras, m.starts, m.heights, style, 300f, 2 to 0)
+
+        val segsOf0 = pages.flatMap { it.segments }.filter { it.paraIndex == 0 }
+        assertEquals("第 0 段被拆开了：$segsOf0", 1, segsOf0.size)
+        assertEquals(0, segsOf0.first().lineStart)
+        assertEquals(2, segsOf0.first().lineEnd)
+        assertFullCoverage(paras, pages)
+        assertLineCoverage(pages)
+    }
+
+    /**
      * **值不值得强行分页**：锚点在页面上半部分就别强分 —— 强分会让**上一页提前结束**、
      * 底部留一大片空白（用户报的「三态切换后翻页，有页面提前分页、底部大片空白」）。
      * 在下半部分才强分（否则读者要往回跳将近一屏）。

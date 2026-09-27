@@ -89,16 +89,6 @@ class NovelBatchPlannerTest {
         assertTrue(NovelBatchPlanner.nextBatch(chapter, 99, emptySet(), 3).isEmpty())
     }
 
-    /** 增量配额：每批减一，到 0 即耗尽，且不会变负。 */
-    @Test
-    fun `增量配额到零即耗尽`() {
-        var q = NovelQuota.of(5)
-        assertEquals(5, q.remaining)
-        repeat(5) { q = q.consume() }
-        assertTrue(q.exhausted)
-        assertEquals(0, q.consume().remaining)
-    }
-
     /**
      * **增量窗口的右边界**（用户口径）：从当前页起往后「向后批数 × 每批段数」段之内才翻。
      * 越界的段留给用户翻页之后（窗口跟着当前页前移）。

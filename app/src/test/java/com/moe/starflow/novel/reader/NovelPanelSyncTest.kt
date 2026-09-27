@@ -49,7 +49,6 @@ class NovelPanelSyncTest {
         failures: Map<Int, List<NovelFailureRow>> = emptyMap(),
     ) = NovelPanelHostState(
         chapterIndex = chapter,
-        chapterCount = 3,
         chapterStats = stats,
         chapterTotals = totals,
         chapterFailures = failures,
@@ -67,9 +66,11 @@ class NovelPanelSyncTest {
     )
 
     /** 挂上面板（走真实 onCreateView + 真实布局），返回它的根视图。 */
-    private fun attach(): Pair<NovelPanelSheet, android.view.View> {
+    private fun attach(
+        chapters: List<com.moe.starflow.novel.model.NovelChapterMeta> = emptyList(),
+    ): Pair<NovelPanelSheet, android.view.View> {
         val activity = Robolectric.buildActivity(AppCompatActivity::class.java).setup().get()
-        val state = NovelPanelState(chapters = emptyList())
+        val state = NovelPanelState(chapters = chapters)
         val callbacks = NovelPanelCallbacks(
             onReaderMode = {}, onAnimation = {}, onBackground = {},
             onLineSpacing = {}, onParagraphSpacing = {}, onPadding = {},
@@ -156,6 +157,43 @@ class NovelPanelSyncTest {
         val adapter = rv.adapter as NovelChapterStateAdapter
         assertEquals(40, adapter.totals[0])
         assertEquals(1, adapter.failures[0]?.size)
+    }
+
+    /**
+     * **回归**：章行「已翻译」的分母必须是**宿主解析出的真实可翻译段数**，不是数据库里的行数。
+     *
+     * 库里的行是**按批惰性写的**，拿它当分母的话"翻了几段且都成功"就等于"整章翻完"——
+     * 用户报的「某一章没翻完却显示已经全部翻译完成」就是这个。把 `totalOf(index)` 改回
+     * `st.total`，这条会红。
+     */
+    @Test
+    fun `章行完成与否按真分母判而不是按库里行数`() {
+        val (sheet, v) = attach(
+            chapters = listOf(com.moe.starflow.novel.model.NovelChapterMeta(0, "第一章", "0,10")),
+        )
+        val rv = v.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rv_translate_chapters)
+        val adapter = { rv.adapter as NovelChapterStateAdapter }
+        adapter().filterKey = 1        // 「已完成」筛选：只看真的翻完的章
+
+        // 库里只有 1 行（翻过 1 段且成功），真分母是 40 → 不算完成
+        sheet.renderHostState(
+            state(
+                chapter = 0,
+                stats = mapOf(0 to NovelChapterStat(0, total = 1, success = 1)),
+                totals = mapOf(0 to 40),
+            ),
+        )
+        assertTrue("1/40 不该被判成已完成", adapter().visibleIndexes().isEmpty())
+
+        // 真分母到齐且已翻满 → 才算完成
+        sheet.renderHostState(
+            state(
+                chapter = 0,
+                stats = mapOf(0 to NovelChapterStat(0, total = 40, success = 40)),
+                totals = mapOf(0 to 40),
+            ),
+        )
+        assertTrue("分母齐了且翻满才算完成", adapter().visibleIndexes().contains(0))
     }
 
     /** 面板不该有自己的第二份真相：渲染完再推同一份状态，控件值不能变回去。 */

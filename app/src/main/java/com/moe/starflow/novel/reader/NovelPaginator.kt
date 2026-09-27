@@ -230,7 +230,9 @@ object NovelPaginator {
         }
 
         // 前半段：倒着填（页序在函数里已经翻正）
-        val head = pagesBackward(lines, breakIdx, style.paragraphSpacingPx, contentHeight)
+        val head = pagesBackward(
+            lines, breakIdx, style.paragraphSpacingPx, contentHeight, style.keepParagraphsWhole,
+        )
 
         // 后半段：把锚点所在段的行度量从锚点行切开，交给原来的正向分页 ——
         // 它从空页开始，所以第一页一定以锚点行开头
@@ -304,8 +306,12 @@ object NovelPaginator {
         endExclusive: Int,
         paragraphSpacingPx: Float,
         pageHeightPx: Float,
+        keepParagraphsWhole: Boolean,
     ): List<NovelPage> {
         if (endExclusive <= 0) return emptyList()
+        // 整段真实高度（判"这一段自己装得下一页吗"）
+        val wholeOf = HashMap<Int, Float>()
+        for (l in lines) wholeOf[l.paraIndex] = (wholeOf[l.paraIndex] ?: 0f) + l.height
         val pagesOut = ArrayList<NovelPage>()
         // 倒着走时先拿到的行在阅读顺序上更靠后 —— 先按倒序收集，收满一页再翻正
         var rev: MutableList<PageSegment> = ArrayList()
@@ -324,6 +330,16 @@ object NovelPaginator {
         while (i >= 0) {
             val ln = lines[i]
             val gap = if (rev.isNotEmpty() && ln.paraIndex != lastPara) paragraphSpacingPx else 0f
+            // ⚠️ **整段优先在倒着填时同样要生效**：这一段自己装得下一页、但这一页放不下它整段时，
+            // 整段挪到（阅读顺序上更早的）上一页 —— 与正向分页同一条规则，否则开着
+            // 「保持段落完整」也会被这里从中间切开
+            if (keepParagraphsWhole && rev.isNotEmpty() && ln.paraIndex != lastPara) {
+                val whole = wholeOf[ln.paraIndex] ?: 0f
+                if (whole <= pageHeightPx && used + gap + whole > pageHeightPx) {
+                    flush()
+                    continue
+                }
+            }
             if (rev.isNotEmpty() && used + gap + ln.height > pageHeightPx) {
                 flush()
                 continue    // 换页后重来这一行；新页为空，gap 自然是 0，不会死循环

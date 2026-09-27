@@ -77,12 +77,9 @@ object NovelBatchPlanner {
  */
 data class NovelQuota(val remaining: Int) {
 
-    /** 窗口宽度（批）。 */
-    val batches: Int get() = remaining
-
-    val exhausted: Boolean get() = remaining <= 0
-
-    fun consume(): NovelQuota = copy(remaining = (remaining - 1).coerceAtLeast(0))
+    // ⚠️ 别再加 `consume()/exhausted()` 那套"会减少的额度"API：现在没有"消耗"这回事了，
+    // 窗口宽度是队列每轮按当前页**现算**的（`NovelTranslationQueue` 读 `quota.remaining` 当宽度）。
+    // 留着扣减接口只会让下一个人以为还有一套配额消费逻辑（上一版就是这么被误读的）。
 
     companion object {
         const val MIN = 2

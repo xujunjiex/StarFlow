@@ -1411,7 +1411,6 @@
     <string name="novel_translate_debounce">Start delay</string>
     <string name="novel_translate_debounce_value">%1$d ms</string>
     <string name="novel_translate_ahead">Batches ahead</string>
-    <string name="novel_translate_cleared">Translations cleared</string>
     <string name="novel_chapter_label">Chapter %1$d</string>
     <string name="novel_chapter_unread">Not translated</string>
     <string name="novel_chapter_partial">%1$d/%2$d</string>

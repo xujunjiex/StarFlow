@@ -1156,12 +1156,11 @@ class NovelReaderActivity : AppCompatActivity() {
                 if (!result.isEmpty && ch == chapterIndex) {
                     refreshTranslations()
                 }
-                if (result.isEmpty) {
+                // ⚠️ **空批 + 没带原因 = 这一批里没有可翻译段**（例如整批都是图片段），
+                // 那是"没得翻"，不是失败 —— 弹红条只会让用户以为引擎坏了
+                if (result.isEmpty && result.error != null) {
                     showOverlayToast(
-                        getString(
-                            R.string.novel_translate_failed_reason,
-                            result.error ?: getString(R.string.reader_translate_failed),
-                        ),
+                        getString(R.string.novel_translate_failed_reason, result.error),
                         error = true,
                     )
                 }
@@ -1205,8 +1204,12 @@ class NovelReaderActivity : AppCompatActivity() {
             translatorName = { "novel" },
             batchSize = { NovelPanelStyle.batchSize(prefs) },
             debounceMs = { NovelPanelStyle.debounceMs(prefs) },
-            currentPageParaIndexes = { currentPageParaIndexes() },
-            chapterParaIndexes = { book2, ch -> repository.paragraphsOf(book2, ch).map { it.index } },
+            // ⚠️ 两条都只喂**可翻译段**（`isTranslatable`）：图片与 <4 字的短行按设计永不翻译，
+            // 混进来会让锚点落在它们身上 → 引擎把整批滤空 → 队列当"一批失败"弹红条（假失败）
+            currentPageParaIndexes = { translatableOnScreen() },
+            chapterParaIndexes = { book2, ch ->
+                repository.paragraphsOf(book2, ch).filter { it.isTranslatable() }.map { it.index }
+            },
             translatedIndexes = { book2, ch -> translations.keys.toSet() },
         ).also {
             queue = it
@@ -1318,12 +1321,10 @@ class NovelReaderActivity : AppCompatActivity() {
      */
     private fun hostStateToPanel() = NovelPanelHostState(
         chapterIndex = chapterIndex,
-        chapterCount = chapterCount,
         chapterStats = chapterStats,
         chapterTotals = chapterTotals.toMap(),
         chapterFailures = chapterFailures,
         translateMode = NovelPanelStyle.translateMode(prefs),
-        translating = queueRunning,
         readerMode = NovelPanelStyle.readerMode(prefs),
         animation = animationMode,
         background = bgMode,
@@ -1401,18 +1402,6 @@ class NovelReaderActivity : AppCompatActivity() {
             ?.takeIf { it != RecyclerView.NO_POSITION } ?: 0
 
     /**
-     * 本章「整页都已翻」的页集合（进度条上的绿色区间）。
-     *
-     * 与漫画同义：那边是「这一页渲染过译图」，这边是「这一页的每一段都有译文」。
-     */
-    private fun translatedPagesOf(pages: List<NovelPage>): Set<Int> {
-        if (translations.isEmpty()) return emptySet()
-        return pages.indices.filterTo(mutableSetOf()) { i ->
-            pages[i].segments.isNotEmpty() && pages[i].segments.all { translations.containsKey(it.paraIndex) }
-        }
-    }
-
-    /**
      * 滚动模式下的「已翻译」格集合（进度条上的绿色区间），值与 [loadChapter] 同步刷新。
      *
      * ⚠️ 不能每次滚动都现算：滚动回调是每帧一次的，几百段遍历会白烧 CPU。
@@ -1475,7 +1464,9 @@ class NovelReaderActivity : AppCompatActivity() {
                 }
             )
             val label = actionLabel(action, selectedPara.size)
-            binding.btnTranslate.contentDescription = label
+            // ⚠️ 没选中任何段时不要报「翻译 0 段」（读屏会念出来）：退回不带计数的普通文案
+            binding.btnTranslate.contentDescription =
+                if (selectedPara.isNotEmpty()) label else getString(R.string.reader_tab_translate)
             // 选择模式下按钮左边显示动作 + 段数：只有两个图标，区分不出「重翻」和「翻译+重翻」。
             // ⚠️ 判据是**选中集非空**（不是 selecting）：取消到一段不剩时按钮已经退回普通语义，
             // 显示「翻译 0 段」就自相矛盾了
@@ -1868,7 +1859,6 @@ class NovelReaderActivity : AppCompatActivity() {
                 debounceMs = NovelPanelStyle.debounceMs(prefs),
                 aheadBatches = NovelPanelStyle.aheadBatches(prefs),
                 batchSize = NovelPanelStyle.batchSize(prefs),
-                chapterCount = chapterCount,
                 currentChapter = chapterIndex,
                 chapters = chapters,
                 chapterStats = stats,
@@ -2004,18 +1994,6 @@ class NovelReaderActivity : AppCompatActivity() {
             showOverlay(null)
             r.onSuccess { showOverlayToast(getString(R.string.novel_download_done, it.absolutePath), error = false) }
                 .onFailure { showOverlayToast(getString(R.string.novel_download_failed, it.message.orEmpty()), error = true) }
-        }
-    }
-
-    private fun clearBookTranslations() {
-        val b = book ?: return
-        lifecycleScope.launch {
-            runCatching { translator().clearBook(b) }
-                .onFailure { LogCollector.w(TAG, "清空译文失败", it) }
-            translations = emptyMap()
-            refreshChapterStats()
-            loadChapter(chapterIndex, anchor = pendingAnchor)
-            toast(R.string.novel_translate_cleared)
         }
     }
 

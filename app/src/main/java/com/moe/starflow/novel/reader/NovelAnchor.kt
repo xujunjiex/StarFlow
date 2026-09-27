@@ -15,7 +15,6 @@ package com.moe.starflow.novel.reader
  * 重排完还在 30% 处 —— 这也是"位置不变"在文本被替换后唯一说得通的定义。
  */
 data class NovelAnchor(val paraIndex: Int = 0, val fraction: Float = 0f) {
-    val isStart: Boolean get() = paraIndex <= 0 && fraction <= 0f
 
     /**
      * 本锚点在「这段的显示文本」里对应的字符位置。

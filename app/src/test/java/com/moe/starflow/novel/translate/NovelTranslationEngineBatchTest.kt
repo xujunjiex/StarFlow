@@ -27,7 +27,8 @@ class NovelTranslationEngineBatchTest {
             callback: (TranslationResult) -> Unit,
         ) {
             prompts += prompt
-            val reply = Regex("""\[(\d+)]""").findAll(prompt)
+            // ⚠️ **逆序**回包：否则「按编号对应」与「按位置对应」结果相同，改成位置映射也能过（假绿）
+            val reply = Regex("""\[(\d+)]""").findAll(prompt).toList().reversed()
                 .joinToString("\n") { "[${it.groupValues[1]}] 译${it.groupValues[1]}" }
             callback(TranslationResult.Success(reply))
         }

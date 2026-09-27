@@ -50,7 +50,9 @@ class NovelChapterTranslator(
 
     private companion object {
         const val TAG = "NovelChapterTranslator"
-        const val FAIL_CODE_EMPTY = "TRANSLATE_EMPTY"
+
+        /** ⚠️ 与显示端共用同一个字面量（`NovelFailCode`）：两处各写一份，改一处就静默不一致 */
+        const val FAIL_CODE_EMPTY = com.moe.starflow.novel.reader.NovelFailCode.TRANSLATE_EMPTY
     }
 
     fun translateChapter(
@@ -79,7 +81,8 @@ class NovelChapterTranslator(
         targetLang: String,
     ) {
         val rows = translatingRows(book, chapterIndex, paragraphs, translatorName, sourceLang, targetLang)
-        if (rows.isNotEmpty()) dao.upsertAll(rows)
+        // ⚠️ 与批路径同一套语义：`insertIgnore`，绝不能 REPLACE —— REPLACE 会把已有译文覆盖成空串
+        if (rows.isNotEmpty()) dao.insertIgnore(rows)
     }
 
     /**
@@ -239,11 +242,13 @@ class NovelChapterTranslator(
         }
         if (mine.isEmpty()) return NovelBatchResult(emptyMap())
 
-        // ⚠️ 先把整章的可翻译段落补齐成 IDLE 行（见 ensureChapterRows 的说明）：
-        // 章徽章/筛选/目录的分母是 `COUNT(*)`，只写这一批的话分母会退化成"翻过的段数"，
-        // 于是翻了几段就把整章标成「已翻译」—— 用户报的「没翻完却显示全部完成」。
-        ensureChapterRows(book, chapterIndex, paragraphs, translatorName, sourceLang, targetLang)
+        // ⚠️ **顺序不能反**：两句都用 `INSERT OR IGNORE`（同一批主键），后写的对已存在的行无效。
+        // 先标这一批为 TRANSLATING，再补齐**其余**段落为 IDLE —— 反过来写的话
+        // 「翻译中」这个状态永远写不进库：`resetStale` 变成空操作，失败后重挑的段也不会被标回翻译中。
         markTranslatingBatch(book, chapterIndex, mine, translatorName, sourceLang, targetLang)
+        // 补齐整章的可翻译段落（章徽章/筛选/目录的分母是 `COUNT(*)`，只写这一批的话分母会退化成
+        // "翻过的段数"，于是翻了几段就把整章标成「已翻译」—— 用户报的「没翻完却显示全部完成」）
+        ensureChapterRows(book, chapterIndex, paragraphs, translatorName, sourceLang, targetLang)
         val result = engine.translateBatch(paragraphs, mine.map { it.index }, sourceLang, targetLang)
         val got = result.translations
         persist(

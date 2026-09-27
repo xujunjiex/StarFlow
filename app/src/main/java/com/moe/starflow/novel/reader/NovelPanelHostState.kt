@@ -21,14 +21,11 @@ import com.moe.starflow.novel.translate.NovelTranslateMode
  */
 data class NovelPanelHostState(
     val chapterIndex: Int = 0,
-    val chapterCount: Int = 0,
     val chapterStats: Map<Int, NovelChapterStat> = emptyMap(),
     val chapterTotals: Map<Int, Int> = emptyMap(),
     val chapterFailures: Map<Int, List<NovelFailureRow>> = emptyMap(),
     /** 宿主**此刻**的模式（打开面板会回退手动，所以必须以宿主为准）。 */
     val translateMode: NovelTranslateMode = NovelTranslateMode.MANUAL,
-    /** 翻译是否在跑（在跑时单击按钮只提示）。 */
-    val translating: Boolean = false,
     val readerMode: Int = NovelPanelStyle.READER_PAGED,
     val animation: Int = NovelPanelStyle.ANIM_SLIDE,
     val background: Int = 0,

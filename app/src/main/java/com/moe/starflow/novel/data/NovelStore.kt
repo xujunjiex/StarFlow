@@ -19,6 +19,8 @@ object NovelStore {
 
     private const val PREFS_NAME = "novel_shelf"
     private const val KEY = "imported_novel_list"
+    /** 清单整体解析不了时，把原始串另存这里（见 [save]）—— 给用户留一条找回的路。 */
+    private const val KEY_BROKEN = "novels_broken_backup"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -29,7 +31,10 @@ object NovelStore {
         return try {
             val arr = JSONArray(raw)
             (0 until arr.length())
-                .map { i -> arr.getJSONObject(i).toNovel() }
+                // ⚠️ **逐条容错**：`toNovel()` 里 `id/addedAt/localRoot` 是严格取值，
+                // 一条坏数据会抛异常 —— 整份 catch 成 emptyList() 的话，下一次 `save()`
+                // （退出阅读器就会调）就把这份空清单覆盖落盘，书的文件还在但清单永久没了
+                .mapNotNull { i -> runCatching { arr.getJSONObject(i).toNovel() }.getOrNull() }
                 // 没有本地路径的条目不可用（占位条目从不入库，出现即脏数据）
                 .filterNot { it.localRoot.isBlank() }
         } catch (e: Exception) {
@@ -39,6 +44,12 @@ object NovelStore {
 
     @Synchronized
     fun save(context: Context, list: List<ImportedNovel>) {
+        // ⚠️ 整份清单解析不了时（不是单条坏、是整体坏了），先把原始串另存一份再覆盖：
+        // 否则这次 save 会把用户仅剩的清单原地抹掉，再也没有找回的余地
+        val raw = prefs(context).getString(KEY, null)
+        if (!raw.isNullOrEmpty() && runCatching { JSONArray(raw) }.isFailure) {
+            prefs(context).edit().putString(KEY_BROKEN, raw).apply()
+        }
         val arr = JSONArray()
         list.forEach { arr.put(it.toJson()) }
         prefs(context).edit().putString(KEY, arr.toString()).apply()
