@@ -115,10 +115,6 @@ class NovelPageAdapter : RecyclerView.Adapter<NovelPageAdapter.VH>() {
         holder.curl.setPageBackground(backgroundColor)
         val c = content ?: return
         val page = c.pages.getOrNull(position) ?: return
-        NovelDebug.log(
-            "bindPage pos=$position segs=${page.segments.size} " +
-                "p0=${page.segments.firstOrNull()?.let { s -> NovelDebug.brief(c.displayOf(s.paraIndex)) }}"
-        )
         holder.page.bind(c, page, style, textColor, selected, activeBatch)
     }
 

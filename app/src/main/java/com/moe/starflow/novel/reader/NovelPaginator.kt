@@ -1,7 +1,54 @@
 package com.moe.starflow.novel.reader
 
+import android.text.StaticLayout
 import com.moe.starflow.novel.translate.NovelParagraph
 import com.moe.starflow.novel.translate.NovelParagraphType
+
+/**
+ * 段级 `StaticLayout` 缓存（[NovelPaginator.paginate] 的度量来源）。
+ *
+ * ⚠️ **为什么必须有**：`paginate` 要为**整章每一段**建一次 `StaticLayout`，而译文每落一批
+ * 就会让内容缓存的键失效、重排整章 —— 改动 3 段却重排 300 段。无章节标记的 txt
+ * （`TxtChapterSplitter.wholeBook`，整本当一章）段数上万，每批重排上万次文本排版，
+ * 用户看到的就是「翻一批要等好几秒」。有了它，每批只需重建显示文本真的变了的那几段。
+ *
+ * 键里带上 `text` **本身**（不只是 hashCode）：哈希碰撞会拿到**另一段的排版**，
+ * 画出来的就是串行错位的正文 —— 这种错不会报错，只会"看着不对"。
+ *
+ * ⚠️ 只给分页器用（它跑在 IO 线程上）：`StaticLayout` 的读取不是线程安全的，
+ * 同一个实例别同时给主线程的绘制用（`NovelPageView` 有自己的缓存）。
+ */
+internal class NovelLayoutCache(private val maxEntries: Int = 256) {
+
+    private data class Key(
+        val paraIndex: Int,
+        val text: String,
+        val style: NovelTextStyle,
+        val width: Int,
+    )
+
+    private val entries = object : LinkedHashMap<Key, StaticLayout>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<Key, StaticLayout>): Boolean =
+            size > maxEntries
+    }
+
+    /** 命中就复用同一份 layout（行起点/行高同源，分页与绘制共用一套几何这条不变量不受影响）。 */
+    @Synchronized
+    fun layout(
+        paraIndex: Int,
+        text: String,
+        style: NovelTextStyle,
+        contentWidth: Int,
+        build: () -> StaticLayout,
+    ): StaticLayout {
+        val key = Key(paraIndex, text, style, contentWidth)
+        entries[key]?.let { return it }
+        return build().also { entries[key] = it }
+    }
+
+    @Synchronized
+    fun clear() = entries.clear()
+}
 
 /**
  * 章文本分页。
@@ -158,6 +205,22 @@ object NovelPaginator {
         heightPx: Int,
         /** 阅读锚点（带位重排）：它必须落在**页首**，见 [paginateAround]。 */
         anchor: NovelAnchor? = null,
+    ): List<NovelPage> = paginate(paragraphs, style, widthPx, heightPx, anchor, null)
+
+    /**
+     * 与上面同义，但可以带上**段级排版缓存**（宿主按章持有，见 [NovelLayoutCache]）。
+     *
+     * 单独一个 `internal` 重载而不是给公开那版加参数：`NovelLayoutCache` 是实现细节，
+     * 不该出现在公开签名里（编译器也会因为公开函数暴露 internal 类型而报错）。
+     * 传 null = 每次全量重排（单测与不需要缓存的调用方用）。
+     */
+    internal fun paginate(
+        paragraphs: List<NovelParagraph>,
+        style: NovelTextStyle,
+        widthPx: Int,
+        heightPx: Int,
+        anchor: NovelAnchor?,
+        layoutCache: NovelLayoutCache?,
     ): List<NovelPage> {
         val visible = paragraphs.filter { it.type != NovelParagraphType.SKIP }
         if (visible.isEmpty() || widthPx <= 0 || heightPx <= 0) return emptyList()
@@ -165,7 +228,15 @@ object NovelPaginator {
         val contentWidth = style.contentWidthPx(widthPx)
         val contentHeight = style.contentHeightPx(heightPx)
 
-        val layouts = visible.map { NovelTextRenderer.build(it.originalText, style, contentWidth) }
+        // ⚠️ 走缓存：译文每落一批就会重排整章，而真正变的只有那一批几段 ——
+        // 不缓存的话改动 3 段要重建 300 份 StaticLayout（见 [NovelLayoutCache]）
+        val layouts = visible.map { p ->
+            layoutCache
+                ?.layout(p.index, p.originalText, style, contentWidth) {
+                    NovelTextRenderer.build(p.originalText, style, contentWidth)
+                }
+                ?: NovelTextRenderer.build(p.originalText, style, contentWidth)
+        }
         val lineStarts = layouts.map { l -> IntArray(l.lineCount) { l.getLineStart(it) } }
         val lineHeights = layouts.map { l ->
             FloatArray(l.lineCount) { (l.getLineBottom(it) - l.getLineTop(it)).toFloat() }

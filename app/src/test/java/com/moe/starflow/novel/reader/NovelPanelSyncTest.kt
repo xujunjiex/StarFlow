@@ -160,6 +160,41 @@ class NovelPanelSyncTest {
     }
 
     /**
+     * **回归**：「失败」筛选下，新失败的章必须出现在列表里。
+     *
+     * `failures` 的 setter 若只 `notifyItemRangeChanged`（不 `rebuild()`），缓存过滤表
+     * `visible` 就不变 —— 而宿主更新这一行是**两次推送**：一批全部失败时 `stats` 的
+     * success/total 一个都没变（data class 相等 → setter 提前 return），真正变的只有 `failures`。
+     * 于是用户开着面板、切到「失败」筛选，刚失败的章就是不出来（其余三个 setter 都 rebuild，漏的是这条）。
+     */
+    @Test
+    fun `失败筛选下新失败的章会出现在列表里`() {
+        val (sheet, v) = attach(
+            chapters = listOf(com.moe.starflow.novel.model.NovelChapterMeta(0, "第一章", "0,10")),
+        )
+        val rv = v.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rv_translate_chapters)
+        val adapter = { rv.adapter as NovelChapterStateAdapter }
+        adapter().filterKey = 3
+
+        val stats = mapOf(0 to NovelChapterStat(0, total = 40, success = 0))
+        val totals = mapOf(0 to 40)
+        sheet.renderHostState(state(chapter = 0, stats = stats, totals = totals))
+        assertTrue("还没有失败时不该出现", adapter().visibleIndexes().isEmpty())
+
+        // 只推 failures：stats 与上一次逐字节相同（setter 会提前 return）
+        sheet.renderHostState(
+            state(
+                chapter = 0,
+                stats = stats,
+                totals = totals,
+                failures = mapOf(0 to listOf(NovelFailureRow(0, 3, "HTTP 429", "原文"))),
+            ),
+        )
+
+        assertTrue("失败筛选下必须出现这一章", adapter().visibleIndexes().contains(0))
+    }
+
+    /**
      * **回归**：章行「已翻译」的分母必须是**宿主解析出的真实可翻译段数**，不是数据库里的行数。
      *
      * 库里的行是**按批惰性写的**，拿它当分母的话"翻了几段且都成功"就等于"整章翻完"——

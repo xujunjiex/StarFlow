@@ -6,6 +6,7 @@ import com.moe.starflow.novel.model.NovelChapterMeta
 import com.moe.starflow.novel.parser.NovelParsers
 import com.moe.starflow.novel.translate.NovelParagraph
 import com.moe.starflow.novel.translate.NovelParagraphSplitter
+import com.moe.starflow.novel.translate.NovelParagraphType
 import com.moe.starflow.utils.LogCollector
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -25,8 +26,39 @@ data class ChapterContent(
     val paragraphs: List<NovelParagraph>,
     val displayTexts: Map<Int, String>,
     val pages: List<NovelPage>,
+    /**
+     * 可翻译段号（TEXT 且非空白）。
+     *
+     * ⚠️ 算一次存着，别让调用方各自 `filter`：进度条判「这一页翻完没有」、浮层判
+     * 「还有没有待翻的段」都要它，而 `refreshOverlay` 在滚动模式下是跟着滚动回调走的。
+     */
+    val translatableIndexes: Set<Int> = emptySet(),
 ) {
-    val isEmpty: Boolean get() = paragraphs.isEmpty()
+    /**
+     * 非 SKIP 的段（滚动列表就是按这个顺序排的）。
+     *
+     * ⚠️ **算一次就存住**：`NovelScrollMapping.visibleParagraphs` 以前每次现 `filter`，
+     * 而它被 `getItemCount()`（RecyclerView 每次布局都问）、每个 item 的绑定、
+     * 以及滚动回调路径反复调用 —— 整本当一章的书（`TxtChapterSplitter.wholeBook`）
+     * 段数上万，等于每帧新建一张表。
+     *
+     * ⚠️ 用 `by lazy` 而不是构造参数：构造参数要带默认值，而**手写的夹具**（单测里直接
+     * `ChapterContent(...)` 的地方）会漏传它，于是"列表是空的"这种假象会静默传播；
+     * 派生属性没有这个口子。它不参与 data class 的 equals/hashCode（那是对的）。
+     */
+    val visibleParas: List<NovelParagraph> by lazy {
+        paragraphs.filter { it.type != NovelParagraphType.SKIP }
+    }
+
+    /**
+     * 有没有东西可显示。
+     *
+     * ⚠️ 不能只看 `paragraphs.isEmpty()`：`NovelParagraphSplitter` 会把不足 4 字的段标成
+     * SKIP、分页器又把 SKIP 整段滤掉 —— 于是「整章都是『……』」的章 `paragraphs` 非空、
+     * `visibleParas` 为空 → 不显示「本章为空」，页适配器 0 项、**白屏且没有任何解释**，
+     * 章行分母也恒为 0。判据要落在"有没有可显示的段"上。
+     */
+    val isEmpty: Boolean get() = paragraphs.isEmpty() || visibleParas.isEmpty()
 
     /** 某段在本章当前该显示的完整文本。 */
     fun displayOf(paraIndex: Int): String = displayTexts[paraIndex].orEmpty()
@@ -71,6 +103,13 @@ class NovelChapterRepository {
 
     /** 段数缓存（与段落缓存分开：章行要段数要得很频繁，不值得每次取整个列表）。 */
     private val paraCounts = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+    /**
+     * 段级排版缓存（整章重排时只重建显示文本真的变了的段）。
+     *
+     * 生命周期与仓库一致：**只在 `load` 里用**（跑在 IO 上），退出阅读器随 [evictAll] 释放。
+     */
+    private val layoutCache = NovelLayoutCache()
 
     /**
      * 取书的章节目录（带缓存）。文件丢失/损坏时返回空表 —— 由调用方展示「文件丢失」提示，
@@ -160,12 +199,19 @@ class NovelChapterRepository {
             // ⚠️ 锚点也要进键：同一个锚点在不同阅读位置会切出不同的页表（页首那刀）
             "${anchor?.paraIndex}:${anchor?.fraction}"
 
-        content.get(key) ?: ChapterContent(
+        // ⚠️ 先查缓存再算显示文本：`displayParas` 是 O(段数) 的对象分配，双语模式下每段还要
+        // 拼一次字符串，而 `loadChapter` 每次改排版 / 切显示模式 / 切背景 / 译文到达都会调到这里。
+        // 命中缓存时这些结果**原样丢掉** —— 键里没有任何一项依赖它们，所以可以提前返回。
+        content.get(key)?.let { return@withContext it }
+
+        val visible = paras.filter { it.type != NovelParagraphType.SKIP }
+        ChapterContent(
             chapterIndex = chapterIndex,
             title = title,
             paragraphs = paras,
             displayTexts = displayTexts,
-            pages = NovelPaginator.paginate(displayParas, style, widthPx, heightPx, anchor),
+            pages = NovelPaginator.paginate(displayParas, style, widthPx, heightPx, anchor, layoutCache),
+            translatableIndexes = visible.filter { it.isTranslatable() }.mapTo(HashSet()) { it.index },
         ).also { content.put(key, it) }
     }
 
@@ -201,9 +247,18 @@ class NovelChapterRepository {
         return if (idx >= 0) idx else pages.lastIndex
     }
 
+    /**
+     * 释放全部缓存。
+     *
+     * ⚠️ **五个都要清**：`paraCounts` 与 `layoutCache` 是另外两份（段数与段级排版），
+     * 漏掉的话类注释承诺的「阅读器退出时整体释放」就不成立 —— 它们都按 书+章 增长，
+     * 而且键与上面三个不是同一个字符串，不会跟着一起失效。
+     */
     fun evictAll() {
         chapterLists.evictAll()
         paragraphs.evictAll()
         content.evictAll()
+        paraCounts.clear()
+        layoutCache.clear()
     }
 }

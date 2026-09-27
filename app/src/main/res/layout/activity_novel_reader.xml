@@ -66,24 +66,58 @@
             android:contentDescription="@string/reader_tab_more"/>
     </FrameLayout>
 
-    <!-- 顶部中间：章号 + 章内页码（点击开目录）。
+    <!-- 顶部中间：章名 + 章内页码（点击开目录）。
          漫画那格只有页码；小说多一个「第几章」——章节是小说最主要的定位单位，
-         不放这里用户就没有任何常显的章节线索（这正是之前"章节功能没用"的来源）。 -->
-    <TextView
-        android:id="@+id/tv_page_indicator"
+         不放这里用户就没有任何常显的章节线索（这正是之前"章节功能没用"的来源）。
+
+         ⚠️ **左右必须留出「碰不到两个圆钮」的硬边距**：以前这里是单个宽 `wrap_content` 的
+         TextView，章名一长就横向长到 `btn_back` / `btn_menu` 底下（`第一回　宴桃园豪杰三结义
+         斩黄巾英雄首立功` 这种回目一上来就压上了；网文那种 `[综英美]布鲁德海文小警察今天
+         追星成功了吗` 更夸张）。圆钮是 40dp 宽 + 外侧 10dp，两边的 64dp 边距留下 14dp 间隙，
+         章名再长也只会被省略号截断，不会钻到按钮下面。
+
+         ⚠️ **章名与页码是两个 TextView**：塞进同一个字符串时省略号会把页码一起吃掉，
+         而页码是这格存在的另一半理由。章名可省略（点上来看完整目录），页码永远完整。 -->
+    <LinearLayout
+        android:id="@+id/top_pill"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="top|center_horizontal"
+        android:layout_marginStart="64dp"
+        android:layout_marginEnd="64dp"
         android:layout_marginTop="38dp"
         android:background="@drawable/bg_pill_dark"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
         android:paddingStart="12dp"
         android:paddingTop="5dp"
         android:paddingEnd="12dp"
         android:paddingBottom="5dp"
-        android:textColor="#FFFFFF"
-        android:textSize="13sp"
         android:clickable="true"
-        android:contentDescription="@string/novel_toc"/>
+        android:contentDescription="@string/novel_toc">
+
+        <!-- 章名。maxWidth 是给「页码不被挤掉」兜底的：15 个字（≈150dp @13sp）以内不截断，
+             再长走省略号。行情上这一格可用宽 = 375dp - 64×2 = 247dp，
+             章名 150 + 页码(含分隔号)≈50 + 内边距 24 = 224dp，还留 23dp 余量。 -->
+        <TextView
+            android:id="@+id/tv_page_indicator"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:maxWidth="150dp"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp"/>
+
+        <!-- 章内页码 / 滚动进度。永远完整显示，不参与省略。 -->
+        <TextView
+            android:id="@+id/tv_page_counter"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:singleLine="true"
+            android:textColor="#FFFFFF"
+            android:textSize="13sp"/>
+    </LinearLayout>
 
     <!-- 底部透明胶囊：上一章 / 章内进度 / 下一章。
          ⚠️ 左右两个按钮是**章**而不是页 —— 与 Koto 两个阅读器的 ReaderProgressBar 语义一致

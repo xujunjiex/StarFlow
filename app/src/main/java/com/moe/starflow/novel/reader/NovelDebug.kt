@@ -10,8 +10,14 @@ import android.util.Log
  */
 internal object NovelDebug {
 
-    /** 打开后每次 loadChapter / 每页绑定 / 每次滚动都会打一行。 */
-    const val ENABLED = true
+    /**
+     * 打开后每次 loadChapter / 每页绑定 / 每次滚动都会打一行。
+     *
+     * ⚠️ **不能以 true 发版**：`brief()` 会打正文前 12 个字，而 `LogCollector` 把它落盘到
+     * `logs/starflow.log` —— 那文件在 app 内日志查看器里对用户可见、可导出，等于把正在读的
+     * 正文（含译文）写进了日志。排查完必须置回 false / 整体删掉。
+     */
+    const val ENABLED = false
 
     private const val TAG = "NovelDbg"
 

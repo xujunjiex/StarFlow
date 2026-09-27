@@ -42,10 +42,14 @@ object NovelTocDialog {
         context: Context,
         chapters: List<NovelChapterMeta>,
         stats: Map<Int, NovelChapterStat>,
+        /** 每章的**真实可翻译段数**（宿主解析出来的分母），与面板同一份。 */
+        totals: Map<Int, Int>,
         currentChapter: Int,
         dark: Boolean = false,
         onPick: (Int) -> Unit,
-    ) {
+        /** 某章分母还不知道时问宿主一次（宿主解析完用 [Handle.update] 推回来）。 */
+        onNeedTotal: ((Int) -> Unit)? = null,
+    ): Handle {
         val binding = DialogNovelTocBinding.inflate(LayoutInflater.from(context))
         val density = context.resources.displayMetrics.density
         val labelColor = if (dark) 0xFFE2E2E4.toInt() else 0xFF333333.toInt()
@@ -65,7 +69,9 @@ object NovelTocDialog {
                 .coerceAtLeast((ROW_HEIGHT_DP * density).toInt())
         }
         var dialog: AlertDialog? = null
-        val adapter = RowAdapter(chapters, stats, currentChapter, dark) { position ->
+        val adapter = RowAdapter(
+            chapters, stats, totals, currentChapter, dark, onNeedTotal,
+        ) { position ->
             // ⚠️ **必须在跳章的同时关掉弹窗**：不关的话，章在弹窗背后换了，弹窗里的高亮
             // 还停在被点之前那一章 —— 看起来就是「点了目录，弹窗没跟着更新」。
             dialog?.dismiss()
@@ -102,16 +108,58 @@ object NovelTocDialog {
         // ⚠️ 宽度也要显式限：AlertDialog 的自定义 View 默认按内容撑，宽屏上会贴满整屏
         val dm = context.resources.displayMetrics
         dialog.window?.setLayout((dm.widthPixels * 0.88).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT)
+        return Handle(dialog, adapter)
+    }
+
+    /**
+     * 目录弹窗句柄：宿主解析出分母后用 [update] 回推，徽章才算得准。
+     *
+     * ⚠️ 目录**必须**和面板用同一份分母（见 [isChapterDone]）：早先这里直接拿
+     * `st.total`（数据库里这一章的行数）判「已完成」，而那是**按批惰性写的**——
+     * 只翻了一部分时 `success >= total` 也成立，于是目录上写着「已完成」、面板上写着
+     * 「进行中」，同一个事实两个结论（用户报的「某一章没翻完却显示已经全部翻译完成」）。
+     */
+    class Handle internal constructor(
+        private val dialog: AlertDialog?,
+        private val adapter: RowAdapter,
+    ) {
+        /** 宿主解析出分母 / 状态有变化时推回。 */
+        fun update(stats: Map<Int, NovelChapterStat>, totals: Map<Int, Int>) {
+            adapter.stats = stats
+            adapter.totals = totals
+        }
+
+        fun dismiss() {
+            dialog?.dismiss()
+        }
     }
 
     /** 一章一行：标题 + 状态徽章；当前章高亮。 */
-    private class RowAdapter(
+    internal class RowAdapter(
         private val chapters: List<NovelChapterMeta>,
-        private val stats: Map<Int, NovelChapterStat>,
+        stats: Map<Int, NovelChapterStat>,
+        totals: Map<Int, Int>,
         private val currentChapter: Int,
         private val dark: Boolean,
+        private val onNeedTotal: ((Int) -> Unit)?,
         private val onPick: (Int) -> Unit,
     ) : RecyclerView.Adapter<RowAdapter.VH>() {
+
+        /** 章状态。宿主推来新的就整表重绑（行数少，且「已完成」判据依赖它）。 */
+        var stats: Map<Int, NovelChapterStat> = stats
+            set(value) {
+                if (field == value) return
+                field = value
+                notifyDataSetChanged()
+            }
+
+        /** 每章真实可翻译段数（分母）。拿不到就按「未完成」显示，等宿主推回来再重算。 */
+        var totals: Map<Int, Int> = totals
+            set(value) {
+                if (field == value) return
+                field = value
+                notifyDataSetChanged()
+            }
 
         private val labelColor = if (dark) 0xFFE2E2E4.toInt() else 0xFF333333.toInt()
 
@@ -139,11 +187,14 @@ object NovelTocDialog {
             holder.binding.tvChapterTitle.setTextColor(if (isCurrent) ACCENT else labelColor)
 
             val st = stats[position]
-            val done = st != null && st.total > 0 && st.success >= st.total
+            // ⚠️ 判据与面板**同一个函数** —— 两处各写一份正是上面那个 bug 的来源
+            val done = isChapterDone(stats, totals, position)
             val started = st != null && st.success > 0
+            val total = totals[position] ?: 0
+            if (total <= 0) onNeedTotal?.invoke(position)
             holder.binding.tvChapterBadge.text = when {
                 done -> ctx.getString(R.string.novel_chapter_done)
-                started -> ctx.getString(R.string.novel_chapter_partial, st!!.success, st.total)
+                started -> ctx.getString(R.string.novel_chapter_partial, st!!.success, total)
                 else -> ctx.getString(R.string.novel_chapter_unread)
             }
             holder.binding.tvChapterBadge.setTextColor(

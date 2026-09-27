@@ -177,8 +177,38 @@ class NovelDisplayModeTest {
             NovelPage(listOf(seg(2))),
             NovelPage(listOf(seg(3))),
         )
-        assertEquals(setOf(0, 1), translatedPagesOf(wide, translated))
-        assertEquals("页变窄后每一页都各自成页", setOf(0, 1, 2, 3), translatedPagesOf(narrow, translated))
+        assertEquals(setOf(0, 1), translatedPagesOf(wide, setOf(0, 1, 2, 3), translated))
+        assertEquals(
+            "页变窄后每一页都各自成页",
+            setOf(0, 1, 2, 3),
+            translatedPagesOf(narrow, setOf(0, 1, 2, 3), translated),
+        )
+    }
+
+    /**
+     * **图片段不参与「这页翻完没有」的判据**（回归）。
+     *
+     * `📷 [图片]` 占位段按设计永远不翻译，要求它「有译文」的话，插图版 EPUB 的每一页
+     * 都永远变不绿 —— 底部进度条对这类书永远差一截，用户以为译文丢了。
+     */
+    @Test
+    fun `含图片段的一页只要可翻译段都翻了就算翻好`() {
+        val withImage = listOf(NovelPage(listOf(seg(0), seg(1), seg(2))))
+        // 段 1 是图片段（不在可翻译集里）→ 只有 0 与 2 需要译文
+        assertEquals(setOf(0), translatedPagesOf(withImage, setOf(0, 2), setOf(0, 2)))
+
+        assertEquals(
+            "可翻译段缺一半就不算翻好",
+            emptySet<Int>(),
+            translatedPagesOf(withImage, setOf(0, 2), setOf(0)),
+        )
+    }
+
+    /** 整页都是不可翻译段（只有图片）→ 没有待办，算翻好。 */
+    @Test
+    fun `整页都是图片段算翻好`() {
+        val onlyImage = listOf(NovelPage(listOf(seg(0))))
+        assertEquals(setOf(0), translatedPagesOf(onlyImage, emptySet(), emptySet()))
     }
 
     /** 半页译文**不算**这页翻好了：否则用户以为整页都翻完了。 */
@@ -188,7 +218,7 @@ class NovelDisplayModeTest {
             NovelPage(listOf(seg(0), seg(1))),
             NovelPage(listOf(seg(2), seg(3))),
         )
-        assertEquals(setOf(0), translatedPagesOf(wide, setOf(0, 1, 2)))
+        assertEquals(setOf(0), translatedPagesOf(wide, setOf(0, 1, 2, 3), setOf(0, 1, 2)))
     }
 
     /**
@@ -209,6 +239,6 @@ class NovelDisplayModeTest {
     /** 空页不算「已翻译」（否则进度条上会凭空多一段绿）。 */
     @Test
     fun `空页不画绿`() {
-        assertEquals(emptySet<Int>(), translatedPagesOf(listOf(NovelPage(emptyList())), setOf(0)))
+        assertEquals(emptySet<Int>(), translatedPagesOf(listOf(NovelPage(emptyList())), setOf(0, 1), setOf(0)))
     }
 }

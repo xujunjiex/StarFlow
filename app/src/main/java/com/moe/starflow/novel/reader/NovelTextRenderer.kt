@@ -10,9 +10,9 @@ import android.text.TextPaint
  * 分页模式与滚动模式都走这里，保证「怎么分的就怎么画」——两处各写一套的话，字号/行距
  * 迟早会在其中一处忘记同步（表现为「分页模式排版正常，滚动模式行距不对」）。
  *
- * ⚠️ 绘制**只接受字符串**，不持有段落/模式等状态：显示文本已经由
- * [NovelPageBilingual.displayText] 在分页之前就定好了，这里再做一次「原文还是译文」的判断
- * 就又多出一个真相来源。
+ * ⚠️ 绘制**不判断「原文还是译文」**：显示文本已经由 [NovelPageBilingual.displayText] 在分页之前
+ * 就定好了，这里再做一次判断就又多出一个真相来源 —— 所以 [drawLayout] 收到的只是一份排好版的
+ * layout，不持有段落/模式等任何状态。
  */
 object NovelTextRenderer {
 
@@ -64,18 +64,25 @@ object NovelTextRenderer {
             .build()
     }
 
-    /** 画一段文本，返回消耗的高度。 */
-    fun draw(
+    /**
+     * 画一份**已经排好**的 layout（[build] 的产物），返回它的高度。
+     *
+     * ⚠️ 这里**不再收字符串、也不再自己 `build()`**：调用方（`NovelScrollAdapter.ParagraphView`）
+     * 为了量高度已经排过一遍，而它每次绑定都会 `requestLayout` —— 绘制端再排一次就是**每段每次绑定排两遍**
+     * （100~300 字的段 0.3~1ms/遍）。现在「量」与「画」共用调用方缓存的那一份。
+     *
+     * ⚠️ 颜色在这里才灌进 layout 自己的 paint：颜色不参与测量（见 [COLOR_MAIN]），
+     * 只为换个颜色重排是白烧；而 StaticLayout 画的时候用的就是构建时传进去的那个 [TextPaint] 实例
+     * （`Layout.getPaint()`），改它的 color 只影响画出来的颜色，几何一点不变。
+     */
+    fun drawLayout(
         canvas: Canvas,
-        text: String,
-        style: NovelTextStyle,
-        contentWidth: Int,
+        layout: StaticLayout,
         x: Float,
         y: Float,
         color: Int = COLOR_MAIN,
     ): Float {
-        if (text.isEmpty()) return 0f
-        val layout = build(text, style, contentWidth, color)
+        layout.paint.color = color
         canvas.save()
         canvas.translate(x, y)
         layout.draw(canvas)

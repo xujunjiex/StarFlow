@@ -19,7 +19,6 @@ import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.moe.starflow.R
 import com.moe.starflow.data.NovelChapterStat
-import com.moe.starflow.data.NovelFailureRow
 import com.moe.starflow.manga.config.OcrEngineGroup
 import com.moe.starflow.mangaimport.translate.ReaderTranslationInfo
 import com.moe.starflow.novel.model.NovelChapterMeta
@@ -30,7 +29,6 @@ import com.moe.starflow.translate.LanguageSelectionDialog
 import com.moe.starflow.translate.TranslateTools
 import com.moe.starflow.utils.Constants
 import com.moe.starflow.utils.CustomPreference
-import com.moe.starflow.utils.MangaFontSize
 import com.moe.starflow.utils.OcrEngineManager
 import translationapi.hymt2translation.HyMt2Languages
 

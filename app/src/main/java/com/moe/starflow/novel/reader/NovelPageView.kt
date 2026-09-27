@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.text.StaticLayout
 import android.view.View
+import com.moe.starflow.utils.LogCollector
 
 /**
  * 分页模式下**一页**的自绘 View。
@@ -39,11 +40,28 @@ class NovelPageView(context: Context) : View(context) {
      */
     private var layouts: Map<Int, StaticLayout> = emptyMap()
 
+    /**
+     * 段号 → 这批 [layouts] 是**按哪个显示文本**排的。
+     *
+     * ⚠️ 有它才能**逐段复用**：译文到达时只有这一批翻到的那几段文本变了，同页其余段的 layout
+     * 原样可用（重排一段 = 主线程 draw 里一个 StaticLayout，一屏十几段）。
+     */
+    private var layoutTexts: Map<Int, String> = emptyMap()
+
     /** 段号 → 该段的逐行高度 `getLineBottom(i) - getLineTop(i)`（与分页端量的是同一批数）。 */
     private var lineHeights: Map<Int, FloatArray> = emptyMap()
 
     /** 这批 [layouts] 是按哪个宽度排的 —— 宽度变了必须重排（旋转/分屏）。 */
     private var laidOutWidth = -1
+
+    /**
+     * 排版缓存是否已过期（内容/页码/字号变了）。
+     *
+     * ⚠️ 只换高亮、只换文字色的重绑**不置这个位**：那样 [ensureLayouts] 会在开头直接早退，
+     * 整页一个 StaticLayout 都不排。早先这三样都在「作废缓存」的闸门里，于是选择模式每点一下、
+     * 切一次阅读背景，都要在主线程 draw 里把整页重排一遍。
+     */
+    private var layoutsDirty = true
 
     /** 越界只报一次（onDraw 每帧都会跑，不设闸门会刷爆日志）。 */
     private var overflowReported = false
@@ -73,12 +91,17 @@ class NovelPageView(context: Context) : View(context) {
     ) {
         // ⚠️ 排版输入没变就别作废已排好的 layout：选择模式每点一下都会重绑，
         // 全页重建 StaticLayout 是白烧的（而且会闪）
-        if (this.content !== content || this.page !== page ||
-            this.style != style || this.textColor != textColor
-        ) {
-            laidOutWidth = -1
-            layouts = emptyMap()
-            lineHeights = emptyMap()
+        // ⚠️ 文字色**不进**这个闸门：颜色不参与排版，换色只改 layout 的 paint（见 [applyTextColor]）。
+        // 以前它在闸门里 —— 切一次阅读背景就要在主线程 draw 里把整页重排一遍。
+        if (this.content !== content || this.page !== page || this.style != style) {
+            layoutsDirty = true
+            // ⚠️ 字号/行距/边距变了 → 连**复用的底稿**（文本比对表）一起作废：
+            // 文本一样但排版参数不同的 layout 不能复用
+            if (this.style != style) {
+                layouts = emptyMap()
+                layoutTexts = emptyMap()
+                lineHeights = emptyMap()
+            }
             overflowReported = false
         }
         this.content = content
@@ -87,7 +110,19 @@ class NovelPageView(context: Context) : View(context) {
         this.textColor = textColor
         this.selected = selected
         this.activeBatch = activeBatch
+        applyTextColor()
         invalidate()
+    }
+
+    /**
+     * 把当前文字色灌进**已经排好**的 layout。
+     *
+     * ⚠️ 颜色不参与排版（见 [NovelTextRenderer.build]），所以换色只改 paint、不重排：
+     * StaticLayout 画的时候用的就是构建时传进去的那个 `TextPaint` 实例（`Layout.getPaint()`），
+     * 改它的 color 只影响画出来的颜色，几何一点不动。
+     */
+    private fun applyTextColor() {
+        for (lay in layouts.values) lay.paint.color = textColor
     }
 
     /**
@@ -120,28 +155,46 @@ class NovelPageView(context: Context) : View(context) {
      *
      * 放在这里而不是逐帧在 `onDraw` 里排：折页动画每帧都会重画，每帧重排整页会掉帧。
      * 逐行高度也在这里一次算好 —— 它只跟排版输入有关，没有理由每帧重算。
+     *
+     * ⚠️ **逐段复用**：段号相同 + 显示文本相同 + 宽度没变 → 上一批的 layout 原样搬过来。
+     * 译文到达时只有这一批翻到的那几段文本变了，同页其余段没有理由重排；只换高亮/换色的重绑
+     * 更是一个都不该排（[layoutsDirty] 为 false 时这里直接早退）。
      */
     private fun ensureLayouts() {
         val w = width
-        if (w <= 0 || w == laidOutWidth) return
+        if (w <= 0) return
         val c = content ?: return
         val p = page ?: return
+        // 宽度没变、内容也没换过 → 什么都不用做
+        if (!layoutsDirty && w == laidOutWidth) return
+        // ⚠️ 宽度变了 → 下面按文本比对复用**一律不成立**（同一段在不同宽度下断行不同）
+        val sameWidth = w == laidOutWidth
         laidOutWidth = w
         val cw = style.contentWidthPx(w)
         val newLayouts = HashMap<Int, StaticLayout>(p.segments.size)
         val newHeights = HashMap<Int, FloatArray>(p.segments.size)
+        val newTexts = HashMap<Int, String>(p.segments.size)
         for (seg in p.segments) {
-            val layout = c.displayOf(seg.paraIndex)
-                .takeIf { it.isNotEmpty() }
-                ?.let { NovelTextRenderer.build(it, style, cw, textColor) }
-                ?: continue
+            val text = c.displayOf(seg.paraIndex)
+            if (text.isEmpty()) continue
+            val reused = if (sameWidth && layoutTexts[seg.paraIndex] == text) {
+                layouts[seg.paraIndex]
+            } else {
+                null
+            }
+            val layout = reused ?: NovelTextRenderer.build(text, style, cw, textColor)
             newLayouts[seg.paraIndex] = layout
-            newHeights[seg.paraIndex] = FloatArray(layout.lineCount) {
+            newTexts[seg.paraIndex] = text
+            // 行高表只跟这份 layout 有关，复用时连数组一起复用（不必再遍历一遍行）
+            val heights = if (reused != null) lineHeights[seg.paraIndex] else null
+            newHeights[seg.paraIndex] = heights ?: FloatArray(layout.lineCount) {
                 (layout.getLineBottom(it) - layout.getLineTop(it)).toFloat()
             }
         }
         layouts = newLayouts
+        layoutTexts = newTexts
         lineHeights = newHeights
+        layoutsDirty = false
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -205,18 +258,24 @@ class NovelPageView(context: Context) : View(context) {
      *
      * 这是「分页账目与绘制是否真的一致」的唯一现场证据：不报 = 底部的字没有被裁。
      * 静态断言做不到这一点（Robolectric 的文本引擎是桩，量不出真机行高）。
+     *
+     * ⚠️ 走 [LogCollector]（app 内日志查看器可见）：这条是排障用的真凭据，得留在正式包里，
+     * 但它**不含任何正文**（只有 px 数与段数），且 [overflowReported] 保证一页只报一次。
      */
     private fun reportOverflow(usedBottom: Float, boxBottom: Float) {
         if (overflowReported || usedBottom <= boxBottom + 0.5f) return
         overflowReported = true
-        NovelDebug.log(
+        LogCollector.w(
+            TAG,
             "PAGE_OVERFLOW 正文顶出框 ${"%.1f".format(usedBottom - boxBottom)} px " +
                 "used=$usedBottom box=$boxBottom h=$height top=${style.topPaddingPx} " +
-                "bot=${style.bottomPaddingPx} segs=${page?.segments?.size}"
+                "bot=${style.bottomPaddingPx} segs=${page?.segments?.size}",
         )
     }
 
     companion object {
+        private const val TAG = "NovelPageView"
+
         val DEFAULT_STYLE = NovelTextStyle(fontSizePx = 42f, lineSpacingMultiplier = 1.5f, paragraphSpacingPx = 18f, paddingPx = 24f)
     }
 }

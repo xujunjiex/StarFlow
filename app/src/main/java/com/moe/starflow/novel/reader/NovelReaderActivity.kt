@@ -29,7 +29,6 @@ import com.moe.starflow.data.NovelChapterStat
 import com.moe.starflow.data.NovelFailureRow
 import com.moe.starflow.data.TranslationHistoryDatabase
 import com.moe.starflow.databinding.ActivityNovelReaderBinding
-import com.moe.starflow.manga.OcrLock
 import com.moe.starflow.mangaimport.reader.CoverTransformer
 import com.moe.starflow.mangaimport.reader.CurlPageView
 import com.moe.starflow.mangaimport.reader.NoneTransformer
@@ -120,6 +119,17 @@ class NovelReaderActivity : AppCompatActivity() {
 
     /** 失败明细（章行展开显示原因）；与 chapterStats 一起推给面板。 */
     private var chapterFailures: Map<Int, List<NovelFailureRow>> = emptyMap()
+
+    /**
+     * 手动「翻一批」/ 长按多选翻译的在途任务。
+     *
+     * ⚠️ **必须真的赋值**（这里曾经是个只被 cancel、从不被赋值的死字段）：这两条路
+     * 都会一直持有 `OcrLock`（别的翻译因此被挡住）并且跑完后调 `showOverlay`——
+     * 那是**进程级系统窗口**，用户已经退出阅读器去别的应用了，芯片还会盖上去
+     * （`onStop` 的注释里写明了这是必须避免的）。退出/切后台要能取消它们。
+     *
+     * 整章任务另有一个 [chapterSweepJob]（它的批数多、更要能停）。
+     */
     private var translationJob: Job? = null
 
     /**
@@ -305,12 +315,6 @@ class NovelReaderActivity : AppCompatActivity() {
         updateRotateMode(rotateMode, persist = false)
         applyReaderMode()
 
-        NovelDebug.log(
-            "onCreate book=${loaded.id} chapters=$chapterCount ch=$chapterIndex para=${pendingAnchor.paraIndex} " +
-                "mode=${NovelPanelStyle.readerMode(prefs)} anim=$animationMode bg=$bgMode " +
-                "root=${binding.root.width}x${binding.root.height}"
-        )
-
         // ⚠️ **先渲染正文**：首次进入绝不能只有「译文读回来」那一条链才会加载内容 ——
         // 那条链在「本章一句译文都没有」时会判定「没变化」直接返回，结果第一次进阅读器
         // 一片空白，必须切一次章才显示（用户实测反馈）。
@@ -345,7 +349,11 @@ class NovelReaderActivity : AppCompatActivity() {
         autoTurnJob?.cancel()
         autoTurnJob = null
         chapterSweepJob?.cancel()
-        chapterSweepJob = null        // 切后台必须暂停队列：lifecycleScope 不因 onStop 取消，否则翻译会在后台整段跑，
+        chapterSweepJob = null
+        // 手动翻一批 / 按选择翻也要停：它们持有 OcrLock（挡住别的翻译），跑完还会往
+        // **进程级系统浮层**上写字 —— 用户已经在别的应用里了也会看到芯片
+        translationJob?.cancel()
+        translationJob = null        // 切后台必须暂停队列：lifecycleScope 不因 onStop 取消，否则翻译会在后台整段跑，
         // 且常驻状态芯片（系统窗口）会一直盖在别的应用上
         queue?.stop()
         queueRunning = false
@@ -439,7 +447,8 @@ class NovelReaderActivity : AppCompatActivity() {
         binding.btnMenu.setOnClickListener { showMenu() }
         binding.btnPrev.setOnClickListener { gotoChapter(chapterIndex - 1) }
         binding.btnNext.setOnClickListener { gotoChapter(chapterIndex + 1) }
-        binding.tvPageIndicator.setOnClickListener { openToc() }
+        // ⚠️ 点整颗胶囊（不是只点章名那半）：页码那半也在这颗胶囊里，点上去同样该开目录
+        binding.topPill.setOnClickListener { openToc() }
         binding.btnTranslate.setOnClickListener { onTranslateButtonClick() }
         binding.btnToggleTranslate.setOnClickListener { cycleDisplayMode() }
         binding.btnFailTranslate.setOnClickListener { showFailBubble() }
@@ -528,7 +537,6 @@ class NovelReaderActivity : AppCompatActivity() {
         }
 
         override fun onPageSelected(position: Int) {
-            NovelDebug.log("onPageSelected pos=$position itemCount=${pageAdapter.itemCount} state=$pagerScrollState")
             if (animationMode == NovelPanelStyle.ANIM_NONE) animState.anchorPage = position
             // 跳页（setCurrentItem(_, false)，无动画模式与点击翻页都走它）不会产生滚动，
             // 于是**不会有任何一次 transformPage 去把新页从"动画中途态"复位**。
@@ -560,7 +568,6 @@ class NovelReaderActivity : AppCompatActivity() {
     private fun realignPagerAfterResize() {
         val w = binding.root.width
         val h = binding.root.height
-        NovelDebug.log("realign root=${w}x$h paged=${pagedWidth}x$pagedHeight mode=${NovelPanelStyle.readerMode(prefs)}")
         if (w <= 0 || h <= 0) return
         if (w != pagedWidth || h != pagedHeight) {
             scheduleRepaginate()
@@ -573,7 +580,7 @@ class NovelReaderActivity : AppCompatActivity() {
     }
 
     private fun chromeViews(): List<View> =
-        listOf(binding.btnBack, binding.btnMenu, binding.tvPageIndicator, binding.bottomProgress)
+        listOf(binding.btnBack, binding.btnMenu, binding.topPill, binding.bottomProgress)
 
     private fun applyChromeVisibility() {
         if (!chromeHidden) refreshTranslationChrome()
@@ -836,7 +843,6 @@ class NovelReaderActivity : AppCompatActivity() {
     }
 
     private fun gotoChapter(index: Int, atLastPage: Boolean = false) {
-        NovelDebug.log("gotoChapter index=$index chapterCount=$chapterCount")
         if (chapterCount <= 0) return
         if (index < 0) {
             toast(R.string.novel_first_chapter)
@@ -971,9 +977,10 @@ class NovelReaderActivity : AppCompatActivity() {
         binding.root.setBackgroundColor(bg)
         binding.novelPager.setBackgroundColor(bg)
         binding.novelScroll.setBackgroundColor(bg)
-        binding.tvPageIndicator.setTextColor(
-            if (NovelPanelStyle.isDarkBackground(bgMode)) Color.WHITE else Color.BLACK
-        )
+        val pillTextColor = if (NovelPanelStyle.isDarkBackground(bgMode)) Color.WHITE else Color.BLACK
+        // 两半都要设：textColor 不会从父 LinearLayout 继承下来
+        binding.tvPageIndicator.setTextColor(pillTextColor)
+        binding.tvPageCounter.setTextColor(pillTextColor)
         binding.novelStatus.setTextColor(
             if (NovelPanelStyle.isDarkBackground(bgMode)) 0xFFECECEC.toInt() else 0xFF222222.toInt()
         )
@@ -1007,7 +1014,6 @@ class NovelReaderActivity : AppCompatActivity() {
             val style = NovelPanelStyle.textStyle(this@NovelReaderActivity, prefs)
             val w = binding.root.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
             val h = binding.root.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels
-            NovelDebug.log("loadChapter#$token start ch=$index anchor=$anchor atLast=$atLastPage size=${w}x$h")
 
             // ⚠️ **本章译文必须在这里按章取**，不能沿用上一次的 `translations`：
             // 那个表是「paraIndex -> 译文」，换章后 paraIndex 会撞上，于是新章每一段都显示
@@ -1016,7 +1022,6 @@ class NovelReaderActivity : AppCompatActivity() {
             val map = runCatching { translator().loadTranslations(b, index) }
                 .getOrDefault(translations)
             if (token != loadToken) {
-                NovelDebug.log("loadChapter#$token DISCARDED after translations (latest=$loadToken)")
                 return@launch
             }
             translations = map
@@ -1029,7 +1034,6 @@ class NovelReaderActivity : AppCompatActivity() {
                 b, index, translations, NovelPanelStyle.displayMode(prefs), style, w, h, pageAnchor,
             )
             if (token != loadToken) {
-                NovelDebug.log("loadChapter#$token DISCARDED (latest=$loadToken)")
                 return@launch
             }
             pagedWidth = w
@@ -1038,11 +1042,6 @@ class NovelReaderActivity : AppCompatActivity() {
             content = loaded
             scrollTranslated = computeScrollTranslated(loaded)
             showStatus(if (loaded.isEmpty) getString(R.string.novel_empty_chapter) else null)
-            NovelDebug.log(
-                "loadChapter#$token done ch=$index paras=${loaded.paragraphs.size} pages=${loaded.pages.size} " +
-                    "texts=${loaded.displayTexts.size} " +
-                    "p0=${loaded.pages.firstOrNull()?.segments?.firstOrNull()?.let { s -> NovelDebug.brief(loaded.displayOf(s.paraIndex)) }}"
-            )
 
             val textColor = NovelPanelStyle.textColor(bgMode)
             val bgColor = NovelPanelStyle.backgroundColor(bgMode)
@@ -1081,13 +1080,23 @@ class NovelReaderActivity : AppCompatActivity() {
                     NovelAnchors.pageOf(loaded.pages, loaded.displayTexts, anchor)
                 }
                 binding.novelPager.setCurrentItem(page, false)
-                // 带位重排：把逻辑锚点钉住（见 [carryAnchor]），落位后 onPaged 不许重取
-                carryAnchor = anchor
+                // 带位重排：把逻辑锚点钉住（见 [carryAnchor]），落位后 onPaged 不许重取。
+                //
+                // ⚠️ `atLastPage`（在章首页点「上一页」翻到上一章末页）**不能钉传进来的
+                // `anchor`**：那条路传的是签名默认值 `NovelAnchor(0)`，钉住它等于宣布
+                // 「读者在这一章的第一段」。于是紧接着的第 1089 行 `snapPagerToAnchor` 会
+                // 算出 want = pageOf(NovelAnchor(0)) = 0 而 `cur` 是末页 → 立刻
+                // `setCurrentItem(0)`：**「上一页」翻到的是上一章的首页而不是末页**，
+                // 而且 `persistProgress` 会把 lastReadParaIndex 落成 0，下次打开从章首开始。
+                // 钉的必须是**实际落位那一页**的锚点。
+                val pinned =
+                    if (atLastPage) NovelAnchors.ofPage(loaded.pages, loaded.displayTexts, page)
+                    else anchor
+                carryAnchor = pinned
                 onPaged(page)
                 // ⚠️ 布局稳定后**再校一次**：页数缩水到当前页号以下时 ViewPager2 会把位置
                 // 重置到第 0 页（实测），紧随的 setCurrentItem 通常能兜住，这里再兜一层。
-                binding.novelPager.post { if (token == loadToken) snapPagerToAnchor(anchor) }
-                NovelDebug.log("loadChapter submit pages=${pageAdapter.itemCount} gotoPage=$page anchor=$anchor")
+                binding.novelPager.post { if (token == loadToken) snapPagerToAnchor(pinned) }
             }
             refreshOverlay()
             refreshTranslationChrome()
@@ -1108,7 +1117,6 @@ class NovelReaderActivity : AppCompatActivity() {
      * 而模型只在用户切换时才变 —— 按变化失效比每批重建便宜得多。
      */
     private fun onEngineConfigChanged() {
-        NovelDebug.log("引擎配置变化 → 丢弃缓存的翻译队列")
         queue?.stop()
         queue = null
         queueRunning = false
@@ -1292,6 +1300,8 @@ class NovelReaderActivity : AppCompatActivity() {
         lifecycleScope.launch {
             chapterStats = runCatching { translator().chapterStats(b) }.getOrDefault(emptyMap())
             chapterFailures = runCatching { translator().failuresOf(b) }.getOrDefault(emptyMap())
+            // 目录开着时也推一份：它和面板用的是同一套判据，不能只更新面板
+            tocHandle?.update(chapterStats, chapterTotals.toMap())
             // 这一句里已经把章级状态推给面板了（见 updateChapterTocLabel）
             updateChapterTocLabel()
         }
@@ -1300,6 +1310,12 @@ class NovelReaderActivity : AppCompatActivity() {
     /** 每章总段数（章行分母）缓存 + 在途去重：同一个章只解析一次。 */
     private val chapterTotals = mutableMapOf<Int, Int>()
     private val pendingTotalFetches = mutableSetOf<Int>()
+
+    /**
+     * 当前打开的目录弹窗。宿主解析出分母 / 章状态变化时回推给它 ——
+     * 否则目录里的「已完成」会在打开那一刻被冻结，与面板对不上。
+     */
+    private var tocHandle: NovelTocDialog.Handle? = null
 
     /**
      * 章行要某章的段数：解析一次并回推（懒解析：章行一次只显示几行）。
@@ -1315,6 +1331,8 @@ class NovelReaderActivity : AppCompatActivity() {
             pendingTotalFetches.remove(index)
             if (n <= 0) return@launch
             chapterTotals[index] = n
+            // 目录与面板共用同一份分母：目录开着时也要跟着刷新，否则两处判据会分叉
+            tocHandle?.update(chapterStats, chapterTotals.toMap())
             pushPanelState()
         }
     }
@@ -1360,19 +1378,27 @@ class NovelReaderActivity : AppCompatActivity() {
 
     /** 章内页码/滚动进度相关的显示 + 推给面板。 */
     private fun updateChapterTocLabel() {
-        // 顶部胶囊：章名 + 章内进度。章是小说最主要的定位单位，必须常显
+        // 顶部胶囊 = 章名 + 章内进度。章是小说最主要的定位单位，必须常显。
+        //
+        // ⚠️ **两个 TextView 分开写**（见布局注释）：章名可以很长（`第一回　宴桃园豪杰三结义
+        // 斩黄巾英雄首立功` 这种回目、网文那种带前缀的长标题），合成一个字符串再省略的话
+        // 页码会被一起吃掉 —— 而页码是这格存在的另一半理由。
         val label = chapterTitle(chapterIndex)
-        val text = if (isScrollMode()) {
+        val counter = if (isScrollMode()) {
             val total = scrollAdapter.itemCount
-            getString(R.string.novel_page_indicator, label, (firstVisibleScrollItem() + 1).coerceAtMost(total), total)
+            getString(
+                R.string.novel_page_counter,
+                (firstVisibleScrollItem() + 1).coerceAtMost(total), total,
+            )
         } else {
             val pages = content?.pages
-            if (pages.isNullOrEmpty()) getString(R.string.novel_page_indicator, label, 0, 0)
-            else getString(R.string.novel_page_indicator, label, currentPage() + 1, pages.size)
+            if (pages.isNullOrEmpty()) getString(R.string.novel_page_counter, 0, 0)
+            else getString(R.string.novel_page_counter, currentPage() + 1, pages.size)
         }
         // ⚠️ 文案没变就别 setText：TextView 会无条件 requestLayout，
         // 而滚动回调是每帧一次的（还会牵动 [setupOverlays] 里的 layout listener）
-        if (binding.tvPageIndicator.text.toString() != text) binding.tvPageIndicator.text = text
+        if (binding.tvPageIndicator.text.toString() != label) binding.tvPageIndicator.text = label
+        if (binding.tvPageCounter.text.toString() != counter) binding.tvPageCounter.text = counter
         pushPanelState()
     }
 
@@ -1395,7 +1421,9 @@ class NovelReaderActivity : AppCompatActivity() {
         } else {
             val pages = content?.pages ?: return
             binding.novelProgress.setPage(currentPage(), pages.size)
-            binding.novelProgress.setTranslatedPages(translatedPagesOf(pages, translations.keys))
+            binding.novelProgress.setTranslatedPages(
+                translatedPagesOf(pages, content?.translatableIndexes.orEmpty(), translations.keys),
+            )
         }
         updateChapterTocLabel()
     }
@@ -1414,9 +1442,14 @@ class NovelReaderActivity : AppCompatActivity() {
      */
     private fun computeScrollTranslated(c: ChapterContent): Set<Int> {
         if (translations.isEmpty()) return emptySet()
-        val visible = NovelScrollMapping.visibleParagraphs(c)
+        val visible = c.visibleParas
         val hits = mutableSetOf<Int>()
-        for (i in visible.indices) if (translations.containsKey(visible[i].index)) hits += i
+        for (i in visible.indices) {
+            val pi = visible[i].index
+            // ⚠️ 图片段（`📷 [图片]`）与过短段按设计**永不翻译**，要求它们「有译文」的话，
+            // 含插图的书进度条永远差几格绿 —— 与 `translatedPagesOf` 同一条判据
+            if (pi !in c.translatableIndexes || translations.containsKey(pi)) hits += i
+        }
         return NovelScrollProgress.stepsOfItems(hits, visible.size)
     }
 
@@ -1590,8 +1623,10 @@ class NovelReaderActivity : AppCompatActivity() {
             return
         }
         showOverlay(getString(R.string.reader_translate_in_progress), autoDismiss = false)
-        lifecycleScope.launch {
+        translationJob?.cancel()
+        translationJob = lifecycleScope.launch {
             val result = runCatching { q.translateOneBatch(b, chapterIndex) }.getOrNull()
+            translationJob = null
             showOverlay(null)
             if (result == null || result.isEmpty) {
                 // 失败也要刷面板：不然「失败」状态和原因要等下次开面板才看得到
@@ -1629,7 +1664,8 @@ class NovelReaderActivity : AppCompatActivity() {
         }
         val chunk = NovelPanelStyle.batchSize(prefs).coerceAtLeast(1)
         showOverlay(getString(R.string.reader_translate_in_progress), autoDismiss = false)
-        lifecycleScope.launch {
+        translationJob?.cancel()
+        translationJob = lifecycleScope.launch {
             var failed: String? = null
             var done = 0
             for (group in wanted.chunked(chunk)) {
@@ -1642,6 +1678,7 @@ class NovelReaderActivity : AppCompatActivity() {
                 // 每批上屏一次：选十几段时要能看到逐批出译文，而不是最后一起蹦出来
                 refreshTranslations()
             }
+            translationJob = null
             showOverlay(null)
             refreshChapterStats()
             if (failed != null) {
@@ -1664,7 +1701,6 @@ class NovelReaderActivity : AppCompatActivity() {
         val want = NovelAnchors.pageOf(c.pages, c.displayTexts, anchor)
         val cur = binding.novelPager.currentItem
         if (cur != want) {
-            NovelDebug.log("snapPager 校正：anchor=$anchor 当前页=$cur 校正到=$want")
             binding.novelPager.setCurrentItem(want, false)
         }
     }
@@ -1855,13 +1891,22 @@ class NovelReaderActivity : AppCompatActivity() {
             val stats = runCatching { translator().chapterStats(b) }.getOrDefault(emptyMap())
             chapterStats = stats
             val chapters = repository.chaptersOf(b)
-            NovelTocDialog.show(
+            tocHandle = NovelTocDialog.show(
                 context = this@NovelReaderActivity,
                 chapters = chapters,
                 stats = stats,
+                // ⚠️ 目录的「已完成」必须与面板**同一个判据**（见 isChapterDone）：
+                // 早先它拿 st.total（库里的行数）当分母，于是同一章在目录里是「已完成」、
+                // 在面板里是「进行中」—— 用户报的「没翻完却显示全部完成」的另一半在这。
+                totals = chapterTotals.toMap(),
                 currentChapter = chapterIndex,
                 dark = NovelPanelStyle.isDarkBackground(bgMode),
-            ) { picked -> gotoChapter(picked) }
+                onPick = { picked ->
+                    tocHandle = null
+                    gotoChapter(picked)
+                },
+                onNeedTotal = { ensureChapterTotal(it) },
+            )
         }
     }
 
@@ -2096,7 +2141,6 @@ class NovelReaderActivity : AppCompatActivity() {
     }
 
     // ===== 沉浸 =====
-
     private fun enterImmersive() {
         @Suppress("DEPRECATION")
         window.setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN)
@@ -2111,9 +2155,6 @@ class NovelReaderActivity : AppCompatActivity() {
             systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         }
     }
-
-    /** 供面板判断「当前是否在前台」用（导出/长任务避免把芯片贴到别的应用上）。 */
-    fun isForeground(): Boolean = lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
 
     private fun toast(resId: Int) {
         UiUtils.showToast(this, getString(resId), true)

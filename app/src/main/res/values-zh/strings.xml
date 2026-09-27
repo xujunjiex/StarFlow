@@ -1357,6 +1357,7 @@
     <string name="novel_import_reason_unreadable">文件无法读取，请检查访问权限</string>
     <string name="novel_import_reason_no_text_chapter">未找到可阅读的文本章节</string>
     <string name="novel_import_reason_empty">空文件</string>
+    <string name="novel_import_reason_too_large">文件太大，无法导入</string>
     <string name="novel_import_reason_encrypted">该 EPUB 受 DRM 加密，暂不支持</string>
     <string name="novel_import_reason_unknown">未知错误</string>
     <string name="novel_importing_percent">导入中 %1$s</string>
@@ -1425,7 +1426,8 @@
     <string name="novel_next_chapter">下一章</string>
     <string name="novel_translate_batch">每批段数</string>
     <string name="novel_style_hint">改动会立即重新排版</string>
-    <string name="novel_page_indicator">%1$s · %2$d/%3$d</string>
+    <!-- 顶部胶囊右侧的页码/滚动进度。前面的「·」是分隔号，与左侧章名连读。 -->
+    <string name="novel_page_counter">· %1$d/%2$d</string>
     <string name="novel_select_hint">点段落选择 · 点空白处完成</string>
     <string name="novel_select_not_translatable">图片和过短的行不翻译</string>
     <string name="novel_action_translate_n">翻译 %1$d 段</string>

@@ -1358,6 +1358,7 @@
     <string name="novel_import_reason_unreadable">File is unreadable. Check access permission.</string>
     <string name="novel_import_reason_no_text_chapter">No readable text chapters.</string>
     <string name="novel_import_reason_empty">Empty file.</string>
+    <string name="novel_import_reason_too_large">File is too large to import.</string>
     <string name="novel_import_reason_encrypted">This EPUB is DRM-encrypted and not supported.</string>
     <string name="novel_import_reason_unknown">Unknown error.</string>
     <string name="novel_importing_percent">Importing %1$s</string>
@@ -1426,7 +1427,8 @@
     <string name="novel_next_chapter">Next chapter</string>
     <string name="novel_translate_batch">Paragraphs per batch</string>
     <string name="novel_style_hint">Layout is rebuilt immediately</string>
-    <string name="novel_page_indicator">%1$s · %2$d/%3$d</string>
+    <!-- 顶部胶囊右侧的页码/滚动进度。前面的「·」是分隔号，与左侧章名连读。 -->
+    <string name="novel_page_counter">· %1$d/%2$d</string>
     <string name="novel_select_hint">Tap paragraphs to select · tap a blank area to finish</string>
     <string name="novel_select_not_translatable">Images and very short lines are not translated</string>
     <string name="novel_action_translate_n">Translate %1$d</string>

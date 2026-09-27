@@ -12,13 +12,6 @@ import com.moe.starflow.data.NovelFailureRow
 import com.moe.starflow.novel.model.NovelChapterMeta
 
 /**
- * 翻译面板「每章一行」。
- *
- * ⚠️ **复用漫画面板的行布局** `item_translate_page_state.xml`（同一个文件、同一套徽章
- * drawable），只是把「P{n}」换成「第 n 章」、「页状态」换成「章状态」。两个阅读器的面板
- * 必须长得一样 —— 各画一套行样式是最容易悄悄跑偏的地方。
- */
-/**
  * 章行 / 目录 / 顶部胶囊显示的章标题。
  *
  * ⚠️ **有标题就只显示标题**：以前一律在前面拼「第N章」，于是没有章节标记的书
@@ -29,13 +22,40 @@ internal fun chapterDisplayTitle(context: Context, index: Int, title: String?): 
     title?.trim()?.takeIf { it.isNotEmpty() }
         ?: context.getString(R.string.novel_chapter_label, index + 1)
 
+/**
+ * 这一章是否**真的翻完**了 —— 面板章行与目录徽章的**唯一判据**。
+ *
+ * ⚠️ 必须两处共用一份：各写一份的结果是目录写「已完成」、面板写「进行中」，同一个事实
+ * 两个结论（用户报的「某一章没翻完却显示已经全部翻译完成」）。
+ *
+ * ⚠️ 分母只认宿主解析出来的**真实可翻译段数**（[totals]），别退回 `st.total`：那是数据库里
+ * 这一章的行数，而**行是按批惰性写的** —— 只翻了一部分时 `success >= total` 也成立。
+ * 拿不到分母时按"未完成"显示，等宿主推回来再重算（宁可暂时不显示完成，也不能误报完成）。
+ */
+internal fun isChapterDone(
+    stats: Map<Int, NovelChapterStat>,
+    totals: Map<Int, Int>,
+    index: Int,
+): Boolean {
+    val st = stats[index] ?: return false
+    val total = totals[index] ?: 0
+    return total > 0 && st.success >= total
+}
+
+/**
+ * 翻译面板「每章一行」。
+ *
+ * ⚠️ **复用漫画面板的行布局** `item_translate_page_state.xml`（同一个文件、同一套徽章
+ * drawable），只是把「P{n}」换成「第 n 章」、「页状态」换成「章状态」。两个阅读器的面板
+ * 必须长得一样 —— 各画一套行样式是最容易悄悄跑偏的地方。
+ */
 class NovelChapterStateAdapter(
     private val onJump: (Int) -> Unit,
 ) : RecyclerView.Adapter<NovelChapterStateAdapter.VH>() {
 
     /**
-     * ⚠️ 三个 setter 都要**先比再刷**：宿主现在会在换章/翻页/译文到达时推全量状态
-     * （见 `NovelPanelSheet.notifyHostState`），值没变还照刷的话，一次翻页就要重绑整张章列表 ——
+     * ⚠️ 四个 setter 都要**先比再刷**：宿主现在会在换章/翻页/译文到达时推全量状态
+     * （见 `NovelPanelSheet.renderHostState`），值没变还照刷的话，一次翻页就要重绑整张章列表 ——
      * 上千章的书上是实打实的卡顿。
      */
     var chapters: List<NovelChapterMeta> = emptyList()
@@ -89,12 +109,19 @@ class NovelChapterStateAdapter(
             rebuild()
         }
 
-    /** 每章的失败明细（章行展开显示「为什么失败」）。 */
+    /**
+     * 每章的失败明细（章行展开显示「为什么失败」）。
+     *
+     * ⚠️ **必须 rebuild 而不是只 notifyItemRangeChanged**：`passesFilter` 在
+     * 「失败」筛选（filterKey == 3）下读的正是 `failures`，只刷可见项的话**缓存过滤表
+     * `visible` 不变** —— 面板开着「失败」筛选时，刚失败的章不会出现在列表里
+     * （其余三个 setter 都调 rebuild，这条是漏的）。
+     */
     var failures: Map<Int, List<NovelFailureRow>> = emptyMap()
         set(value) {
             if (field == value) return
             field = value
-            notifyItemRangeChanged(0, itemCount)
+            rebuild()
         }
 
     /** 当前展开的**行下标**（同漫画：一次只展开一行）。 */
@@ -142,20 +169,10 @@ class NovelChapterStateAdapter(
     /** 当前过滤后的章号列表（只读）。 */
     fun visibleIndexes(): List<Int> = visible
 
-    /**
-     * 这一章的**分母**：只认宿主解析出来的真实可翻译段数。
-     *
-     * ⚠️ 别退回 `st.total`（数据库里这一章的行数）：行是**按批惰性写的**，
-     * 只翻了一部分时 `success >= total` 也成立 —— 那正是「某一章没翻完却显示已经全部
-     * 翻译完成」的判据来源。拿不到分母时按"未完成"显示，等宿主推回来再重算。
-     */
+    /** 这一章的分母（见 [isChapterDone]）。 */
     private fun totalOf(index: Int): Int = totals[index] ?: 0
 
-    private fun isDone(index: Int): Boolean {
-        val st = stats[index] ?: return false
-        val total = totalOf(index)
-        return total > 0 && st.success >= total
-    }
+    private fun isDone(index: Int): Boolean = isChapterDone(stats, totals, index)
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH =
         VH(LayoutInflater.from(parent.context).inflate(R.layout.item_translate_page_state, parent, false))
@@ -199,11 +216,8 @@ class NovelChapterStateAdapter(
 
         // 这一行借的是「失败原因」那一格来显示段落进度 —— 章没有失败原因可言，
         // 空着反而让行高和漫画面板对不齐
-        // 这一行借的是「失败原因」那一格来显示段落进度 —— 章没有失败原因可言，
-        // 空着反而让行高和漫画面板对不齐
         //
-        // ⚠️ 分母只认宿主解析出来的**真实可翻译段数**（见 [totalOf]）：数据库里的行数是
-        // 按批惰性写的，拿它当分母会让"刚翻了几段"的章看起来像翻完了
+        // ⚠️ 分母只认宿主解析出来的**真实可翻译段数**（见 [isChapterDone]）。
         if (total == 0) onNeedTotal?.invoke(index)
         val failed = failures[index].orEmpty()
         item.findViewById<TextView>(R.id.tv_fail_message).apply {
