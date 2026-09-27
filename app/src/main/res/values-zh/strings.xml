@@ -1431,6 +1431,7 @@
     <string name="novel_action_translate_n">翻译 %1$d 段</string>
     <string name="novel_action_retranslate_n">重翻 %1$d 段</string>
     <string name="novel_action_both_n">翻译+重翻 %1$d 段</string>
+    <string name="novel_translate_chapter_done">本章翻完 · 共 %1$d 批</string>
     <string name="novel_translate_selected_done">已翻 %1$d 段</string>
     <string name="novel_queue_translating">正在翻译第 %1$d 章…</string>
     <string name="novel_queue_translating_page">正在翻译 · 第 %1$d/%2$d 页</string>

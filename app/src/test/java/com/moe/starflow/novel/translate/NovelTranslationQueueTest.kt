@@ -199,6 +199,23 @@ class NovelTranslationQueueTest {
         q.stop()
     }
 
+    /**
+     * **面板「翻译本章」= 真的翻整章**：一批批翻到章末，不是只翻一批。
+     * （这颗按钮长期写着「翻译本章」却只翻一批，文案与行为对不上。）
+     */
+    @Test
+    fun `翻译整章会一批批翻到章末`() = runTest {
+        val t = FakeTranslator()
+        val translated = mutableSetOf<Int>()
+        val q = queue(backgroundScope, t, translated, page = { listOf(0, 1) }, chapterSize = 5, batchSize = 2)
+
+        val done = q.translateWholeChapter(book(), 0) { r -> translated += r.translations.keys }
+
+        assertEquals("5 段 / 每批 2 段 → 3 批", 3, done)
+        assertEquals(listOf(listOf(0, 1), listOf(2, 3), listOf(4)), t.batches)
+        q.stop()
+    }
+
     /** 空选择不发请求（白抢一次锁、白烧一次额度）。 */
     @Test
     fun `空选择不发请求`() = runTest {

@@ -1432,6 +1432,7 @@
     <string name="novel_action_translate_n">Translate %1$d</string>
     <string name="novel_action_retranslate_n">Retranslate %1$d</string>
     <string name="novel_action_both_n">Translate + retranslate %1$d</string>
+    <string name="novel_translate_chapter_done">Chapter done · %1$d batches</string>
     <string name="novel_translate_selected_done">Translated %1$d paragraphs</string>
     <string name="novel_queue_translating">Translating chapter %1$d…</string>
     <string name="novel_queue_translating_page">Translating · page %1$d/%2$d</string>

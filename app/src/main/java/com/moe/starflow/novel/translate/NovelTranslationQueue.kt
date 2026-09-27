@@ -5,6 +5,7 @@ import com.moe.starflow.novel.data.ImportedNovel
 import com.moe.starflow.utils.LogCollector
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -270,6 +271,40 @@ class NovelTranslationQueue(
     ): NovelBatchResult {
         if (paraIndexes.isEmpty()) return NovelBatchResult(emptyMap())
         return runBatch(book, chapterIndex, paraIndexes)
+    }
+
+    /**
+     * **翻译整章**（面板上的「翻译本章」）：从本章第一段没翻的段起，一批批翻到章末。
+     *
+     * 与三种模式都不同：它不盯页、也不受增量窗口限制，就是"把这一章翻完"。
+     * ⚠️ 这颗按钮长期写着「翻译本章」却只翻**一批**（文案与行为对不上，用户直接问了
+     * "不是有翻译本章的功能吗"）—— 现在它是真的翻整章。
+     *
+     * @param onBatch 每批落定就回调一次（宿主逐批上屏 + 刷新统计）
+     * @return 成功翻完的**批数**；一批都没翻成才 0
+     */
+    suspend fun translateWholeChapter(
+        book: ImportedNovel,
+        chapterIndex: Int,
+        onBatch: suspend (NovelBatchResult) -> Unit,
+    ): Int {
+        val chapterParas = chapterParaIndexes(book, chapterIndex)
+        var done = 0
+        while (currentCoroutineContext().isActive) {
+            val translated = translatedIndexes(book, chapterIndex) + failedAnchors
+            val anchor = chapterParas.firstOrNull { it !in translated } ?: return done
+            val batch = NovelBatchPlanner.nextBatch(chapterParas, anchor, translated, batchSize())
+            if (batch.isEmpty()) return done
+            val result = runBatch(book, chapterIndex, batch)
+            onBatch(result)
+            if (result.isEmpty) {
+                // 失败就停（不是跳过接着翻）：整章任务要的可预测 —— 停下来把原始原因报出去，
+                // 让用户决定重试还是改设置；自动/增量那两条路才做"跳过继续"
+                return done
+            }
+            done += 1
+        }
+        return done
     }
 
     /** 一批（已确定段号）的实际请求：抢锁 → 翻 → 落库（在 [NovelBatchTranslator] 里）。 */

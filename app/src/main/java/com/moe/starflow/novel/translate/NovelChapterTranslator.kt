@@ -6,8 +6,6 @@ import com.moe.starflow.data.NovelFailureRow
 import com.moe.starflow.data.NovelParagraphTranslationDao
 import com.moe.starflow.novel.data.ImportedNovel
 import com.moe.starflow.utils.LogCollector
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
 
 /**
  * 章翻译编排：引擎产出 + 状态机写库。
@@ -53,36 +51,6 @@ class NovelChapterTranslator(
 
         /** ⚠️ 与显示端共用同一个字面量（`NovelFailCode`）：两处各写一份，改一处就静默不一致 */
         const val FAIL_CODE_EMPTY = com.moe.starflow.novel.reader.NovelFailCode.TRANSLATE_EMPTY
-    }
-
-    fun translateChapter(
-        book: ImportedNovel,
-        chapterIndex: Int,
-        paragraphs: List<NovelParagraph>,
-        sourceLang: String,
-        targetLang: String,
-        translatorName: String,
-        batchSize: Int = NovelTranslationBatch.DEFAULT_BATCH_PARAGRAPHS,
-    ): Flow<NovelChapterProgress> = flow {
-        markTranslating(book, chapterIndex, paragraphs, translatorName, sourceLang, targetLang)
-        engine.translateChapter(chapterIndex, paragraphs, sourceLang, targetLang, batchSize)
-            .collect { progress ->
-                persist(book, chapterIndex, paragraphs, progress, translatorName, sourceLang, targetLang)
-                emit(progress)
-            }
-    }
-
-    private suspend fun markTranslating(
-        book: ImportedNovel,
-        chapterIndex: Int,
-        paragraphs: List<NovelParagraph>,
-        translatorName: String,
-        sourceLang: String,
-        targetLang: String,
-    ) {
-        val rows = translatingRows(book, chapterIndex, paragraphs, translatorName, sourceLang, targetLang)
-        // ⚠️ 与批路径同一套语义：`insertIgnore`，绝不能 REPLACE —— REPLACE 会把已有译文覆盖成空串
-        if (rows.isNotEmpty()) dao.insertIgnore(rows)
     }
 
     /**

@@ -4,10 +4,6 @@ import com.moe.starflow.translate.TranslationResult
 import com.moe.starflow.translate.TranslationTextAPI
 import com.moe.starflow.utils.LogCollector
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
@@ -97,44 +93,6 @@ class NovelTranslationEngine(private val translator: NovelTextTranslator) {
          */
         const val NUMBERING_INSTRUCTION =
             "逐条翻译下面的段落，保持每条的 [编号] 前缀与顺序不变，只输出译文："
-    }
-
-    fun translateChapter(
-        chapterIndex: Int,
-        paragraphs: List<NovelParagraph>,
-        sourceLang: String,
-        targetLang: String,
-        batchSize: Int = NovelTranslationBatch.DEFAULT_BATCH_PARAGRAPHS,
-    ): Flow<NovelChapterProgress> = callbackFlow {
-        val units = asUnits(paragraphs)
-
-        if (units.isEmpty()) {
-            trySend(NovelChapterProgress(chapterIndex, emptyMap(), isComplete = true))
-            close()
-            return@callbackFlow
-        }
-
-        val batches = NovelTranslationBatch.buildBatches(units, batchSize)
-        val accumulated = linkedMapOf<Int, String>()
-
-        val worker = launch {
-            var doneCount = 0
-            for (batch in batches) {
-                accumulated.putAll(requestBatch(units, batch, sourceLang, targetLang).translations)
-                doneCount += batch.size
-                trySend(
-                    NovelChapterProgress(
-                        chapterIndex = chapterIndex,
-                        translations = accumulated.toMap(),
-                        isComplete = doneCount >= units.size,
-                    )
-                )
-            }
-            // 收尾：确保完成态一定发出（全失败也要发，否则上层一直等）
-            trySend(NovelChapterProgress(chapterIndex, accumulated.toMap(), isComplete = true))
-            close()
-        }
-        awaitClose { worker.cancel() }
     }
 
     /**

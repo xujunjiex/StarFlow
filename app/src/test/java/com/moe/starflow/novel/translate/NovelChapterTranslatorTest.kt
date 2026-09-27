@@ -103,38 +103,23 @@ class NovelChapterTranslatorTest {
 
     // ===== 正常路径 =====
 
+    /** 一批一批翻完，每批都落库（「翻译本章」走的就是这条批路径）。 */
     @Test
-    fun `逐批产出累积结果并落库`() = runBlocking {
-        val emitted = translatorFor(FakeTranslator())
-            .translateChapter(book, 0, paragraphs, "ja", "zh", "fake", batchSize = 1)
-            .toList()
-
-        assertTrue(emitted.isNotEmpty())
-        assertTrue("最后一批必须标记完成", emitted.last().isComplete)
-        val final = emitted.last().translations
-        assertEquals(2, final.size)
-        assertEquals("T:第一段原文", final[0])
-        assertEquals("T:第二段原文", final[2])
+    fun `逐批翻完并落库`() = runBlocking {
+        val t = translatorFor(FakeTranslator())
+        t.translateBatch(book, 0, paragraphs, listOf(0), "ja", "zh", "fake")
+        t.translateBatch(book, 0, paragraphs, listOf(2), "ja", "zh", "fake")
 
         val rows = dao.forChapter(1, "5000", 0, SPLIT_VERSION)
+            .filter { it.state == NovelParagraphTranslation.STATE_SUCCESS }
         assertEquals(2, rows.size)
-        assertTrue(rows.all { it.state == NovelParagraphTranslation.STATE_SUCCESS })
         assertTrue(rows.all { it.novelKey == "5000" })
-    }
-
-    /** 两段应合成一批 —— 批次被拆散正是参考实现翻译慢的根因。 */
-    @Test
-    fun `多段合成一批时只调一次翻译`() = runBlocking {
-        val fake = FakeTranslator()
-        translatorFor(fake).translateChapter(book, 0, paragraphs, "ja", "zh", "fake", batchSize = 8).toList()
-        assertEquals(1, fake.calls)
     }
 
     /** 过短段不参与翻译，但它的 index 必须被跳过而不是被占用。 */
     @Test
     fun `SKIP 段不送翻译且不占译文行`() = runBlocking {
-        translatorFor(FakeTranslator())
-            .translateChapter(book, 0, paragraphs, "ja", "zh", "fake", batchSize = 8).toList()
+        translatorFor(FakeTranslator()).translateBatch(book, 0, paragraphs, listOf(0, 2), "ja", "zh", "fake")
         val rows = dao.forChapter(1, "5000", 0, SPLIT_VERSION)
         assertEquals(listOf(0, 2), rows.map { it.paraIndex })
     }
@@ -143,8 +128,7 @@ class NovelChapterTranslatorTest {
     @Test
     fun `译文按键位对应而不是按回文顺序`() = runBlocking {
         // 段号故意不连续：0 与 2
-        translatorFor(FakeTranslator())
-            .translateChapter(book, 0, paragraphs, "ja", "zh", "fake", batchSize = 8).toList()
+        translatorFor(FakeTranslator()).translateBatch(book, 0, paragraphs, listOf(0, 2), "ja", "zh", "fake")
         val map = translatorFor(FakeTranslator()).loadTranslations(book, 0)
         assertEquals("T:第一段原文", map[0])
         assertEquals("T:第二段原文", map[2])
@@ -182,7 +166,7 @@ class NovelChapterTranslatorTest {
     @Test
     fun `全部失败时标记 FAILED 且不写空译文`() = runBlocking {
         translatorFor(FakeTranslator(failAll = true))
-            .translateChapter(book, 0, paragraphs, "ja", "zh", "x", batchSize = 8).toList()
+            .translateBatch(book, 0, paragraphs, listOf(0, 2), "ja", "zh", "x")
         val rows = dao.forChapter(1, "5000", 0, SPLIT_VERSION)
         assertEquals(2, rows.size)
         assertTrue(rows.all { it.state == NovelParagraphTranslation.STATE_FAILED })
@@ -219,12 +203,11 @@ class NovelChapterTranslatorTest {
     @Test
     fun `整批失败会降级逐段重试一次`() = runBlocking {
         val fake = FirstCallFailsTranslator()
-        val emitted = NovelChapterTranslator(dao, NovelTranslationEngine(fake), SPLIT_VERSION)
-            .translateChapter(book, 0, paragraphs, "ja", "zh", "flaky", batchSize = 8)
-            .toList()
+        val r = NovelChapterTranslator(dao, NovelTranslationEngine(fake), SPLIT_VERSION)
+            .translateBatch(book, 0, paragraphs, listOf(0, 2), "ja", "zh", "flaky")
 
-        assertEquals("T:第一段原文", emitted.last().translations[0])
-        assertEquals("T:第二段原文", emitted.last().translations[2])
+        assertEquals("T:第一段原文", r.translations[0])
+        assertEquals("T:第二段原文", r.translations[2])
         assertEquals("整批 1 次 + 逐段 2 次", 3, fake.calls)
     }
 
@@ -262,11 +245,10 @@ class NovelChapterTranslatorTest {
     /** 模型完全丢掉编号时按位置兜底（条数一致才接受）。 */
     @Test
     fun `模型丢掉编号时按位置兜底`() = runBlocking {
-        val emitted = translatorFor(FakeTranslator(dropNumbering = true))
-            .translateChapter(book, 0, paragraphs, "ja", "zh", "fake", batchSize = 8)
-            .toList()
-        assertEquals("T:第一段原文", emitted.last().translations[0])
-        assertEquals("T:第二段原文", emitted.last().translations[2])
+        val r = translatorFor(FakeTranslator(dropNumbering = true))
+            .translateBatch(book, 0, paragraphs, listOf(0, 2), "ja", "zh", "fake")
+        assertEquals("T:第一段原文", r.translations[0])
+        assertEquals("T:第二段原文", r.translations[2])
     }
 
     // ===== 读回与版本 =====
@@ -274,7 +256,7 @@ class NovelChapterTranslatorTest {
     @Test
     fun `splitVersion 不同的旧译文读不出来`() = runBlocking {
         translatorFor(FakeTranslator(), splitVersion = 1)
-            .translateChapter(book, 0, paragraphs, "ja", "zh", "fake", batchSize = 8).toList()
+            .translateBatch(book, 0, paragraphs, listOf(0, 2), "ja", "zh", "fake")
         assertTrue(translatorFor(FakeTranslator(), splitVersion = 2).loadTranslations(book, 0).isEmpty())
     }
 
@@ -297,7 +279,7 @@ class NovelChapterTranslatorTest {
     @Test
     fun `章状态聚合给出成功数`() = runBlocking {
         val t = translatorFor(FakeTranslator())
-        t.translateChapter(book, 0, paragraphs, "ja", "zh", "fake", batchSize = 8).toList()
+        t.translateBatch(book, 0, paragraphs, listOf(0, 2), "ja", "zh", "fake")
         assertEquals(2, t.chapterStats(book)[0]?.success)
         assertEquals(2, t.chapterStats(book)[0]?.total)
     }
@@ -305,7 +287,7 @@ class NovelChapterTranslatorTest {
     @Test
     fun `清空本书按指纹删且不误伤别的书`() = runBlocking {
         val t = translatorFor(FakeTranslator())
-        t.translateChapter(book, 0, paragraphs, "ja", "zh", "fake", batchSize = 8).toList()
+        t.translateBatch(book, 0, paragraphs, listOf(0, 2), "ja", "zh", "fake")
         dao.upsert(
             NovelParagraphTranslation(
                 novelId = 1, novelKey = "9999", chapterIndex = 0, paraIndex = 0,
@@ -318,15 +300,17 @@ class NovelChapterTranslatorTest {
         assertEquals("同 id 不同指纹的书不能被误删", 1, dao.countFor(1, "9999"))
     }
 
+    /** 整章只有不可翻译段（SKIP）→ 一个请求都不发，也不写任何行。 */
     @Test
-    fun `空章节不发请求直接完成`() = runBlocking {
+    fun `没有可翻译段时不发请求`() = runBlocking {
         val fake = FakeTranslator()
-        val emitted = translatorFor(fake)
-            .translateChapter(book, 0, listOf(NovelParagraph(0, NovelParagraphType.SKIP, "……")), "ja", "zh", "fake")
-            .toList()
+        val only = listOf(NovelParagraph(0, NovelParagraphType.SKIP, "……"))
+
+        val r = translatorFor(fake).translateBatch(book, 0, only, listOf(0), "ja", "zh", "fake")
+
         assertEquals(0, fake.calls)
-        assertTrue(emitted.last().isComplete)
-        assertTrue(emitted.last().translations.isEmpty())
+        assertTrue(r.isEmpty)
+        assertTrue(dao.forChapter(1, "5000", 0, SPLIT_VERSION).isEmpty())
     }
 
     private companion object {

@@ -151,6 +151,9 @@ class NovelReaderActivity : AppCompatActivity() {
     /** 队列状态的观察者。队列被丢弃重建时要先 cancel，否则旧收集器一直挂在 lifecycleScope 上。 */
     private var queueObserverJob: Job? = null
 
+    /** 面板「翻译本章」的在途任务（一次整章）。双击 / 开面板 / 退出阅读器都要能取消它。 */
+    private var chapterSweepJob: Job? = null
+
     /** 模型/引擎配置变化的监听（见 [onEngineConfigChanged]）。 */
     private var enginePrefsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
 
@@ -340,7 +343,9 @@ class NovelReaderActivity : AppCompatActivity() {
     override fun onStop() {
         super.onStop()
         autoTurnJob?.cancel()
-        autoTurnJob = null        // 切后台必须暂停队列：lifecycleScope 不因 onStop 取消，否则翻译会在后台整段跑，
+        autoTurnJob = null
+        chapterSweepJob?.cancel()
+        chapterSweepJob = null        // 切后台必须暂停队列：lifecycleScope 不因 onStop 取消，否则翻译会在后台整段跑，
         // 且常驻状态芯片（系统窗口）会一直盖在别的应用上
         queue?.stop()
         queueRunning = false
@@ -1665,6 +1670,39 @@ class NovelReaderActivity : AppCompatActivity() {
     }
 
     /**
+     * 面板「翻译本章」：把当前章一批批翻完（逐批上屏，失败即停并报原始原因）。
+     */
+    private fun translateWholeChapterNow() {
+        val b = book ?: return
+        val q = queueOrNull()
+        if (q == null) {
+            toast(R.string.novel_translate_need_config)
+            return
+        }
+        chapterSweepJob?.cancel()
+        showOverlay(getString(R.string.reader_translate_in_progress), autoDismiss = false)
+        chapterSweepJob = lifecycleScope.launch {
+            var failed: String? = null
+            val batches = runCatching {
+                q.translateWholeChapter(b, chapterIndex) { r ->
+                    if (r.error != null) failed = r.error
+                    refreshChapterStats()
+                    if (!r.isEmpty) refreshTranslations()
+                }
+            }.getOrDefault(0)
+            chapterSweepJob = null
+            showOverlay(null)
+            refreshChapterStats()
+            val why = failed
+            if (why != null) {
+                showOverlayToast(getString(R.string.novel_translate_failed_reason, why), error = true)
+            } else if (batches > 0) {
+                showOverlayToast(getString(R.string.novel_translate_chapter_done, batches), error = false)
+            }
+        }
+    }
+
+    /**
      * 取（必要时创建）翻译队列。
      *
      * ⚠️ 手动模式是**默认模式**，队列从没被创建过 —— 少了这句兜底，点翻译按钮会一点反应都没有
@@ -1682,6 +1720,9 @@ class NovelReaderActivity : AppCompatActivity() {
      */
     private fun pauseToManual(message: String? = null) {
         queue?.stop()
+        // 整章任务也要停：面板打开 / 双击取消都走这里
+        chapterSweepJob?.cancel()
+        chapterSweepJob = null
         queueRunning = false
         NovelPanelStyle.setTranslateMode(prefs, NovelTranslateMode.MANUAL)
         showOverlay(null)
@@ -1930,7 +1971,9 @@ class NovelReaderActivity : AppCompatActivity() {
                 onAheadBatches = { n -> NovelPanelStyle.setAheadBatches(prefs, n) },
                 onBatchSize = { n -> NovelPanelStyle.setBatchSize(prefs, n) },
                 currentTranslateMode = { NovelPanelStyle.translateMode(prefs) },
-                onTranslateNow = { onTranslateButtonClick() },
+                // ⚠️ 面板这颗按钮写着「翻译本章」→ 必须真的翻整章（不是翻一批）：
+                // 阅读器上那颗悬浮翻译按钮才是"点一次翻一批 / 按选择翻"
+                onTranslateNow = { translateWholeChapterNow() },
                 onClearChapter = { clearChapterTranslations() },
                 onDownload = { which -> exportNovel(which) },
                 onChapterJump = { ch -> gotoChapter(ch) },

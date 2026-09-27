@@ -15,7 +15,16 @@ package com.moe.starflow.novel.translate
  */
 object NovelParagraphSplitter {
 
-    /** 切分规则版本。改规则就 +1，理由见类注释。 */
+    /**
+     * 切分规则版本。改规则就 +1，理由见类注释。
+     *
+     * ⚠️ **改这个值之前先清旧行**：译文表的主键是 `(novelId, novelKey, chapterIndex, paraIndex)`，
+     * **不含 splitVersion** —— 旧版本的行会占着同一批主键，新版本的行 `insertIgnore` 静默写不进去
+     * （"补齐分母"和"标记翻译中"全废），而旧行没有任何清理路径（表只增不减）。
+     * 当前 `SPLIT_VERSION = 1` 从没变过，所以还没有实际数据踩这一条。
+     * 真要 +1 时二选一：① 阅读器进入时按 `(novelId, novelKey)` 删掉非当前版本的行；
+     * ② 把 `splitVersion` 并进主键（需要一次重建表的迁移）。
+     */
     const val SPLIT_VERSION = 1
 
     /** 短于此长度的段落不翻译（短对白、分隔符、"……"）。 */
