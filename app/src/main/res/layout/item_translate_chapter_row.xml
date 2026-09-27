@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  翻译面板里的**章节卡片**（漫画）。
+
+  用户口径（2026-09-27 重排版）：
+  - 「记录里面的章节卡片排版很丑，重新布局一下翻译本章和清空译文的位置，而且要有卡片的样子」
+    → 卡片 = 圆角 + 独立底色 + 卡片间留白（底色由 `CardBackdrop` 在绑定时按面板深浅贴）
+    → 按钮文案去掉「本章」（太长）：「翻译 / 暂停 / 继续」+「清空译文 / 取消」
+  - 「章标题字号要比页标题大」→ 16sp 加粗（页行 13sp）
+  - 「点卡片 = 切章」→ 点卡片空白处跳该章，点箭头只展开/收起（按钮各自吞点击）
+
+  行结构：`[章标题][徽章][箭头]` → `[主按钮 weight=1][次按钮 wrap]`
+  ⚠️ 主按钮 `weight=1` + 次按钮 `wrap_content`：两句文案都不固定宽度，
+  这样「翻译」与「清空译文」不会各占半屏（原来等宽让短文案周围全是空白，就是"丑"的来源之一）。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:layout_marginTop="4dp"
+    android:layout_marginBottom="4dp"
+    android:layout_marginStart="1dp"
+    android:layout_marginEnd="1dp"
+    android:paddingStart="10dp"
+    android:paddingEnd="10dp"
+    android:paddingTop="7dp"
+    android:paddingBottom="7dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/tv_chapter_label"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:textSize="14sp"
+            android:textStyle="bold"/>
+
+        <TextView
+            android:id="@+id/tv_chapter_badge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:paddingStart="6dp"
+            android:paddingEnd="6dp"
+            android:paddingTop="2dp"
+            android:paddingBottom="2dp"
+            android:textSize="12sp"/>
+
+        <TextView
+            android:id="@+id/tv_chapter_expand"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingStart="10dp"
+            android:paddingEnd="2dp"
+            android:textSize="14sp"/>
+    </LinearLayout>
+
+    <!-- 动作行：主操作（翻译/暂停/继续）靠左占满，次操作（清空译文/取消）贴右 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginTop="6dp">
+
+        <TextView
+            android:id="@+id/btn_chapter_primary"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:paddingTop="5dp"
+            android:paddingBottom="5dp"
+            android:textSize="12sp"
+            android:clickable="true"
+            android:focusable="true"
+            android:textColor="#55AEEA"/>
+
+        <TextView
+            android:id="@+id/btn_chapter_secondary"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:paddingTop="6dp"
+            android:paddingBottom="6dp"
+            android:gravity="center"
+            android:textSize="13sp"
+            android:clickable="true"
+            android:focusable="true"
+            android:textColor="#CC5555"/>
+    </LinearLayout>
+</LinearLayout>

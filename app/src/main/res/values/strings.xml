@@ -15,7 +15,7 @@
     <string name="display_options">Display</string>
     <string name="import_manga_empty_hint">Tap + to import manga</string>
     <string name="import_manga_deleted">Deleted</string>
-    <string name="import_manga_option_files">Import files (zip/cbz)</string>
+    <string name="import_manga_option_files">Import files (zip/cbz/cbr/7z)</string>
     <string name="import_manga_option_single_dir">Import folder (whole folder = one manga)</string>
     <string name="import_folder_hint">Tip: some devices only allow choosing a newly-created folder. If blocked, create a folder in the picker first.</string>
     <string name="import_storage_hint">Stored to app\'s internal storage:&#10;%1$s</string>
@@ -800,9 +800,9 @@
     <string name="pixel_check_interval_title">Check Interval</string>
     <string name="pixel_check_interval_summary">Current: %s. Pixel check interval</string>
     <string name="game_context_title">AI Context</string>
-    <string name="game_context_summary">Carry translation history as context for better coherence (Game mode only, OpenAI-compatible APIs only)</string>
-    <string name="game_context_count_title">Context Rounds</string>
-    <string name="game_context_count_summary">Keep last %s rounds as context (Note: more rounds = more token usage)</string>
+    <string name="game_context_summary">Carry translation history as context for better coherence (Game mode; OpenAI-compatible APIs and local LlamaCpp models)</string>
+    <string name="game_context_budget_title">Context Length</string>
+    <string name="game_context_budget_summary">Keep the most recent %s of history as context. Larger = slower and more expensive (token usage); local LlamaCpp models always use the model\'s own context size instead.</string>
 
     <!-- Translation Cache -->
     <string name="cache_setting_title">Cache</string>
@@ -1048,7 +1048,7 @@
     <string name="reader_translate_summary">%1$d pages · %2$d done · %3$d ongoing · %4$d failed</string>
     <string name="reader_translate_ocr_model">OCR Model: %1$s</string>
     <string name="reader_translate_translator_model">Translation Model: %1$s</string>
-    <string name="reader_translate_font_size">Font size: %1$s</string>
+    
     <string name="reader_translate_source_lang_label">Source</string>
     <string name="reader_translate_target_lang_label">Target</string>
     <string name="reader_translate_filter_all">All</string>
@@ -1060,7 +1060,7 @@
     <string name="reader_translate_retranslate_current">Re-translate this page</string>
     <string name="reader_translate_state_idle">Not translated</string>
     <string name="reader_translate_state_translating">Translating</string>
-    <string name="reader_translate_state_success">Ready</string>
+    <string name="reader_translate_state_success">✓ Done</string>
     <string name="reader_translate_state_failed">Failed</string>
     <string name="reader_translate_row_detail">Details</string>
     <string name="reader_translate_no_failed">No failed pages</string>
@@ -1087,6 +1087,67 @@
     <string name="reader_translate_batch_detect">Recognizing (%1$d/2)…</string>
     <string name="reader_translate_batch_translate">Translating (%1$d/2)…</string>
     <string name="reader_translate_queue_drained">Translation queue finished. Turn the page to continue.</string>
+
+    <!-- ===== 漫画章节系统 ===== -->
+    <!-- 章标题兜底：文件夹名本身带编号时只显示文件夹名（见 mangaChapterLabel） -->
+    <string name="manga_chapter_label">Chapter %1$d</string>
+    <string name="reader_chapter_toc">Chapters</string>
+    <string name="reader_chapter_count">%1$d chapters</string>
+    <!-- 顶部页码胶囊：章标题 · 章内第几页 / 本章共几页 -->
+    <string name="reader_page_indicator_chapter">%1$s · %2$d/%3$d</string>
+    <string name="reader_chapter_prev">Previous chapter</string>
+    <string name="reader_chapter_next">Next chapter</string>
+    <string name="reader_chapter_first">Already at the first chapter</string>
+    <string name="reader_chapter_last">Already at the last chapter</string>
+    <string name="reader_chapter_badge">%1$d/%2$d translated</string>
+
+    <!-- 章节目录（书架列表行 / 阅读器顶部胶囊点开的那个弹窗） -->
+    <string name="import_chapters_count">%1$d chapters</string>
+    <string name="import_read_progress_chapter">%1$s · %2$d/%3$d</string>
+
+    <!-- 压缩包内元数据（ComicInfo.xml / meta.json）自动生成的简介行 -->
+    <string name="comic_meta_author">Author: %1$s</string>
+    <string name="comic_meta_circle">Circle/Translator: %1$s</string>
+    <string name="comic_meta_series">Series: %1$s</string>
+    <string name="comic_meta_tags">Tags: %1$s</string>
+    <string name="comic_meta_source">Source: %1$s</string>
+
+    <!-- ===== 翻译面板：本章批量翻译 / 记录管理 ===== -->
+    <string name="reader_translate_chapter_translate">Translate chapter</string>
+    <string name="reader_translate_chapter_pause">Pause</string>
+    <string name="reader_translate_chapter_done">Translated</string>
+    <string name="reader_translate_chapter_resume">Resume</string>
+
+    <!-- 章节批量翻译：通知栏（每章一条，可暂停/继续/取消） -->
+    <string name="chapter_translate_notify_title">%1$s · %2$s</string>
+    <string name="chapter_translate_notify_progress">Translating %1$d/%2$d pages</string>
+    <string name="chapter_translate_notify_paused">Paused · %1$d/%2$d pages</string>
+    <string name="chapter_translate_notify_cancelled">Cancelled</string>
+    <string name="chapter_translate_notify_resume">Resume</string>
+    <string name="chapter_translate_notify_summary_title">Chapter translation</string>
+    <string name="chapter_translate_notify_summary">%1$d chapter(s) translating in background</string>
+    <string name="reader_translate_chapter_clear">Clear</string>
+    <string name="reader_translate_chapter_running">Translating chapter %1$d/%2$d</string>
+    <!-- 章节批量翻译的并发度（漫画：OCR 串行，调高主要加快翻译请求） -->
+    <string name="reader_translate_concurrency">Max concurrent translation requests</string>
+    <string name="reader_translate_concurrency_hint">Whole-chapter translation only, and NOT for local models (they stay serial). Each page sends its translation request as soon as its OCR finishes, without waiting for earlier ones; up to N run at once, the rest queue.</string>
+    <string name="reader_translate_state_waiting">Waiting</string>
+    <string name="reader_translate_chapter_hint">Translating chapter %1$d/%2$d. Double-tap to pause.</string>
+    <string name="reader_translate_chapter_finished">Chapter finished: %1$d/%2$d translated</string>
+    <string name="reader_translate_chapter_nothing">Nothing to translate in this chapter</string>
+    <string name="reader_translate_chapter_summary">%1$s · %2$d/%3$d done · %4$d ongoing · %5$d failed</string>
+    <!-- 一键翻译整章的确认弹窗：默认「只翻未完成」，可强行「全部重翻」（覆盖已成功的页） -->
+    <string name="reader_translate_chapter_confirm_title">Translate this chapter</string>
+    <string name="reader_translate_chapter_confirm_msg">This chapter has %1$d pages: %2$d untranslated, %3$d failed, %4$d done.</string>
+    <string name="reader_translate_chapter_only_pending">Pending only</string>
+    <string name="reader_translate_chapter_overwrite">Redo all</string>
+    <string name="reader_translate_clear_confirm_title">Clear chapter translations?</string>
+    <string name="reader_translate_clear_confirm_msg">The translation data of %1$d pages in this chapter will be deleted. This cannot be undone.</string>
+    <string name="reader_translate_chapter_cleared">Chapter translations cleared</string>
+    <string name="reader_translate_delete_page">Clear</string>
+    <string name="reader_translate_page_deleted">Page translation deleted</string>
+    <string name="reader_translate_filter_done">Done</string>
+    <string name="reader_translate_filter_ongoing">Ongoing</string>
     <string name="reader_translate_waiting_other">Waiting for another translation to finish…</string>
     <!-- 翻译完成时的缓存说明：用户要求给出「12 条里命中 3 条」的口径，而不是笼统一句"有缓存"。
          全部命中时不说 API 数（0 条），partial 时同时给出两个口径的分母。 -->
@@ -1095,6 +1156,7 @@
     <string name="reader_translate_paused_to_manual">Translation paused, switched to manual mode.</string>
     <string name="reader_translate_cancelled">Stopped. Switched to manual mode.</string>
     <string name="reader_translate_debounce">Start delay</string>
+    <string name="reader_translate_debounce_hint">How long to wait after a page turn before translating (debounce), shared by auto and incremental. Smaller feels snappier but wastes pages while you keep turning.</string>
     <string name="reader_translate_ahead_pages">Pages ahead</string>
     <string name="reader_translate_failed_badge">Translation failed</string>
     <string name="reader_translate_disabled_mode">Translation is not available in Webtoon mode</string>
@@ -1424,7 +1486,7 @@
     <string name="novel_translate_hint_running">Translating chapter %1$d — double-tap to pause</string>
     <string name="novel_translate_window_done">%1$d batches ahead done · turn the page to continue</string>
     <string name="novel_translate_pending_batches">Translate chapter</string>
-    <string name="novel_translate_clear_chapter">Clear this chapter</string>
+    <string name="novel_translate_clear_chapter">Clear</string>
     <string name="novel_translate_clear_chapter_confirm">Only this chapter\'s translations will be cleared. Continue?</string>
     <string name="novel_translate_clear_ok">Clear</string>
     <string name="novel_translate_cleared_chapter">Chapter translations cleared</string>
@@ -1451,8 +1513,13 @@
     <string name="novel_display_bilingual">Bilingual</string>
     <string name="novel_translate_mode">Translation mode</string>
     <string name="novel_translate_debounce">Start delay</string>
+    <string name="novel_translate_debounce_hint">How long to wait after a page turn before translating (debounce), used by auto and incremental modes. Smaller feels snappier but wastes a few pages while you keep turning.</string>
     <string name="novel_translate_debounce_value">%1$d ms</string>
-    <string name="novel_translate_ahead">Batches ahead</string>
+    <string name="novel_translate_ahead_hint">How many batches to run ahead in incremental mode (this × paragraphs per batch = paragraphs per window). It stops when the window is done and moves on as you turn pages.</string>
+    <string name="novel_translate_ahead">Incremental look-ahead</string>
+    <string name="novel_translate_batch_group">Batch handling</string>
+    <string name="reader_translate_font_size_label">Font size</string>
+    <string name="reader_translate_font_size_hint">Drag the slider to fix a size; tap Auto to fit each bubble</string>
     <string name="novel_chapter_label">Chapter %1$d</string>
     <string name="novel_chapter_unread">Not translated</string>
     <string name="novel_chapter_partial">%1$d/%2$d</string>
@@ -1467,6 +1534,29 @@
     <string name="novel_prev_chapter">Previous chapter</string>
     <string name="novel_next_chapter">Next chapter</string>
     <string name="novel_translate_batch">Paragraphs per batch</string>
+    <string name="novel_translate_batch_hint">How many paragraphs one request translates (consecutive, never across chapters). Larger means fewer requests but longer ones, and it triggers the length warning below sooner.</string>
+    <!-- ===== 单批超长预警（一批合并文本估算超过阈值 → 弹窗问「继续 / 取消这次翻译」） ===== -->
+    <string name="novel_translate_warn">Batch warning threshold</string>
+    <string name="novel_translate_warn_hint">Ask once before sending a batch whose source text is estimated above this length (only asked once per run). A larger value means fewer prompts, but overly long requests are more likely to be truncated or mistranslated.</string>
+    <string name="novel_translate_oversize_title">Batch is very long</string>
+    <string name="novel_translate_oversize_msg">This batch is about %1$d tokens, above the %2$d you set. Very long input can make the translation worse. Continue?</string>
+    <string name="novel_translate_oversize_continue">Continue</string>
+    <string name="novel_translate_oversize_skip">Skip this batch</string>
+    <string name="novel_translate_oversize_skipped">Skipped the over-long batch</string>
+    <!-- ===== 同时 API 请求数（文本翻译；本地引擎固定 1） ===== -->
+    <string name="novel_translate_concurrency">Max concurrent translation requests</string>
+    <string name="novel_translate_concurrency_hint">Incremental and whole-chapter translation only, and NOT for local models (they stay serial). Batches are sent in reading order without waiting for earlier ones; up to N run at once, the rest queue. Higher is faster and costs more quota.</string>
+    <!-- ===== 章卡片：后台章节任务的进度（单位是**批**，不是页） ===== -->
+    <string name="novel_chapter_running_batches">Translating %1$d/%2$d batches</string>
+    <string name="novel_chapter_paused_batches">Paused · %1$d/%2$d batches</string>
+    <!-- 章卡片第二行：这一章还有多少批排在队里（纯内存态） -->
+    <string name="novel_chapter_active_batches">%1$d batch(es) in flight</string>
+    <string name="novel_chapter_active_waiting_batches">%1$d in flight · %2$d waiting</string>
+    <string name="novel_chapter_waiting_batches">%1$d batches waiting</string>
+    <!-- ===== 记录列表里「排队中（还没开始翻）的批」那一行 ===== -->
+    <string name="novel_translate_batch_row">Batch %1$d · paragraphs %2$d-%3$d</string>
+    <!-- 退出阅读器时暂停翻译（**不回退模式**，回来按原模式继续） -->
+    <string name="novel_translate_paused_background">Translation paused. It continues when you come back.</string>
     <string name="novel_style_hint">Layout is rebuilt immediately</string>
     <!-- 顶部胶囊右侧的页码/滚动进度。前面的「·」是分隔号，与左侧章名连读。 -->
     <string name="novel_page_counter">· %1$d/%2$d</string>
@@ -1507,8 +1597,8 @@
     <string name="import_already_done">That import already finished</string>
 
     <!-- ===== 导入弹窗的选项说明（措辞与 koto 统一；只保留「文件」「文件夹(单部)」，不含多部入口）===== -->
-    <string name="import_desc_files_manga">Pick one or more CBZ or ZIP files. Each file is imported as one manga.</string>
-    <string name="import_desc_dir_manga">Pick a folder holding a single manga. Subfolders are treated as chapters.</string>
+    <string name="import_desc_files_manga">Pick one or more CBZ/ZIP/CBR/7z files. Each file becomes one manga; its subfolders become chapters.</string>
+    <string name="import_desc_dir_manga">Pick a folder holding a single manga. Its subfolders become chapters; loose images in the root become chapter 0.</string>
     <string name="import_desc_files_novel">Pick one or more EPUB or TXT files. Each file is imported as one novel.</string>
     <string name="import_desc_dir_novel">Pick a folder holding a single novel. TXT files inside become chapters; each EPUB becomes a volume and keeps its own chapters.</string>
     <string name="import_option_dir_manga_single">Import folder (single manga)</string>

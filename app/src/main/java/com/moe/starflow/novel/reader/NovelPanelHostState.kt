@@ -2,8 +2,12 @@ package com.moe.starflow.novel.reader
 
 import com.moe.starflow.data.NovelChapterStat
 import com.moe.starflow.data.NovelFailureRow
+import com.moe.starflow.novel.translate.NovelBatchWarning
 import com.moe.starflow.novel.translate.NovelQuota
 import com.moe.starflow.novel.translate.NovelTranslateMode
+import com.moe.starflow.novel.translate.NovelWaitingBatch
+import com.moe.starflow.translate.batch.ChapterJob
+import com.moe.starflow.utils.TranslationConcurrency
 
 /**
  * 宿主推给面板的**全部**状态 —— 面板就是它的纯函数渲染。
@@ -40,4 +44,31 @@ data class NovelPanelHostState(
     val rotateLabel: String = "",
     val keepParagraphsWhole: Boolean = false,
     val isDarkPanel: Boolean = false,
+
+    /**
+     * 每章的**后台章节任务**（缺省 = 没任务）。卡片上的按钮文案（翻译本章 ⇄ 暂停 ⇄ 继续）与
+     * 进度徽章都按它渲染 —— 任务是应用级的（`NovelChapterJobHost`），面板必须能拿到此刻的状态。
+     */
+    val chapterJobs: Map<Int, ChapterJob> = emptyMap(),
+
+    /**
+     * 每章**还没开始翻**的批（面板记录列表里标「等待」的行）。
+     *
+     * ⚠️ **纯内存态**：来自 `ChapterJobRunner.waitingPages`，任务结束/取消就消失，**不写库**。
+     */
+    val waitingBatches: Map<Int, List<NovelWaitingBatch>> = emptyMap(),
+
+    /**
+     * **正在提交/等待返回**的批（琥珀高亮行）。
+     *
+     * 用户口径（2026-09-27）：「正在提交等待返回的批次片段背景要高亮处理」——
+     * 与 [waitingBatches] 一样是纯内存态，区别是这些批已经离开队列、正在等服务端返回。
+     */
+    val activeBatches: Map<Int, List<NovelWaitingBatch>> = emptyMap(),
+
+    /** 「同时 API 请求数」**用户设的值**（1–10，默认 5）；本地引擎实际恒 1。 */
+    val concurrency: Int = TranslationConcurrency.NOVEL_DEFAULT,
+
+    /** 单批预警阈值在 [NovelBatchWarning.tiers] 里的**档位下标**。 */
+    val batchWarnIndex: Int = NovelBatchWarning.defaultIndex,
 )

@@ -9,7 +9,13 @@ import androidx.appcompat.app.AppCompatActivity
 import com.moe.starflow.R
 import com.moe.starflow.data.NovelChapterStat
 import com.moe.starflow.data.NovelFailureRow
+import com.moe.starflow.novel.model.NovelChapterMeta
+import com.moe.starflow.novel.translate.NovelBatchWarning
 import com.moe.starflow.novel.translate.NovelTranslateMode
+import com.moe.starflow.novel.translate.NovelWaitingBatch
+import com.moe.starflow.translate.batch.ChapterJob
+import com.moe.starflow.translate.batch.ChapterJobState
+import com.moe.starflow.utils.TranslationConcurrency
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -48,6 +54,10 @@ class NovelPanelSyncTest {
         totals: Map<Int, Int> = emptyMap(),
         failures: Map<Int, List<NovelFailureRow>> = emptyMap(),
         chars: Map<Int, Int> = emptyMap(),
+        jobs: Map<Int, ChapterJob> = emptyMap(),
+        waiting: Map<Int, List<NovelWaitingBatch>> = emptyMap(),
+        concurrency: Int = TranslationConcurrency.NOVEL_DEFAULT,
+        warnIndex: Int = NovelBatchWarning.defaultIndex,
     ) = NovelPanelHostState(
         chapterIndex = chapter,
         chapterStats = stats,
@@ -65,6 +75,10 @@ class NovelPanelSyncTest {
         batchSize = batchSize,
         rotateLabel = rotate,
         keepParagraphsWhole = keepWhole,
+        chapterJobs = jobs,
+        waitingBatches = waiting,
+        concurrency = concurrency,
+        batchWarnIndex = warnIndex,
     )
 
     /**
@@ -289,4 +303,119 @@ class NovelPanelSyncTest {
         assertEquals("4", v.findViewById<TextView>(R.id.tv_batch_value).text)
     }
 
+    // ===== 章节卡片 / 等待行 / 两个新滑块（2026-10 改版）=====
+
+    /**
+     * **章卡片两个按钮的文案随任务状态切换**（用户口径）：
+     * 没任务 = 翻译本章 / 清除本章译文；跑着 = 暂停 / 取消；暂停了 = 继续 / 取消。
+     *
+     * ⚠️ 这条同时钉死「宿主推的状态必须立刻反映到按钮上」——面板是打开那一刻的快照，
+     * 不重绑就永远停在打开时的文案。
+     */
+    @Test
+    fun `章卡片按钮随任务状态切换`() {
+        val (sheet, v) = attach(
+            chapters = listOf(NovelChapterMeta(0, "第一章", "0,10")),
+        )
+        val rv = v.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rv_translate_chapters)
+        val adapter = rv.adapter as NovelChapterStateAdapter
+        val holder = adapter.onCreateViewHolder(rv, 0)
+        fun primary() = holder.itemView.findViewById<TextView>(R.id.btn_chapter_primary).text.toString()
+        fun secondary() = holder.itemView.findViewById<TextView>(R.id.btn_chapter_secondary).text.toString()
+
+        sheet.renderHostState(state(chapter = 0, totals = mapOf(0 to 40)))
+        adapter.onBindViewHolder(holder, 0)
+        assertEquals(v.context.getString(R.string.reader_translate_chapter_translate), primary())
+        assertEquals(v.context.getString(R.string.novel_translate_clear_chapter), secondary())
+
+        val running = ChapterJob(0, total = 10, done = 3, state = ChapterJobState.RUNNING, label = "第一章")
+        sheet.renderHostState(state(chapter = 0, totals = mapOf(0 to 40), jobs = mapOf(0 to running)))
+        adapter.onBindViewHolder(holder, 0)
+        assertEquals(v.context.getString(R.string.reader_translate_chapter_pause), primary())
+        assertEquals(v.context.getString(R.string.cancel), secondary())
+
+        val paused = running.copy(state = ChapterJobState.PAUSED)
+        sheet.renderHostState(state(chapter = 0, totals = mapOf(0 to 40), jobs = mapOf(0 to paused)))
+        adapter.onBindViewHolder(holder, 0)
+        assertEquals(v.context.getString(R.string.reader_translate_chapter_resume), primary())
+        assertEquals(v.context.getString(R.string.cancel), secondary())
+    }
+
+    /**
+     * **排队中的批要显示成「等待」行**（纯内存态，来自 `ChapterJobRunner.waitingPages`）。
+     * 展开的章里：卡片一行 + 每批一行；批行的徽章就是「等待」。
+     */
+    @Test
+    fun `排队中的批显示等待行`() {
+        val (sheet, v) = attach(
+            chapters = listOf(NovelChapterMeta(0, "第一章", "0,10")),
+        )
+        val rv = v.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rv_translate_chapters)
+        val adapter = rv.adapter as NovelChapterStateAdapter
+        val running = ChapterJob(0, total = 10, done = 3, state = ChapterJobState.RUNNING, label = "第一章")
+
+        sheet.renderHostState(
+            state(
+                chapter = 0, totals = mapOf(0 to 40), jobs = mapOf(0 to running),
+                waiting = mapOf(
+                    0 to listOf(
+                        NovelWaitingBatch(0, ordinal = 1, paraIndexes = listOf(3, 4, 5)),
+                        NovelWaitingBatch(0, ordinal = 2, paraIndexes = listOf(6, 7, 8)),
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals("卡片 + 两条等待行（当前章默认展开）", 3, adapter.itemCount)
+        val batchViewType = adapter.getItemViewType(1)
+        val batchHolder = adapter.onCreateViewHolder(rv, batchViewType)
+        adapter.onBindViewHolder(batchHolder, 1)
+        assertEquals(
+            v.context.getString(R.string.reader_translate_state_waiting),
+            batchHolder.itemView.findViewById<TextView>(R.id.tv_state_badge).text.toString(),
+        )
+        val label = batchHolder.itemView.findViewById<TextView>(R.id.tv_page_label).text.toString()
+        assertEquals(
+            v.context.getString(R.string.novel_translate_batch_row, 2, 4, 6),
+            label,
+        )
+    }
+
+    /** 「同时 API 请求数」与「单批预警阈值」两个滑块必须跟着宿主状态变（含数值文本）。 */
+    @Test
+    fun `并发数与预警阈值滑块跟着状态变`() {
+        val (sheet, v) = attach()
+
+        sheet.renderHostState(state())
+        assertEquals(TranslationConcurrency.NOVEL_DEFAULT, v.findViewById<SeekBar>(R.id.sb_concurrency).progress)
+        assertEquals(
+            "${NovelBatchWarning.DEFAULT_THRESHOLD}",
+            v.findViewById<TextView>(R.id.tv_batch_warn_value).text,
+        )
+
+        sheet.renderHostState(state(concurrency = 8, warnIndex = 3))
+        assertEquals(8, v.findViewById<SeekBar>(R.id.sb_concurrency).progress)
+        assertEquals("8", v.findViewById<TextView>(R.id.tv_concurrency_value).text)
+        assertEquals(3, v.findViewById<SeekBar>(R.id.sb_batch_warn).progress)
+        assertEquals(
+            "${NovelBatchWarning.thresholdAt(3)}",
+            v.findViewById<TextView>(R.id.tv_batch_warn_value).text,
+        )
+    }
+
+    /** 旧的两个**全局**按钮必须已经不在面板里了（用户要求整体删掉，能力都挪到章卡片上）。 */
+    @Test
+    fun `面板里不再有全局翻译与清空按钮`() {
+        val (_, v) = attach()
+        // ⚠️ 用 `getIdentifier` 而不是 `R.id.xxx`：删掉控件之后 R 里就没有这个字段了，
+        // 直接引用会**编译不过**（那正是「已删除」的证明，但测试本身得先能编译）
+        fun idOf(name: String): Int =
+            v.context.resources.getIdentifier(name, "id", v.context.packageName)
+
+        assertEquals("btn_translate_action 必须已从布局里删除", 0, idOf("btn_translate_action"))
+        assertEquals("btn_translate_clear 必须已从布局里删除", 0, idOf("btn_translate_clear"))
+        // 反向守卫：新控件必须真的存在（别把整段删空了也算通过）
+        assertTrue(idOf("sb_concurrency") != 0)
+        assertTrue(idOf("sb_batch_warn") != 0)
+    }
 }

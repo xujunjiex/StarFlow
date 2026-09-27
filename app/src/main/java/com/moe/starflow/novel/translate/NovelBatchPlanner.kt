@@ -65,6 +65,22 @@ object NovelBatchPlanner {
             .filter { it !in translated }
             .take(batchSize.coerceAtLeast(1))
     }
+
+    /**
+     * 把「本章还没翻的段」**一次切成整串批**（**章批量任务**用：提交时算好，之后按序交给流水线）。
+     *
+     * ⚠️ 与「反复调 [nextBatch] 推进」**等价**（`NovelBatchPlannerTest` 有等价性守卫）：
+     * 从第一个未翻的段起 take(batchSize) 个未翻的段，如此往复 —— 所以这里就是
+     * `filter(未翻).chunked(batchSize)`。两套算法各写一份迟早不一致，等价性用测试钉住。
+     *
+     * ⚠️ **只在本章内成批**（调用方按章调用）：批不跨章是既有约定。
+     */
+    fun planBatches(
+        chapterParaIndexes: List<Int>,
+        translated: Set<Int>,
+        batchSize: Int,
+    ): List<List<Int>> =
+        chapterParaIndexes.filter { it !in translated }.chunked(batchSize.coerceAtLeast(1))
 }
 
 /**

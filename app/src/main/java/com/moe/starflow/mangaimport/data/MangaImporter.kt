@@ -34,6 +34,9 @@ object MangaImporter {
 
     private const val COVER_WIDTH = 300
 
+    /** rar/7z 解压出来的图片目录名（在 `manga_import/<id>/` 下）。 */
+    const val EXTRACT_DIR = "pages"
+
     /** 复制缓冲区（也是进度上报的字节粒度）。 */
     private const val COPY_BUFFER = 64 * 1024
 
@@ -63,10 +66,14 @@ object MangaImporter {
     private fun localDir(context: Context, id: Long): File =
         File(StorageDirStore.root(context), id.toString())
 
-    // ===== 导入压缩包 zip/cbz =====
+    // ===== 导入压缩包 zip/cbz/cbr/7z =====
 
     /**
-     * 导入一个 zip/cbz 压缩包（ACTION_OPEN_DOCUMENT 返回的 contentUri）。
+     * 导入一个压缩包（ACTION_OPEN_DOCUMENT 返回的 contentUri）。
+     *
+     * 分两条链路，按**内容魔数**判定（不看扩展名，见 [ArchiveTypes]）：
+     * - **zip/cbz**：原样留存，`ZipFile` 随机读（当前实现，最快的路径）
+     * - **rar/cbr/7z**：导入时用 libarchive **解压成目录**，之后与文件夹导入走同一条阅读链路
      *
      * @param id 调用方**预留**的条目 id（并发导入时由 [ImportManager] 保证唯一）
      * @param onProgress 进度回调，在 IO 线程调用
@@ -84,7 +91,7 @@ object MangaImporter {
 
         val manga = importArchiveToFile(context, contentUri, id, name, title, onProgress)
             ?: throw IllegalStateException("导入失败")
-        LogCollector.i(TAG, "复制压缩包完成: ${manga.title} (${manga.pageCount} 页)")
+        LogCollector.i(TAG, "复制压缩包完成: ${manga.title} (${manga.pageCount} 页, ${manga.chapterCount} 章)")
         manga
     }
 
@@ -129,24 +136,101 @@ object MangaImporter {
                 }
             } ?: return null
 
-            val pageNames = listZipImageEntries(archiveFile)
-            val coverPath = extractCoverFromZipFile(context, archiveFile, pageNames, id)
-            return ImportedManga(
-                id = id,
-                title = title,
-                localRoot = archiveFile.absolutePath,
-                isArchive = true,
-                coverPath = coverPath,
-                pageCount = pageNames.size,
-                addedAt = freshAddedAt(context),
-                sizeBytes = archiveFile.length()
-            )
+            return when (ArchiveTypes.detect(archiveFile)) {
+                ArchiveKind.ZIP -> importZipArchive(context, archiveFile, id, title)
+                ArchiveKind.RAR, ArchiveKind.SEVEN_ZIP ->
+                    importExtractedArchive(context, archiveFile, destDir, id, title, onProgress)
+                ArchiveKind.UNKNOWN -> throw IllegalArgumentException("不支持的压缩包格式: $name")
+            }
         } catch (e: Exception) {
             // 半成品必须清掉：留着的话下次导入复用同一个 id，残件与新文件混在同一目录
             destDir.deleteRecursively()
             LogCollector.e(TAG, "导入压缩包失败，已清理 $destDir: ${e.message}", e)
             throw e
         }
+    }
+
+    /** zip/cbz：保留原包，页序/章节交给 [MangaChapterSplitter]（与阅读侧同源）。 */
+    private fun importZipArchive(
+        context: Context,
+        archiveFile: File,
+        id: Long,
+        title: String
+    ): ImportedManga {
+        val split = MangaChapterSplitter.split(listZipImageEntries(archiveFile))
+        val coverPath = extractCoverFromZipFile(context, archiveFile, split.keys, id)
+        return ImportedManga(
+            id = id,
+            title = title,
+            localRoot = archiveFile.absolutePath,
+            isArchive = true,
+            coverPath = coverPath,
+            pageCount = split.keys.size,
+            addedAt = freshAddedAt(context),
+            sizeBytes = archiveFile.length(),
+            // 包内的 ComicInfo.xml / meta.json → 自动填简介（只填这一次，之后用户可手改）
+            description = ComicMetadataParser.descriptionOf(context, readZipMetadataTexts(archiveFile)),
+            chapters = split.chapters
+        )
+    }
+
+    /**
+     * rar/cbr/7z：用 libarchive 解压成 `manga_import/<id>/pages/` 目录，之后按**文件夹导入**处理。
+     *
+     * ⚠️ 解压成功后**删掉原压缩包副本**：rar/7z 没有中央目录、随机读一页要顺序扫整包，
+     * 留着读取体验极差；而漫画本来就是「导入即复制」，解压结果才是真正要读的东西。
+     * 不删的话同一本书要占两份空间（几百 MB 级）。
+     */
+    private suspend fun importExtractedArchive(
+        context: Context,
+        archiveFile: File,
+        destDir: File,
+        id: Long,
+        title: String,
+        onProgress: (ImportProgress) -> Unit
+    ): ImportedManga {
+        val extractDir = File(destDir, EXTRACT_DIR)
+        val extracted = LibArchiveExtractor.extract(
+            archive = archiveFile,
+            destDir = extractDir,
+            // 图片之外**顺带把元数据文件也解出来**（ComicInfo.xml / meta.json，都是几 KB）：
+            // rar/7z 没法像 zip 那样随手读一个条目，解出来再读是最省事、也最省 CPU 的做法。
+            // 解出来后**留在 pages/ 里不删** —— 阅读侧只枚举图片，不受影响；留着还能让用户
+            // 在 Android/data 下看到原始元数据
+            filter = { ArchivedMangaReader.isImageFile(it) || ComicMetadataParser.isMetadataEntry(it) },
+            onProgress = { consumed, total ->
+                // ⚠️ 参数按**名字**给：ImportProgress 的前两位是「文件数」(Int)，
+                // 顺序传 Long 会被推断成文件数 → 编译不过 / 语义错
+                onProgress(
+                    ImportProgress(ImportPhase.COPYING, copiedBytes = consumed, totalBytes = total)
+                )
+            }
+        )
+        archiveFile.delete()
+        // 解压完重新枚举（保留子目录结构 → 分章白拿）
+        // ⚠️ 包内没有图片**不是异常**：照旧产出一条 0 页漫画，由 ImportManager 决定提示
+        // （与 zip 链路一致 —— 那里也是 pageCount=0 走 NoImages 事件）
+        val split = MangaChapterSplitter.split(ArchivedMangaReader.listImageFilesInDir(extractDir))
+        if (split.keys.isEmpty()) {
+            LogCollector.w(TAG, "压缩包里没有图片: ${archiveFile.name} (extracted=$extracted)")
+        }
+        val coverPath = split.keys.firstOrNull()
+            ?.let { File(extractDir, it) }
+            ?.let { extractThumbnailFromFile(context, it, id) }
+        val size = extractDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        return ImportedManga(
+            id = id,
+            title = title,
+            localRoot = extractDir.absolutePath,
+            isArchive = false,
+            coverPath = coverPath,
+            pageCount = split.keys.size,
+            addedAt = freshAddedAt(context),
+            sizeBytes = size,
+            // 解出来的 ComicInfo.xml / meta.json → 自动填简介（与 zip 链路同一条规则）
+            description = ComicMetadataParser.descriptionOf(context, readDirMetadataTexts(extractDir)),
+            chapters = split.chapters
+        )
     }
 
     // ===== 导入图片文件夹 =====
@@ -185,17 +269,19 @@ object MangaImporter {
             val entries = mutableListOf<Pair<DocumentFile, String>>()
             collectImageDocs(rootDoc, "", entries)
 
-            val pages = entries
-                .sortedWith(compareBy(ArchivedMangaReader.naturalComparator()) { it.second })
-                .map { it.second }
-            val totalFiles = entries.size
+            // ⚠️ 章节切分在这里就定下来：它同时产出**权威页序**（按章分组、章内自然排序），
+            // 落盘顺序即阅读顺序 —— 阅读侧 `ReaderPageSource` 用同一个切分器，两边不会错位。
+            val split = MangaChapterSplitter.split(entries.map { it.second })
+            val pageOrder = split.keys.withIndex().associate { (i, key) -> key to i }
+            val ordered = entries.sortedBy { pageOrder[it.second] ?: Int.MAX_VALUE }
+            val totalFiles = ordered.size
             onProgress(ImportProgress(ImportPhase.COPYING, 0, totalFiles))
 
             // ===== 阶段二：复制（按排好的页序落盘） =====
             var total = 0L
             var done = 0
             var last = 0L
-            entries.forEach { (doc, rel) ->
+            ordered.forEach { (doc, rel) ->
                 coroutineContext.ensureActive()
                 val target = File(destDir, rel)
                 target.parentFile?.mkdirs()
@@ -212,7 +298,9 @@ object MangaImporter {
                 }
             }
 
-            val coverPath = pages.firstOrNull()
+            // 封面取**阅读顺序的第一页**：有第0章时就是第0章的第一张，没有则第1章的第一张
+            // （用户口径：「封面选择从第0章找，没有图片再去第一章找」）
+            val coverPath = split.keys.firstOrNull()
                 ?.let { File(destDir, it) }
                 ?.let { extractThumbnailFromFile(context, it, id) }
 
@@ -222,9 +310,10 @@ object MangaImporter {
                 localRoot = destDir.absolutePath,
                 isArchive = false,
                 coverPath = coverPath,
-                pageCount = pages.size,
+                pageCount = split.keys.size,
                 addedAt = freshAddedAt(context),
-                sizeBytes = total
+                sizeBytes = total,
+                chapters = split.chapters
             )
         } catch (e: Exception) {
             destDir.deleteRecursively()
@@ -294,6 +383,68 @@ object MangaImporter {
             }
         }
         return ArchivedMangaReader.sortNaturally(out)
+    }
+
+    // ===== 元数据（ComicInfo.xml / meta.json → 简介） =====
+
+    /**
+     * 读 zip 内的元数据条目文本。
+     *
+     * ⚠️ 按 **basename** 匹配而不是硬编码路径：不同工具写的位置不一样
+     * （根目录 / 书名目录里 / 与图片同层），大小写也不统一（`ComicInfo.xml` / `comicinfo.xml`）。
+     * 读取失败、条目太大、不是文本，一律**当没有元数据**（只影响简介，绝不影响导入成败）。
+     */
+    internal fun readZipMetadataTexts(archive: File): List<Pair<String, String>> {
+        val out = mutableListOf<Pair<String, String>>()
+        try {
+            ZipFile(archive).use { zip ->
+                val entries = zip.entries()
+                while (entries.hasMoreElements()) {
+                    val e = entries.nextElement()
+                    if (e.isDirectory || !ComicMetadataParser.isMetadataEntry(e.name)) continue
+                    val text = zip.getInputStream(e).use { readTextCapped(it, e.size) } ?: continue
+                    out.add(e.name to text)
+                }
+            }
+        } catch (ex: Exception) {
+            LogCollector.w(TAG, "读取压缩包元数据失败（忽略）: ${ex.message}")
+        }
+        return out
+    }
+
+    /** 读目录里的元数据条目文本（rar/7z 解压出来的 `pages/`，见 [importExtractedArchive]）。 */
+    internal fun readDirMetadataTexts(dir: File): List<Pair<String, String>> {
+        if (!dir.isDirectory) return emptyList()
+        val out = mutableListOf<Pair<String, String>>()
+        dir.walkTopDown().forEach { f ->
+            if (!f.isFile || !ComicMetadataParser.isMetadataEntry(f.name)) return@forEach
+            val text = try {
+                f.inputStream().use { readTextCapped(it, f.length()) }
+            } catch (ex: Exception) {
+                null
+            } ?: return@forEach
+            out.add(f.relativeTo(dir).path.replace('\\', '/') to text)
+        }
+        return out
+    }
+
+    /**
+     * 按上限读文本（UTF-8）。超过 [ComicMetadataParser.MAX_METADATA_BYTES] 返回 null ——
+     * 有条目自称 `meta.json` 其实是几百 MB 的东西时不能整个读进内存。
+     */
+    private fun readTextCapped(input: InputStream, expectedSize: Long): String? {
+        if (expectedSize > ComicMetadataParser.MAX_METADATA_BYTES) return null
+        val out = java.io.ByteArrayOutputStream()
+        val buf = ByteArray(8 * 1024)
+        var total = 0L
+        while (true) {
+            val n = input.read(buf)
+            if (n < 0) break
+            total += n
+            if (total > ComicMetadataParser.MAX_METADATA_BYTES) return null
+            out.write(buf, 0, n)
+        }
+        return out.toString("UTF-8")
     }
 
     // ===== 封面提取 =====

@@ -46,6 +46,7 @@ import com.moe.starflow.translate.widget.Dialogs
 import com.moe.starflow.translate.FloatingBallService
 import com.moe.starflow.manga.MangaFloatingService
 import com.moe.starflow.utils.Constants
+import com.moe.starflow.utils.ContextBudget
 import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.FloatingBallStyle
 import com.moe.starflow.utils.MangaFontSize
@@ -245,13 +246,14 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
                 true
             }
         }
-        findPreference<ListPreference>("game_context_count")?.apply {
+        // 上下文长度（token 预算，档位 4K~128K，默认 32K）——原来是「轮数」，已整体替换
+        findPreference<ListPreference>(ContextBudget.KEY_TOKEN_BUDGET)?.apply {
             setOnPreferenceChangeListener { _, newValue ->
-                prefs.setString("game_context_count", newValue.toString())
+                prefs.setString(ContextBudget.KEY_TOKEN_BUDGET, newValue.toString())
                 true
             }
             summaryProvider = Preference.SummaryProvider<ListPreference> { pref ->
-                getString(R.string.game_context_count_summary, pref.entry)
+                getString(R.string.game_context_budget_summary, pref.entry)
             }
         }
 

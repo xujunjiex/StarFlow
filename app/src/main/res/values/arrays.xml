@@ -178,21 +178,22 @@
         <item>5000</item>
     </string-array>
 
-    <string-array name="context_count_entries">
-        <item>5 turns</item>
-        <item>8 turns</item>
-        <item>10 turns</item>
-        <item>12 turns</item>
-        <item>15 turns</item>
-        <item>20 turns</item>
+    <!-- AI 上下文长度（token 预算）：值 = token 数，与 ctx_token_budget（ListPreference）一一对应 -->
+    <string-array name="ctx_token_budget_entries">
+        <item>4K tokens</item>
+        <item>8K tokens</item>
+        <item>16K tokens</item>
+        <item>32K tokens</item>
+        <item>64K tokens</item>
+        <item>128K tokens</item>
     </string-array>
-    <string-array name="context_count_values">
-        <item>5</item>
-        <item>8</item>
-        <item>10</item>
-        <item>12</item>
-        <item>15</item>
-        <item>20</item>
+    <string-array name="ctx_token_budget_values">
+        <item>4096</item>
+        <item>8192</item>
+        <item>16384</item>
+        <item>32768</item>
+        <item>65536</item>
+        <item>131072</item>
     </string-array>
 
     <!-- Translation cache count -->

@@ -13,6 +13,7 @@ import com.moe.starflow.databinding.ItemImportMangaCardBinding
 import com.moe.starflow.databinding.ItemImportMangaRowBinding
 import com.moe.starflow.mangaimport.data.ImportPhase
 import com.moe.starflow.mangaimport.data.ImportedManga
+import com.moe.starflow.mangaimport.data.mangaChapterLabel
 import com.moe.starflow.utils.UiUtils
 import java.io.File
 import java.util.Locale
@@ -196,20 +197,33 @@ class MangaGridAdapter(
             // 导入中：信息行改成进度文案（页数/大小还不知道），阅读进度行让位
             h.binding.tvInfoLine.text = importStatusText(ctx, item)
         } else {
-            // 详细信息：页数 · 大小
+            // 详细信息：**共N章** · 页数 · 大小（章数只在多章时显示，单章漫画不必啰嗦）
             val size = formatSize(item.sizeBytes)
             val pages = ctx.getString(R.string.import_pages_count, item.pageCount)
-            h.binding.tvInfoLine.text = if (size.isNotEmpty()) "$pages · $size" else pages
+            val chaptersLabel = if (item.chapters.size > 1) {
+                ctx.getString(R.string.import_chapters_count, item.chapters.size)
+            } else {
+                null
+            }
+            h.binding.tvInfoLine.text = listOfNotNull(chaptersLabel, pages, size.ifEmpty { null })
+                .joinToString(" · ")
         }
 
         // 阅读进度（已开始阅读时显示；导入中的占位不算已读）
+        // 章节化后显示「第3章 · 5/20」：只给全书页号的话，几百页的多章本根本看不出读到哪一章
+        val chapter = if (item.lastReadPage > 0) item.chapterOfPage(item.lastReadPage) else null
         if (!item.importing && item.lastReadPage > 0) {
             h.binding.tvProgress.visibility = View.VISIBLE
-            h.binding.tvProgress.text = ctx.getString(
-                R.string.import_read_progress,
-                item.lastReadPage + 1,
-                item.pageCount
-            )
+            h.binding.tvProgress.text = if (chapter != null) {
+                ctx.getString(
+                    R.string.import_read_progress_chapter,
+                    mangaChapterLabel(ctx, chapter),
+                    item.lastReadPage - chapter.startPage + 1,
+                    chapter.pageCount
+                )
+            } else {
+                ctx.getString(R.string.import_read_progress, item.lastReadPage + 1, item.pageCount)
+            }
         } else {
             h.binding.tvProgress.visibility = View.GONE
         }

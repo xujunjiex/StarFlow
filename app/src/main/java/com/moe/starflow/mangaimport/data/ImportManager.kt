@@ -214,8 +214,10 @@ object ImportManager {
     }
 
     private fun classifyArchive(e: Throwable): ImportFailureReason = when (e) {
-        // ZipFile 对非 zip（rar/7z/改名的文件）与损坏包抛 ZipException；空包也走这里
+        // ZipFile 对非 zip 与损坏包抛 ZipException；魔数认不出的包由 MangaImporter 抛
+        // IllegalArgumentException；rar/7z 解压失败由 libarchive 抛 ArchiveException
         is ZipException, is IllegalArgumentException -> ImportFailureReason.NOT_ARCHIVE
+        is me.zhanghai.android.libarchive.ArchiveException -> ImportFailureReason.NOT_ARCHIVE
         is java.io.FileNotFoundException, is SecurityException -> ImportFailureReason.UNREADABLE
         else -> ImportFailureReason.UNKNOWN
     }

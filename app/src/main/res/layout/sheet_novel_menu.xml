@@ -209,52 +209,128 @@
                         android:layout_weight="1" android:text="@string/reader_translate_mode_incremental"/>
                 </RadioGroup>
 
+                <!-- ===== 翻译参数：统一用「段落」那套排版 =====
+                     用户口径（2026-09-27）：「右边的取值排版非常难看，设计成和段落那样的排版」
+                     → 标签在左、取值贴右（同一行），进度条**另起一行占满整宽**，说明文字再下一行。
+                     五项都带说明（启动延迟 / 每批段数 / 单批预警 / 翻译模型最大同时请求数）。 -->
+
                 <!-- 启动延迟（防抖）：停留多久才开翻，自动/增量都用它 -->
                 <LinearLayout android:id="@+id/row_debounce" android:layout_width="match_parent"
-                    android:layout_height="wrap_content" android:orientation="horizontal"
-                    android:gravity="center_vertical" android:layout_marginTop="6dp">
-                    <TextView android:id="@+id/tv_debounce_label" android:layout_width="wrap_content"
-                        android:layout_height="wrap_content" android:text="@string/reader_translate_debounce"
-                        android:textSize="12sp" android:textColor="#888888"/>
-                    <SeekBar android:id="@+id/sb_debounce" android:layout_width="0dp" android:layout_weight="1"
-                        android:layout_height="wrap_content" android:min="200" android:max="2000"
-                        android:layout_marginHorizontal="10dp" android:thumbTint="#55AEEA" android:progressTint="#55AEEA" android:progressBackgroundTint="#55AEEA"/>
-                    <!-- 数值放在**进度条后面**（用户要求）：minWidth 让各行的条尾对齐 -->
-                    <TextView android:id="@+id/tv_debounce_value" android:layout_width="wrap_content"
-                        android:layout_height="wrap_content" android:minWidth="56dp" android:gravity="end"
-                        android:text="500 ms" android:textSize="12sp" android:textColor="#55AEEA"/>
+                    android:layout_height="wrap_content" android:orientation="vertical" android:layout_marginTop="8dp">
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:gravity="center_vertical">
+                        <TextView android:id="@+id/tv_debounce_label" android:layout_width="0dp" android:layout_weight="1"
+                            android:layout_height="wrap_content" android:text="@string/reader_translate_debounce"
+                            android:textSize="13sp" android:textColor="#333333"/>
+                        <TextView android:id="@+id/tv_debounce_value" android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" android:text="500 ms" android:textSize="12sp" android:textColor="#55AEEA"/>
+                    </LinearLayout>
+                    <SeekBar android:id="@+id/sb_debounce" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:min="200" android:max="2000" android:layout_marginTop="2dp"
+                        android:thumbTint="#55AEEA" android:progressTint="#55AEEA" android:progressBackgroundTint="#55AEEA"/>
+                    <TextView android:id="@+id/tv_debounce_hint" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:text="@string/novel_translate_debounce_hint"
+                        android:textSize="11sp" android:textColor="#888888"/>
                 </LinearLayout>
 
-                <!-- 向后翻译**批数**：仅增量模式显示（批 = 每批段数指定的连续段，不跨章） -->
+                <!-- ===== 批次处理（可折叠组）=====
+                     用户口径（2026-09-27）：除了「启动延迟」之外的四个批次相关参数**收进这一组折叠起来**，
+                     组名「批次处理」，组内第一项是「启动增量翻译向后」。默认折叠（记在 prefs 里）。 -->
+                <LinearLayout android:id="@+id/row_batch_group" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:orientation="vertical" android:layout_marginTop="8dp" android:layout_marginBottom="10dp">
+
+                    <LinearLayout android:id="@+id/btn_batch_group" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:orientation="horizontal"
+                        android:gravity="center_vertical" android:clickable="true" android:focusable="true"
+                        android:paddingTop="4dp" android:paddingBottom="4dp">
+                        <TextView android:id="@+id/tv_batch_group_title" android:layout_width="0dp"
+                            android:layout_height="wrap_content" android:layout_weight="1"
+                            android:text="@string/novel_translate_batch_group" android:textSize="13sp" android:textColor="#333333"/>
+                        <TextView android:id="@+id/tv_batch_group_arrow" android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" android:text="▸" android:textSize="13sp" android:textColor="#888888"/>
+                    </LinearLayout>
+
+                    <LinearLayout android:id="@+id/batch_group_content" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone">
+
+                <!-- 向后翻译**批数**（仅增量模式显示；批 = 每批段数指定的连续段，不跨章） -->
                 <LinearLayout android:id="@+id/row_ahead_chapters" android:layout_width="match_parent"
-                    android:layout_height="wrap_content" android:orientation="horizontal"
-                    android:gravity="center_vertical" android:layout_marginTop="6dp">
-                    <TextView android:id="@+id/tv_ahead_label" android:layout_width="wrap_content"
-                        android:layout_height="wrap_content" android:text="@string/novel_translate_ahead"
-                        android:textSize="12sp" android:textColor="#888888"/>
-                    <SeekBar android:id="@+id/sb_ahead" android:layout_width="0dp" android:layout_weight="1"
-                        android:layout_height="wrap_content" android:min="2" android:max="10"
-                        android:layout_marginHorizontal="10dp" android:thumbTint="#55AEEA" android:progressTint="#55AEEA" android:progressBackgroundTint="#55AEEA"/>
-                    <!-- 数值放在**进度条后面**（用户要求）：minWidth 让各行的条尾对齐 -->
-                    <TextView android:id="@+id/tv_ahead_value" android:layout_width="wrap_content"
-                        android:layout_height="wrap_content" android:minWidth="56dp" android:gravity="end"
-                        android:text="5" android:textSize="12sp" android:textColor="#55AEEA"/>
+                    android:layout_height="wrap_content" android:orientation="vertical" android:layout_marginTop="8dp">
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:gravity="center_vertical">
+                        <TextView android:id="@+id/tv_ahead_label" android:layout_width="0dp" android:layout_weight="1"
+                            android:layout_height="wrap_content" android:text="@string/novel_translate_ahead"
+                            android:textSize="13sp" android:textColor="#333333"/>
+                        <TextView android:id="@+id/tv_ahead_value" android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" android:text="5" android:textSize="12sp" android:textColor="#55AEEA"/>
+                    </LinearLayout>
+                    <SeekBar android:id="@+id/sb_ahead" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:min="2" android:max="10" android:layout_marginTop="2dp"
+                        android:thumbTint="#55AEEA" android:progressTint="#55AEEA" android:progressBackgroundTint="#55AEEA"/>
+                    <TextView android:id="@+id/tv_ahead_hint" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:text="@string/novel_translate_ahead_hint"
+                        android:textSize="11sp" android:textColor="#888888"/>
                 </LinearLayout>
 
                 <!-- 每批段数：一次翻译请求翻多少段（默认 3，范围 1–10） -->
                 <LinearLayout android:id="@+id/row_batch" android:layout_width="match_parent"
-                    android:layout_height="wrap_content" android:orientation="horizontal"
-                    android:gravity="center_vertical" android:layout_marginTop="6dp">
-                    <TextView android:id="@+id/tv_batch_label" android:layout_width="wrap_content"
-                        android:layout_height="wrap_content" android:text="@string/novel_translate_batch"
-                        android:textSize="12sp" android:textColor="#888888"/>
-                    <SeekBar android:id="@+id/sb_batch" android:layout_width="0dp" android:layout_weight="1"
-                        android:layout_height="wrap_content" android:min="1" android:max="10"
-                        android:layout_marginHorizontal="10dp" android:thumbTint="#55AEEA" android:progressTint="#55AEEA" android:progressBackgroundTint="#55AEEA"/>
-                    <!-- 数值放在**进度条后面**（用户要求）：minWidth 让各行的条尾对齐 -->
-                    <TextView android:id="@+id/tv_batch_value" android:layout_width="wrap_content"
-                        android:layout_height="wrap_content" android:minWidth="56dp" android:gravity="end"
-                        android:text="3" android:textSize="12sp" android:textColor="#55AEEA"/>
+                    android:layout_height="wrap_content" android:orientation="vertical" android:layout_marginTop="8dp">
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:gravity="center_vertical">
+                        <TextView android:id="@+id/tv_batch_label" android:layout_width="0dp" android:layout_weight="1"
+                            android:layout_height="wrap_content" android:text="@string/novel_translate_batch"
+                            android:textSize="13sp" android:textColor="#333333"/>
+                        <TextView android:id="@+id/tv_batch_value" android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" android:text="3" android:textSize="12sp" android:textColor="#55AEEA"/>
+                    </LinearLayout>
+                    <SeekBar android:id="@+id/sb_batch" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:min="1" android:max="10" android:layout_marginTop="2dp"
+                        android:thumbTint="#55AEEA" android:progressTint="#55AEEA" android:progressBackgroundTint="#55AEEA"/>
+                    <TextView android:id="@+id/tv_batch_hint" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:text="@string/novel_translate_batch_hint"
+                        android:textSize="11sp" android:textColor="#888888"/>
+                </LinearLayout>
+
+                <!-- 单批预警阈值（token 粗估）：一批合并文本超过它就弹窗问「继续 / 取消这次翻译」。
+                     档位在 NovelBatchWarning.tiers，滑块位置是**档位下标**（不是 token 值本身）。 -->
+                <LinearLayout android:id="@+id/row_batch_warn" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:orientation="vertical" android:layout_marginTop="8dp">
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:gravity="center_vertical">
+                        <TextView android:id="@+id/tv_batch_warn_label" android:layout_width="0dp" android:layout_weight="1"
+                            android:layout_height="wrap_content" android:text="@string/novel_translate_warn"
+                            android:textSize="13sp" android:textColor="#333333"/>
+                        <TextView android:id="@+id/tv_batch_warn_value" android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" android:text="4096" android:textSize="12sp" android:textColor="#55AEEA"/>
+                    </LinearLayout>
+                    <SeekBar android:id="@+id/sb_batch_warn" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:min="0" android:max="4" android:layout_marginTop="2dp"
+                        android:thumbTint="#55AEEA" android:progressTint="#55AEEA" android:progressBackgroundTint="#55AEEA"/>
+                    <TextView android:id="@+id/tv_batch_warn_hint" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:text="@string/novel_translate_warn_hint"
+                        android:textSize="11sp" android:textColor="#888888"/>
+                </LinearLayout>
+
+                <!-- 翻译模型最大同时请求数（1-10，默认 5）：只对增量/整章翻译有效，**不含本地模型**
+                     （本地引擎 NLLB / LlamaCpp 恒为 1，见 TranslationConcurrency）。 -->
+                <LinearLayout android:id="@+id/row_concurrency" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:orientation="vertical" android:layout_marginTop="8dp">
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:gravity="center_vertical">
+                        <TextView android:id="@+id/tv_concurrency_label" android:layout_width="0dp" android:layout_weight="1"
+                            android:layout_height="wrap_content" android:text="@string/novel_translate_concurrency"
+                            android:textSize="13sp" android:textColor="#333333"/>
+                        <TextView android:id="@+id/tv_concurrency_value" android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" android:text="5" android:textSize="12sp" android:textColor="#55AEEA"/>
+                    </LinearLayout>
+                    <SeekBar android:id="@+id/sb_concurrency" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:min="1" android:max="10" android:layout_marginTop="2dp"
+                        android:thumbTint="#55AEEA" android:progressTint="#55AEEA" android:progressBackgroundTint="#55AEEA"/>
+                    <TextView android:id="@+id/tv_concurrency_hint" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:text="@string/novel_translate_concurrency_hint"
+                        android:textSize="11sp" android:textColor="#888888"/>
+                </LinearLayout>
+                    </LinearLayout>
                 </LinearLayout>
 
                 <!-- 翻译模型（小说没有 OCR，所以只有这一行） -->
@@ -310,22 +386,10 @@
                      状态标签里已经有了，两处显示同一件事就是重复。
                      ⚠️ 不要再加回来。 -->
 
-                <!-- 两个按钮：**不带图标**、紧凑胶囊（用户要求：图标+大按钮又丑又占地方） -->
-                <!-- 两个按钮：**不带图标**、**等宽平分一行**（用户要求：靠左挤在一起太拥挤） -->
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:layout_marginTop="10dp" android:layout_marginBottom="14dp">
-                    <TextView android:id="@+id/btn_translate_action" android:layout_width="0dp"
-                        android:layout_weight="1" android:layout_height="wrap_content" android:gravity="center"
-                        android:paddingTop="7dp" android:paddingBottom="7dp"
-                        android:background="@drawable/bg_pill_dark" android:text="@string/novel_translate_pending_batches"
-                        android:textSize="12sp" android:textColor="#FFFFFF" android:clickable="true"/>
-                    <TextView android:id="@+id/btn_translate_clear" android:layout_width="0dp"
-                        android:layout_weight="1" android:layout_height="wrap_content"
-                        android:layout_marginStart="12dp" android:gravity="center"
-                        android:paddingTop="7dp" android:paddingBottom="7dp"
-                        android:background="@drawable/bg_pill_dark" android:text="@string/novel_translate_clear_chapter"
-                        android:textSize="12sp" android:textColor="#FFFFFF" android:clickable="true"/>
-                </LinearLayout>
+                <!-- ⚠️ 原来这里有两个**全局**按钮（`btn_translate_action` 翻译本章 / `btn_translate_clear`
+                     清空本章译文）—— 用户要求**删掉**：「翻译本章 / 清除本章译文 / 暂停 / 取消」全部挪到
+                     **章节卡片**上（见 `item_novel_chapter_card.xml`），"待翻译多少批"这类信息也走卡片徽章。
+                     不要再加回来。 -->
 
                 <HorizontalScrollView android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:layout_marginTop="2dp" android:scrollbars="none">

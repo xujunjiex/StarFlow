@@ -2,9 +2,11 @@ package com.moe.starflow.llamacpp
 
 import android.content.Context
 import com.moe.starflow.R
+import com.moe.starflow.translate.ContextAwareTranslation
 import com.moe.starflow.translate.TranslationResult
 import com.moe.starflow.translate.TranslationStatusOverlay
 import com.moe.starflow.translate.TranslationTextAPI
+import com.moe.starflow.utils.ContextBudget
 import com.moe.starflow.utils.LogCollector
 import translationapi.llamacpp.LlamaCppNative
 import translationapi.llamacpp.LlamaCppStreamCallback
@@ -19,6 +21,11 @@ import java.io.File
  *  - `hyProfile = true`：Hy-MT2 专用通道（`nativeTranslate*`，角色标记由桥接补，前缀缓存＝固定指令）
  *  - 否则：通用通道（`nativeTranslateRaw*`，prompt 由模型自带 Jinja 模板渲染，前缀缓存＝原文之前的渲染片段）
  *
+ * ### 历史上下文（[ContextAwareTranslation]）
+ * 本地模型也接上下文，但**预算不看设置里的 `ctx_token_budget`**：本地模型必须服从自己的
+ * `contextSize`，塞超过 `n_ctx` 的 prompt 会被 native 拒绝（`__PROMPT_TOO_LONG__`）甚至 ggml_abort。
+ * 预算 = `contextSize − 预留生成空间（maxTokens，取不到用 ctx/4）`，见 [ContextBudget.localBudgetTokens]。
+ *
  * 保留老引擎的全部运行时保障：epoch 世代号 + inFlight 计数（防 use-after-free）、
  * keepAlive 共享热实例、abort 取消、崩溃日志、warmUp 预加载（并**按审计结论把 warmUp 线程也设成
  * MAX_PRIORITY**，否则线程池 worker 会继承普通优先级）。
@@ -26,7 +33,7 @@ import java.io.File
 class LlamaCppTranslation(
     context: Context,
     private val model: LlamaCppModel,
-) : TranslationTextAPI {
+) : TranslationTextAPI, ContextAwareTranslation {
 
     override val modelName: String get() = model.displayName
 
@@ -55,6 +62,56 @@ class LlamaCppTranslation(
         private set
     @Volatile var modelDisplayFromGguf: String = ""
         private set
+
+    // ───────────────────────── 历史上下文 ─────────────────────────
+
+    /**
+     * 调用方推来的历史（旧 → 新）。**这里刻意存原样、不裁剪**：
+     * 预算要用**模型自己的** `contextSize`/`maxTokens`，那两个值每次推理现读
+     * （`currentParams()`，见 `LlamaCppSharedHolder.keyOf`），在更新上下文时读会多一次清单 IO，
+     * 而且可能读到即将失效的旧值。真正的裁剪在 [contextAwareText] 里做。
+     */
+    @Volatile private var contextHistory: List<Pair<String, String>> = emptyList()
+    @Volatile private var contextEnabled: Boolean = false
+
+    /**
+     * 更新历史上下文。**忽略 [budgetTokens]**（那是给网络 API 用的设置值）——
+     * 本地模型的预算来自模型自身的 `contextSize`，超了会直接被 native 拒绝甚至闪退。
+     */
+    override fun updateContext(history: List<Pair<String, String>>, enabled: Boolean, budgetTokens: Int) {
+        contextHistory = if (enabled) history else emptyList()
+        contextEnabled = enabled
+    }
+
+    /**
+     * 把历史按模型预算裁成一段**前缀文本**拼在待翻译原文之前。
+     *
+     * 为什么拼进 user 文本而不是走多轮 messages：native 侧只有
+     * `prompt`(system 段) + `prefix`+`rest`(user 段) 两个字符串（见 `llamacpp_bridge.cpp`
+     * 的 `tokenize_str(prefix)` / `tokenize_str(prompt + prefix.size())`），**没有多轮接口**
+     * （聊天用的 `nativeTranslateChat` 是另一条实现，翻译通道不走它）。所以历史只能作为
+     * user 段里原文之前的一段文本 —— 也正因为它在 `{source_text}` 位置，前缀 KV 缓存
+     * （`buildHyPrefix` / `buildGeneric` 的 prefix）仍然只覆盖固定指令，缓存不会被历史破坏。
+     */
+    private fun contextAwareText(text: String, params: LlamaCppParams): String {
+        if (!contextEnabled || contextHistory.isEmpty()) return text
+        val budget = ContextBudget.localHistoryBudget(params.contextSize, params.maxTokens, text)
+        val kept = ContextBudget.trim(contextHistory, budget)
+        if (kept.isEmpty()) {
+            LogCollector.d(
+                TAG,
+                "$modelName 上下文：预算 $budget tok（ctx=${params.contextSize} max=${params.maxTokens}，" +
+                    "已扣除本轮原文）内塞不下任何一轮，已忽略"
+            )
+            return text
+        }
+        LogCollector.d(
+            TAG,
+            "$modelName 上下文：带 ${kept.size}/${contextHistory.size} 轮，预算 $budget tok " +
+                "(ctx=${params.contextSize} max=${params.maxTokens})"
+        )
+        return ContextBudget.localContextBlock(kept, budget) + text
+    }
 
     // ───────────────────────── 翻译入口 ─────────────────────────
 
@@ -108,13 +165,15 @@ class LlamaCppTranslation(
                     }
 
                     // 两条通道：Hy-MT2 手工拼装 / 通用模板渲染
+                    // 历史上下文作为 user 段里原文之前的一段前缀（本地通道没有多轮接口，见 contextAwareText）
+                    val promptText = contextAwareText(text, params)
                     val prompt: String
                     val prefix: String
                     if (hyProfile) {
-                        prompt = LlamaCppPrompt.buildHy(params.promptTemplate, targetName, text)
+                        prompt = LlamaCppPrompt.buildHy(params.promptTemplate, targetName, promptText)
                         prefix = LlamaCppPrompt.buildHyPrefix(params.promptTemplate, targetName)
                     } else {
-                        val rendered = LlamaCppPrompt.buildGeneric(nativeHandle, params, targetName, text)
+                        val rendered = LlamaCppPrompt.buildGeneric(nativeHandle, params, targetName, promptText)
                         prompt = rendered.prompt
                         prefix = rendered.prefix
                     }

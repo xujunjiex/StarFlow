@@ -39,25 +39,37 @@ import com.moe.starflow.me.settings.SettingPageActivity
 import com.moe.starflow.novel.data.ImportedNovel
 import com.moe.starflow.novel.data.NovelStore
 import com.moe.starflow.novel.translate.NovelBatchTranslator
+import com.moe.starflow.novel.translate.NovelBatchWarnGate
+import com.moe.starflow.novel.translate.NovelBatchWarning
+import com.moe.starflow.novel.translate.NovelChapterJobHost
 import com.moe.starflow.novel.translate.NovelChapterTranslator
 import com.moe.starflow.novel.translate.NovelEngineConfig
+import com.moe.starflow.novel.translate.NovelOversizeConfirmer
 import com.moe.starflow.novel.translate.NovelParagraphSplitter
 import com.moe.starflow.novel.translate.NovelQuota
 import com.moe.starflow.novel.translate.NovelTranslateMode
 import com.moe.starflow.novel.translate.NovelQueuePhase
 import com.moe.starflow.novel.translate.NovelQueueState
 import com.moe.starflow.novel.translate.NovelTranslationEngine
+import com.moe.starflow.novel.translate.NovelTranslationHub
 import com.moe.starflow.novel.translate.NovelTranslationQueue
 import com.moe.starflow.novel.translate.TranslationTextApiAdapter
 import com.moe.starflow.translate.TranslationStatusOverlay
+import com.moe.starflow.translate.batch.ChapterJobState
+import com.moe.starflow.translate.batch.TranslationJobService
 import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.LogCollector
+import com.moe.starflow.utils.TranslationConcurrency
 import com.moe.starflow.utils.UiUtils
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import translationapi.TranslatorFactory
+import kotlin.coroutines.resume
 import kotlin.math.roundToInt
 
 /**
@@ -79,6 +91,12 @@ class NovelReaderActivity : AppCompatActivity() {
     companion object {
         private const val TAG = "NovelReader"
         const val EXTRA_NOVEL_ID = "novel_id"
+
+        /**
+         * 通知栏点进来时带的目标章（章节后台翻译的通知用）。
+         * ⚠️ 由 `TranslationJobService` 传入；阅读器若还没接这个 extra，就退化成"按断点续读"。
+         */
+        const val EXTRA_CHAPTER_INDEX = "chapter_index"
 
         /** 上下 UI 显隐的淡入淡出时长（与漫画一致）。 */
         private const val CHROME_FADE_MS = 160L
@@ -126,10 +144,12 @@ class NovelReaderActivity : AppCompatActivity() {
      *
      * ⚠️ **必须真的赋值**（这里曾经是个只被 cancel、从不被赋值的死字段）：这两条路
      * 都会一直持有 `OcrLock`（别的翻译因此被挡住）并且跑完后调 `showOverlay`——
-     * 那是**进程级系统窗口**，用户已经退出阅读器去别的应用了，芯片还会盖上去
-     * （`onStop` 的注释里写明了这是必须避免的）。退出/切后台要能取消它们。
+     * 那是**进程级系统窗口**，用户已经退出阅读器去别的应用了，芯片还会盖上去。
+     * 退出/切后台要能取消它们。
      *
-     * 整章任务另有一个 [chapterSweepJob]（它的批数多、更要能停）。
+     * ⚠️ 章批量任务（原来那个 `chapterSweepJob`）**已经挪到应用级宿主**
+     * （`novel/translate/NovelChapterJobHost.kt`）：它不受 Activity 生命周期影响，
+     * 退出阅读器也继续翻，进度在前台服务通知栏里。
      */
     private var translationJob: Job? = null
 
@@ -162,8 +182,24 @@ class NovelReaderActivity : AppCompatActivity() {
     /** 队列状态的观察者。队列被丢弃重建时要先 cancel，否则旧收集器一直挂在 lifecycleScope 上。 */
     private var queueObserverJob: Job? = null
 
-    /** 面板「翻译本章」的在途任务（一次整章）。双击 / 开面板 / 退出阅读器都要能取消它。 */
-    private var chapterSweepJob: Job? = null
+    /**
+     * **章批量翻译的应用级宿主**（`NovelChapterJobHost`，按 novelId 缓存）。
+     *
+     * ⚠️ 「翻译本章」不再跑在 `lifecycleScope` 上：整章任务由宿主在**应用级 scope** 里跑，
+     * 退出阅读器也继续（进度走前台服务通知栏），这里只负责取任务状态 + 把结果刷上屏。
+     */
+    private var chapterHost: NovelChapterJobHost? = null
+
+    /** 宿主任务收尾的监听（显示「本章翻完」提示）；退出阅读器要 remove。 */
+    private var jobFinishedListener: ((Int, Int, Int, Boolean) -> Unit)? = null
+
+    /**
+     * 单批超长预警的「同一轮只打扰一次」记账（用户拒过一遍 → 本轮后续超长批静默跳过）。
+     * 与宿主里那份是**两份**：它们分别对应自动/增量队列与章任务两条路。
+     */
+    private val oversizeConfirmer = NovelOversizeConfirmer { estimate, threshold ->
+        confirmOversizeOnUi(estimate, threshold)
+    }
 
     /** 模型/引擎配置变化的监听（见 [onEngineConfigChanged]）。 */
     private var enginePrefsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
@@ -173,6 +209,12 @@ class NovelReaderActivity : AppCompatActivity() {
     /** 队列最近一次的模式（与 [queueChapter] 一起做「重复调用短路」）。 */
     private var queueMode: NovelTranslateMode? = null
     private var queueRunning = false
+
+    /** 「已暂停」提示发过没有（`onStop` 与 `onDestroy` 的兜底二选一，别弹两次）。 */
+    private var pausedToManualNotified = false
+
+    /** `onDestroy` 兜底用：`onStop` 那一刻队列是否真的在跑。 */
+    private var wasQueueRunning = false
 
     /**
      * 当前阅读锚点（段号 + **段内比例**），见 [NovelAnchor]。
@@ -306,10 +348,40 @@ class NovelReaderActivity : AppCompatActivity() {
         // 断点续读只存了段号（既有格式），段内比例从段首起算
         pendingAnchor = NovelAnchor(loaded.lastReadParaIndex)
 
+        // **通知栏点进来的目标章**：章节后台任务的通知带着 chapterIndex，直接定位到那一章
+        // （没有这个 extra 就走断点续读。⚠️ `TranslationJobService` 已经在传它了。）
+        intent.getIntExtra(EXTRA_CHAPTER_INDEX, -1)
+            .takeIf { it in 0 until chapterCount }
+            ?.let {
+                chapterIndex = it
+                // 目标章要从**章首**看：段内比例从第一段起算（断点续读的位置与这一章无关）
+                pendingAnchor = NovelAnchor(0)
+            }
+
         if (savedInstanceState != null) {
             returnedFromSettings = savedInstanceState.getBoolean(STATE_FROM_SETTINGS, false)
             chapterIndex = savedInstanceState.getInt(STATE_CURRENT_CHAPTER, chapterIndex)
         }
+
+        // 章批量翻译的**应用级宿主**：同一本书永远只有一份（任务/进度不会分裂）
+        chapterHost = NovelTranslationHub.hostFor(this, loaded).also { host ->
+            host.bindUi(
+                confirmOversize = { estimate, threshold -> confirmOversizeOnUi(estimate, threshold) },
+                onChanged = { onChapterJobProgress() },
+            )
+        }
+        // 任务收尾提示（失败/取消不喊完成；用户口径：取消时不报"本章完成 x/y"）
+        val finished: (Int, Int, Int, Boolean) -> Unit = { ch, ok, total, cancelled ->
+            runOnUiThread {
+                if (!cancelled && ch == chapterIndex && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+                    showOverlayToast(getString(R.string.reader_translate_chapter_finished, ok, total), error = false)
+                }
+            }
+        }
+        jobFinishedListener = finished
+        chapterHost?.addJobFinishedListener(finished)
+        // 任务状态一变就把整份宿主状态推给面板（暂停/继续/取消也要立刻反映到卡片按钮上）
+        lifecycleScope.launch { chapterHost?.chapterJobs?.collect { pushPanelState() } }
 
         setupOverlays()
         applyBackground()
@@ -349,8 +421,17 @@ class NovelReaderActivity : AppCompatActivity() {
         super.onStop()
         autoTurnJob?.cancel()
         autoTurnJob = null
-        chapterSweepJob?.cancel()
-        chapterSweepJob = null
+        // ⚠️ 用户口径：「打开菜单或者**退出阅读器**自动暂停回退手动，但我发现这个暂停没有
+        // app 的提示信息」—— 提示要在 `onStop` 里发（`isFinishing` = 真的在关掉），
+        // 那一刻窗口还在、看得见；`onDestroy` 里弹的 Toast 常被系统直接吞掉。
+        // ⚠️ 文案用 `novel_translate_paused_background`：退出阅读器**只暂停、不改模式**
+        // （回来按原模式接着翻），写成「回退到手动」就是假话。
+        // ⚠️ 提示必须**最后**发：下面的 `TranslationStatusOverlay.dismiss()` 会清掉浮层上
+        // 所有堆叠消息，先发就被它自己抹掉了。
+        wasQueueRunning = queueRunning
+        val notifyPause = isFinishing &&
+            NovelPanelStyle.translateMode(prefs) != NovelTranslateMode.MANUAL
+        if (notifyPause) pausedToManualNotified = true
         // 手动翻一批 / 按选择翻也要停：它们持有 OcrLock（挡住别的翻译），跑完还会往
         // **进程级系统浮层**上写字 —— 用户已经在别的应用里了也会看到芯片
         translationJob?.cancel()
@@ -362,9 +443,28 @@ class NovelReaderActivity : AppCompatActivity() {
         // 回来时 `onStart → restartQueueIfNeeded()` 会按**原来那个模式**接着翻。
         // ⚠️ 早先这里顺手把模式也回退成手动了（多做的），结果是「切个后台/息屏回来，
         // 自动翻译就没了，还得重新选」—— 那才是"老是暂停"的来源。
+        //
+        // ⚠️ **章批量任务（应用级宿主）不受影响**：用户要求它「除非清后台否则继续翻」，
+        // 进度走前台服务通知栏，回到阅读器时译文已经写库、`refreshTranslations` 直接读到。
         TranslationStatusOverlay.getInstance(this@NovelReaderActivity).dismiss()
+        // ⚠️ 提示放在 `dismiss()` **之后**：浮层是共享单例，dismiss 会清掉所有堆叠消息
+        if (notifyPause) showPausedNotice(R.string.novel_translate_paused_background)
         // 离开阅读器清掉选择集：它是「长按多选」的临时状态，回到阅读器时不该还亮着
         exitSelection()
+    }
+
+    /**
+     * 通知栏点进来的目标章（阅读器**已经开着**时走这里：服务的 Intent 带 SINGLE_TOP）。
+     *
+     * 少了它，点第二条通知会停在上一条通知那一章 —— 用户看到的是"点了没反应"。
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val target = intent.getIntExtra(EXTRA_CHAPTER_INDEX, -1)
+        if (target < 0 || target >= chapterCount) return
+        if (target == chapterIndex) return
+        gotoChapter(target)
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -406,9 +506,24 @@ class NovelReaderActivity : AppCompatActivity() {
         }
         enginePrefsListener = null
         translationJob?.cancel()
+        // ⚠️ 章任务**不取消**（应用级宿主继续跑）：只解绑 UI + 撤监听，让宿主能在"没有 UI
+        // 且没有任务"时被回收。译文已经写库，回到阅读器直接读得到。
+        jobFinishedListener?.let { chapterHost?.removeJobFinishedListener(it) }
+        jobFinishedListener = null
+        chapterHost?.unbindUi()
+        chapterHost = null
+        book?.let { NovelTranslationHub.releaseIfIdle(it.id) }
         if (::repository.isInitialized) repository.evictAll()
         // ⚠️ 状态浮层是**进程级 TYPE_APPLICATION_OVERLAY 系统窗口**，不清会挂在桌面/别的应用上
         TranslationStatusOverlay.getInstance(this@NovelReaderActivity).dismiss()
+        // 兜底：`onStop` 没发过（进程被杀 / 没走 onStop 的路径）而当时确实在自动翻 → 补一次。
+        // ⚠️ 但 `onDestroy` 里的 Toast 经常被系统吞掉，所以正常路径靠 onStop 那条。
+        if (!pausedToManualNotified &&
+            NovelPanelStyle.translateMode(prefs) != NovelTranslateMode.MANUAL &&
+            wasQueueRunning
+        ) {
+            UiUtils.showToast(this, getString(R.string.novel_translate_paused_background))
+        }
         super.onDestroy()
     }
 
@@ -425,6 +540,11 @@ class NovelReaderActivity : AppCompatActivity() {
             )
         ),
         splitVersion = NovelParagraphSplitter.SPLIT_VERSION,
+        // 单批超长预警：阈值现读设置，确认弹窗走宿主（**没 UI 时放行**，见 NovelBatchWarnGate）
+        warnGate = NovelBatchWarnGate(
+            threshold = { NovelPanelStyle.batchWarnThreshold(prefs) },
+            confirm = { estimate, threshold -> oversizeConfirmer.confirm(estimate, threshold) },
+        ),
     )
 
     // ===== chrome（与漫画逐项对齐） =====
@@ -1124,6 +1244,8 @@ class NovelReaderActivity : AppCompatActivity() {
         queueRunning = false
         queueChapter = -1
         queueMode = null
+        // 章任务的翻译器也按值缓存了，同样要丢（下次用到时按新配置重建）
+        chapterHost?.invalidateTranslator()
         if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) restartQueueIfNeeded()
     }
 
@@ -1226,6 +1348,15 @@ class NovelReaderActivity : AppCompatActivity() {
                 repository.paragraphsOf(book2, ch).filter { it.isTranslatable() }.map { it.index }
             },
             translatedIndexes = { book2, ch -> translations.keys.toSet() },
+            // **并发**：远端 API 由「同时 API 请求数」决定（默认 5），**本地引擎恒 1**（判据在
+            // TranslationConcurrency 里）→ 本地引擎天然串行，不需要额外分支。
+            // 每轮现读 prefs：滑块改完立刻对下一批生效（在飞的那几批不受影响）。
+            concurrency = {
+                TranslationConcurrency.novelConcurrency(
+                    this,
+                    PreferenceManager.getDefaultSharedPreferences(this),
+                )
+            },
         ).also {
             queue = it
             observeQueue(it)
@@ -1369,6 +1500,14 @@ class NovelReaderActivity : AppCompatActivity() {
         rotateLabel = rotateLabel(),
         keepParagraphsWhole = NovelPanelStyle.keepParagraphsWhole(prefs),
         isDarkPanel = NovelPanelStyle.isDarkBackground(bgMode),
+        // 章任务状态（卡片按钮文案 + 徽章 + 「等待」行）：应用级宿主是唯一真值
+        chapterJobs = chapterHost?.chapterJobs?.value.orEmpty().associateBy { it.chapterIndex },
+        waitingBatches = chapterHost?.waitingByChapter().orEmpty(),
+                    activeBatches = chapterHost?.activeByChapter().orEmpty(),
+        concurrency = NovelPanelStyle.storedConcurrency(
+            PreferenceManager.getDefaultSharedPreferences(this),
+        ),
+        batchWarnIndex = NovelBatchWarning.indexOf(NovelPanelStyle.batchWarnThreshold(prefs)),
     )
 
     /**
@@ -1636,6 +1775,8 @@ class NovelReaderActivity : AppCompatActivity() {
             toast(R.string.novel_translate_need_config)
             return
         }
+        // 显式操作 = 新一轮：超长预警重新允许弹窗
+        oversizeConfirmer.reset()
         showOverlay(getString(R.string.reader_translate_in_progress), autoDismiss = false)
         translationJob?.cancel()
         translationJob = lifecycleScope.launch {
@@ -1677,6 +1818,8 @@ class NovelReaderActivity : AppCompatActivity() {
             return
         }
         val chunk = NovelPanelStyle.batchSize(prefs).coerceAtLeast(1)
+        // 显式操作 = 新一轮：超长预警重新允许弹窗
+        oversizeConfirmer.reset()
         showOverlay(getString(R.string.reader_translate_in_progress), autoDismiss = false)
         translationJob?.cancel()
         translationJob = lifecycleScope.launch {
@@ -1720,34 +1863,130 @@ class NovelReaderActivity : AppCompatActivity() {
     }
 
     /**
-     * 面板「翻译本章」：把当前章一批批翻完（逐批上屏，失败即停并报原始原因）。
+     * **章卡片的主按钮**（用户口径：没任务 = 翻译本章；跑着 = 暂停；暂停了 = 继续）。
+     *
+     * 任务本体在**应用级宿主**（`NovelChapterJobHost`）里跑：退出阅读器也继续，
+     * 进度走前台服务通知栏。所以这里只做三件事：按状态切暂停/继续、把任务提交上去、
+     * 把前台服务拉起来。
      */
-    private fun translateWholeChapterNow() {
-        val b = book ?: return
-        val q = queueOrNull()
-        if (q == null) {
-            toast(R.string.novel_translate_need_config)
-            return
+    private fun onChapterPrimaryClicked(index: Int) {
+        val host = chapterHost ?: return
+        when (host.jobOf(index)?.state) {
+            ChapterJobState.RUNNING, ChapterJobState.QUEUED -> {
+                host.pause(index)
+                pushPanelState()
+                return
+            }
+            ChapterJobState.PAUSED -> {
+                host.resume(index)
+                TranslationJobService.start(applicationContext)
+                pushPanelState()
+                return
+            }
+            else -> Unit
         }
-        chapterSweepJob?.cancel()
-        showOverlay(getString(R.string.reader_translate_in_progress), autoDismiss = false)
-        chapterSweepJob = lifecycleScope.launch {
-            var failed: String? = null
-            val batches = runCatching {
-                q.translateWholeChapter(b, chapterIndex) { r ->
-                    if (r.error != null) failed = r.error
-                    refreshChapterStats()
-                    if (!r.isEmpty) refreshTranslations()
+        // 没任务 → 「翻译本章」：只翻**没翻成**的段（重翻走长按多选，语义不混）
+        oversizeConfirmer.reset()
+        host.startChapter(
+            chapterIndex = index,
+            label = chapterDisplayTitle(this, index, chaptersCache[index]),
+            onEmpty = {
+                runOnUiThread {
+                    if (!isFinishing && !isDestroyed) {
+                        UiUtils.showToast(this, getString(R.string.reader_translate_chapter_nothing), true)
+                    }
                 }
-            }.getOrDefault(0)
-            chapterSweepJob = null
-            showOverlay(null)
+            },
+        )
+        // 任务在应用级后台跑：拉起前台服务（通知栏进度 + 暂停/继续/取消按钮）
+        TranslationJobService.start(applicationContext)
+        pushPanelState()
+    }
+
+    /**
+     * **章卡片的次按钮**（有任务时）：取消该章任务 ——
+     * 丢掉**还没开始翻**的批，**已翻好的译文保留**（语义在 `ChapterJobRunner` 里，与漫画一致）。
+     */
+    private fun onChapterSecondaryClicked(index: Int) {
+        val host = chapterHost ?: return
+        host.cancel(index)
+        showOverlayToast(getString(R.string.reader_translate_cancelled), error = false)
+        book?.let { NovelTranslationHub.releaseIfIdle(it.id) }
+        pushPanelState()
+    }
+
+    /** 章目录缓存（章任务要标题当通知栏文案）。 */
+    private val chaptersCache = mutableMapOf<Int, String?>()
+
+    private fun cacheChapterTitles(list: List<com.moe.starflow.novel.model.NovelChapterMeta>) {
+        list.forEachIndexed { i, meta -> chaptersCache[i] = meta.title }
+    }
+
+    /** 章任务有进展（一批落定 / 收尾）→ 把结果**实时刷上屏**。 */
+    private fun onChapterJobProgress() {
+        runOnUiThread {
+            if (isFinishing || isDestroyed) return@runOnUiThread
+            // 后台任务也可能在别的章上跑：只刷统计（章行/徽章），当前章的译文才重排
             refreshChapterStats()
-            val why = failed
-            if (why != null) {
-                showOverlayToast(getString(R.string.novel_translate_failed_reason, why), error = true)
-            } else if (batches > 0) {
-                showOverlayToast(getString(R.string.novel_translate_chapter_done, batches), error = false)
+            if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) refreshTranslations()
+            pushPanelState()
+        }
+    }
+
+    /**
+     * 「已暂停」的用户可见提示（用户报过"没有提示"）。
+     *
+     * 状态浮层开着就用浮层（**系统窗口，阅读器正在关闭也看得见**），否则退回 Toast ——
+     * 与漫画 `showPausedToManualNotice()` 同一套判断。
+     */
+    private fun showPausedNotice(textRes: Int) {
+        val text = getString(textRes)
+        if (statusOverlayEnabled()) {
+            TranslationStatusOverlay.getInstance(this).show(text)
+        } else {
+            UiUtils.showToast(this, text)
+        }
+    }
+
+    /**
+     * **单批超长预警**的确认框（继续 / 取消这次翻译）。
+     *
+     * ⚠️ 会被**后台任务**调用（宿主在 IO 线程上问 UI），所以整段切主线程；
+     * Activity 正在销毁时直接**放行**（预警是提示，不是硬闸门 —— 没 UI 不能把任务卡死）。
+     */
+    private suspend fun confirmOversizeOnUi(estimate: Int, threshold: Int): Boolean {
+        if (isFinishing || isDestroyed) return true
+        return withContext(Dispatchers.Main) {
+            suspendCancellableCoroutine { cont ->
+                if (isFinishing || isDestroyed) {
+                    cont.resume(true)
+                    return@suspendCancellableCoroutine
+                }
+                var answered = false
+                val dlg = AlertDialog.Builder(this@NovelReaderActivity)
+                    .setTitle(R.string.novel_translate_oversize_title)
+                    .setMessage(getString(R.string.novel_translate_oversize_msg, estimate, threshold))
+                    .setPositiveButton(R.string.novel_translate_oversize_continue) { _, _ ->
+                        answered = true
+                        cont.resume(true)
+                    }
+                    .setNegativeButton(R.string.novel_translate_oversize_skip) { _, _ ->
+                        answered = true
+                        UiUtils.showToast(
+                            this@NovelReaderActivity,
+                            getString(R.string.novel_translate_oversize_skipped),
+                            false,
+                        )
+                        cont.resume(false)
+                    }
+                    .setOnCancelListener {
+                        answered = true
+                        cont.resume(false)
+                    }
+                    .create()
+                dlg.show()
+                applyNovelDialogTheme(dlg, NovelPanelStyle.isDarkBackground(bgMode))
+                cont.invokeOnCancellation { if (!answered) runCatching { dlg.dismiss() } }
             }
         }
     }
@@ -1764,15 +2003,13 @@ class NovelReaderActivity : AppCompatActivity() {
     }
 
     /**
-     * 停止在途翻译并**回退手动**：面板打开 / 双击 / 退出阅读器都走这里。
+     * 停止在途翻译并**回退手动**：面板打开 / 双击走这里（用户明确要求）。
      *
-     * 与漫画 `pauseToManual` 同义 —— 回退之后不会自己接上，要用户重新选模式（用户明确要求）。
+     * ⚠️ **不动章批量任务**：那是应用级的后台任务（面板上有暂停/取消按钮），
+     * 打开面板就把它停掉与「后台继续翻」直接冲突。
      */
     private fun pauseToManual(message: String? = null) {
         queue?.stop()
-        // 整章任务也要停：面板打开 / 双击取消都走这里
-        chapterSweepJob?.cancel()
-        chapterSweepJob = null
         queueRunning = false
         NovelPanelStyle.setTranslateMode(prefs, NovelTranslateMode.MANUAL)
         showOverlay(null)
@@ -1905,6 +2142,8 @@ class NovelReaderActivity : AppCompatActivity() {
             val stats = runCatching { translator().chapterStats(b) }.getOrDefault(emptyMap())
             chapterStats = stats
             val chapters = repository.chaptersOf(b)
+            // 章标题缓存：章任务的通知栏文案要用（阅读器关掉后拿不到目录）
+            cacheChapterTitles(chapters)
             tocHandle = NovelTocDialog.show(
                 context = this@NovelReaderActivity,
                 chapters = chapters,
@@ -1930,6 +2169,8 @@ class NovelReaderActivity : AppCompatActivity() {
         // 章节目录要读文件（EPUB 读 OPF+NCX；TXT 跑一遍分章正则），不能在主线程取
         lifecycleScope.launch {
             val chapters = repository.chaptersOf(b)
+            // 章标题缓存：章任务的通知栏文案要用（阅读器关掉后拿不到目录）
+            cacheChapterTitles(chapters)
             val stats = runCatching { translator().chapterStats(b) }.getOrDefault(chapterStats)
             chapterStats = stats
             showMenuNow(chapters, stats)
@@ -1962,6 +2203,14 @@ class NovelReaderActivity : AppCompatActivity() {
                 currentChapter = chapterIndex,
                 chapters = chapters,
                 chapterStats = stats,
+                // 章任务状态一并给面板：卡片按钮的「暂停/继续/取消」与「等待」行要靠它
+                chapterJobs = chapterHost?.chapterJobs?.value.orEmpty().associateBy { it.chapterIndex },
+                waitingBatches = chapterHost?.waitingByChapter().orEmpty(),
+                    activeBatches = chapterHost?.activeByChapter().orEmpty(),
+                concurrency = NovelPanelStyle.storedConcurrency(
+                    PreferenceManager.getDefaultSharedPreferences(this),
+                ),
+                batchWarnIndex = NovelBatchWarning.indexOf(NovelPanelStyle.batchWarnThreshold(prefs)),
             ),
             NovelPanelCallbacks(
                 onReaderMode = { mode ->
@@ -2029,11 +2278,21 @@ class NovelReaderActivity : AppCompatActivity() {
                 onDebounceMs = { ms -> NovelPanelStyle.setDebounceMs(prefs, ms) },
                 onAheadBatches = { n -> NovelPanelStyle.setAheadBatches(prefs, n) },
                 onBatchSize = { n -> NovelPanelStyle.setBatchSize(prefs, n) },
+                // 「同时 API 请求数」：写的是**用户设的值**（本地引擎实际仍恒 1，判据在
+                // TranslationConcurrency）。队列每轮现读 → 改完立刻对下一批生效。
+                onConcurrency = { v ->
+                    NovelPanelStyle.setConcurrency(PreferenceManager.getDefaultSharedPreferences(this), v)
+                },
+                // 「单批预警阈值」：面板给的是**档位下标**，落地成 token 值（判据用这个值）
+                onBatchWarn = { index ->
+                    NovelPanelStyle.setBatchWarnThreshold(prefs, NovelBatchWarning.thresholdAt(index))
+                },
                 currentTranslateMode = { NovelPanelStyle.translateMode(prefs) },
-                // ⚠️ 面板这颗按钮写着「翻译本章」→ 必须真的翻整章（不是翻一批）：
-                // 阅读器上那颗悬浮翻译按钮才是"点一次翻一批 / 按选择翻"
-                onTranslateNow = { translateWholeChapterNow() },
-                onClearChapter = { clearChapterTranslations() },
+                // ⚠️ 章卡片的主按钮（用户口径）：没任务 = 翻译本章；跑着 = 暂停；暂停了 = 继续。
+                // 任务本体在**应用级宿主**里跑，退出阅读器也继续（进度走通知栏）。
+                onChapterPrimary = { index -> onChapterPrimaryClicked(index) },
+                onChapterSecondary = { index -> onChapterSecondaryClicked(index) },
+                onChapterClear = { index -> clearChapterTranslations(index) },
                 onDownload = { which -> exportNovel(which) },
                 onChapterJump = { ch -> gotoChapter(ch) },
                 onNeedChapterTotal = { ch -> ensureChapterTotal(ch) },
@@ -2066,17 +2325,22 @@ class NovelReaderActivity : AppCompatActivity() {
     }
 
     /**
-     * 只清**本章**译文（用户明确要求：不要一点就清整本；面板里已二次确认）。
+     * 只清**某一章**译文（用户明确要求：不要一点就清整本；面板里已二次确认）。
+     *
+     * @param index 要清的章；默认当前章
      */
-    private fun clearChapterTranslations() {
+    private fun clearChapterTranslations(index: Int = chapterIndex) {
         val b = book ?: return
         lifecycleScope.launch {
-            runCatching { translator().clearChapter(b, chapterIndex) }
-            translations = emptyMap()
-            // 译文都没了，"刚翻的是哪几段"也就无从谈起
-            activeBatch = emptySet()
+            runCatching { translator().clearChapter(b, index) }
+            // 只清当前章时才动屏幕上的这份译文（清别的章不该把读者这一章的内容抽掉）
+            if (index == chapterIndex) {
+                translations = emptyMap()
+                // 译文都没了，"刚翻的是哪几段"也就无从谈起
+                activeBatch = emptySet()
+                loadChapter(index, anchor = pendingAnchor)
+            }
             refreshChapterStats()
-            loadChapter(chapterIndex, anchor = pendingAnchor)
             showOverlayToast(getString(R.string.novel_translate_cleared_chapter), error = false)
         }
     }

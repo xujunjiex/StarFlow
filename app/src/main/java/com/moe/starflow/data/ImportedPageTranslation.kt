@@ -74,6 +74,30 @@ interface ImportedPageTranslationDao {
     @Query("UPDATE imported_page_translation SET mangaKey = :newKey WHERE mangaId = :mangaId AND mangaKey = :oldKey")
     suspend fun rewriteMangaKey(mangaId: Long, oldKey: String, newKey: String)
 
+    /**
+     * 删除**某一页的翻译数据**（面板「详情 → 删除」用）。
+     *
+     * 删的是整行（原文 + 译文 + 气泡坐标 + 状态），不是「只删记录」——删完该页回到未翻译态，
+     * 显示回落原图。指纹过滤与读取侧（[forManga]）保持同一口径：id 会被复用，
+     * 只按 id+页号删可能删到复用同一 id 的新书。
+     */
+    @Query(
+        "DELETE FROM imported_page_translation " +
+            "WHERE mangaId = :mangaId AND (mangaKey = :mangaKey OR mangaKey IS NULL) AND pageIndex = :pageIndex"
+    )
+    suspend fun deletePage(mangaId: Long, mangaKey: String, pageIndex: Int)
+
+    /**
+     * 删除某段页号的翻译数据（「清除本章译文」用；`from`/`to` 都含，全书页号）。
+     * 指纹过滤同上 —— 不匹配的行一律不动。
+     */
+    @Query(
+        "DELETE FROM imported_page_translation " +
+            "WHERE mangaId = :mangaId AND (mangaKey = :mangaKey OR mangaKey IS NULL) " +
+            "AND pageIndex BETWEEN :from AND :to"
+    )
+    suspend fun deletePageRange(mangaId: Long, mangaKey: String, from: Int, to: Int)
+
     /** 删除单部漫画的全部记录（孤儿清理用：该 id 已不在书架里）。 */
     @Query("DELETE FROM imported_page_translation WHERE mangaId = :mangaId")
     suspend fun deleteManga(mangaId: Long)

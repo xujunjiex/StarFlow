@@ -275,12 +275,12 @@
             android:summary="@string/game_context_summary"/>
 
         <ListPreference
-            android:key="game_context_count"
+            android:key="ctx_token_budget"
             app:iconSpaceReserved="false"
-            android:defaultValue="5"
-            android:title="@string/game_context_count_title"
-            android:entries="@array/context_count_entries"
-            android:entryValues="@array/context_count_values"
+            android:defaultValue="32768"
+            android:title="@string/game_context_budget_title"
+            android:entries="@array/ctx_token_budget_entries"
+            android:entryValues="@array/ctx_token_budget_values"
             android:dependency="game_context_enabled"/>
 
     </PreferenceCategory>

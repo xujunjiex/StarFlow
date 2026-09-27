@@ -14,6 +14,7 @@ import com.moe.starflow.manga.config.*
 import android.graphics.Color
 import com.moe.starflow.translate.TranslationResult
 import com.moe.starflow.translate.TranslationTextAPI
+import com.moe.starflow.utils.ContextBudget
 import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.LogCollector
 import kotlinx.coroutines.CancellableContinuation
@@ -184,14 +185,15 @@ object TranslateUtils {
 
         // 分批渲染强制开启上下文（仅批次间传递）；正常漫画翻译不使用上下文
         val currentContextEnabled = forceContext
-        val currentContextMaxCount = try {
-            prefs.getString("game_context_count", "5").toIntOrNull() ?: 5
-        } catch (e: Exception) { 5 }
+        // 上下文预算（token，不再是轮数）：网络 API 用设置值；本地 LlamaCpp 不受它影响
+        val currentContextBudget = ContextBudget.budgetOf(prefs)
 
-        // 更新 AI 上下文（仅 OpenAI 兼容 API）
-        (translator as? OpenAITranslation)?.updateContext(
-            if (currentContextEnabled) contextHistory.toList() else emptyList(),
-            currentContextEnabled
+        // 更新 AI 上下文（唯一入口；NLLB 等纯机器翻译不实现 ContextAwareTranslation，会被跳过）
+        ContextBudget.applyTo(
+            translator,
+            contextHistory.toList(),
+            currentContextEnabled,
+            prefs
         )
 
         // 等待翻译结果。超时策略：
@@ -319,15 +321,13 @@ object TranslateUtils {
         }
         LogCollector.d(TAG, "translateBubblesBatch: parsed ${translations.size} translations")
 
-        // 更新 AI 上下文历史（仅 OpenAI 兼容 API）
+        // 更新 AI 上下文历史（仅支持上下文的引擎；按 token 预算裁剪，唯一实现在 ContextBudget）
         if (currentContextEnabled && translations.isNotEmpty()) {
             val sourceText = bubbles.map { it.second }.joinToString("\n")
             val translatedText = translations.joinToString("\n")
             contextHistory.addLast(Pair(sourceText, translatedText))
-            while (contextHistory.size > currentContextMaxCount) {
-                contextHistory.removeFirst()
-            }
-            LogCollector.d(TAG, "上下文已更新: ${contextHistory.size}/$currentContextMaxCount 轮")
+            val kept = ContextBudget.trimInPlace(contextHistory, currentContextBudget)
+            LogCollector.d(TAG, "上下文已更新: $kept 轮（预算 $currentContextBudget tok）")
         }
 
         // 输出翻译结果

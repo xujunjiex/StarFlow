@@ -1,6 +1,7 @@
 package com.moe.starflow.novel.reader
 
 import android.content.Context
+import android.graphics.drawable.GradientDrawable
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -8,8 +9,12 @@ import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.moe.starflow.R
 import com.moe.starflow.data.NovelChapterStat
+import com.moe.starflow.mangaimport.reader.CardBackdrop
 import com.moe.starflow.data.NovelFailureRow
 import com.moe.starflow.novel.model.NovelChapterMeta
+import com.moe.starflow.novel.translate.NovelWaitingBatch
+import com.moe.starflow.translate.batch.ChapterJob
+import com.moe.starflow.translate.batch.ChapterJobState
 import java.util.Locale
 
 /**
@@ -53,16 +58,54 @@ internal fun isChapterDone(
 internal fun chapterCharLabel(context: Context, count: Int): String =
     context.getString(R.string.novel_chapter_chars, String.format(Locale.US, "%,d", count))
 
+/** 翻译面板里的一行：**章节卡片** 或 该章排队中的批（「等待」）。 */
+sealed interface NovelTranslateRow {
+    /**
+     * 章卡片。
+     *
+     * ⚠️ 只带**结构**信息（章号 + 是否展开）：段数/字数/失败/任务状态一律在绑定那一刻
+     * **从适配器的 map 里现读**。曾经把它们快照进行对象，而 `chars`/`currentChapter` 这几个
+     * setter 只 `notifyItemRangeChanged`（不重建行）→ 行里存的是**旧值**，字数永远显示不出来
+     * （`NovelPanelSyncTest` 抓到的：`3 of 40 paragraphs` 后面少一截）。
+     */
+    data class Chapter(val chapterIndex: Int, val expanded: Boolean) : NovelTranslateRow
+
+    /** 章内**排队中**的一批（纯内存态，任务没了就消失）。 */
+    data class Batch(
+        val chapterIndex: Int,
+        val batch: NovelWaitingBatch,
+        /** true = **正在提交/等待返回**（琥珀高亮）；false = 还排在队列里（「等待」）。 */
+        val active: Boolean = false,
+    ) : NovelTranslateRow
+}
+
 /**
- * 翻译面板「每章一行」。
+ * 翻译面板「记录列表」的**两段式**列表（与漫画 `ReaderPageStateAdapter` 同一形态）：
+ * 每章一张**卡片**（16sp 加粗标题 + 两个按钮），展开后列出**该章排队中的批**（标「等待」）
+ * 与失败明细。
  *
- * ⚠️ **复用漫画面板的行布局** `item_translate_page_state.xml`（同一个文件、同一套徽章
- * drawable），只是把「P{n}」换成「第 n 章」、「页状态」换成「章状态」。两个阅读器的面板
- * 必须长得一样 —— 各画一套行样式是最容易悄悄跑偏的地方。
+ * 用户口径（2026-10）：
+ * - 章标题比批/页行大（16sp 加粗 vs 13sp），卡片上直接放两个按钮：
+ *   主按钮「翻译本章 ⇄ 暂停 ⇄ 继续」、次按钮「清除本章译文 ⇄ 取消」
+ * - **点卡片空白处 = 跳到该章**（切章只从记录里点；面板里不再有切章组件）
+ * - 排队中的批标「等待」（**纯内存态，不写库**）
  */
 class NovelChapterStateAdapter(
     private val onJump: (Int) -> Unit,
-) : RecyclerView.Adapter<NovelChapterStateAdapter.VH>() {
+    /** 章卡片主按钮：没任务 = 翻译本章；跑着 = 暂停；暂停了 = 继续。 */
+    private val onChapterPrimary: (Int) -> Unit = {},
+    /** 章卡片次按钮：有任务 = 取消；没任务 = 清除本章译文（确认弹窗在面板里）。 */
+    private val onChapterSecondary: (Int) -> Unit = {},
+) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+
+    companion object {
+        /** 展开/收起明细的过渡时长（与漫画同一套观感）。 */
+        private const val EXPAND_ANIM_MS = 160L
+
+        /** ⚠️ 章节卡片必须是 0：测试与调用方按 `viewType = 0` 取卡片视图。 */
+        private const val TYPE_CHAPTER = 0
+        private const val TYPE_BATCH = 1
+    }
 
     /**
      * ⚠️ 四个 setter 都要**先比再刷**：宿主现在会在换章/翻页/译文到达时推全量状态
@@ -121,6 +164,39 @@ class NovelChapterStateAdapter(
             notifyItemRangeChanged(0, itemCount)
         }
 
+    /** 每章的后台任务（null/缺省 = 没任务）：按钮文案、徽章、筛选都读它。 */
+    var jobs: Map<Int, ChapterJob> = emptyMap()
+        set(value) {
+            if (field == value) return
+            field = value
+            rebuild()
+        }
+
+    /**
+     * 每章排队中（还没开始翻）的批 —— **纯内存态**，来自宿主的 `waitingPages`。
+     *
+     * ⚠️ **必须 rebuild**：面板的推送顺序是「先 waiting、后 active」，而 `active` 为空时会提前 return；
+     * 少了这里的 rebuild，"刚排上队的批"要等下一次别的字段变化才出现（`NovelPanelSyncTest`
+     * 的「排队中的批显示等待行」正是这么红的）。
+     */
+    var waiting: Map<Int, List<NovelWaitingBatch>> = emptyMap()
+        set(value) {
+            if (field == value) return
+            field = value
+            rebuild()
+        }
+
+    /**
+     * **正在提交/等待返回**的批（用户口径：这些片段的背景要高亮）。
+     * 与 [waiting] 一样是纯内存态；先渲染在飞批（它们更靠前），再渲染等待批。
+     */
+    var active: Map<Int, List<NovelWaitingBatch>> = emptyMap()
+        set(value) {
+            if (field == value) return
+            field = value
+            rebuild()
+        }
+
     /**
      * 状态标签过滤：0 全部 / 1 完成 / 2 进行中 / 3 失败（与面板上的 chip 一一对应）。
      *
@@ -148,10 +224,16 @@ class NovelChapterStateAdapter(
             rebuild()
         }
 
-    /** 当前展开的**行下标**（同漫画：一次只展开一行）。 */
-    private var expandedIndex: Int? = null
-
     /** 面板深浅（随阅读背景切换），行内文字配色跟随。 */
+    /** 药丸底：徽章与按钮统一用它（圆角 + 半透明填充，随面板深浅）。 */
+    private fun pill(argb: Int): GradientDrawable = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = 8f * density
+        setColor(argb)
+    }
+
+    private var density: Float = 1f
+
     var dark = false
         set(value) {
             if (field == value) return
@@ -159,7 +241,8 @@ class NovelChapterStateAdapter(
             notifyItemRangeChanged(0, itemCount)
         }
 
-    class VH(item: View) : RecyclerView.ViewHolder(item)
+    class ChapterVH(item: View) : RecyclerView.ViewHolder(item)
+    class BatchVH(item: View) : RecyclerView.ViewHolder(item)
 
     /**
      * 过滤后的章号列表（缓存）。
@@ -169,11 +252,33 @@ class NovelChapterStateAdapter(
      */
     private var visible: List<Int> = emptyList()
 
+    /** 展开展开的章（下标集合）：展开后才列「等待」的批与失败明细。 */
+    private val expanded = mutableSetOf<Int>()
+
+    /** 整表行（卡片 + 展开章里的批行）。 */
+    private var rows: List<NovelTranslateRow> = emptyList()
+
     private fun rebuild() {
+        if (chapters.isNotEmpty() && expanded.isEmpty()) expanded += currentChapter
+        expanded.retainAll(chapters.indices.toSet())
         val all = chapters.indices.toList()
         visible = if (filterKey == 0) all else all.filter { passesFilter(it) }
-        expandedIndex = null
+        rows = buildRows()
         notifyDataSetChanged()
+    }
+
+    private fun buildRows(): List<NovelTranslateRow> {
+        if (visible.isEmpty()) return emptyList()
+        val out = ArrayList<NovelTranslateRow>(visible.size)
+        for (index in visible) {
+            val isExpanded = index in expanded
+            out += NovelTranslateRow.Chapter(index, isExpanded)
+            if (!isExpanded) continue
+            // 在飞批（正在提交/等待返回）排前面：用户最关心"现在轮到哪几批"
+            active[index].orEmpty().forEach { out += NovelTranslateRow.Batch(index, it, active = true) }
+            waiting[index].orEmpty().forEach { out += NovelTranslateRow.Batch(index, it, active = false) }
+        }
+        return out
     }
 
     /** 章行是否命中当前状态标签。 */
@@ -181,7 +286,8 @@ class NovelChapterStateAdapter(
         val st = stats[index]
         val done = isDone(index)
         val failed = failures[index].orEmpty().isNotEmpty()
-        val running = st != null && st.success > 0 && !done
+        val jobActive = jobs[index]?.isActive == true
+        val running = jobActive || (st != null && st.success > 0 && !done)
         return when (filterKey) {
             1 -> done
             2 -> running
@@ -198,109 +304,252 @@ class NovelChapterStateAdapter(
 
     private fun isDone(index: Int): Boolean = isChapterDone(stats, totals, index)
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH =
-        VH(LayoutInflater.from(parent.context).inflate(R.layout.item_translate_page_state, parent, false))
+    override fun getItemViewType(position: Int): Int =
+        if (rows.getOrNull(position) is NovelTranslateRow.Batch) TYPE_BATCH else TYPE_CHAPTER
 
-    override fun getItemCount(): Int = visible.size
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder =
+        if (viewType == TYPE_BATCH) {
+            BatchVH(LayoutInflater.from(parent.context).inflate(R.layout.item_translate_page_state, parent, false))
+        } else {
+            ChapterVH(LayoutInflater.from(parent.context).inflate(R.layout.item_novel_chapter_card, parent, false))
+        }
 
-    override fun onBindViewHolder(holder: VH, position: Int) {
-        val item = holder.itemView
-        val index = visible.getOrNull(position) ?: return
-        val st = stats[index]
+    override fun getItemCount(): Int = rows.size
 
+    override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+        when (val row = rows.getOrNull(position)) {
+            is NovelTranslateRow.Chapter -> bindChapter(holder.itemView, row)
+            is NovelTranslateRow.Batch -> bindBatch(holder.itemView, row)
+            null -> Unit
+        }
+    }
+
+    /**
+     * 章卡片：大字号标题 + 徽章 + 展开箭头 + 两个按钮。
+     *
+     * 按钮文案随任务状态切换（用户口径，与漫画逐条对齐）：
+     * - 无任务：`翻译本章` / `清除本章译文`
+     * - 跑着：`暂停` / `取消`
+     * - 暂停：`继续` / `取消`
+     */
+    private fun bindChapter(item: View, row: NovelTranslateRow.Chapter) {
+        val ctx = item.context
         val labelColor = if (dark) 0xFFE2E2E4.toInt() else 0xFF333333.toInt()
         val subColor = if (dark) 0xFF9A9A9F.toInt() else 0xFF888888.toInt()
         val accent = 0xFF55AEEA.toInt()
 
-        item.findViewById<TextView>(R.id.tv_page_label).apply {
-            text = chapterDisplayTitle(item.context, index, chapters.getOrNull(index)?.title)
+        // ⚠️ 一律**现读**（见 [NovelTranslateRow.Chapter] 的说明：行对象只带结构信息）
+        val index = row.chapterIndex
+        val success = stats[index]?.success ?: 0
+        val total = totalOf(index)
+        val charCount = chars[index] ?: 0
+        val failed = failures[index].orEmpty()
+        val job = jobs[index]
+        val waitingCount = waiting[index].orEmpty().size
+        val jobActive = job?.isActive == true
+
+        item.findViewById<TextView>(R.id.tv_chapter_label).apply {
+            text = chapterDisplayTitle(ctx, index, chapters.getOrNull(index)?.title)
             setTextColor(if (index == currentChapter) accent else labelColor)
-            maxLines = 1
-            ellipsize = android.text.TextUtils.TruncateAt.END
         }
 
-        val badge = item.findViewById<TextView>(R.id.tv_state_badge)
-        val total = totalOf(index)
-        val done = isDone(index)
-        val started = st != null && st.success > 0
-        badge.setText(
-            when {
-                done -> item.context.getString(R.string.novel_chapter_done)
-                started -> item.context.getString(R.string.novel_chapter_partial, st!!.success, total)
-                else -> item.context.getString(R.string.novel_chapter_unread)
-            }
-        )
-        badge.setBackgroundResource(
-            when {
-                done -> R.drawable.bg_state_success
-                started -> R.drawable.bg_state_translating
-                else -> R.drawable.bg_state_idle
-            }
-        )
-
-        // 这一行借的是「失败原因」那一格来显示段落进度 —— 章没有失败原因可言，
-        // 空着反而让行高和漫画面板对不齐
-        //
-        // ⚠️ 分母只认宿主解析出来的**真实可翻译段数**（见 [isChapterDone]）。
-        // 分母或字数还缺就问宿主一次（宿主按章去重，重复调用无害）
-        if (totals[index] == null || chars[index] == null) onNeedTotal?.invoke(index)
-        val failed = failures[index].orEmpty()
-        item.findViewById<TextView>(R.id.tv_fail_message).apply {
-            // 有失败时**优先显示失败原因**（用户要的就是"为什么失败"），否则显示段落进度
-            val charCount = chars[index] ?: 0
+        val running = job?.state == ChapterJobState.RUNNING || job?.state == ChapterJobState.QUEUED
+        val paused = job?.state == ChapterJobState.PAUSED
+        item.findViewById<TextView>(R.id.tv_chapter_badge).apply {
             text = when {
-                failed.isNotEmpty() -> item.context.getString(
+                running -> ctx.getString(R.string.novel_chapter_running_batches, job?.done ?: 0, job?.total ?: 0)
+                paused -> ctx.getString(R.string.novel_chapter_paused_batches, job?.done ?: 0, job?.total ?: 0)
+                waitingCount > 0 -> ctx.getString(R.string.reader_translate_state_waiting)
+                isDone(index) -> ctx.getString(R.string.novel_chapter_done)
+                success > 0 -> ctx.getString(R.string.novel_chapter_partial, success, total)
+                else -> ctx.getString(R.string.novel_chapter_unread)
+            }
+            setTextColor(
+                when {
+                    running -> accent
+                    paused -> 0xFFFF9F0A.toInt()
+                    isDone(index) -> 0xFF34C759.toInt()
+                    success > 0 -> 0xFFFF9F0A.toInt()
+                    else -> subColor
+                }
+            )
+            // 徽章做成小药丸（与漫画一致；不然在卡片上就是一行裸文字）
+            background = pill(
+                when {
+                    running -> if (dark) 0x332E86C9 else 0x1A2E86C9
+                    paused -> if (dark) 0x33FF9F0A else 0x1AFF9F0A
+                    isDone(index) -> if (dark) 0x3334C759 else 0x1A34C759
+                    else -> if (dark) 0x1AFFFFFF else 0x0F000000
+                }
+            )
+        }
+
+        // 卡片底（圆角 + 独立底色 + 卡片间留白，见 CardBackdrop）
+        CardBackdrop.apply(item, CardBackdrop.Tone.CARD, dark)
+
+        val activeCount = active[index].orEmpty().size
+        val hasChildren = waitingCount > 0 || activeCount > 0 || failed.isNotEmpty()
+        item.findViewById<TextView>(R.id.tv_chapter_expand).apply {
+            text = if (row.expanded) "▾" else "▸"
+            visibility = if (hasChildren) View.VISIBLE else View.INVISIBLE
+            setTextColor(subColor)
+            setOnClickListener { toggleChapter(index) }
+        }
+
+        item.findViewById<TextView>(R.id.btn_chapter_primary).apply {
+            text = when {
+                running -> ctx.getString(R.string.reader_translate_chapter_pause)
+                paused -> ctx.getString(R.string.reader_translate_chapter_resume)
+                else -> ctx.getString(R.string.reader_translate_chapter_translate)
+            }
+            setTextColor(if (running || paused) 0xFFFF9F0A.toInt() else accent)
+            background = pill(
+                when {
+                    running || paused -> if (dark) 0x33FF9F0A else 0x1AFF9F0A
+                    else -> if (dark) 0x332E86C9 else 0x1A2E86C9
+                }
+            )
+            setOnClickListener { onChapterPrimary(index) }
+        }
+        item.findViewById<TextView>(R.id.btn_chapter_secondary).apply {
+            // ⚠️ 只在**任务真的还在跑/暂停**时才显示「取消」；完成态必须是「清空译文」
+            //（用户报的"已经翻完了还一直显示暂停和取消"）
+            text = if (running || paused) ctx.getString(R.string.cancel)
+            else ctx.getString(R.string.novel_translate_clear_chapter)
+            setTextColor(0xFFCC5555.toInt())
+            background = pill(if (dark) 0x33CC5555 else 0x14CC5555)
+            setOnClickListener { onChapterSecondary(index) }
+        }
+
+        // 第二行：失败原因优先，其次「已翻 x/y · 字数」；有等待批时补一句还剩多少批
+        item.findViewById<TextView>(R.id.tv_fail_message).apply {
+            if (totals[index] == null || chars[index] == null) onNeedTotal?.invoke(index)
+            val base = when {
+                failed.isNotEmpty() -> ctx.getString(
                     R.string.novel_chapter_failed_hint,
                     failed.size,
-                    NovelFailCode.label(item.context, failed.first().failCode),
+                    NovelFailCode.label(ctx, failed.first().failCode),
                 )
                 // 「已翻 3/40 · 12,345字」：段数给进度，字数给**费用估算**（用户要求放同一行）
-                total > 0 && charCount > 0 -> item.context.getString(
+                total > 0 && charCount > 0 -> ctx.getString(
                     R.string.novel_chapter_progress_chars,
-                    item.context.getString(R.string.novel_chapter_progress, st?.success ?: 0, total),
-                    chapterCharLabel(item.context, charCount),
+                    ctx.getString(R.string.novel_chapter_progress, success, total),
+                    chapterCharLabel(ctx, charCount),
                 )
-                total > 0 -> item.context.getString(R.string.novel_chapter_progress, st?.success ?: 0, total)
-                charCount > 0 -> chapterCharLabel(item.context, charCount)
+                total > 0 -> ctx.getString(R.string.novel_chapter_progress, success, total)
+                charCount > 0 -> chapterCharLabel(ctx, charCount)
                 else -> ""
             }
+            val waitingText = when {
+                activeCount > 0 && waitingCount > 0 ->
+                    ctx.getString(R.string.novel_chapter_active_waiting_batches, activeCount, waitingCount)
+                activeCount > 0 -> ctx.getString(R.string.novel_chapter_active_batches, activeCount)
+                waitingCount > 0 -> ctx.getString(R.string.novel_chapter_waiting_batches, waitingCount)
+                else -> ""
+            }
+            text = listOf(base, waitingText).filter { it.isNotBlank() }.joinToString(" · ")
             setTextColor(subColor)
-            visibility = if (!text.isNullOrBlank()) View.VISIBLE else View.GONE
+            visibility = if (text.isNullOrBlank()) View.GONE else View.VISIBLE
         }
 
-        // 有失败才给「详情」按钮；展开后逐条列出 段号 + 原因 + 原文前 20 字（与漫画同一套展开）
-        val expanded = expandedIndex == position
-        val btnDetail = item.findViewById<TextView>(R.id.btn_row_detail)
-        btnDetail.visibility = if (failed.isEmpty()) View.GONE else View.VISIBLE
-        btnDetail.setTextColor(accent)
-        btnDetail.text = item.context.getString(
-            if (expanded) R.string.reader_translate_collapse else R.string.reader_translate_row_detail,
-        )
+        // 失败明细：展开该章且确有失败时才显示
         val detail = item.findViewById<View>(R.id.detail_panel)
-        if (expanded && failed.isNotEmpty()) {
+        val wantDetail = row.expanded && failed.isNotEmpty()
+        // ⚠️ 展开/收起要有过渡（与漫画一致）：先让 TransitionManager 记下"展开前"的样子再改可见性
+        val lastExpanded = item.getTag(R.id.detail_panel) as? Boolean
+        if (lastExpanded != null && lastExpanded != wantDetail) {
+            androidx.transition.TransitionManager.beginDelayedTransition(
+                item as android.view.ViewGroup,
+                androidx.transition.AutoTransition().setDuration(EXPAND_ANIM_MS)
+            )
+        }
+        item.setTag(R.id.detail_panel, wantDetail)
+        CardBackdrop.apply(detail, CardBackdrop.Tone.DETAIL, dark)
+        if (wantDetail) {
             item.findViewById<TextView>(R.id.tv_detail_meta).apply {
-                text = item.context.getString(R.string.novel_chapter_failed_meta, index + 1, failed.size)
+                text = ctx.getString(R.string.novel_chapter_failed_meta, index + 1, failed.size)
                 setTextColor(labelColor)
             }
             item.findViewById<TextView>(R.id.tv_detail_list).apply {
                 text = failed.joinToString("\n") {
-                    "#${it.paraIndex}  ${NovelFailCode.label(item.context, it.failCode)}  ${it.sourceText.take(20)}"
+                    "#${it.paraIndex}  ${NovelFailCode.label(ctx, it.failCode)}  ${it.sourceText.take(20)}"
                 }
                 setTextColor(subColor)
             }
-            item.findViewById<TextView>(R.id.tv_detail_collapse).setTextColor(accent)
+            item.findViewById<TextView>(R.id.tv_detail_collapse).apply {
+                setTextColor(accent)
+                setOnClickListener { collapseChapter(index) }
+            }
             detail.visibility = View.VISIBLE
         } else {
             detail.visibility = View.GONE
         }
-        btnDetail.setOnClickListener {
-            val prev = expandedIndex
-            expandedIndex = if (expanded) null else position
-            if (prev != null) notifyItemChanged(prev)
-            notifyItemChanged(position)
-        }
 
-        // 点整行 = 跳章；展开态点行不跳（避免误触）
-        item.setOnClickListener { if (!expanded) onJump(index) }
+        // 点卡片空白处 = 跳到该章（并展开）；点箭头 = 只展开/收起
+        item.setOnClickListener {
+            onJump(index)
+            expandChapter(index)
+        }
+    }
+
+    /** 章内「等待」的批：一行一批，徽章固定「等待」（复用共用的页行布局）。 */
+    private fun bindBatch(item: View, row: NovelTranslateRow.Batch) {
+        val subColor = if (dark) 0xFF9A9A9F.toInt() else 0xFF888888.toInt()
+        val labelColor = if (dark) 0xFFE2E2E4.toInt() else 0xFF333333.toInt()
+        val batch = row.batch
+        if (density == 1f) density = item.resources.displayMetrics.density
+        // 等待行也做成卡片（用户口径：展开出来的行不能是一行裸文字）
+        // 在飞批=琥珀高亮（"正在提交/等待返回"），排队批=中性（"等待"）
+        // ⚠️ 用 applyNested（方角 + 左侧竖线）：与漫画一样，展开出来的行要**看着在章卡片里面**
+        CardBackdrop.applyNested(
+            item,
+            if (row.active) CardBackdrop.Tone.ACTIVE else CardBackdrop.Tone.WAITING,
+            dark,
+        )
+        item.findViewById<TextView>(R.id.tv_page_label).apply {
+            text = item.context.getString(
+                R.string.novel_translate_batch_row,
+                batch.ordinal + 1,
+                batch.firstPara + 1,
+                batch.lastPara + 1,
+            )
+            setTextColor(labelColor)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        item.findViewById<TextView>(R.id.tv_state_badge).apply {
+            setText(
+                if (row.active) R.string.reader_translate_state_translating
+                else R.string.reader_translate_state_waiting
+            )
+            setBackgroundResource(
+                if (row.active) R.drawable.bg_state_translating else R.drawable.bg_state_idle
+            )
+        }
+        item.findViewById<TextView>(R.id.tv_fail_message).apply {
+            text = ""
+            visibility = View.GONE
+            setTextColor(subColor)
+        }
+        // 「详情 / 删除」是漫画独有的（共用布局里默认 gone）—— 小说这边**显式**保持 gone
+        item.findViewById<TextView>(R.id.btn_row_detail).visibility = View.GONE
+        item.findViewById<TextView>(R.id.btn_row_delete).visibility = View.GONE
+        item.findViewById<View>(R.id.detail_panel).visibility = View.GONE
+        item.setOnClickListener { onJump(row.chapterIndex) }
+    }
+
+    // ===== 展开态 =====
+
+    private fun expandChapter(index: Int) {
+        if (expanded.add(index)) rebuild()
+    }
+
+    private fun collapseChapter(index: Int) {
+        if (expanded.remove(index)) rebuild()
+    }
+
+    fun toggleChapter(index: Int) {
+        if (!expanded.remove(index)) expanded += index
+        rebuild()
     }
 }

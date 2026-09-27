@@ -85,6 +85,7 @@ class NovelPanelThemeTest {
         sheet.renderHostState(NovelPanelHostState(isDarkPanel = true))
 
         // ① 底部 4 个 Tab 图标：未选中的必须从旧灰阶换到深色灰，选中的那个也要重放（保持蓝）
+        //    ⚠️ Tab 图标用的是 0xFFB8BCC2（`setTab`），**与面板文字的 subColor（0xFF9A9A9F）不同**
         for (id in listOf(R.id.tab_translate, R.id.tab_style, R.id.tab_more)) {
             assertEquals("深色：未选中 Tab 应换成深色灰", 0xFFB8BCC2.toInt(), iconTint(v, id))
         }
@@ -96,10 +97,23 @@ class NovelPanelThemeTest {
         // ③ 文字色
         assertEquals("深色：label 文字色", 0xFFE2E2E4.toInt(), label(v, R.id.tv_mode_label))
 
+        // ④ 新增控件也必须登记（「同时 API 请求数」/「单批预警阈值」的标签与数值 + 提示行）：
+        //    `applyPanelTheme` 是手写清单，漏登记的控件在深色面板下保持布局默认的深色字 → 看不见
+        assertEquals("深色：并发数标签", 0xFFE2E2E4.toInt(), label(v, R.id.tv_concurrency_label))
+        assertEquals("深色：并发数值", 0xFF9A9A9F.toInt(), label(v, R.id.tv_concurrency_value))
+        assertEquals("深色：预警阈值标签", 0xFFE2E2E4.toInt(), label(v, R.id.tv_batch_warn_label))
+        assertEquals("深色：预警阈值数值", 0xFF9A9A9F.toInt(), label(v, R.id.tv_batch_warn_value))
+        assertEquals("深色：并发提示行", 0xFF9A9A9F.toInt(), label(v, R.id.tv_concurrency_hint))
+        assertEquals("深色：预警提示行", 0xFF9A9A9F.toInt(), label(v, R.id.tv_batch_warn_hint))
+
         // ---- 再切回浅色：必须原路还原（用户视角就是「切回来又不对了」）----
         sheet.renderHostState(NovelPanelHostState(isDarkPanel = false))
         assertEquals(0xFF777777.toInt(), iconTint(v, R.id.tab_translate))
         assertEquals(0xFFE4E4E6.toInt(), chipBg(v, 0))
         assertEquals(0xFF333333.toInt(), label(v, R.id.tv_mode_label))
+        assertEquals("浅色：并发数标签", 0xFF333333.toInt(), label(v, R.id.tv_concurrency_label))
+        assertEquals("浅色：并发数值", 0xFF888888.toInt(), label(v, R.id.tv_concurrency_value))
+        assertEquals("浅色：预警阈值数值", 0xFF888888.toInt(), label(v, R.id.tv_batch_warn_value))
+        assertEquals("浅色：并发提示行", 0xFF888888.toInt(), label(v, R.id.tv_concurrency_hint))
     }
 }

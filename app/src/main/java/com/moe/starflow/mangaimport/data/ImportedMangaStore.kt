@@ -75,6 +75,8 @@ object ImportedMangaStore {
         put("description", description)
         put("translatedPath", translatedPath ?: JSONObject.NULL)
         put("lastReadPage", lastReadPage)
+        // 章节表存成 JSON 串（空串 = 无章节信息，与旧版清单二进制兼容：读回空表）
+        put("chapters", MangaChapter.listToJson(chapters))
     }
 
     private fun JSONObject.toManga(): ImportedManga = ImportedManga(
@@ -88,6 +90,7 @@ object ImportedMangaStore {
         sizeBytes = optLong("sizeBytes", 0),
         description = optString("description", ""),
         translatedPath = if (isNull("translatedPath")) null else getString("translatedPath"),
-        lastReadPage = optInt("lastReadPage", 0)
+        lastReadPage = optInt("lastReadPage", 0),
+        chapters = MangaChapter.listFromJson(optString("chapters", ""))
     )
 }

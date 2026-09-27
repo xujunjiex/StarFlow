@@ -15,7 +15,7 @@
     <string name="display_options">显示选项</string>
     <string name="import_manga_empty_hint">点击右下角 + 导入漫画</string>
     <string name="import_manga_deleted">已删除</string>
-    <string name="import_manga_option_files">导入文件（zip/cbz）</string>
+    <string name="import_manga_option_files">导入文件（zip/cbz/cbr/7z）</string>
     <string name="import_manga_option_single_dir">导入文件夹（整个文件夹 = 一部漫画）</string>
     <string name="import_folder_hint">提示：部分机型系统文件选择器只允许选择「新建的文件夹」，若无法选择请先在系统选择器里新建一个文件夹</string>
     <string name="import_storage_hint">已导入的漫画保存在应用专属目录（Android/data 下，可通过文件管理器 / 数据线访问）：&#10;%1$s</string>
@@ -744,9 +744,9 @@
     <string name="pixel_check_interval_title">检测间隔</string>
     <string name="pixel_check_interval_summary">当前: %s。像素快检的间隔时间</string>
     <string name="game_context_title">AI 上下文</string>
-    <string name="game_context_summary">开启后翻译将携带历史对话上下文，提升翻译连贯性（仅游戏模式，仅支持聚合AI翻译）</string>
-    <string name="game_context_count_title">上下文轮数</string>
-    <string name="game_context_count_summary">保留最近 %s 轮翻译作为上下文（注意：轮数越多消耗 token 越多）</string>
+    <string name="game_context_summary">开启后翻译将携带历史翻译作为上下文，提升连贯性（游戏模式；支持聚合AI翻译与本地 LlamaCpp 模型）</string>
+    <string name="game_context_budget_title">上下文长度</string>
+    <string name="game_context_budget_summary">保留最近 %s 的翻译作为上下文。越大越慢、越费 token；本地 LlamaCpp 模型固定用模型自身的上下文长度，不受此设置影响。</string>
 
     <!-- Translation Cache -->
     <string name="cache_setting_title">缓存</string>
@@ -983,7 +983,7 @@
     <string name="reader_translate_summary">共 %1$d 页 · 已译 %2$d · 翻译中 %3$d · 失败 %4$d</string>
     <string name="reader_translate_ocr_model">OCR模型：%1$s</string>
     <string name="reader_translate_translator_model">翻译模型：%1$s</string>
-    <string name="reader_translate_font_size">字体大小：%1$s</string>
+    
     <string name="reader_translate_source_lang_label">源语言</string>
     <string name="reader_translate_target_lang_label">目标语言</string>
     <string name="reader_translate_filter_all">全部</string>
@@ -995,7 +995,7 @@
     <string name="reader_translate_retranslate_current">重新翻译当前页</string>
     <string name="reader_translate_state_idle">未翻译</string>
     <string name="reader_translate_state_translating">翻译中</string>
-    <string name="reader_translate_state_success">成功</string>
+    <string name="reader_translate_state_success">✓ 已完成</string>
     <string name="reader_translate_state_failed">失败</string>
     <string name="reader_translate_row_detail">详情</string>
     <string name="reader_translate_no_failed">没有失败页</string>
@@ -1023,11 +1023,69 @@
     <string name="reader_translate_batch_translate">翻译中（%1$d/2）…</string>
     <string name="reader_translate_queue_drained">翻译队列已耗尽，翻页后继续</string>
     <string name="reader_translate_waiting_other">等待其他翻译任务完成…</string>
+
+    <!-- ===== 漫画章节系统 ===== -->
+    <string name="manga_chapter_label">第%1$d章</string>
+    <string name="reader_chapter_toc">章节目录</string>
+    <string name="reader_chapter_count">共 %1$d 章</string>
+    <string name="reader_page_indicator_chapter">%1$s · %2$d/%3$d</string>
+    <string name="reader_chapter_prev">上一章</string>
+    <string name="reader_chapter_next">下一章</string>
+    <string name="reader_chapter_first">当前已是第一章</string>
+    <string name="reader_chapter_last">当前已是最后一章</string>
+    <string name="reader_chapter_badge">已译 %1$d/%2$d</string>
+
+    <string name="import_chapters_count">共 %1$d 章</string>
+    <string name="import_read_progress_chapter">%1$s · %2$d/%3$d</string>
+
+    <!-- 压缩包内元数据（ComicInfo.xml / meta.json）自动生成的简介行 -->
+    <string name="comic_meta_author">作者：%1$s</string>
+    <string name="comic_meta_circle">社团/译者：%1$s</string>
+    <string name="comic_meta_series">系列：%1$s</string>
+    <string name="comic_meta_tags">标签：%1$s</string>
+    <string name="comic_meta_source">来源：%1$s</string>
+
+    <!-- ===== 翻译面板：本章批量翻译 / 记录管理 ===== -->
+    <string name="reader_translate_chapter_translate">翻译本章</string>
+    <string name="reader_translate_chapter_pause">暂停</string>
+    <string name="reader_translate_chapter_done">翻译完成</string>
+    <string name="reader_translate_chapter_resume">继续</string>
+
+    <!-- 章节批量翻译：通知栏（每章一条，可暂停/继续/取消） -->
+    <string name="chapter_translate_notify_title">%1$s · %2$s</string>
+    <string name="chapter_translate_notify_progress">正在翻译 %1$d/%2$d 页</string>
+    <string name="chapter_translate_notify_paused">已暂停 · %1$d/%2$d 页</string>
+    <string name="chapter_translate_notify_cancelled">已取消</string>
+    <string name="chapter_translate_notify_resume">继续</string>
+    <string name="chapter_translate_notify_summary_title">章节翻译</string>
+    <string name="chapter_translate_notify_summary">%1$d 个章节正在后台翻译</string>
+    <string name="reader_translate_chapter_clear">清空译文</string>
+    <string name="reader_translate_chapter_running">正在翻译本章 %1$d/%2$d</string>
+    <!-- 章节批量翻译的并发度（漫画：OCR 串行，调高主要加快翻译请求） -->
+    <string name="reader_translate_concurrency">翻译模型最大同时请求数</string>
+    <string name="reader_translate_concurrency_hint">只对整章翻译生效，不含本地模型（本地固定串行）。每页 OCR 一结束就发出它的翻译请求、不等上一个返回；同时最多 N 个在跑，多的排队。</string>
+    <string name="reader_translate_state_waiting">等待</string>
+    <string name="reader_translate_chapter_hint">正在翻译本章 %1$d/%2$d，双击暂停</string>
+    <string name="reader_translate_chapter_finished">本章完成 %1$d/%2$d</string>
+    <string name="reader_translate_chapter_nothing">本章没有待翻译的页面</string>
+    <string name="reader_translate_chapter_summary">%1$s · 已译 %2$d/%3$d · 翻译中 %4$d · 失败 %5$d</string>
+    <string name="reader_translate_chapter_confirm_title">翻译本章</string>
+    <string name="reader_translate_chapter_confirm_msg">本章共 %1$d 页：未翻译 %2$d 页、失败 %3$d 页、已成功 %4$d 页。</string>
+    <string name="reader_translate_chapter_only_pending">只翻未完成</string>
+    <string name="reader_translate_chapter_overwrite">全部重翻</string>
+    <string name="reader_translate_clear_confirm_title">清除本章译文？</string>
+    <string name="reader_translate_clear_confirm_msg">将删除本章 %1$d 页的全部翻译数据，且无法恢复。</string>
+    <string name="reader_translate_chapter_cleared">已清除本章译文</string>
+    <string name="reader_translate_delete_page">清空译文</string>
+    <string name="reader_translate_page_deleted">已删除该页译文</string>
+    <string name="reader_translate_filter_done">完成</string>
+    <string name="reader_translate_filter_ongoing">进行中</string>
     <string name="reader_translate_all_cached">翻译完成（%1$d 条全部命中缓存）</string>
     <string name="reader_translate_partial_cached">翻译完成（%1$d/%2$d 命中缓存，%3$d 条调用 API）</string>
     <string name="reader_translate_paused_to_manual">翻译已暂停，回退到手动翻译</string>
     <string name="reader_translate_cancelled">已停止，退回手动翻译</string>
     <string name="reader_translate_debounce">启动延迟</string>
+    <string name="reader_translate_debounce_hint">翻页后停留这么久才开始翻（防抖），自动与增量共用；调小更跟手，但连翻几页时会白翻。</string>
     <string name="reader_translate_ahead_pages">向后翻译页数</string>
     <string name="reader_translate_failed_badge">本页翻译失败</string>
     <string name="reader_translate_disabled_mode">连续滚动模式下暂不支持翻译</string>
@@ -1429,8 +1487,8 @@
     <string name="novel_translate_hint_running">正在翻译第 %1$d 章，双击暂停</string>
     <string name="novel_translate_window_done">已向后翻完 %1$d 批 · 翻页继续</string>
     <string name="novel_translate_pending_batches">翻译本章</string>
-    <string name="novel_translate_clear_chapter">清空本章译文</string>
-    <string name="novel_translate_clear_chapter_confirm">只清空**本章**的译文，其它章不受影响。确定？</string>
+    <string name="novel_translate_clear_chapter">清空译文</string>
+    <string name="novel_translate_clear_chapter_confirm">只清空这一章的译文，其它章不受影响。确定？</string>
     <string name="novel_translate_clear_ok">确定清空</string>
     <string name="novel_translate_cleared_chapter">已清空本章译文</string>
     <string name="novel_download_title">下载</string>
@@ -1456,12 +1514,17 @@
     <string name="novel_display_bilingual">双语</string>
     <string name="novel_translate_mode">翻译模式</string>
     <string name="novel_translate_debounce">启动延迟</string>
+    <string name="novel_translate_debounce_hint">翻页后停留这么久才开始翻（防抖），自动与增量共用；调小更跟手，但连续翻页时会白翻几页。</string>
     <string name="novel_translate_debounce_value">%1$d 毫秒</string>
-    <string name="novel_translate_ahead">向后翻译批数</string>
+    <string name="novel_translate_ahead_hint">增量模式往后翻多少批（此值 × 每批段数 = 一次前移的段数）；翻完停下，翻页后窗口自己前移。</string>
+    <string name="novel_translate_ahead">启动增量翻译向后</string>
+    <string name="novel_translate_batch_group">批次处理</string>
+    <string name="reader_translate_font_size_label">字体大小</string>
+    <string name="reader_translate_font_size_hint">拖动滑块 = 固定字号；点「自动」= 按气泡大小自适应</string>
     <string name="novel_chapter_label">第 %1$d 章</string>
     <string name="novel_chapter_unread">未翻译</string>
     <string name="novel_chapter_partial">%1$d/%2$d</string>
-    <string name="novel_chapter_done">已翻译</string>
+    <string name="novel_chapter_done">翻译完成</string>
     <string name="novel_translate_need_config">请先配置翻译引擎</string>
     <string name="novel_translate_busy">正在等待其它翻译任务…</string>
     <string name="novel_file_missing_hint">本地文件已丢失，请重新导入</string>
@@ -1472,6 +1535,29 @@
     <string name="novel_prev_chapter">上一章</string>
     <string name="novel_next_chapter">下一章</string>
     <string name="novel_translate_batch">每批段数</string>
+    <string name="novel_translate_batch_hint">一次请求翻多少段（批 = 连续的这几段，不跨章）。调大请求数更少但单次更长，也更容易触发下面的超长预警。</string>
+    <!-- ===== 单批超长预警（一批合并文本估算超过阈值 → 弹窗问「继续 / 取消这次翻译」） ===== -->
+    <string name="novel_translate_warn">单批预警阈值</string>
+    <string name="novel_translate_warn_hint">一批的原文估算超过这个长度时先问一次「是否继续」（同一轮只问一次）。设大一点可以少打扰，但单次请求太长时模型容易漏译或截断。</string>
+    <string name="novel_translate_oversize_title">单次请求内容超长</string>
+    <string name="novel_translate_oversize_msg">这一批合并文本约 %1$d tokens，超过你设的 %2$d。内容过长时翻译效果可能变差，是否继续？</string>
+    <string name="novel_translate_oversize_continue">继续</string>
+    <string name="novel_translate_oversize_skip">取消这次翻译</string>
+    <string name="novel_translate_oversize_skipped">已跳过这一批（内容超长）</string>
+    <!-- ===== 同时 API 请求数（文本翻译；本地引擎固定 1） ===== -->
+    <string name="novel_translate_concurrency">翻译模型最大同时请求数</string>
+    <string name="novel_translate_concurrency_hint">只对增量与整章翻译生效，不含本地模型（本地固定串行）。按文章顺序连续提交、不等上一批返回；同时最多 N 个在跑，多的排队。调高更快，也更费额度。</string>
+    <!-- ===== 章卡片：后台章节任务的进度（单位是**批**，不是页） ===== -->
+    <string name="novel_chapter_running_batches">翻译中 %1$d/%2$d 批</string>
+    <string name="novel_chapter_paused_batches">已暂停 %1$d/%2$d 批</string>
+    <!-- 章卡片第二行：这一章还有多少批排在队里（纯内存态） -->
+    <string name="novel_chapter_active_batches">正在翻译 %1$d 批</string>
+    <string name="novel_chapter_active_waiting_batches">正在翻译 %1$d 批 · 等待 %2$d 批</string>
+    <string name="novel_chapter_waiting_batches">等待 %1$d 批</string>
+    <!-- ===== 记录列表里「排队中（还没开始翻）的批」那一行 ===== -->
+    <string name="novel_translate_batch_row">第 %1$d 批 · 段 %2$d-%3$d</string>
+    <!-- 退出阅读器时暂停翻译（**不回退模式**，回来按原模式继续） -->
+    <string name="novel_translate_paused_background">已暂停翻译，返回阅读器后继续</string>
     <string name="novel_style_hint">改动会立即重新排版</string>
     <!-- 顶部胶囊右侧的页码/滚动进度。前面的「·」是分隔号，与左侧章名连读。 -->
     <string name="novel_page_counter">· %1$d/%2$d</string>
@@ -1509,8 +1595,8 @@
     <string name="import_already_done">这次导入已经完成了</string>
 
     <!-- ===== 导入弹窗的选项说明（措辞与 koto 统一；只保留「文件」「文件夹(单部)」，不含多部入口）===== -->
-    <string name="import_desc_files_manga">选择一个或多个 CBZ 或 ZIP 文件，每个文件将识别为一本漫画。</string>
-    <string name="import_desc_dir_manga">选择一个包含单部漫画的文件夹，子文件夹将被识别为章节。</string>
+    <string name="import_desc_files_manga">选择一个或多个 CBZ/ZIP/CBR/7z 文件，每个文件导入为一本漫画，夹内的子文件夹将作为章节。</string>
+    <string name="import_desc_dir_manga">选择一个包含单部漫画的文件夹，子文件夹将作为章节，最外层散图作为第0章。</string>
     <string name="import_desc_files_novel">选择一个或多个 EPUB 或 TXT 文件，每个文件导入为一部小说。</string>
     <string name="import_desc_dir_novel">选择一个包含单部小说的文件夹。内部 TXT 文件会作为章节导入；每个 EPUB 文件会作为一个分卷导入，并保留其内部章节。</string>
     <string name="import_option_dir_manga_single">导入文件夹（单部漫画）</string>

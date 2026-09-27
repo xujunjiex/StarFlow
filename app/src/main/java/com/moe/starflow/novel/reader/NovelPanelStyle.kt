@@ -4,8 +4,10 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.content.res.Configuration
 import com.moe.starflow.R
+import com.moe.starflow.novel.translate.NovelBatchWarning
 import com.moe.starflow.novel.translate.NovelQuota
 import com.moe.starflow.novel.translate.NovelTranslateMode
+import com.moe.starflow.utils.TranslationConcurrency
 
 /**
  * 小说阅读器的偏好读写。**收敛成一处**，避免键名散落各处写错。
@@ -397,6 +399,49 @@ object NovelPanelStyle {
 
     fun setBatchSize(prefs: SharedPreferences, v: Int) =
         prefs.edit().putInt(KEY_BATCH, v.coerceIn(BATCH_MIN, BATCH_MAX)).apply()
+
+    /**
+     * **单批超长预警阈值**（token 粗估）：一批合并文本估算超过它 → 弹窗问「继续 / 取消这次翻译」。
+     *
+     * 档位与默认值都在 [NovelBatchWarning]（默认 4096），这里只负责读写。
+     * 存的可能是老值/手改值 → 一律 [NovelBatchWarning.normalize] 收敛到档位上，
+     * 免得"面板滑块显示 A、判据用 B"。
+     */
+    private const val KEY_BATCH_WARN = "novel_translate_batch_warn"
+
+    fun batchWarnThreshold(prefs: SharedPreferences): Int =
+        NovelBatchWarning.normalize(prefs.getInt(KEY_BATCH_WARN, NovelBatchWarning.DEFAULT_THRESHOLD))
+
+    fun setBatchWarnThreshold(prefs: SharedPreferences, v: Int) =
+        prefs.edit().putInt(KEY_BATCH_WARN, NovelBatchWarning.normalize(v)).apply()
+
+    /**
+     * 「同时 API 请求数」**用户设的值**（1–10，默认 5）。
+     *
+     * ⚠️ 传进来的必须是**默认 SharedPreferences**（`PreferenceManager.getDefaultSharedPreferences`）——
+     * 这个键（`TranslationConcurrency.KEY_NOVEL`）与文本翻译引擎配置放在一起，**不在** [PREFS_NAME] 里。
+     *
+     * ⚠️ 这只是"用户设的值"，**不是实际生效值**：实际并发由
+     * `TranslationConcurrency.novelConcurrency()` 决定（**本地引擎恒 1**，判据封装在那里）。
+     * 面板显示用户设的值 + 一句「本地引擎固定串行」的提示，所以两者不一致也不奇怪。
+     */
+    fun storedConcurrency(prefs: SharedPreferences): Int {
+        val stored = try {
+            prefs.getInt(TranslationConcurrency.KEY_NOVEL, TranslationConcurrency.NOVEL_DEFAULT)
+        } catch (e: Exception) {
+            // 老版本可能把它存成 String（ListPreference 的默认行为），兜一手
+            prefs.getString(TranslationConcurrency.KEY_NOVEL, null)?.toIntOrNull()
+                ?: TranslationConcurrency.NOVEL_DEFAULT
+        }
+        return stored.coerceIn(TranslationConcurrency.NOVEL_MIN, TranslationConcurrency.NOVEL_MAX)
+    }
+
+    fun setConcurrency(prefs: SharedPreferences, v: Int) = prefs.edit()
+        .putInt(
+            TranslationConcurrency.KEY_NOVEL,
+            v.coerceIn(TranslationConcurrency.NOVEL_MIN, TranslationConcurrency.NOVEL_MAX),
+        )
+        .apply()
 
     fun displayModeLabel(context: Context, mode: NovelDisplayMode): String = context.getString(
         when (mode) {

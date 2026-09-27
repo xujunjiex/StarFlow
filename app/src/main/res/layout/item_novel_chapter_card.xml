@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  小说翻译面板里的**章节卡片**（用户口径 2026-10）：
+  - 章标题字号必须**大于**页/批行（16sp 加粗 vs 13sp），方便在卡片上放按钮
+  - 两个按钮：主按钮「翻译本章 ⇄ 暂停 ⇄ 继续」、次按钮「清除本章译文 ⇄ 取消」
+  - **点卡片空白处 = 跳到该章**（切章只从记录里点）；点箭头 = 展开/收起
+  - 展开后显示：**排队中（还没开始翻）的批**（标「等待」）+ 该章的失败明细
+
+  ⚠️ 与漫画的 `item_translate_chapter_row.xml` 是**同一套观感**，但小说多一行
+  `tv_fail_message`（「已翻 3/40 · 12,345字」/失败原因，漫画面板把进度放在徽章里）——
+  所以刻意**不共用**那个文件，免得给漫画多加一行。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:layout_marginTop="4dp"
+    android:layout_marginBottom="4dp"
+    android:layout_marginStart="1dp"
+    android:layout_marginEnd="1dp"
+    android:paddingStart="10dp"
+    android:paddingEnd="10dp"
+    android:paddingTop="7dp"
+    android:paddingBottom="7dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/tv_chapter_label"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:textSize="14sp"
+            android:textStyle="bold"/>
+
+        <TextView
+            android:id="@+id/tv_chapter_badge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:paddingStart="6dp"
+            android:paddingEnd="6dp"
+            android:paddingTop="2dp"
+            android:paddingBottom="2dp"
+            android:textSize="12sp"/>
+
+        <TextView
+            android:id="@+id/tv_chapter_expand"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:paddingStart="8dp"
+            android:paddingEnd="4dp"
+            android:textSize="13sp"/>
+    </LinearLayout>
+
+    <!-- 第二行：进度 + 字数（估费用）/ 失败原因 / 「等待 N 批」 -->
+    <TextView
+        android:id="@+id/tv_fail_message"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:paddingStart="4dp"
+        android:textSize="11sp"
+        android:textColor="#CC5555"
+        android:visibility="gone"/>
+
+    <!-- 两个动作按钮：主操作（翻译本章/暂停/继续）+ 次操作（清除本章译文/取消） -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="6dp">
+
+        <TextView
+            android:id="@+id/btn_chapter_primary"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:paddingTop="5dp"
+            android:paddingBottom="5dp"
+            android:textSize="12sp"
+            android:clickable="true"
+            android:focusable="true"
+            android:textColor="#55AEEA"/>
+
+        <TextView
+            android:id="@+id/btn_chapter_secondary"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:gravity="center"
+            android:paddingTop="5dp"
+            android:paddingBottom="5dp"
+            android:textSize="12sp"
+            android:clickable="true"
+            android:focusable="true"
+            android:textColor="#CC5555"/>
+    </LinearLayout>
+
+    <!-- 失败明细（展开该章且确实有失败时才显示）：元数据 + 逐条 段号/原因/原文前 20 字 -->
+    <LinearLayout
+        android:id="@+id/detail_panel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:layout_marginTop="6dp"
+        android:background="#0F000000"
+        android:padding="8dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/tv_detail_meta"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:textSize="11sp"/>
+
+        <TextView
+            android:id="@+id/tv_detail_list"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textIsSelectable="true"
+            android:textSize="13sp"
+            android:lineSpacingExtra="2dp"/>
+
+        <TextView
+            android:id="@+id/tv_detail_collapse"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:gravity="center"
+            android:padding="2dp"
+            android:text="@string/reader_translate_collapse"
+            android:textSize="12sp"
+            android:textColor="#55AEEA"/>
+    </LinearLayout>
+</LinearLayout>

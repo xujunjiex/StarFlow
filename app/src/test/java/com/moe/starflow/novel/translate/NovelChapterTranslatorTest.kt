@@ -382,6 +382,66 @@ class NovelChapterTranslatorTest {
         assertTrue(dao.forChapter(1, "5000", 0, SPLIT_VERSION).isEmpty())
     }
 
+    // ===== 单批超长预警（阈值判据收在 NovelChapterTranslator.translateBatch 一处） =====
+
+    /**
+     * 超过阈值 → 问用户；用户**取消** → 这一批不发请求、不写库
+     * （段保持"没翻过"，不是 FAILED：用户改大阈值或直接重来即可）。
+     */
+    @Test
+    fun `超长批用户取消时不发请求也不写库`() = runBlocking {
+        val fake = FakeTranslator()
+        var asked: Pair<Int, Int>? = null
+        val t = NovelChapterTranslator(
+            dao, NovelTranslationEngine(fake), SPLIT_VERSION,
+            warnGate = NovelBatchWarnGate(
+                threshold = { 3 },
+                confirm = { est, th -> asked = est to th; false },
+            ),
+        )
+
+        val r = t.translateBatch(book, 0, paragraphs, listOf(0, 2), "ja", "zh", "fake")
+
+        assertTrue(r.isEmpty)
+        assertEquals("问过一次", 1, (if (asked != null) 1 else 0))
+        assertEquals("阈值原样传下去", 3, asked?.second)
+        assertTrue("估算必须真的超过阈值（否则这条测试没测到）", (asked?.first ?: 0) > 3)
+        assertEquals("不能发请求", 0, fake.calls)
+        assertTrue("不能写任何行", dao.forChapter(1, "5000", 0, SPLIT_VERSION).isEmpty())
+    }
+
+    /** 用户选「继续」→ 照常翻译并落库。 */
+    @Test
+    fun `超长批用户继续时照常翻译`() = runBlocking {
+        val fake = FakeTranslator()
+        val t = NovelChapterTranslator(
+            dao, NovelTranslationEngine(fake), SPLIT_VERSION,
+            warnGate = NovelBatchWarnGate(threshold = { 1 }, confirm = { _, _ -> true }),
+        )
+
+        val r = t.translateBatch(book, 0, paragraphs, listOf(0, 2), "ja", "zh", "fake")
+
+        assertEquals(mapOf(0 to "T:第一段原文", 2 to "T:第二段原文"), r.translations)
+        assertEquals(2, t.chapterStats(book)[0]?.success)
+    }
+
+    /** 没超阈值（或没接预警）时**一次都不问**，老路径零回归。 */
+    @Test
+    fun `没超阈值时不打扰用户`() = runBlocking {
+        var asked = 0
+        val t = NovelChapterTranslator(
+            dao, NovelTranslationEngine(FakeTranslator()), SPLIT_VERSION,
+            warnGate = NovelBatchWarnGate(threshold = { NovelBatchWarning.DEFAULT_THRESHOLD }) { _, _ ->
+                asked++
+                true
+            },
+        )
+
+        t.translateBatch(book, 0, paragraphs, listOf(0, 2), "ja", "zh", "fake")
+
+        assertEquals(0, asked)
+    }
+
     private companion object {
         const val SPLIT_VERSION = 1
     }

@@ -1,6 +1,7 @@
 package com.moe.starflow.mangaimport.reader
 
 import android.content.Context
+import android.graphics.drawable.GradientDrawable
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
@@ -12,83 +13,448 @@ import androidx.recyclerview.widget.RecyclerView
 import com.moe.starflow.R
 import com.moe.starflow.data.ImportedPageTranslation
 import com.moe.starflow.data.TranslationCacheUtils
+import com.moe.starflow.mangaimport.data.MangaChapter
+import com.moe.starflow.translate.batch.ChapterJobState
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/** 翻译面板的一行：**章节卡片** 或 章内某一页的翻译记录。 */
+sealed interface TranslateRow {
+    data class Header(
+        val chapterIndex: Int,
+        val label: String,
+        val success: Int,
+        val pageCount: Int,
+        val expanded: Boolean,
+        val selected: Boolean,
+        /** 该章的后台任务状态（null = 没任务）。按钮文案与「进行中」都按它显示。 */
+        val jobState: ChapterJobState?,
+        val jobDone: Int,
+    ) : TranslateRow
+
+    data class Page(
+        val row: ImportedPageTranslation,
+        val chapterIndex: Int,
+        /** 排队中（还没开始翻）：显示「等待」而不是状态徽章。 */
+        val waiting: Boolean,
+    ) : TranslateRow
+}
+
 /**
- * 翻译面板每页一行：P{n} + 状态徽章 + 失败原因；点「详情/收起」在当前行内联展开
- * （像屏幕翻译历史那样：元数据 + 逐条原文/译文 + 复制全部），配色随面板主题（[dark]）。
+ * 翻译面板的**两段式**列表（漫画）：每章一张**卡片**，展开后才是该章的逐页记录。
+ *
+ * 用户口径（2026-10 改版）：
+ * - 章卡片比页行**大**（16sp 加粗 vs 13sp），卡片上直接放两个按钮：
+ *   `翻译本章 / 暂停 / 继续` + `清除本章译文 / 取消`
+ * - **点卡片空白处 = 跳到该章**（切章只从记录里切，面板不再有左右切章组件）
+ * - 排队中的页显示「等待」（纯内存态，不写库）
+ * - 未翻译的页默认不进列表（只列有记录的页 + 正在排队的页）
+ *
+ * ⚠️ 页行沿用**共用布局** `item_translate_page_state.xml`（小说那边也用同一个文件）：
+ * 底部的「删除」按钮只有本适配器会显式 VISIBLE（小说那边不碰它 → 保持 GONE）。
  */
 class ReaderPageStateAdapter(
+    /** 章标题的本地化（需要 Context，由面板注入 `mangaChapterLabel`）。 */
+    private val chapterLabelOf: (MangaChapter) -> String,
     private val onJump: (Int) -> Unit,
-) : RecyclerView.Adapter<ReaderPageStateAdapter.VH>() {
+    private val onSelectChapter: (Int) -> Unit,
+    /** 章卡片主按钮：没有任务 = 翻译本章；跑着 = 暂停；暂停了 = 继续。 */
+    private val onChapterPrimary: (Int) -> Unit,
+    /** 章卡片次按钮：没有任务 = 清除本章译文（带确认）；有任务 = 取消任务。 */
+    private val onChapterSecondary: (Int) -> Unit,
+    private val onDeletePage: (Int) -> Unit,
+) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
 
-    var rows: List<ImportedPageTranslation> = emptyList()
-        set(value) { field = value; notifyDataSetChanged() }
+    companion object {
+        const val FILTER_ALL = 0
+        const val FILTER_DONE = 1
+        const val FILTER_ONGOING = 2
+        const val FILTER_FAILED = 3
+
+        private const val TYPE_CHAPTER = 0
+        private const val TYPE_PAGE = 1
+
+        /** 展开/收起详情的过渡时长。 */
+        private const val EXPAND_ANIM_MS = 160L
+
+        /** 「轮到这一页了」的淡入时长。 */
+        private const val ACTIVE_FADE_MS = 220L
+    }
+
+    private var chapters: List<MangaChapter> = emptyList()
+    private var records: List<ImportedPageTranslation> = emptyList()
+    private var jobs: Map<Int, ChapterJobState> = emptyMap()
+    private var jobDone: Map<Int, Int> = emptyMap()
+    private var waitingPages: Set<Int> = emptySet()
+    private var selectedChapter = 0
+    private var filter = FILTER_ALL
+
+    /** 展开的章（下标集合）。默认展开**当前章**，让用户一开面板就看到自己刚翻的页。 */
+    private val expanded = mutableSetOf<Int>()
+
+    private var rows: List<TranslateRow> = emptyList()
 
     /** 面板深浅（随阅读背景切换），行内文字配色跟随。 */
     var dark = false
-        set(value) { field = value; notifyDataSetChanged() }
+        set(value) {
+            field = value
+            notifyDataSetChanged()
+        }
+
+    /** 面板是打开那一刻的快照，宿主每次推送都整表重建（行数不多，且分组依赖状态）。 */
+    fun submit(
+        chapters: List<MangaChapter>,
+        records: List<ImportedPageTranslation>,
+        selectedChapter: Int,
+        jobs: Map<Int, ChapterJobState> = emptyMap(),
+        jobDone: Map<Int, Int> = emptyMap(),
+        waitingPages: Set<Int> = emptySet(),
+    ) {
+        // ⚠️ 判据是「**章表变了**」而不是「这是第一次提交」：宿主会先往面板字段里存一份章表
+        // 再调这里，用「this.chapters.isEmpty()」判首次会被那一步提前破坏，
+        // 结果是**打开面板时当前章没有自动展开**（用户看到一列章卡片、以为记录丢了）
+        val chaptersChanged = this.chapters != chapters
+        this.chapters = chapters
+        this.records = records
+        this.selectedChapter = selectedChapter
+        this.jobs = jobs
+        this.jobDone = jobDone
+        this.waitingPages = waitingPages
+        if (chaptersChanged) expanded += selectedChapter
+        rebuild()
+    }
+
+    fun setFilter(key: Int) {
+        if (filter == key) return
+        filter = key
+        rebuild()
+    }
+
+    /** 展开/收起某章（点卡片右侧箭头）。 */
+    fun toggleChapter(index: Int) {
+        if (!expanded.remove(index)) expanded += index
+        rebuild()
+    }
+
+    /** 切到某章时把它展开（选中即展开，符合「点了就是看它」的直觉）。 */
+    fun expandChapter(index: Int) {
+        if (expanded.add(index)) rebuild()
+    }
+
+    private fun rebuild() {
+        // 详情的展开态按下标记，整表重建后下标会指到别的行 → 一律收起
+        expandedIndex = null
+        rows = buildRows()
+        notifyDataSetChanged()
+    }
+
+    /**
+     * 页号 → 章下标（二分查找）。
+     *
+     * ⚠️ 不要写成「遍历所有章、把每页塞进一张 map」：面板**每完成一页就整表重建**，
+     * 几百页的书每帧建一次全量映射纯属白烧（章节区间是连续的升序区间，二分 O(log n) 就够）。
+     * 返回 -1 = 不属于任何章（章节表与实际页数不一致时会出现）。
+     */
+    private fun chapterIndexFor(page: Int): Int {
+        var lo = 0
+        var hi = chapters.size - 1
+        while (lo <= hi) {
+            val mid = (lo + hi) / 2
+            val c = chapters[mid]
+            when {
+                page < c.startPage -> hi = mid - 1
+                page > c.endPage -> lo = mid + 1
+                else -> return mid
+            }
+        }
+        return -1
+    }
+
+    private fun buildRows(): List<TranslateRow> {
+        if (chapters.isEmpty()) return emptyList()
+        val byChapter = HashMap<Int, MutableList<ImportedPageTranslation>>()
+        val successByChapter = HashMap<Int, Int>()
+
+        for (r in records) {
+            val idx = chapterIndexFor(r.pageIndex)
+            if (idx < 0) continue
+            if (r.state == ImportedPageTranslation.STATE_SUCCESS) {
+                successByChapter[idx] = (successByChapter[idx] ?: 0) + 1
+            }
+            // 未翻译的行不进列表（用户口径：默认只显示翻译过的记录）；
+            // 「等待」的页不在 records 里（内存态），下面单独补
+            if (r.state == ImportedPageTranslation.STATE_IDLE) continue
+            if (filter != FILTER_ALL && !matchesFilter(r)) continue
+            byChapter.getOrPut(idx) { mutableListOf() }.add(r)
+        }
+
+        val out = ArrayList<TranslateRow>()
+        chapters.forEachIndexed { index, chapter ->
+            val state = jobs[index]
+            out += TranslateRow.Header(
+                chapterIndex = index,
+                label = chapterLabelOf(chapter),
+                success = successByChapter[index] ?: 0,
+                pageCount = chapter.pageCount,
+                expanded = index in expanded,
+                selected = index == selectedChapter,
+                jobState = state,
+                jobDone = jobDone[index] ?: 0,
+            )
+            if (index !in expanded) return@forEachIndexed
+
+            // ① 排队中的页（还没开始翻）：标「等待」，让用户看得见"这章还要翻这些"
+            val queued = (chapter.startPage..chapter.endPage)
+                .filter { it in waitingPages }
+                .sorted()
+            // ② 已有记录的页
+            val recorded = byChapter[index]?.sortedBy { it.pageIndex }.orEmpty()
+            val showQueued = filter == FILTER_ALL || filter == FILTER_ONGOING
+            recorded.forEach { out += TranslateRow.Page(it, index, waiting = false) }
+            if (showQueued) {
+                val recordedPages = recorded.map { it.pageIndex }.toSet()
+                queued.filter { it !in recordedPages }
+                    .forEach { page ->
+                        out += TranslateRow.Page(
+                            ImportedPageTranslation(
+                                mangaId = -1, pageIndex = page,
+                                state = ImportedPageTranslation.STATE_IDLE,
+                            ),
+                            index, waiting = true,
+                        )
+                    }
+            }
+        }
+        return out
+    }
+
+    private fun matchesFilter(r: ImportedPageTranslation): Boolean = when (filter) {
+        FILTER_DONE -> r.state == ImportedPageTranslation.STATE_SUCCESS
+        FILTER_ONGOING -> r.state == ImportedPageTranslation.STATE_TRANSLATING
+        FILTER_FAILED -> r.state == ImportedPageTranslation.STATE_FAILED
+        else -> true
+    }
 
     private var expandedIndex: Int? = null
 
-    class VH(item: View) : RecyclerView.ViewHolder(item)
+    override fun getItemViewType(position: Int): Int =
+        if (rows[position] is TranslateRow.Header) TYPE_CHAPTER else TYPE_PAGE
 
-    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH =
-        VH(LayoutInflater.from(parent.context).inflate(R.layout.item_translate_page_state, parent, false))
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder =
+        if (viewType == TYPE_CHAPTER) {
+            HeaderVH(LayoutInflater.from(parent.context).inflate(R.layout.item_translate_chapter_row, parent, false))
+        } else {
+            PageVH(LayoutInflater.from(parent.context).inflate(R.layout.item_translate_page_state, parent, false))
+        }
 
     override fun getItemCount(): Int = rows.size
 
-    override fun onBindViewHolder(holder: VH, position: Int) {
-        val item = holder.itemView
-        val row = rows[position]
+    class HeaderVH(item: View) : RecyclerView.ViewHolder(item)
+    class PageVH(item: View) : RecyclerView.ViewHolder(item)
 
+    override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
+        when (val row = rows[position]) {
+            is TranslateRow.Header -> bindHeader(holder.itemView, row)
+            is TranslateRow.Page -> bindPage(holder.itemView, position, row)
+        }
+    }
+
+    /**
+     * 章卡片：大字号标题 + 已译徽章 + 展开箭头 + 两个动作按钮。
+     *
+     * 按钮文案随任务状态切换（用户口径）：
+     * - 无任务：`翻译本章` / `清除本章译文`
+     * - 跑着：`暂停` / `取消`
+     * - 暂停：`继续` / `取消`
+     */
+    private fun bindHeader(item: View, row: TranslateRow.Header) {
+        val ctx = item.context
+        val labelColor = if (dark) 0xFFE2E2E4.toInt() else 0xFF333333.toInt()
+        val accent = 0xFF55AEEA.toInt()
+        val amber = 0xFFFF9F0A.toInt()
+        // 卡片底（圆角 + 独立底色，随面板深浅）
+        CardBackdrop.apply(item, CardBackdrop.Tone.CARD, dark)
+
+        item.findViewById<TextView>(R.id.tv_chapter_label).apply {
+            text = row.label
+            setTextColor(if (row.selected) accent else labelColor)
+        }
+
+        val running = row.jobState == ChapterJobState.RUNNING || row.jobState == ChapterJobState.QUEUED
+        val paused = row.jobState == ChapterJobState.PAUSED
+        // 「这一章翻完了」= 成功页数覆盖整章（用户口径：完成的章要有**完成标记**，而不是只剩按钮在变）
+        val allDone = row.pageCount > 0 && row.success >= row.pageCount
+        item.findViewById<TextView>(R.id.tv_chapter_badge).apply {
+            text = when {
+                running -> ctx.getString(R.string.reader_translate_chapter_running, row.jobDone, row.pageCount)
+                paused -> ctx.getString(R.string.chapter_translate_notify_paused, row.jobDone, row.pageCount)
+                allDone -> ctx.getString(R.string.reader_translate_chapter_done)
+                else -> ctx.getString(R.string.reader_chapter_badge, row.success, row.pageCount)
+            }
+            setTextColor(
+                when {
+                    running -> accent
+                    paused -> amber
+                    allDone -> 0xFF34C759.toInt()
+                    row.success > 0 -> amber
+                    else -> if (dark) 0xFF6E6E73.toInt() else 0xFF888888.toInt()
+                }
+            )
+            background = pill(
+                when {
+                    running -> if (dark) 0x332E86C9 else 0x1A2E86C9
+                    paused -> if (dark) 0x33FF9F0A else 0x1AFF9F0A
+                    allDone -> if (dark) 0x3334C759 else 0x1A34C759
+                    else -> if (dark) 0x1AFFFFFF else 0x0F000000
+                }
+            )
+        }
+        item.findViewById<TextView>(R.id.tv_chapter_expand).apply {
+            text = if (row.expanded) "▾" else "▸"
+            setTextColor(if (dark) 0xFF9A9A9F.toInt() else 0xFF888888.toInt())
+        }
+
+        item.findViewById<TextView>(R.id.btn_chapter_primary).apply {
+            text = when {
+                running -> ctx.getString(R.string.reader_translate_chapter_pause)
+                paused -> ctx.getString(R.string.reader_translate_chapter_resume)
+                else -> ctx.getString(R.string.reader_translate_chapter_translate)
+            }
+            setTextColor(if (running || paused) amber else accent)
+            // 主按钮做成"实心药丸"：卡片上一个明确的主操作，不再是一行裸文字
+            background = pill(
+                when {
+                    running || paused -> if (dark) 0x33FF9F0A else 0x1AFF9F0A
+                    else -> if (dark) 0x332E86C9 else 0x1A2E86C9
+                }
+            )
+            setOnClickListener { onChapterPrimary(row.chapterIndex) }
+        }
+        item.findViewById<TextView>(R.id.btn_chapter_secondary).apply {
+            // ⚠️ 只在**任务真的还在跑/暂停**时才显示「取消」；完成态必须是「清空译文」
+            //（用户报的"已经翻完了还一直显示暂停和取消"）
+            text = if (running || paused) ctx.getString(R.string.cancel)
+            else ctx.getString(R.string.reader_translate_chapter_clear)
+            setTextColor(0xFFCC5555.toInt())
+            background = pill(if (dark) 0x33CC5555 else 0x14CC5555)
+            setOnClickListener { onChapterSecondary(row.chapterIndex) }
+        }
+
+        // 点卡片空白处 = 跳该章（切章只从记录里切）；点箭头 = 只展开/收起
+        item.setOnClickListener {
+            onSelectChapter(row.chapterIndex)
+            expandChapter(row.chapterIndex)
+        }
+        item.findViewById<TextView>(R.id.tv_chapter_expand).setOnClickListener {
+            toggleChapter(row.chapterIndex)
+        }
+    }
+
+    /** 药丸底：按钮/徽章统一用它（圆角 + 半透明填充，随面板深浅）。 */
+    private fun pill(argb: Int): GradientDrawable = GradientDrawable().apply {
+        shape = GradientDrawable.RECTANGLE
+        cornerRadius = 8f * itemDensity
+        setColor(argb)
+    }
+
+    private var itemDensity: Float = 1f
+
+    private fun bindPage(item: View, position: Int, row: TranslateRow.Page) {
         val labelColor = if (dark) 0xFFE2E2E4.toInt() else 0xFF333333.toInt()
         val subColor = if (dark) 0xFF9A9A9F.toInt() else 0xFF888888.toInt()
         val accent = 0xFF55AEEA.toInt()
+        val page = row.row
+        if (itemDensity == 1f) itemDensity = item.resources.displayMetrics.density
+
+        // ⚠️ **这一行也要有卡片的样子**，且**按状态给底色**（用户口径）：
+        // 排队中=中性灰、**正在提交/等待返回=琥珀高亮**、失败=淡红、已翻译=普通卡片底
+        val tone = when {
+            row.waiting -> CardBackdrop.Tone.WAITING
+            page.state == ImportedPageTranslation.STATE_TRANSLATING -> CardBackdrop.Tone.ACTIVE
+            page.state == ImportedPageTranslation.STATE_FAILED -> CardBackdrop.Tone.FAILED
+            // 普通行用 PLAIN（与卡片同色、无描边）：缩进之后就是"在这张章卡片的组里"
+            else -> CardBackdrop.Tone.PLAIN
+        }
+        CardBackdrop.applyNested(item, tone, dark)
 
         item.findViewById<TextView>(R.id.tv_page_label).apply {
-            text = "P${row.pageIndex + 1}"
+            text = "P${page.pageIndex + 1}"
             setTextColor(labelColor)
         }
         val badge = item.findViewById<TextView>(R.id.tv_state_badge)
-        badge.setText(contextString(item.context, when (row.state) {
-            ImportedPageTranslation.STATE_TRANSLATING -> R.string.reader_translate_state_translating
-            ImportedPageTranslation.STATE_SUCCESS -> R.string.reader_translate_state_success
-            ImportedPageTranslation.STATE_FAILED -> R.string.reader_translate_state_failed
-            else -> R.string.reader_translate_state_idle
-        }))
-        badge.setBackgroundResource(
-            when (row.state) {
-                ImportedPageTranslation.STATE_SUCCESS -> R.drawable.bg_state_success
-                ImportedPageTranslation.STATE_FAILED -> R.drawable.bg_state_failed
-                ImportedPageTranslation.STATE_TRANSLATING -> R.drawable.bg_state_translating
-                else -> R.drawable.bg_state_idle
-            }
-        )
+        if (row.waiting) {
+            // 排队中：纯内存态（不写库），显示「等待」
+            badge.setText(R.string.reader_translate_state_waiting)
+            badge.setBackgroundResource(R.drawable.bg_state_idle)
+        } else {
+            badge.setText(contextString(item.context, when (page.state) {
+                ImportedPageTranslation.STATE_TRANSLATING -> R.string.reader_translate_state_translating
+                ImportedPageTranslation.STATE_SUCCESS -> R.string.reader_translate_state_success
+                ImportedPageTranslation.STATE_FAILED -> R.string.reader_translate_state_failed
+                else -> R.string.reader_translate_state_idle
+            }))
+            badge.setBackgroundResource(
+                when (page.state) {
+                    ImportedPageTranslation.STATE_SUCCESS -> R.drawable.bg_state_success
+                    ImportedPageTranslation.STATE_FAILED -> R.drawable.bg_state_failed
+                    ImportedPageTranslation.STATE_TRANSLATING -> R.drawable.bg_state_translating
+                    else -> R.drawable.bg_state_idle
+                }
+            )
+        }
 
         item.findViewById<TextView>(R.id.tv_fail_message).apply {
-            text = row.failMessage
-            visibility = if (!row.failMessage.isNullOrBlank()) View.VISIBLE else View.GONE
+            text = page.failMessage
+            visibility = if (!row.waiting && !page.failMessage.isNullOrBlank()) View.VISIBLE else View.GONE
         }
 
         val expanded = position == expandedIndex
         val btnDetail = item.findViewById<TextView>(R.id.btn_row_detail)
         btnDetail.setTextColor(accent)
+        btnDetail.visibility = if (row.waiting) View.GONE else View.VISIBLE
         btnDetail.text = contextString(item.context,
             if (expanded) R.string.reader_translate_collapse else R.string.reader_translate_row_detail)
 
+        // 删除本页译文（整行数据）。⚠️ 必须**显式**置 VISIBLE：本布局与小说面板共用，
+        // 默认 gone，回收复用时不赋值就会把上一行的按钮状态带过来（或永远不显示）
+        item.findViewById<TextView>(R.id.btn_row_delete).apply {
+            visibility = if (row.waiting) View.GONE else View.VISIBLE
+            setOnClickListener { onDeletePage(page.pageIndex) }
+        }
+
         val detail = item.findViewById<View>(R.id.detail_panel)
-        if (expanded) {
-            fillDetail(item, position, row, labelColor, subColor, accent)
+        val wantDetail = expanded && !row.waiting
+        // ⚠️ **展开/收起要有动画**（用户口径）：先让 TransitionManager 记下"展开前"的样子，
+        // 再改可见性 —— 之后那次布局就会把高度变化补成过渡；直接 setVisibility 是硬切、很生硬。
+        val holder = (item.getTag(R.id.detail_panel) as? Boolean)
+        if (holder != null && holder != wantDetail) {
+            androidx.transition.TransitionManager.beginDelayedTransition(
+                item as android.view.ViewGroup,
+                androidx.transition.AutoTransition().setDuration(EXPAND_ANIM_MS)
+            )
+        }
+        item.setTag(R.id.detail_panel, wantDetail)
+        if (wantDetail) {
+            fillDetail(item, position, page, labelColor, subColor, accent)
             detail.visibility = View.VISIBLE
         } else {
             detail.visibility = View.GONE
         }
+        // 详情块也做成圆角块（不再是一块直角灰底）
+        CardBackdrop.apply(detail, CardBackdrop.Tone.DETAIL, dark)
 
-        // 点整行 = 跳页；展开态点详情按钮 = 收起
-        item.setOnClickListener { if (!expanded) onJump(row.pageIndex) }
+        // 正在提交/等待返回的那一行：淡入一下，让"轮到它了"看得见
+        if (!row.waiting && page.state == ImportedPageTranslation.STATE_TRANSLATING) {
+            item.alpha = 0.55f
+            item.animate().alpha(1f).setDuration(ACTIVE_FADE_MS).start()
+        } else {
+            item.animate().cancel()
+            item.alpha = 1f
+        }
+
+        // 点整行 = 跳页；展开态点详情按钮 = 收起；等待页没有详情
+        item.setOnClickListener { if (!expanded && !row.waiting) onJump(page.pageIndex) }
         btnDetail.setOnClickListener {
             val prev = expandedIndex
             expandedIndex = if (expanded) null else position
@@ -98,7 +464,14 @@ class ReaderPageStateAdapter(
     }
 
     /** 像屏幕翻译历史那样：元数据（翻译器/语言/时间）+ 逐条 原文(淡)+译文(主)。拖拽选择复制，无复制按钮。 */
-    private fun fillDetail(item: View, position: Int, row: ImportedPageTranslation, labelColor: Int, subColor: Int, accent: Int) {
+    private fun fillDetail(
+        item: View,
+        position: Int,
+        row: ImportedPageTranslation,
+        labelColor: Int,
+        subColor: Int,
+        accent: Int
+    ) {
         val meta = buildString {
             row.translatorName?.takeIf { it.isNotBlank() }?.let { append(it).append("\n") }
             val langs = listOfNotNull(row.sourceLang, row.targetLang)

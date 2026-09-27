@@ -20,7 +20,9 @@ package translationapi.openaitranslation
 import android.content.Context
 import com.moe.starflow.R
 import com.moe.starflow.me.apiconfig.OpenAIProviderConfig
+import com.moe.starflow.utils.ContextBudget
 import com.moe.starflow.utils.LogCollector
+import com.moe.starflow.translate.ContextAwareTranslation
 import com.moe.starflow.translate.CustomLocale
 import com.moe.starflow.translate.TranslationResult
 import com.moe.starflow.translate.TranslationTextAPI
@@ -58,7 +60,7 @@ class OpenAITranslation(
     private val thinkingMode: Int = OpenAIProviderConfig.THINKING_DEFAULT,
     /** 仅用于把用户可见的错误文案本地化（模型未选择 / HTTP 错误）。必须是可用的 Context，勿传 null。 */
     private val appContext: Context
-) : TranslationTextAPI {
+) : TranslationTextAPI, ContextAwareTranslation {
 
     override val modelName: String get() = model
 
@@ -75,10 +77,26 @@ class OpenAITranslation(
 
     /**
      * 更新上下文。每次翻译前调用，传入最新的历史对话。
+     *
+     * **按 token 预算裁剪**（不再是「按轮数」）：从最新往前累加，
+     * `TokenEstimator.estimatePair` 装不下的最旧轮直接丢 —— 这就是「新开上下文」的效果。
+     * 裁剪实现只有 `ContextBudget.trim` 一处（`FloatingBallService` / `TranslateUtils` 都走它）。
+     *
+     * @param budgetTokens 设置项 `ctx_token_budget` 的值；≤0 用默认档（调用方未指定的场合，如聊天引擎）
      */
-    fun updateContext(history: List<Pair<String, String>>, enabled: Boolean) {
-        this.currentContextHistory = history
+    override fun updateContext(history: List<Pair<String, String>>, enabled: Boolean, budgetTokens: Int) {
+        val budget = if (budgetTokens > 0) budgetTokens else ContextBudget.DEFAULT_TOKEN_BUDGET
+        this.currentContextHistory =
+            if (enabled) ContextBudget.trim(history, budget) else emptyList()
         this.currentContextEnabled = enabled
+        LogCollector.d(
+            TAG,
+            "上下文: " + if (enabled) {
+                "启用，保留 ${currentContextHistory.size}/${history.size} 轮（预算 $budget tok）"
+            } else {
+                "关闭"
+            }
+        )
     }
 
     // 创建协程作用域

@@ -22,15 +22,19 @@ import com.moe.starflow.data.NovelChapterStat
 import com.moe.starflow.manga.config.OcrEngineGroup
 import com.moe.starflow.mangaimport.translate.ReaderTranslationInfo
 import com.moe.starflow.novel.model.NovelChapterMeta
+import com.moe.starflow.novel.translate.NovelBatchWarning
 import com.moe.starflow.novel.translate.NovelQuota
 import com.moe.starflow.novel.translate.NovelTranslateMode
+import com.moe.starflow.novel.translate.NovelWaitingBatch
 import com.moe.starflow.translate.CustomLocale
 import com.moe.starflow.translate.LanguageSelectionDialog
 import com.moe.starflow.translate.TranslateTools
+import com.moe.starflow.translate.batch.ChapterJob
 import com.moe.starflow.llamacpp.LlamaCppLanguages
 import com.moe.starflow.llamacpp.LlamaCppModelStore
 import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.OcrEngineManager
+import com.moe.starflow.utils.TranslationConcurrency
 
 /**
  * 小说阅读器底部工具栏的初始状态。
@@ -61,6 +65,16 @@ class NovelPanelState(
     val chapters: List<NovelChapterMeta> = emptyList(),
     val chapterStats: Map<Int, NovelChapterStat> = emptyMap(),
     val keepParagraphsWhole: Boolean = false,
+    /** 每章的后台章节任务（卡片按钮文案 + 进度徽章 + 筛选）。 */
+    val chapterJobs: Map<Int, ChapterJob> = emptyMap(),
+    /** 每章排队中的批（记录列表里标「等待」的行）。**纯内存态**。 */
+    val waitingBatches: Map<Int, List<NovelWaitingBatch>> = emptyMap(),
+    /** 正在提交/等待返回的批（高亮行；纯内存态）。 */
+    val activeBatches: Map<Int, List<NovelWaitingBatch>> = emptyMap(),
+    /** 「同时 API 请求数」用户设的值（1–10，默认 5；本地引擎实际恒 1）。 */
+    val concurrency: Int = TranslationConcurrency.NOVEL_DEFAULT,
+    /** 单批预警阈值的档位下标（见 `NovelBatchWarning.tiers`）。 */
+    val batchWarnIndex: Int = NovelBatchWarning.defaultIndex,
 )
 
 /** 小说阅读器底部工具栏回调。 */
@@ -97,9 +111,26 @@ class NovelPanelCallbacks(
     val onDebounceMs: (Int) -> Unit = {},
     val onAheadBatches: (Int) -> Unit = {},
     val onBatchSize: (Int) -> Unit = {},
-    val onTranslateNow: () -> Unit = {},
-    /** 清空**本章**译文（面板里点确认后才回调）。 */
-    val onClearChapter: () -> Unit = {},
+
+    /**
+     * 章卡片的**主按钮**：没任务 = 翻译本章；跑着 = 暂停；暂停了 = 继续。
+     *
+     * ⚠️ 面板只报"点了这一章"，**怎么处置由宿主按任务状态决定**（它才是任务的真值持有者）——
+     * 面板手里那份 `chapterJobs` 只是打开那一刻的快照，照它分支会在状态刚变时点错。
+     */
+    val onChapterPrimary: (Int) -> Unit = {},
+
+    /** 章卡片的**次按钮**：**有任务** = 取消该章任务（丢弃还没开始翻的批，已翻好的保留）。 */
+    val onChapterSecondary: (Int) -> Unit = {},
+
+    /** 章卡片的**次按钮**：**没任务** = 清除本章译文（面板里已二次确认）。 */
+    val onChapterClear: (Int) -> Unit = {},
+
+    /** 「同时 API 请求数」滑块（传用户设的值）。 */
+    val onConcurrency: (Int) -> Unit = {},
+
+    /** 「单批预警阈值」滑块（传的是**档位下标**，见 `NovelBatchWarning.tiers`）。 */
+    val onBatchWarn: (Int) -> Unit = {},
 
     /** 下载：[NovelExportKind] 的序号（0 译文 / 1 原文 / 2 双语）。 */
     val onDownload: (Int) -> Unit = {},
@@ -125,10 +156,17 @@ class NovelPanelSheet(
 
     companion object {
         const val TAG = "NovelPanelSheet"
+
+        /** 「批次处理」折叠组的展开态（默认折叠；用户特意要求把四个批次参数收起来）。 */
+        private const val KEY_BATCH_GROUP_EXPANDED = "novel_batch_group_expanded"
     }
 
     /** 面板深浅（随阅读背景切换即时更新）。 */
     private var darkPanel = state.isDarkPanel
+
+    /** 面板自己的 prefs（与 `NovelPanelStyle` 同一份，折叠态等纯 UI 偏好存这里）。 */
+    private val prefs: SharedPreferences
+        get() = requireContext().getSharedPreferences(NovelPanelStyle.PREFS_NAME, Context.MODE_PRIVATE)
 
     private var appPrefsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
 
@@ -171,8 +209,20 @@ class NovelPanelSheet(
     private var currentFilterKey = 0
 
     private val chapterAdapter by lazy {
-        NovelChapterStateAdapter(onJump = { cb.onChapterJump(it) })
+        NovelChapterStateAdapter(
+            onJump = { cb.onChapterJump(it) },
+            onChapterPrimary = { cb.onChapterPrimary(it) },
+            onChapterSecondary = { index ->
+                // 有任务 → 取消（无确认，用户口径）；没任务 → 清除本章译文（**保留二次确认**）
+                val job = chapterJobs[index]
+                if (job != null && job.isActive) cb.onChapterSecondary(index)
+                else confirmClearChapter(index)
+            },
+        )
     }
+
+    /** 面板手里那份任务快照（[renderHostState] 每次推全量时刷新）。 */
+    private var chapterJobs: Map<Int, ChapterJob> = emptyMap()
 
     private val dp8: Int get() = (8 * resources.displayMetrics.density).toInt().coerceAtLeast(1)
 
@@ -427,6 +477,44 @@ class NovelPanelSheet(
         })
         applyAheadRowVisibility(view, translateMode)
 
+        // 单批预警阈值（滑块位置 = 档位下标；用户口径：默认 4096，档位都是较大的值）
+        val sbWarn = view.findViewById<SeekBar>(R.id.sb_batch_warn)
+        val tvWarn = view.findViewById<TextView>(R.id.tv_batch_warn_value)
+        sbWarn.max = NovelBatchWarning.maxIndex()
+        sbWarn.progress = state.batchWarnIndex.coerceIn(0, NovelBatchWarning.maxIndex())
+        tvWarn.text = "${NovelBatchWarning.thresholdAt(sbWarn.progress)}"
+        sbWarn.setOnSeekBarChangeListener(slider {
+            tvWarn.text = "${NovelBatchWarning.thresholdAt(sbWarn.progress)}"
+            cb.onBatchWarn(sbWarn.progress)
+        })
+
+        // 同时 API 请求数（文本翻译 1-10，默认 5）—— ⚠️ `android:min` 让 progress 是**绝对值**
+        val sbConcurrency = view.findViewById<SeekBar>(R.id.sb_concurrency)
+        val tvConcurrency = view.findViewById<TextView>(R.id.tv_concurrency_value)
+        sbConcurrency.min = TranslationConcurrency.NOVEL_MIN
+        sbConcurrency.max = TranslationConcurrency.NOVEL_MAX
+        sbConcurrency.progress = state.concurrency
+            .coerceIn(TranslationConcurrency.NOVEL_MIN, TranslationConcurrency.NOVEL_MAX)
+        tvConcurrency.text = "${sbConcurrency.progress}"
+        sbConcurrency.setOnSeekBarChangeListener(slider {
+            tvConcurrency.text = "${sbConcurrency.progress}"
+            cb.onConcurrency(sbConcurrency.progress)
+        })
+
+        // 「批次处理」折叠组：四个批次相关参数收在里面（组内第一项是「启动增量翻译向后」）。
+        // 展开态记在 prefs 里（默认折叠）—— 用户特意要求"折叠起来"，别每次打开又弹开。
+        val groupContent = view.findViewById<View>(R.id.batch_group_content)
+        val groupArrow = view.findViewById<TextView>(R.id.tv_batch_group_arrow)
+        fun applyBatchGroup(expanded: Boolean) {
+            groupContent.visibility = if (expanded) View.VISIBLE else View.GONE
+            groupArrow.text = if (expanded) "▾" else "▸"
+            prefs.edit().putBoolean(KEY_BATCH_GROUP_EXPANDED, expanded).apply()
+        }
+        applyBatchGroup(prefs.getBoolean(KEY_BATCH_GROUP_EXPANDED, false))
+        view.findViewById<View>(R.id.btn_batch_group).setOnClickListener {
+            applyBatchGroup(groupContent.visibility != View.VISIBLE)
+        }
+
         view.findViewById<TextView>(R.id.tv_translator_model_row).text =
             getString(R.string.reader_translate_translator_model, ReaderTranslationInfo.translatorModelLabel(requireContext()))
         view.findViewById<View>(R.id.btn_model_translate).setOnClickListener { cb.onOpenApiConfig() }
@@ -444,18 +532,10 @@ class NovelPanelSheet(
             refreshLangRow(view)
         }
 
-        view.findViewById<View>(R.id.btn_translate_action).setOnClickListener { cb.onTranslateNow() }
-        // ⚠️ 清空**必须二次确认**：用户明确要求"不要点击就直接清空"（以前一点就清整本）
-        view.findViewById<View>(R.id.btn_translate_clear).setOnClickListener {
-            val dlg = AlertDialog.Builder(requireContext())
-                .setTitle(R.string.novel_translate_clear_chapter)
-                .setMessage(R.string.novel_translate_clear_chapter_confirm)
-                .setNegativeButton(R.string.user_cancel, null)
-                .setPositiveButton(R.string.novel_translate_clear_ok) { _, _ -> cb.onClearChapter() }
-                .create()
-            dlg.show()
-            applyDialogTheme(dlg)
-        }
+        // ⚠️ 这里原来还有两个**全局**按钮（`btn_translate_action` / `btn_translate_clear`）：
+        // 用户要求整体删掉 —— 「翻译本章 / 清除本章译文 / 暂停 / 取消」都在**章节卡片**上
+        // （见 `item_novel_chapter_card.xml` 与 `NovelChapterStateAdapter`）。
+
         // 下载：三选（译文 / 原文 / 双语），与漫画「更多」页同一套交互
         view.findViewById<View>(R.id.btn_download).setOnClickListener {
             val dlg = AlertDialog.Builder(requireContext())
@@ -477,8 +557,12 @@ class NovelPanelSheet(
         rv.adapter = chapterAdapter
         chapterAdapter.chapters = state.chapters
         chapterAdapter.stats = state.chapterStats
+        chapterAdapter.jobs = state.chapterJobs
+        chapterAdapter.waiting = state.waitingBatches
+        chapterAdapter.active = state.activeBatches
         chapterAdapter.onNeedTotal = { cb.onNeedChapterTotal(it) }
         chapterAdapter.currentChapter = state.currentChapter
+        chapterJobs = state.chapterJobs
         setupTranslateFilter(view)
 
         // ---- 更多：旋转 / 自动翻页 / 目录 / 设置 ----
@@ -626,6 +710,8 @@ class NovelPanelSheet(
             R.id.tv_translator_model_row,
             R.id.tv_source_lang_value, R.id.tv_target_lang_value,
             R.id.tv_debounce_label, R.id.tv_ahead_label, R.id.tv_batch_label,
+            R.id.tv_batch_group_title,
+            R.id.tv_batch_warn_label, R.id.tv_concurrency_label,
             R.id.tv_font_size_label,
             R.id.tv_line_spacing_label, R.id.tv_para_spacing_label,
             R.id.tv_padding_label, R.id.tv_keep_paragraphs_label,
@@ -635,11 +721,16 @@ class NovelPanelSheet(
             R.id.tv_rotate_value, R.id.tv_interval_value,
             R.id.tv_source_caption, R.id.tv_target_caption,
             R.id.tv_debounce_value, R.id.tv_ahead_value, R.id.tv_batch_value,
+            // 说明行（11sp）与「值」同组：都是"依附于某项的次要文字"，深浅一起翻
+            R.id.tv_debounce_hint, R.id.tv_ahead_hint, R.id.tv_batch_hint,
+            R.id.tv_batch_warn_value, R.id.tv_batch_warn_hint,
+            R.id.tv_concurrency_value, R.id.tv_concurrency_hint,
             R.id.tv_font_size_value,
             R.id.tv_line_spacing_value, R.id.tv_para_spacing_value,
             R.id.tv_padding_value, R.id.tv_keep_paragraphs_hint,
             R.id.tv_top_padding_value, R.id.tv_bottom_padding_value,
             R.id.tv_style_hint,
+            R.id.tv_batch_group_arrow,
         ).forEach { view.findViewById<TextView>(it).setTextColor(subColor) }
         reapplySegments(view)
         // ⚠️ Tab 图标与筛选 chip 原来**只在创建/点击时**着色，主题重喷漏了它们 ——
@@ -860,7 +951,12 @@ class NovelPanelSheet(
             chapterAdapter.totals = s.chapterTotals
             chapterAdapter.chars = s.chapterChars
             chapterAdapter.failures = s.chapterFailures
+            chapterAdapter.jobs = s.chapterJobs
+            chapterAdapter.waiting = s.waitingBatches
+        chapterAdapter.active = s.activeBatches
             chapterAdapter.currentChapter = s.chapterIndex
+            // 面板手里那份任务快照（次按钮的「取消 ⇄ 清除」分支要读它）
+            chapterJobs = s.chapterJobs
 
             applySeg(
                 view, R.id.seg_mode,
@@ -906,6 +1002,16 @@ class NovelPanelSheet(
                 aheadLabel(view, s.aheadBatches, s.batchSize),
             )
             applySlider(view, R.id.sb_batch, R.id.tv_batch_value, s.batchSize, "${s.batchSize}")
+            // 单批预警阈值：滑块位置是**档位下标**，右侧显示 token 值
+            val warnIndex = s.batchWarnIndex.coerceIn(0, NovelBatchWarning.maxIndex())
+            applySlider(
+                view, R.id.sb_batch_warn, R.id.tv_batch_warn_value, warnIndex,
+                "${NovelBatchWarning.thresholdAt(warnIndex)}",
+            )
+            // 同时 API 请求数（用户设的值；本地引擎实际恒 1，提示文案里写明了）
+            val concurrency = s.concurrency
+                .coerceIn(TranslationConcurrency.NOVEL_MIN, TranslationConcurrency.NOVEL_MAX)
+            applySlider(view, R.id.sb_concurrency, R.id.tv_concurrency_value, concurrency, "$concurrency")
 
             view.findViewById<TextView>(R.id.tv_rotate_value).text = s.rotateLabel
             view.findViewById<TextView>(R.id.tv_interval_value).text = "${s.intervalSec} s"
@@ -929,7 +1035,7 @@ class NovelPanelSheet(
         for ((key, label) in options) {
             val chip = TextView(requireContext()).apply {
                 text = getString(label)
-                textSize = 12f
+                textSize = 15f
                 setPadding(dp8 * 2, dp8, dp8 * 2, dp8)
                 tag = key
                 setOnClickListener { applyFilter(key, view) }
@@ -1043,6 +1149,23 @@ class NovelPanelSheet(
         val dlg = AlertDialog.Builder(requireContext())
             .setMessage(msg)
             .setPositiveButton(R.string.user_known, null)
+            .create()
+        dlg.show()
+        applyDialogTheme(dlg)
+    }
+
+    /**
+     * **清除本章译文**的二次确认（用户明确要求：不要点一下就直接清空）。
+     *
+     * ⚠️ 章卡片上那颗按钮在有任务时是「取消」，**不弹确认**（取消是可恢复的：已翻好的译文保留）；
+     * 只有"清除本章译文"这条会丢数据，所以确认只留在这里。
+     */
+    private fun confirmClearChapter(chapterIndex: Int) {
+        val dlg = AlertDialog.Builder(requireContext())
+            .setTitle(R.string.novel_translate_clear_chapter)
+            .setMessage(R.string.novel_translate_clear_chapter_confirm)
+            .setNegativeButton(R.string.user_cancel, null)
+            .setPositiveButton(R.string.novel_translate_clear_ok) { _, _ -> cb.onChapterClear(chapterIndex) }
             .create()
         dlg.show()
         applyDialogTheme(dlg)

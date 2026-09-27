@@ -17,6 +17,9 @@ package com.moe.starflow.mangaimport.data
  *                  `toJson` 不持久化。
  * @param importPhase 瞬态：占位的导入阶段（扫描/复制），仅 [importing] 时有意义。
  * @param importPercent 瞬态：占位的导入进度 0..100（-1=不确定），仅 [importing] 时有意义。
+ * @param chapters **章节表**（见 [MangaChapter]）。空表 = 还不知道/单章漫画：
+ *                 导入时按「子文件夹 = 一章」算好并持久化；老条目由书架后台一次性回填
+ *                 （`MangaChapterMigrator`），阅读器打开时也会按实际文件**重新推导并自愈**。
  */
 data class ImportedManga(
     val id: Long,
@@ -33,8 +36,15 @@ data class ImportedManga(
     val lost: Boolean = false,
     val importing: Boolean = false,
     val importPhase: ImportPhase? = null,
-    val importPercent: Int = -1
+    val importPercent: Int = -1,
+    val chapters: List<MangaChapter> = emptyList()
 ) {
+    /** 章数（至少 1：单章漫画也算一章）。 */
+    val chapterCount: Int get() = chapters.size.coerceAtLeast(1)
+
+    /** 第 [page] 页所在的章（没有章节表时按「整本一章」处理）。 */
+    fun chapterOfPage(page: Int): MangaChapter? = chapters.firstOrNull { it.containsPage(page) }
+
     /**
      * 翻译记录的身份指纹（= `addedAt`）。
      *

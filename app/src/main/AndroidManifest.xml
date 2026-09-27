@@ -116,6 +116,12 @@
             android:foregroundServiceType="dataSync"
             android:exported="false" />
 
+        <!-- 章节批量翻译的前台服务：通知栏每章一条进度（可暂停/继续/取消） -->
+        <service
+            android:name=".translate.batch.TranslationJobService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
+
         <activity
             android:name=".translate.screenshot.ScreenCapturePermissionActivity"
             android:exported="false"

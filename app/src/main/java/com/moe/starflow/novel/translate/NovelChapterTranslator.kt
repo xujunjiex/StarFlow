@@ -44,6 +44,15 @@ class NovelChapterTranslator(
     private val engine: NovelTranslationEngine,
     /** 必须与 `NovelParagraphSplitter.SPLIT_VERSION` 一致；不一致的旧译文读不出来。 */
     private val splitVersion: Int,
+    /**
+     * **单批超长预警**（[NovelBatchWarning]）：一批合并文本的 token 估算超过用户设的阈值时
+     * 由宿主弹窗问「继续 / 取消这次翻译」。
+     *
+     * 放在这里（而不是各个入口）是因为**所有批量路径都汇到 [translateBatch]**：
+     * 翻译本章 / 多选翻译 / 自动 / 增量 都会走它，收在这一处才不会漏掉某条路。
+     * null = 不预警（纯逻辑单测与不关心预警的老调用方）。
+     */
+    private val warnGate: NovelBatchWarnGate? = null,
 ) : NovelBatchTranslator {
 
     private companion object {
@@ -240,6 +249,23 @@ class NovelChapterTranslator(
             it.index in wanted && it.type == NovelParagraphType.TEXT && it.originalText.isNotBlank()
         }
         if (mine.isEmpty()) return NovelBatchResult(emptyMap())
+
+        // **单批超长预警**：合并文本估算超过用户设的阈值 → 由宿主弹窗问「继续 / 取消这次翻译」。
+        // 用户取消 → 这一批**不发请求、不写库**（不写 FAILED：那些行保持 IDLE，用户可以改大阈值或
+        // 直接重来），只回一个空结果，由调用方按"没翻成"处理（队列会记账跳过、不无限重试）。
+        val gate = warnGate
+        if (gate != null) {
+            val threshold = gate.threshold()
+            val estimate = NovelBatchWarning.estimateOf(mine.map { it.originalText })
+            if (NovelBatchWarning.shouldWarn(estimate, threshold)) {
+                val go = gate.confirm(estimate, threshold)
+                LogCollector.w(
+                    TAG,
+                    "第 $chapterIndex 章一批内容约 $estimate tokens（阈值 $threshold），用户选择继续=$go",
+                )
+                if (!go) return NovelBatchResult(emptyMap())
+            }
+        }
 
         // 落库前的两步准备工作合在一处（顺序敏感，见下）
         prepareChapterForBatch(book, chapterIndex, paragraphs, mine, translatorName, sourceLang, targetLang)

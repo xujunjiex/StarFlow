@@ -25,6 +25,13 @@ import com.moe.starflow.translate.TranslationTextAPI
 import com.moe.starflow.utils.LogCollector
 import com.moe.starflow.translate.TranslationStatusOverlay
 
+/**
+ * NLLB 本地机器翻译引擎。
+ *
+ * ⚠️ **刻意不接历史上下文**（不实现 `ContextAwareTranslation`）：NLLB 是纯 seq2seq 机器翻译，
+ * 接口只有「一句原文 → 一句译文」，没有 system/user 提示词通道，硬塞历史只会被当成待翻译正文
+ * 一起编码，把译文带跑偏。要上下文请用聚合 AI（OpenAI 兼容）或本地 LlamaCpp 模型。
+ */
 class NLLBTranslation(context: Context) : TranslationTextAPI {
     private val ctx = context.applicationContext
     private var currentTask: Thread? = null

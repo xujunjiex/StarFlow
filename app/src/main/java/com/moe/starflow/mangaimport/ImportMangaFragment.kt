@@ -24,6 +24,7 @@ import com.moe.starflow.mangaimport.data.ImportManager
 import com.moe.starflow.mangaimport.data.ImportTab
 import com.moe.starflow.mangaimport.data.ImportedManga
 import com.moe.starflow.mangaimport.data.ImportedMangaStore
+import com.moe.starflow.mangaimport.data.MangaChapterMigrator
 import com.moe.starflow.mangaimport.data.MangaImporter
 import com.moe.starflow.mangaimport.data.ShelfCleanup
 import com.moe.starflow.mangaimport.data.StorageDirStore
@@ -135,7 +136,23 @@ class ImportMangaFragment : Fragment() {
         binding.fabImport.setOnClickListener {
             ImportDialog.show(
                 requireContext(),
-                onPickFiles = { pickFilesLauncher.launch(arrayOf("application/zip", "application/octet-stream")) },
+                // mime 列表要显式带上 rar/7z：SAF 选择器按 mime 过滤，只给 zip 的话
+                // .cbr/.7z 会被置灰选不中（octet-stream 只兜「未知类型」那一部分）
+                onPickFiles = {
+                    pickFilesLauncher.launch(
+                        arrayOf(
+                            "application/zip",
+                            "application/x-cbz",
+                            "application/vnd.comicbook+zip",
+                            "application/x-rar-compressed",
+                            "application/vnd.rar",
+                            "application/x-cbr",
+                            "application/vnd.comicbook-rar",
+                            "application/x-7z-compressed",
+                            "application/octet-stream"
+                        )
+                    )
+                },
                 onPickSingleDir = { pickDirLauncher.launch(null) }
             )
         }
@@ -180,6 +197,9 @@ class ImportMangaFragment : Fragment() {
             withContext(Dispatchers.IO) {
                 StorageDirStore.migrate(requireContext())
                 purgeOrphanTranslations(requireContext())
+                // 老条目回填章节表（导入时还没分章概念的那批）：只影响清单里 chapters 为空的项，
+                // 之后是幂等短路 —— 不补的话书架上永远看不到「共N章」
+                MangaChapterMigrator.ensureChapters(requireContext())
             }
             refresh()
         }

@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.LruCache
 import com.moe.starflow.mangaimport.data.ArchivedMangaReader
+import com.moe.starflow.mangaimport.data.MangaChapter
+import com.moe.starflow.mangaimport.data.MangaChapterSplitter
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.ZipFile
@@ -20,7 +22,19 @@ class ReaderPageSource(
     private val localRoot: String
 ) {
 
-    private val pageKeys: List<String> = resolvePages()
+    /**
+     * 页序 + 章节表：**由实际文件推导**（不与清单里存的那份对比，文件才是事实来源）。
+     *
+     * ⚠️ 必须与导入侧用**同一个切分器**（[MangaChapterSplitter]）：它同时负责「按章分组」
+     * 与「章内自然排序」，两边算出来不一样的话章区间就会错位（点第3章跳到别人的页）。
+     * 清单里那份只给书架显示章数用，阅读器这份才是权威 —— 两者不一致时以这份为准并回写清单。
+     */
+    private val split: MangaChapterSplitter.Result = MangaChapterSplitter.split(resolveRawPages())
+
+    private val pageKeys: List<String> = split.keys
+
+    /** 章节表（含 `startPage`/`pageCount`，都是 [pageKeys] 的下标区间）。 */
+    val chapters: List<MangaChapter> get() = split.chapters
 
     // 按「张数」计数的缩略图缓存（每张 ~几十 KB，48 张约 2-4MB）
     private val thumbCache: LruCache<Int, Bitmap> = object : LruCache<Int, Bitmap>(MAX_THUMBS) {
@@ -249,7 +263,8 @@ class ReaderPageSource(
         )
     }
 
-    private fun resolvePages(): List<String> {
+    /** 枚举原始页 key（未排序：排序与分章都由 [MangaChapterSplitter] 一处负责）。 */
+    private fun resolveRawPages(): List<String> {
         return if (isArchive) {
             val out = mutableListOf<String>()
             try {
@@ -260,7 +275,7 @@ class ReaderPageSource(
                         if (!e.isDirectory && ArchivedMangaReader.isImageFile(e.name)) out.add(e.name)
                     }
                 }
-                ArchivedMangaReader.sortNaturally(out)
+                out
             } catch (e: Exception) {
                 // zip 缺失/损坏时返回空，由阅读器侧展示「文件丢失」提示，而不是崩溃
                 emptyList()

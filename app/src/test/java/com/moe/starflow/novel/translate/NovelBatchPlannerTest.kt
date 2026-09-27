@@ -122,4 +122,50 @@ class NovelBatchPlannerTest {
         assertEquals(10, NovelQuota.of(99).remaining)
         assertEquals(5, NovelQuota.of(5).remaining)
     }
+
+    // ===== 章批量任务的「整章切批」（planBatches）=====
+
+    /**
+     * ⚠️ **等价性守卫**：`planBatches` 必须与「反复 `nextBatch` 推进到章末」逐批相同 ——
+     * 章批量任务用它一次算好整章的批，而自动/增量走的是 `nextBatch`；两套算法不一致的话，
+     * 「翻译本章」与「自动翻」切出来的批就不是同一批（重翻/记账会错位）。
+     */
+    @Test
+    fun `整章切批与反复推进等价`() {
+        for (batchSize in 1..4) {
+            for (translated in listOf(emptySet(), setOf(0, 1, 5), setOf(0, 2, 4, 6, 8))) {
+                val chapter = (0..9).toList()
+                val plan = NovelBatchPlanner.planBatches(chapter, translated, batchSize)
+
+                // 反复 nextBatch 推进到章末
+                val stepwise = mutableListOf<List<Int>>()
+                var done = translated
+                while (true) {
+                    val anchor = chapter.firstOrNull { it !in done } ?: break
+                    val batch = NovelBatchPlanner.nextBatch(chapter, anchor, done, batchSize)
+                    if (batch.isEmpty()) break
+                    stepwise += batch
+                    done = done + batch
+                }
+
+                assertEquals(
+                    "batchSize=$batchSize translated=$translated 时两套必须一致",
+                    stepwise,
+                    plan,
+                )
+                assertTrue("批不跨章、不超批大小", plan.all { it.size in 1..batchSize })
+            }
+        }
+    }
+
+    /** 已翻的段不进批；全翻完 → 没有批（章任务据此直接返回）。 */
+    @Test
+    fun `整章切批跳过已有译文`() {
+        assertEquals(
+            listOf(listOf(1, 3), listOf(7)),
+            NovelBatchPlanner.planBatches((0..7).toList(), setOf(0, 2, 4, 5, 6), 2),
+        )
+        assertTrue(NovelBatchPlanner.planBatches((0..4).toList(), setOf(0, 1, 2, 3, 4), 3).isEmpty())
+        assertTrue(NovelBatchPlanner.planBatches(emptyList(), emptySet(), 3).isEmpty())
+    }
 }

@@ -193,22 +193,23 @@
     </string-array>
 
     <!-- ===== 此前仅存在于 values/，中文环境回退英文 → 补全 ===== -->
-    <string-array name="context_count_entries">
-        <item>5 轮</item>
-        <item>8 轮</item>
-        <item>10 轮</item>
-        <item>12 轮</item>
-        <item>15 轮</item>
-        <item>20 轮</item>
+    <!-- AI 上下文长度（token 预算）：值 = token 数，与 ctx_token_budget（ListPreference）一一对应 -->
+    <string-array name="ctx_token_budget_entries">
+        <item>4K token</item>
+        <item>8K token</item>
+        <item>16K token</item>
+        <item>32K token</item>
+        <item>64K token</item>
+        <item>128K token</item>
     </string-array>
 
-    <string-array name="context_count_values">
-        <item>5</item>
-        <item>8</item>
-        <item>10</item>
-        <item>12</item>
-        <item>15</item>
-        <item>20</item>
+    <string-array name="ctx_token_budget_values">
+        <item>4096</item>
+        <item>8192</item>
+        <item>16384</item>
+        <item>32768</item>
+        <item>65536</item>
+        <item>131072</item>
     </string-array>
 
     <string-array name="cache_count_entries">

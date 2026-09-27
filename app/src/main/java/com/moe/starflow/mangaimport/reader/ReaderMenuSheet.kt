@@ -21,6 +21,9 @@ import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.moe.starflow.R
 import com.moe.starflow.data.ImportedPageTranslation
 import com.moe.starflow.manga.config.OcrEngineGroup
+import com.moe.starflow.mangaimport.data.MangaChapter
+import com.moe.starflow.mangaimport.data.mangaChapterLabel
+import com.moe.starflow.translate.batch.ChapterJobState
 import com.moe.starflow.mangaimport.translate.ReaderTranslationInfo
 import com.moe.starflow.translate.CustomLocale
 import com.moe.starflow.translate.LanguageSelectionDialog
@@ -28,7 +31,6 @@ import com.moe.starflow.translate.TranslateTools
 import com.moe.starflow.utils.Constants
 import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.MangaFontSize
-import com.moe.starflow.utils.MangaFontSizeDialog
 import com.moe.starflow.utils.OcrEngineManager
 
 /** 阅读器底部工具栏初始状态。mode:0=LTR 1=RTL 2=竖排 3=Webtoon；animation:0无 1默认 2高级 3仿真；bg:0默认 1浅 2深 3白 4黑 5自动。 */
@@ -48,7 +50,19 @@ class ReaderMenuState(
     val translateMode: Int = 0,                 // 0 手动 1 自动 2 增量
     val debounceMs: Int = 500,                  // 自动/增量的启动延迟
     val aheadPages: Int = 5,                    // 增量向后翻多少页（1..10）
-    val pageTranslations: List<ImportedPageTranslation> = emptyList()  // 每页翻译记录快照
+    val pageTranslations: List<ImportedPageTranslation> = emptyList(),  // 每页翻译记录快照
+    /** 章节表（空 = 单章）。翻译面板顶部的章切换行与记录列表分组都用它。 */
+    val chapters: List<MangaChapter> = emptyList(),
+    /** 当前选中的章下标（默认 = 阅读器当前所在章）。 */
+    val currentChapter: Int = 0,
+    /** 各章的后台任务状态（章卡片按钮文案、「进行中」都按它显示）。 */
+    val chapterJobs: Map<Int, ChapterJobState> = emptyMap(),
+    /** 各章任务已完成的页数。 */
+    val chapterJobDone: Map<Int, Int> = emptyMap(),
+    /** 排队中（还没开始翻）的页 —— 面板把它们标成「等待」。 */
+    val waitingPages: Set<Int> = emptySet(),
+    /** 漫画的「同时请求数」（2-5）。 */
+    val concurrency: Int = 3,
 )
 
 /** 阅读器底部工具栏回调。 */
@@ -74,6 +88,21 @@ class ReaderMenuCallbacks(
     val onPanelClosed: () -> Unit = {},
     val onOpenModelManagement: () -> Unit = {},
     val onOpenApiConfig: () -> Unit = {},
+    /** 点章卡片主按钮：没有任务 = 翻译本章；跑着 = 暂停；暂停了 = 继续。 */
+    val onChapterPrimary: (Int) -> Unit = {},
+    /** 点章卡片次按钮：没有任务 = 清除本章译文（宿主负责二次确认）；有任务 = 取消该章任务。 */
+    val onChapterSecondary: (Int) -> Unit = {},
+    /** 删除某一页的翻译数据（面板行内「删除」）。 */
+    val onDeletePage: (Int) -> Unit = {},
+    /** 点章卡片空白处 = 跳到该章（切章只从记录里切，面板不再有左右切章组件）。 */
+    val onChapterSelected: (Int) -> Unit = {},
+    /**
+     * 回读宿主**当前真实**的章节状态（章表 / 当前章 / 各章任务 / 等待页）。
+     *
+     * ⚠️ 与 [currentTranslateMode] 同一套理由：面板是打开那一刻的快照，宿主随时可能改
+     * （翻页换章、批量任务开跑/暂停/收尾），面板必须能拿到**此刻**的真值。
+     */
+    val currentChapterState: () -> ChapterPanelState = { ChapterPanelState() },
     /**
      * 回读宿主**当前真实**的翻译模式。
      *
@@ -82,7 +111,28 @@ class ReaderMenuCallbacks(
      * RadioButton 在同组内重复选中不派发 onCheckedChanged → 模式彻底切不动。
      */
     val currentTranslateMode: () -> Int = { 0 },
+    /** 漫画的「同时请求数」变化（2-5）：宿主写 prefs，下一次任务生效。 */
+    val onConcurrency: (Int) -> Unit = {},
+    /**
+     * 面板里改了**译文字号 / 自动字号**。
+     *
+     * ⚠️ 字号不在渲染缓存 key 里（key 只有 `page:idx:MODE`）→ 宿主必须**作废已渲染译图**
+     * 并重渲染当前页，不然滑块拖完屏幕上还是旧字号。
+     */
+    val onFontSizeChanged: () -> Unit = {},
 )
+
+/** 面板回读用的章节快照（宿主侧真值）。 */
+class ChapterPanelState(
+    val chapters: List<MangaChapter> = emptyList(),
+    val currentChapter: Int = 0,
+    val records: List<ImportedPageTranslation> = emptyList(),
+    /** 各章任务状态 / 已完成页数 / 排队页（章卡片按钮与「等待」标签都靠它们）。 */
+    val jobs: Map<Int, ChapterJobState> = emptyMap(),
+    val jobDone: Map<Int, Int> = emptyMap(),
+    val waitingPages: Set<Int> = emptySet(),
+)
+
 
 /**
  * 阅读器底部工具栏（Koto 四图标 Tab）：翻页（模式/动画/背景分段）/ 翻译 / 调色（内联）/ 更多。
@@ -144,10 +194,30 @@ class ReaderMenuSheet(
      */
     private var reapplyingMode = false
 
+    /**
+     * 每页/每章记录列表适配器。
+     *
+     * 章标题的本地化交给面板注入（`mangaChapterLabel` 与阅读器顶部胶囊、章节目录弹窗**同一份**），
+     * 三个地方各拼一套的话「第0章 / 序章 / ch1」会同时出现。
+     */
     private val pageAdapter by lazy {
-        ReaderPageStateAdapter(onJump = { cb.onTranslatePageJump(it) })
+        ReaderPageStateAdapter(
+            chapterLabelOf = { mangaChapterLabel(requireContext(), it) },
+            onJump = { cb.onTranslatePageJump(it) },
+            onSelectChapter = { cb.onChapterSelected(it) },
+            onChapterPrimary = { cb.onChapterPrimary(it) },
+            onChapterSecondary = { cb.onChapterSecondary(it) },
+            onDeletePage = { cb.onDeletePage(it) },
+        )
     }
     private var currentRecords: List<ImportedPageTranslation> = emptyList()
+
+    /** 面板内的章节快照（宿主推送 / 刚打开时回读）。 */
+    private var chapters: List<MangaChapter> = emptyList()
+    private var selectedChapter = 0
+    private var jobs: Map<Int, ChapterJobState> = emptyMap()
+    private var jobDone: Map<Int, Int> = emptyMap()
+    private var waitingPages: Set<Int> = emptySet()
     private var currentFilterKey = 0
 
     /** 系统是否深色（独立于 app 强制主题）：读 Resources.getSystem()，避免全局主题切换影响面板默认深浅。 */
@@ -168,6 +238,18 @@ class ReaderMenuSheet(
         // ⚠️ 顺序不能反：onPanelOpened 里宿主会把模式回退到手动，随后必须回读覆盖面板选中态，
         // 否则面板显示「自动」而实际是手动，用户点那个已选中的条目不会有任何反应。
         setTranslateMode(cb.currentTranslateMode())
+        // 章节状态同样回读：面板的 onCreateView 是异步的，这中间宿主完全可能已经翻页换章，
+        // 不覆盖的话章标题行会停在上一次打开时的章号
+        run {
+            val st = cb.currentChapterState()
+            chapters = st.chapters
+            selectedChapter = st.currentChapter
+            currentRecords = st.records
+            jobs = st.jobs
+            jobDone = st.jobDone
+            waitingPages = st.waitingPages
+            view?.let { pushToAdapter() }
+        }
         // 面板容器背景初始跟随当前深浅（此后由 applyPanelTheme 实时维护）
         reapplySheetContainerBg()
         // 模型/语言 prefs 变化（跳设置页返回等）→ 即时刷新模型名；无需关面板
@@ -351,12 +433,17 @@ class ReaderMenuSheet(
         view.findViewById<TextView>(R.id.tv_rotate_value).text = state.rotateLabel
         view.findViewById<TextView>(R.id.tv_download_value).text = state.downloadLabel
 
-        // 翻译面板：模式骨架（手动/自动/增量三选一）+ 汇总 + 过滤 + 每页列表
+        // 翻译面板：模式骨架 + 同时请求数 + 过滤 + 章节卡片/页记录列表
         currentRecords = state.pageTranslations
+        chapters = state.chapters
+        selectedChapter = state.currentChapter
+        jobs = state.chapterJobs
+        jobDone = state.chapterJobDone
+        waitingPages = state.waitingPages
         val rvPages = view.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rv_translate_pages)
         rvPages.layoutManager = LinearLayoutManager(requireContext())
         rvPages.adapter = pageAdapter
-        pageAdapter.rows = filteredRows()
+        pushToAdapter()
         val rbManual = view.findViewById<RadioButton>(R.id.translate_mode_manual)
         val rbAuto = view.findViewById<RadioButton>(R.id.translate_mode_auto)
         val rbAhead = view.findViewById<RadioButton>(R.id.translate_mode_incremental)
@@ -378,16 +465,40 @@ class ReaderMenuSheet(
             applyAheadRowVisibility(view, translateMode)
         }
 
-        // 译文大小：**同一份设置**（个性化 → 漫画翻译结果字体大小）。这里改完，
-        // 悬浮窗与设置页显示同步跟着变；改动经 prefs 落盘，重翻时按新字号渲染。
-        val tvFontSize = view.findViewById<TextView>(R.id.tv_font_size_row)
+        // 译文大小：与**文本阅读器同一个滑块样式**（标签在左、值贴右、进度条占满一行）。
+        // ⚠️ 仍走 `MangaFontSize`（个性化设置页 / 悬浮窗菜单 / 这里三处同一份设置）；
+        // 「自动」是漫画独有的，做成右侧小胶囊；滑块档位就是 `MangaFontSize.PRESET_SIZES` 的下标。
+        val tvFontSizeValue = view.findViewById<TextView>(R.id.tv_font_size_value)
+        val btnFontAuto = view.findViewById<TextView>(R.id.btn_font_auto)
+        val sbFontSize = view.findViewById<SeekBar>(R.id.sb_font_size)
+        sbFontSize.max = (MangaFontSize.PRESET_SIZES.size - 1).coerceAtLeast(1)
         fun refreshFontSizeRow() {
-            tvFontSize.text = getString(R.string.reader_translate_font_size, MangaFontSize.summary(requireContext()))
+            val ctx = requireContext()
+            val auto = MangaFontSize.isAuto(ctx)
+            tvFontSizeValue.text = MangaFontSize.summary(ctx)
+            sbFontSize.progress = MangaFontSize.presetIndexOf(ctx).coerceIn(0, sbFontSize.max)
+            // 自动态：胶囊高亮；固定态：只留描边
+            btnFontAuto.setTextColor(if (auto) 0xFF55AEEA.toInt() else if (darkPanel) 0xFF9A9A9F.toInt() else 0xFF888888.toInt())
+            btnFontAuto.background = GradientDrawable().apply {
+                cornerRadius = 8f * resources.displayMetrics.density
+                setColor(if (auto) (if (darkPanel) 0x332E86C9 else 0x1A2E86C9) else 0x00000000)
+                setStroke((1f * resources.displayMetrics.density).toInt(), if (darkPanel) 0x33FFFFFF else 0x22000000)
+            }
         }
         refreshFontSizeRow()
-        view.findViewById<View>(R.id.btn_font_size).setOnClickListener {
-            showFontSizeDialog { refreshFontSizeRow() }
+        btnFontAuto.setOnClickListener {
+            // 切自动：按气泡自适应（滑块位置保留上一次的固定值，切回来还在）
+            MangaFontSize.setAuto(requireContext(), !MangaFontSize.isAuto(requireContext()))
+            refreshFontSizeRow()
+            // ⚠️ 字号不在渲染缓存 key 里，改完必须作废已渲染译图，否则屏幕上还是旧字号
+            cb.onFontSizeChanged()
         }
+        sbFontSize.setOnSeekBarChangeListener(slider {
+            val index = sbFontSize.progress.coerceIn(0, sbFontSize.max)
+            MangaFontSize.setSize(requireContext(), MangaFontSize.PRESET_SIZES[index].toFloat())
+            refreshFontSizeRow()
+            cb.onFontSizeChanged()
+        })
 
         // 启动延迟（防抖）：翻页停留多久才开翻。自动/增量共用。
         val sbDebounce = view.findViewById<SeekBar>(R.id.sb_debounce)
@@ -415,7 +526,7 @@ class ReaderMenuSheet(
         applyAheadRowVisibility(view, translateMode)
 
         setupTranslateFilter(view)
-        updateSummary(currentRecords)
+        setupConcurrency(view)
 
         // 模型区：OCR/翻译模型 快速跳转（保持面板打开，返回后 onStart/prefs 监听刷新模型名）
         view.findViewById<TextView>(R.id.tv_ocr_model_row).text =
@@ -524,7 +635,7 @@ class ReaderMenuSheet(
         val subColor = if (dark) 0xFF9A9A9F.toInt() else 0xFF888888.toInt()
         listOf(
             R.id.tv_mode_label, R.id.tv_animation_label, R.id.tv_background_label,
-            R.id.tv_translate_mode_label, R.id.tv_translate_summary,
+            R.id.tv_translate_mode_label,
             R.id.tv_color_title, R.id.tv_color_inverted, R.id.tv_color_grayscale, R.id.tv_color_book,
             R.id.tv_brightness_label, R.id.tv_contrast_label,
             R.id.tv_rotate_label, R.id.tv_auto_turn_label, R.id.tv_download_label, R.id.tv_settings_label,
@@ -540,7 +651,13 @@ class ReaderMenuSheet(
             R.id.tv_brightness_value, R.id.tv_contrast_value, R.id.tv_color_hint,
             R.id.tv_rotate_value, R.id.tv_interval_value, R.id.tv_download_value,
             R.id.tv_source_caption, R.id.tv_target_caption,
-            R.id.tv_debounce_value, R.id.tv_ahead_value
+            R.id.tv_debounce_value, R.id.tv_ahead_value,
+            // 「同时请求数」两行：标签走说明色，与其它滑块行一致
+            R.id.tv_concurrency_label, R.id.tv_concurrency_hint,
+            // 字号行的值与说明（「自动」胶囊的配色在 refreshFontSizeRow 里按状态给）
+            R.id.tv_font_size_value, R.id.tv_font_size_hint,
+            // 启动延迟的说明行
+            R.id.tv_debounce_hint
         ).forEach { id ->
             view.findViewById<TextView>(id).setTextColor(subColor)
         }
@@ -575,6 +692,8 @@ class ReaderMenuSheet(
         listOf(R.id.btn_source_lang, R.id.btn_target_lang).forEach { id ->
             view.findViewById<View>(id).background = langCellBg
         }
+        // 「同时请求数」行文字随面板深浅（标签在 subColor 组、数值固定强调色）
+        view.findViewById<TextView>(R.id.tv_concurrency_value).setTextColor(0xFF55AEEA.toInt())
     }
 
     /**
@@ -739,13 +858,6 @@ class ReaderMenuSheet(
         TranslateTools.getLanguagesList(requireContext(), type, group) ?: emptyList()
     }
 
-    /**
-     * 译文大小选择。走三处共用的 [MangaFontSizeDialog]（设置页/悬浮窗/阅读器面板同一份实现），
-     * 配色只需告诉它当前面板深浅 —— 阅读器面板不随全局主题，必须显式传。
-     */
-    private fun showFontSizeDialog(onChanged: () -> Unit) {
-        MangaFontSizeDialog.create(requireContext(), dark = darkPanel) { onChanged() }.show()
-    }
 
     /** 语言选择弹窗（复刻主页 showLanguageListDialog，主题随 darkPanel）。 */
     private fun showLangDialog(type: Int) {
@@ -811,50 +923,90 @@ class ReaderMenuSheet(
         if (v is android.view.ViewGroup) for (i in 0 until v.childCount) recolorLang(v.getChildAt(i))
     }
 
-    private fun updateSummary(records: List<ImportedPageTranslation>) {
-        val s = records.count { it.state == ImportedPageTranslation.STATE_SUCCESS }
-        val t = records.count { it.state == ImportedPageTranslation.STATE_TRANSLATING }
-        val f = records.count { it.state == ImportedPageTranslation.STATE_FAILED }
-        view?.findViewById<TextView>(R.id.tv_translate_summary)?.text =
-            getString(R.string.reader_translate_summary, records.size, s, t, f)
+    /**
+     * 把宿主侧状态推给列表适配器（章节卡片 + 页记录都要这些）。
+     *
+     * ⚠️ 这是**唯一**的宿主 → 列表推送出口：新增宿主可改的字段必须一起加进来，
+     * 否则那处 UI 永远停在打开那一刻。
+     */
+    private fun pushToAdapter() {
+        pageAdapter.submit(
+            chapters = chapters,
+            records = currentRecords,
+            selectedChapter = selectedChapter,
+            jobs = jobs,
+            jobDone = jobDone,
+            waitingPages = waitingPages,
+        )
     }
 
-    /** 外部刷新入口（翻译任务开始/完成/失败后调用）。 */
-    fun notifyTranslateChanged(records: List<ImportedPageTranslation>) {
+    /** 「同时请求数」滑块（漫画批量任务用；与文本那个设置互相独立）。 */
+    private fun setupConcurrency(view: View) {
+        val sb = view.findViewById<SeekBar>(R.id.sb_concurrency)
+        val tv = view.findViewById<TextView>(R.id.tv_concurrency_value)
+        val value = state.concurrency.coerceIn(CONCURRENCY_MIN, CONCURRENCY_MAX)
+        // ⚠️ 设了 android:min 的 SeekBar，progress 就是**绝对值**
+        sb.progress = value
+        tv.text = "$value"
+        sb.setOnSeekBarChangeListener(slider {
+            val n = sb.progress
+            tv.text = "$n"
+            cb.onConcurrency(n)
+        })
+    }
+
+    /**
+     * 外部刷新入口（翻译任务开始/完成/失败、切章、批量任务进度都走这里）。
+     *
+     * ⚠️ 这是**唯一**的宿主 → 面板推送入口（与小说面板的 `notifyHostState` 同一约定）：
+     * 新增宿主可改的字段必须一起加进来，否则那处 UI 永远停在打开那一刻。
+     */
+    fun notifyTranslateChanged(
+        records: List<ImportedPageTranslation>,
+        chapters: List<MangaChapter>,
+        selectedChapter: Int,
+        jobs: Map<Int, ChapterJobState>,
+        jobDone: Map<Int, Int>,
+        waitingPages: Set<Int>,
+    ) {
         currentRecords = records
-        view?.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rv_translate_pages)?.adapter = pageAdapter
-        pageAdapter.rows = filteredRows()
-        updateSummary(currentRecords)
+        this.chapters = chapters
+        this.selectedChapter = selectedChapter
+        this.jobs = jobs
+        this.jobDone = jobDone
+        this.waitingPages = waitingPages
+        pushToAdapter()
     }
 
-    private fun filteredRows(): List<ImportedPageTranslation> = when (currentFilterKey) {
-        1 -> currentRecords.filter { it.state == ImportedPageTranslation.STATE_FAILED }
-        2 -> currentRecords.filter { it.state == ImportedPageTranslation.STATE_FAILED && it.failCode == "OCR_EMPTY" }
-        3 -> currentRecords.filter { it.state == ImportedPageTranslation.STATE_FAILED && it.failCode == "TRANSLATE_EMPTY" }
-        4 -> currentRecords.filter { it.state == ImportedPageTranslation.STATE_FAILED && it.failCode != "OCR_EMPTY" && it.failCode != "TRANSLATE_EMPTY" }
-        else -> currentRecords
-    }
-
+    /**
+     * 筛选 chips：全部 / 完成 / 进行中 / 失败。
+     *
+     * ⚠️ 过滤**不在面板这一层做**，而是交给 `pageAdapter.setFilter`：记录列表是「章表头 + 页行」
+     * 两段式的，过滤只能作用于页行；在面板里先筛一遍再交给适配器，会把没有记录的章表头也一起筛掉。
+     *
+     * ⚠️ 与改造前的区别：原来把失败再细分成「OCR空 / 翻译空 / 异常」三个 chip，
+     * 而失败的**具体原因**本来就写在行内（`tv_fail_message`）——细分 chip 既占位置又没必要，
+     * 现在统一收敛到「失败」（用户口径）。
+     */
     private fun setupTranslateFilter(view: View) {
         val row = view.findViewById<ViewGroup>(R.id.translate_filter_row)
         row.removeAllViews()
         val options = listOf(
-            0 to R.string.reader_translate_filter_all,
-            1 to R.string.reader_translate_filter_failed,
-            2 to R.string.reader_translate_filter_ocr,
-            3 to R.string.reader_translate_filter_translate,
-            4 to R.string.reader_translate_filter_exception,
+            ReaderPageStateAdapter.FILTER_ALL to R.string.reader_translate_filter_all,
+            ReaderPageStateAdapter.FILTER_DONE to R.string.reader_translate_filter_done,
+            ReaderPageStateAdapter.FILTER_ONGOING to R.string.reader_translate_filter_ongoing,
+            ReaderPageStateAdapter.FILTER_FAILED to R.string.reader_translate_filter_failed,
         )
         for ((key, label) in options) {
             val chip = TextView(requireContext()).apply {
                 text = getString(label)
-                textSize = 12f
+                textSize = 15f
                 setPadding(dp8 * 2, dp8, dp8 * 2, dp8)
                 tag = key
                 setOnClickListener {
                     currentFilterKey = key
                     refreshFilterChipStyle(row)
-                    pageAdapter.rows = filteredRows()
+                    pageAdapter.setFilter(key)
                 }
             }
             setChipStyle(chip, key == currentFilterKey)
@@ -903,5 +1055,9 @@ class ReaderMenuSheet(
         /** 向后翻译页数范围，与 sheet_reader_menu.xml 的 sb_ahead min/max 一致。 */
         private const val AHEAD_MIN = 1
         private const val AHEAD_MAX = 10
+
+        /** 同时请求数范围（漫画），与 sheet_reader_menu.xml 的 sb_concurrency min/max 一致。 */
+        private const val CONCURRENCY_MIN = 2
+        private const val CONCURRENCY_MAX = 5
     }
 }

@@ -66,6 +66,7 @@ import com.moe.starflow.manga.types.TextDirection
 import com.moe.starflow.manga.engine.PPOcrV5Engine
 import com.moe.starflow.manga.engine.PPOcrV6Engine
 import com.moe.starflow.utils.Constants
+import com.moe.starflow.utils.ContextBudget
 import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.FloatingBallStyle
 import com.moe.starflow.utils.KeystoreManager
@@ -86,7 +87,6 @@ import translationapi.customtranslation.CustomTranslationText
 import translationapi.deepltranslation.DeepLTranslation
 import translationapi.niutrans.NiuTranslation
 import translationapi.nllbtranslation.NLLBTranslation
-import translationapi.openaitranslation.OpenAITranslation
 import translationapi.tencentcloud.TencentTranslationImage
 import translationapi.tencentcloud.TencentTranslationText
 import translationapi.TranslatorFactory
@@ -212,10 +212,15 @@ class FloatingBallService : LifecycleService() {
     private var translatorText: TranslationTextAPI? = null
     private var translatorPic: TranslationPicAPI? = null
 
-    // AI 上下文（仅游戏模式，仅 OpenAI 兼容 API）
+    // AI 上下文（仅游戏模式：OpenAI 兼容 API + 本地 LlamaCpp，见 ContextBudget）
     private val contextHistory = LinkedList<Pair<String, String>>()
     private var contextEnabled = false
-    private var contextMaxCount = 5
+    /**
+     * 内存里历史的 token 上限（设置项 `ctx_token_budget`）。
+     * ⚠️ 本地 LlamaCpp 的实际预算由**模型自己的 ctx** 决定（[ContextBudget.localHistoryBudget]），
+     * 这个值只管住内存不无界增长 —— 见 [ContextBudget] 顶部注释。
+     */
+    private var contextTokenBudget = ContextBudget.DEFAULT_TOKEN_BUDGET
 
     // 翻译会话 ID（每次服务启动生成新的）
     private val sessionId = java.util.UUID.randomUUID().toString()
@@ -542,11 +547,9 @@ class FloatingBallService : LifecycleService() {
         singleClickAction = Constants.BallAction.fromValue(prefs.getString("Ball_Gesture_Single_Click", "0").toIntOrNull() ?: 0)
         doubleClickAction = Constants.BallAction.fromValue(prefs.getString("Ball_Gesture_Double_Click", "2").toIntOrNull() ?: 2)
         longPressAction = Constants.BallAction.fromValue(prefs.getString("Ball_Gesture_Long_Press", "1").toIntOrNull() ?: 1)
-        // 读取 AI 上下文设置
+        // 读取 AI 上下文设置（预算档位 = token，不是轮数）
         contextEnabled = prefs.getBoolean("game_context_enabled", false)
-        contextMaxCount = try {
-            prefs.getString("game_context_count", "5").toIntOrNull() ?: 5
-        } catch (e: Exception) { 5 }
+        contextTokenBudget = ContextBudget.budgetOf(prefs)
 
         // 先初始化截图提供者，再检查权限（权限检查在悬浮球创建之前）
         initScreenshotProvider()
@@ -571,7 +574,6 @@ class FloatingBallService : LifecycleService() {
             "Game_OCR_Engine",
             OcrEngineManager.PREF_KEY,
             "game_context_enabled",
-            "game_context_count",
             // 竖排读取方向：每次识别时现读（见 readVerticalDirection），此处置入只为
             // 「设置页改动后立刻重建 translator / 刷新提示」，不影响取值的实时性
             "Game_Text_Direction"
@@ -586,7 +588,8 @@ class FloatingBallService : LifecycleService() {
         prefChangeListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             when {
                 key == "game_context_enabled" -> contextEnabled = prefs.getBoolean("game_context_enabled", false)
-                key == "game_context_count" -> contextMaxCount = prefs.getString("game_context_count", "5").toIntOrNull() ?: 5
+                // 上下文长度（token 预算）改动 → 现读，下一次翻译即按新预算裁剪
+                key == ContextBudget.KEY_TOKEN_BUDGET -> contextTokenBudget = ContextBudget.budgetOf(prefs)
                 // 翻译模型切换：重建 translator（共享 Hy-MT2 实例由 Holder 换出/重建，无需重启服务）
                 key == "Text_API" || key == "Text_AI" -> {
                     if (prefs.getInt("Translate_Mode", Constants.TranslateMode.TEXT.id) == Constants.TranslateMode.TEXT.id) {
@@ -697,6 +700,9 @@ class FloatingBallService : LifecycleService() {
             LogCollector.d(TAG, "翻译 API 初始化成功: $apiName")
             showToast(getString(R.string.toast_engine_init_ok, apiName))
         }
+
+        // 新会话开始：翻译器刚创建（或拿到共享的 LlamaCpp 实例）→ 清掉可能残留的上下文
+        clearContext()
 
         // 初始化 OCR 引擎
         ocrEngine = GameOcrEngine(this) { msg -> showToast(msg, true) }
@@ -1986,16 +1992,41 @@ class FloatingBallService : LifecycleService() {
 
 
 
+    /**
+     * 清空 AI 上下文（内存历史 + 引擎里已推入的那份）。
+     *
+     * 时机（用户口径：「上下文重置一般发生在退出阅读器，关闭截屏翻译进程等待」）：
+     * - **新会话开始**（`initialize()` 里翻译器刚建好）
+     * - **服务停止**（`onDestroy`，= 「关闭截屏翻译进程」）
+     *
+     * 为什么不在**退出漫画阅读器**时清：阅读器（`mangaimport/`）退出后仍可能有后台批量翻译
+     * 在跑（章节队列），此刻清历史会把在途批次正在用的上下文抽走，导致同一次翻译任务前后
+     * 半页「上下文有无不一致」。阅读器自己的历史是 `ReaderTranslationController` 的实例字段、
+     * 随 Activity 结束自然消失，不依赖 Service 侧清理（该文件不在本次改动范围内）。
+     */
+    private fun clearContext() {
+        if (contextHistory.isNotEmpty()) {
+            LogCollector.d(TAG, "清空 AI 上下文（${contextHistory.size} 轮）")
+            contextHistory.clear()
+        }
+        // ⚠️ 引擎侧也必须清：LlamaCppTranslation 是进程级共享实例（LlamaCppSharedHolder），
+        //    服务重建后拿到的是同一个对象，不清就会把上次会话的历史接着当上下文用
+        ContextBudget.clear(translatorText)
+    }
+
     // 文本翻译
     private fun translateByText(str: String) {
         val sourceLang = prefs.getString("Source_Language", "ja")
         val targetLang = prefs.getString("Target_Language", "zh")
         LogCollector.d(TAG, "开始文本翻译: ${str.take(50)}..., $sourceLang → $targetLang")
 
-        // 更新 AI 上下文（仅 OpenAI 兼容 API）
-        (translatorText as? OpenAITranslation)?.updateContext(
-            if (contextEnabled) contextHistory.toList() else emptyList(),
-            contextEnabled
+        // 更新 AI 上下文（唯一入口）：网络 API 按设置的 token 预算裁剪，
+        // 本地 LlamaCpp 忽略该设置、按模型自己的 ctx 裁剪（见 ContextBudget / ContextAwareTranslation）
+        ContextBudget.applyTo(
+            translatorText,
+            contextHistory.toList(),
+            contextEnabled,
+            prefs
         )
 
         translatorText?.getTranslationStreaming(
@@ -2055,13 +2086,12 @@ class FloatingBallService : LifecycleService() {
                             translatorName = translatorText?.javaClass?.simpleName ?: "Unknown"
                         )
 
-                        // 更新 AI 上下文
-                        if (contextEnabled && translatorText is OpenAITranslation) {
+                        // 更新 AI 上下文：支持上下文的引擎（OpenAI 兼容 / 本地 LlamaCpp）都累积
+                        if (contextEnabled && translatorText is ContextAwareTranslation) {
                             contextHistory.addLast(Pair(str, result.translatedText))
-                            while (contextHistory.size > contextMaxCount) {
-                                contextHistory.removeFirst()
-                            }
-                            LogCollector.d(TAG, "上下文已更新: ${contextHistory.size}/$contextMaxCount 轮")
+                            // 按 token 预算裁剪（唯一实现），旧的「按轮数 removeFirst」已删
+                            val kept = ContextBudget.trimInPlace(contextHistory, contextTokenBudget)
+                            LogCollector.d(TAG, "上下文已更新: $kept 轮（预算 $contextTokenBudget tok）")
                         }
                     }
                     is TranslationResult.Error -> {
@@ -2267,6 +2297,8 @@ class FloatingBallService : LifecycleService() {
     override fun onDestroy() {
         LogCollector.d(TAG, "FloatingBallService onDestroy")
         super.onDestroy()
+        // 服务停止 = 一次翻译会话结束 → 清空上下文（用户口径：「关闭截屏翻译进程」时重置）
+        clearContext()
         // 注销悬浮球图标变更广播
         iconChangeReceiver?.let {
             androidx.localbroadcastmanager.content.LocalBroadcastManager.getInstance(this).unregisterReceiver(it)

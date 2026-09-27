@@ -167,6 +167,10 @@ dependencies {
     kapt "androidx.room:room-compiler:2.6.1"
     implementation "androidx.room:room-ktx:2.6.1"
 
+    // 压缩包解压（libarchive JNI）：rar/cbr（含 RAR5）与 7z —— Android 没有内置解 RAR 能力，
+    // 与参考项目 Kototoro 同款依赖。zip 不走它（ZipFile 能随机读，更快）
+    implementation 'me.zhanghai.android.libarchive:library:1.1.6'
+
     // 本地 GGUF 推理（llama.cpp 源码自编，含 minja 对话模板）
     implementation project(':llamacpp')
 

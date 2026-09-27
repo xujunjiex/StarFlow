@@ -71,6 +71,7 @@ import com.moe.starflow.translate.screenshot.ScreenshotProvider
 import com.moe.starflow.translate.screenshot.ScreenCapturePermissionActivity
 import com.moe.starflow.translate.TranslationTextAPI
 import com.moe.starflow.utils.Constants
+import com.moe.starflow.utils.ContextBudget
 import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.FloatingBallStyle
 import com.moe.starflow.utils.KeystoreManager
@@ -196,9 +197,13 @@ class MangaFloatingService : LifecycleService() {
     private val longPressRunnable = Runnable { handleLongPress() }
     private var currentGesture: GestureType? = null
 
-    // AI 上下文（仅 OpenAI 兼容 API）
-    private var contextEnabled = false
-    private var contextMaxCount = 5
+    // AI 上下文（批次间增量渲染用；见 TranslateUtils.translateBubbles 的 forceContext）
+    //
+    // ⚠️ 这里**没有**上下文开关/预算字段：漫画的正常翻译刻意不使用上下文（`forceContext=false`），
+    //    只有增量渲染的两批之间才用一次、用完回滚（`IncrementalBatchPipeline` 按 size 回滚）。
+    //    预算是每次现读的（`ContextBudget.budgetOf`，在 `TranslateUtils` 里），因此设置项改动
+    //    **不需要**在下面的 watchedKeys 里登记 —— 登记只会白白触发一次 config 重载与语言提示。
+    //    原先那两个 `contextEnabled`/`contextMaxCount` 字段是死的（只赋值、从不读），已删。
     private val contextHistory = LinkedList<Pair<String, String>>()  // (原文, 译文) 对
 
     // Auto-translate — 基于图像哈希 + 区域级缓存的智能自动翻译
@@ -392,11 +397,8 @@ class MangaFloatingService : LifecycleService() {
         checkLanguageHints()
         initTranslator()
 
-        // 读取 AI 上下文设置
-        contextEnabled = prefs.getBoolean("game_context_enabled", false)
-        contextMaxCount = try {
-            prefs.getString("game_context_count", "5").toIntOrNull() ?: 5
-        } catch (e: Exception) { 5 }
+        // 新会话开始：清掉共享引擎（LlamaCppSharedHolder 是进程级实例）里可能残留的上下文
+        clearContext()
 
         // 监听源语言、引擎、结果样式变化，实时检查语言/模型提示并刷新 config
         val watchedKeys = setOf(
@@ -511,6 +513,10 @@ class MangaFloatingService : LifecycleService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        // 服务停止 = 一次翻译会话结束 → 清空上下文（用户口径：「关闭截屏翻译进程等待」）。
+        // 关键是**引擎侧**那份：LlamaCpp 是进程级共享实例，服务重建后还是同一个对象，
+        // 不清就会把上一个会话的历史接着当上下文用。本字段随 Service 实例一起销毁，清它只是顺带。
+        clearContext()
         // 注销悬浮球图标变更广播
         iconChangeReceiver?.let {
             androidx.localbroadcastmanager.content.LocalBroadcastManager.getInstance(this).unregisterReceiver(it)
@@ -563,6 +569,19 @@ class MangaFloatingService : LifecycleService() {
     }
 
     // ---------- Initialization ----------
+
+    /**
+     * 清空 AI 上下文（内存历史 + 引擎里已推入的那份）。
+     * 时机：**新会话开始**（`onCreate`）与**服务停止**（`onDestroy`）——
+     * 与 `FloatingBallService.clearContext` 同一口径，理由见那边的注释。
+     */
+    private fun clearContext() {
+        if (contextHistory.isNotEmpty()) {
+            LogCollector.d(TAG, "清空 AI 上下文（${contextHistory.size} 轮）")
+            contextHistory.clear()
+        }
+        ContextBudget.clear(translatorText)
+    }
 
     // 初始化截图提供者
     private fun initScreenshotProvider() {
