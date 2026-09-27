@@ -11,7 +11,8 @@ import android.view.View
  *
  * 逐 segment 绘制：每个 segment 记录的是「段落自身 layout 的哪几行」（`lineStart..lineEnd`），
  * 这里排出一份**同样的** layout，按行区间画出来、按同一个行区间累加高度。
- * 与分页端共用一套几何，中间没有任何估算（见 [NovelPaginator] 的类注释）。
+ * 与分页端共用一套几何，中间没有任何估算（见 [NovelPaginator] 的类注释）——
+ * 纵向走法本身收敛在 [NovelPageGeometry] 一份里，本文件不再自己排一遍。
  *
  * ⚠️ 早期版本把 segment 的 substring 取出来**重新排版**，高度按 `行数 × 估算行高` 累加：
  * 重新断行会让行数变化、估算行高会偏，两边一错位底部那行就被画到框外（用户看到的「被裁切」）。
@@ -30,8 +31,16 @@ class NovelPageView(context: Context) : View(context) {
     /** 正在翻译 / 刚翻完的段（琥珀高亮底，让用户在重排偏移后仍能找到）。 */
     private var activeBatch: Set<Int> = emptySet()
 
-    /** 与 `page.segments` 一一对应的排版结果（空文本/未布局时为 null）。 */
-    private var layouts: List<StaticLayout?> = emptyList()
+    /**
+     * 与 `page.segments` 对应的排版结果，**按段号索引**（空文本/未布局的段没有条目）。
+     *
+     * ⚠️ 键是段号而不是 segment 下标：一页内段号不重复（见 [PageSegment]），而排版只由
+     * 「段号 → 显示文本」决定 —— 用段号当键，[NovelPageGeometry] 的行高表就是同一套键。
+     */
+    private var layouts: Map<Int, StaticLayout> = emptyMap()
+
+    /** 段号 → 该段的逐行高度 `getLineBottom(i) - getLineTop(i)`（与分页端量的是同一批数）。 */
+    private var lineHeights: Map<Int, FloatArray> = emptyMap()
 
     /** 这批 [layouts] 是按哪个宽度排的 —— 宽度变了必须重排（旋转/分屏）。 */
     private var laidOutWidth = -1
@@ -68,7 +77,8 @@ class NovelPageView(context: Context) : View(context) {
             this.style != style || this.textColor != textColor
         ) {
             laidOutWidth = -1
-            layouts = emptyList()
+            layouts = emptyMap()
+            lineHeights = emptyMap()
             overflowReported = false
         }
         this.content = content
@@ -83,8 +93,8 @@ class NovelPageView(context: Context) : View(context) {
     /**
      * 页内命中：本 View 坐标 [y] 落在哪一段上（选择模式用）。
      *
-     * ⚠️ 几何必须与 [onDraw] **同一套走法**（逐段累加真实行高、段间距只补在段之间），
-     * 否则选中的段和手指点的段会对不上。
+     * 走法就是 [NovelPageGeometry.walk]（与 [onDraw] 同一条），所以"手指点的段"与"画出来的段"
+     * 按定义对得上。
      * 段与段之间的空隙归**上一段**（空隙只有段间距几十像素，归给"空白"太容易误退出）；
      * 正文上下之外的区域返回 null = 真正的空白（点它退出选择模式）。
      */
@@ -92,26 +102,24 @@ class NovelPageView(context: Context) : View(context) {
         val p = page ?: return null
         if (y < style.topPaddingPx) return null
         ensureLayouts()
-        var top = style.topPaddingPx
         var prev: Int? = null
-        for ((i, seg) in p.segments.withIndex()) {
-            val layout = layouts.getOrNull(i) ?: continue
-            val from = seg.lineStart.coerceIn(0, layout.lineCount)
-            val to = seg.lineEnd.coerceIn(from, layout.lineCount)
-            if (to <= from) continue
-            val bottom = top + (layout.getLineBottom(to - 1) - layout.getLineTop(from))
-            if (y < top) return prev ?: seg.paraIndex
-            if (y < bottom) return seg.paraIndex
-            prev = seg.paraIndex
-            top = bottom + if (i != p.segments.lastIndex) style.paragraphSpacingPx else 0f
+        var hit: Int? = null
+        NovelPageGeometry.walk(p.segments, { lineHeights[it] }, style.paragraphSpacingPx, style.topPaddingPx) { seg, top, bottom ->
+            if (hit != null) return@walk
+            when {
+                y < top -> hit = prev ?: seg.paraIndex   // 落在段间空隙里 → 归上一段
+                y < bottom -> hit = seg.paraIndex
+                else -> prev = seg.paraIndex
+            }
         }
-        return null
+        return hit
     }
 
     /**
      * 按当前宽度把这一页的排版算好（一次），绘制时直接用。
      *
      * 放在这里而不是逐帧在 `onDraw` 里排：折页动画每帧都会重画，每帧重排整页会掉帧。
+     * 逐行高度也在这里一次算好 —— 它只跟排版输入有关，没有理由每帧重算。
      */
     private fun ensureLayouts() {
         val w = width
@@ -120,11 +128,20 @@ class NovelPageView(context: Context) : View(context) {
         val p = page ?: return
         laidOutWidth = w
         val cw = style.contentWidthPx(w)
-        layouts = p.segments.map { seg ->
-            c.displayOf(seg.paraIndex)
+        val newLayouts = HashMap<Int, StaticLayout>(p.segments.size)
+        val newHeights = HashMap<Int, FloatArray>(p.segments.size)
+        for (seg in p.segments) {
+            val layout = c.displayOf(seg.paraIndex)
                 .takeIf { it.isNotEmpty() }
                 ?.let { NovelTextRenderer.build(it, style, cw, textColor) }
+                ?: continue
+            newLayouts[seg.paraIndex] = layout
+            newHeights[seg.paraIndex] = FloatArray(layout.lineCount) {
+                (layout.getLineBottom(it) - layout.getLineTop(it)).toFloat()
+            }
         }
+        layouts = newLayouts
+        lineHeights = newHeights
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -144,14 +161,14 @@ class NovelPageView(context: Context) : View(context) {
         canvas.save()
         canvas.clipRect(0f, boxTop, widthF, boxBottom)
 
-        var y = boxTop
-        for ((i, seg) in p.segments.withIndex()) {
-            val layout = layouts.getOrNull(i) ?: continue
-            val from = seg.lineStart.coerceIn(0, layout.lineCount)
-            val to = seg.lineEnd.coerceIn(from, layout.lineCount)
-            if (to <= from) continue
-            val top = layout.getLineTop(from).toFloat()
-            val bottom = layout.getLineBottom(to - 1).toFloat()
+        var usedBottom = boxTop
+        // ⚠️ 纵向走法走共用件（[NovelPageGeometry]）：绘制、命中测试、分页量"锚点离页顶多少 px"
+        // 必须是同一份，否则三处各改各的，错位只有真机上看图才发现
+        NovelPageGeometry.walk(p.segments, { lineHeights[it] }, style.paragraphSpacingPx, boxTop) { seg, top, bottom ->
+            val layout = layouts[seg.paraIndex] ?: return@walk
+            // 行区间由共用件判定（没有度量的段根本不会被回调），画与记账用的是同一个区间
+            val range = NovelPageGeometry.lineRange(seg, lineHeights[seg.paraIndex]) ?: return@walk
+            usedBottom = bottom
 
             // 高亮底画在文字**下面**（同一个矩形范围，逐段累加的高度）。
             // 选中优先于「正在翻译」：两者同时命中时得看得出是选中
@@ -163,27 +180,24 @@ class NovelPageView(context: Context) : View(context) {
             if (hl != null) {
                 // ⚠️ **铺满整行**（左右边距也填上）+ 圆角（用户要求）：只铺正文列的话
                 // 高亮像被两侧裁了一刀，和滚动模式的 item 底色也不是一个样子
-                canvas.drawRoundRect(0f, y, widthF, y + (bottom - top), hlRadiusPx, hlRadiusPx, hl)
+                canvas.drawRoundRect(0f, top, widthF, bottom, hlRadiusPx, hlRadiusPx, hl)
             }
 
-            // 只画 [from, to) 这几行：整份 layout 一起画会把区间外的行也画出来，
+            // 只画 [range] 这几行：整份 layout 一起画会把区间外的行也画出来，
             // 而本页的高度记账只算了这几行。
             // ⚠️ 先 translate 再 clipRect：这样裁剪矩形是**布局坐标**下的行区间，
             // 与 getLineTop/getLineBottom 同一套坐标，不用自己做一次换算
+            val lineTop = layout.getLineTop(range.first).toFloat()
+            val lineBottom = layout.getLineBottom(range.last).toFloat()
             canvas.save()
-            canvas.translate(padding, y - top)
-            canvas.clipRect(0f, top, widthF, bottom)
+            canvas.translate(padding, top - lineTop)
+            canvas.clipRect(0f, lineTop, widthF, lineBottom)
             layout.draw(canvas)
             canvas.restore()
-
-            y += bottom - top
-            // 段间距只补在段与段**之间**：页内最后一段之后不该再补 —— 分页的容量模型正是
-            // 「按段间距分隔」，多补一份会让最后一行的下沿顶出正文框
-            if (i != p.segments.lastIndex) y += style.paragraphSpacingPx
         }
         canvas.restore()
 
-        reportOverflow(y, boxBottom)
+        reportOverflow(usedBottom, boxBottom)
     }
 
     /**

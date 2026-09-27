@@ -17,7 +17,8 @@ import com.moe.starflow.novel.translate.NovelParagraphType
  * ### 高度口径：**只认 `StaticLayout` 量出来的数**，不做任何估算
  * 这里的 `lineHeights` 就是 `getLineBottom(i) - getLineTop(i)`，段高就是它们的和
  * （`setIncludePad(false)` 时等于 `layout.height`）—— 绘制端按同一份 layout 的同一批
- * 数字累加。**分页与绘制共用一套几何**，中间没有任何「按字号估行高」「把段距量化成整行」
+ * 数字累加。**分页与绘制共用一套几何**（逐段累加那一套收敛在 [NovelPageGeometry] 一份里，
+ * 本文件的 `offsetInPage` 也走它），中间没有任何「按字号估行高」「把段距量化成整行」
  * 这类换算，所以「分页说放得下、画出来顶出框」在结构上就不可能发生。
  *
  * 踩过的两个坑都死在「估算」上：
@@ -388,10 +389,14 @@ object NovelPaginator {
     /**
      * 锚点在**自然分页**里距离所在页顶多少 px（页表里找不到 → null）。
      *
-     * 走法与绘制完全一致（逐 segment 累加真实行高、段间距只补在段之间），
-     * 否则量出来的"距离页顶"和用户看到的对不上。
+     * 纵向走法直接走 [NovelPageGeometry.walk]（逐 segment 累加真实行高、段间距只补在段之间），
+     * 与绘制/命中测试是同一份实现 —— 各写一遍的话，量出来的"距离页顶"和用户看到的对不上，
+     * 强分页的阈值就落在一个不存在的位置上。
+     *
+     * `internal` 是为了单测能直接对着它断言（[shouldForceBreak] 只是它的一次阈值判断，
+     * 隔着一层去反推偏移既绕又脆）。
      */
-    private fun offsetInPage(
+    internal fun offsetInPage(
         pages: List<NovelPage>,
         visIndexOf: Map<Int, Int>,
         targetVis: Int,
@@ -399,21 +404,22 @@ object NovelPaginator {
         lineHeights: List<FloatArray>,
         paragraphSpacingPx: Float,
     ): Float? {
+        // ⚠️ 度量表按**可见段下标**存，而走法按**段号**取 → 这里做一次映射；
+        // 段号不在表里（理论不该有）时返回 null，走法会把该段整个跳过
+        val heightsOf = { paraIndex: Int -> visIndexOf[paraIndex]?.let { lineHeights.getOrNull(it) } }
         for (page in pages) {
-            var y = 0f
-            for ((i, seg) in page.segments.withIndex()) {
-                val vi = visIndexOf[seg.paraIndex] ?: continue
-                val heights = lineHeights.getOrNull(vi)
-                val from = seg.lineStart
-                val to = if (heights != null) seg.lineEnd.coerceAtMost(heights.size) else from
-                if (vi == targetVis && targetLine in from until to && heights != null) {
-                    var off = 0f
-                    for (l in from until targetLine.coerceAtMost(heights.size)) off += heights[l]
-                    return y + off
-                }
-                if (heights != null) for (l in from until to) y += heights[l]
-                if (i != page.segments.lastIndex) y += paragraphSpacingPx
+            var hit: Float? = null
+            NovelPageGeometry.walk(page.segments, heightsOf, paragraphSpacingPx) { seg, top, _ ->
+                if (hit != null) return@walk
+                val heights = heightsOf(seg.paraIndex) ?: return@walk
+                val range = NovelPageGeometry.lineRange(seg, heights) ?: return@walk
+                if (seg.paraIndex != targetVis || targetLine !in range) return@walk
+                // 段顶 + 该段前 targetLine 行的高度之和（行区间已夹住，targetLine 必在区间内）
+                var off = 0f
+                for (l in range.first until targetLine) off += heights[l]
+                hit = top + off
             }
+            if (hit != null) return hit
         }
         return null
     }
