@@ -243,6 +243,30 @@ class NovelTranslationQueueTest {
         q.stop()
     }
 
+    /**
+     * 用户**清除了译文**的段：自动模式本会话别再翻回来（否则用户看到的是"清了个寂寞"）。
+     * 而「翻译本章」是显式操作 —— 开跑前会把这份账整份清掉，照样翻。
+     */
+    @Test
+    fun `清除过的段自动模式不再翻但翻译本章照样翻`() = runTest {
+        val t = FakeTranslator()
+        val translated = mutableSetOf<Int>()
+        val q = queue(backgroundScope, t, translated, page = { listOf(0, 1) }, chapterSize = 4, batchSize = 2)
+
+        q.skipParagraphs(listOf(0, 1))
+        q.start(book(), NovelTranslateMode.AUTO, currentChapter = { 0 }) { _, r -> translated += r.translations.keys }
+        advanceTimeBy(5_000)
+
+        assertTrue("清过的段不该被自动翻回来，实际发了 ${t.batches}", t.batches.isEmpty())
+        assertEquals(NovelQueuePhase.DRAINED, q.state.value.phase)
+        q.stop()
+
+        val done = q.translateWholeChapter(book(), 0) { r -> translated += r.translations.keys }
+
+        assertEquals("「翻译本章」是显式操作：4 段 / 每批 2 段 → 2 批", 2, done)
+        assertTrue(translated.containsAll(listOf(0, 1, 2, 3)))
+    }
+
     /** 空选择不发请求（白抢一次锁、白烧一次额度）。 */
     @Test
     fun `空选择不发请求`() = runTest {

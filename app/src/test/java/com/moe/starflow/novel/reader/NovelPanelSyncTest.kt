@@ -1,6 +1,5 @@
 package com.moe.starflow.novel.reader
 
-import android.view.View
 import android.widget.LinearLayout
 import android.widget.RadioButton
 import android.widget.SeekBar
@@ -69,32 +68,38 @@ class NovelPanelSyncTest {
     )
 
     /**
-     * **章行要显示「本章多少字」**（用户拿它估翻译费用）。
+     * **进度那一行要同时给出「已翻几段」和「本章多少字」**（用户指定的位置：字数和共多少段同一行）。
      *
-     * 走真实链路：宿主状态 → 面板 → 章行适配器 → 布局里那一格（`tv_char_count`）。
+     * 走真实链路：宿主状态 → 面板 → 章行适配器 → 那一行。
      */
     @Test
-    fun `章行显示本章字数`() {
+    fun `章行进度行同时显示段数与字数`() {
         val (sheet, v) = attach(
             chapters = listOf(com.moe.starflow.novel.model.NovelChapterMeta(0, "第一章", "0,10")),
         )
         val rv = v.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rv_translate_chapters)
         val adapter = { rv.adapter as NovelChapterStateAdapter }
         val holder = adapter().onCreateViewHolder(rv, 0)
+        val stats = mapOf(0 to NovelChapterStat(0, total = 40, success = 3))
+        val line = { holder.itemView.findViewById<TextView>(R.id.tv_fail_message).text.toString() }
 
-        // 宿主还没解析出字数 → 不显示（不占位、也不显示 0）
-        sheet.renderHostState(state(chapter = 0, totals = mapOf(0 to 40)))
+        // 字数还没解析出来 → 只有进度，不显示 0 字
+        sheet.renderHostState(state(chapter = 0, stats = stats, totals = mapOf(0 to 40)))
         adapter().onBindViewHolder(holder, 0)
-        assertEquals(View.GONE, holder.itemView.findViewById<TextView>(R.id.tv_char_count).visibility)
+        assertEquals(v.context.getString(R.string.novel_chapter_progress, 3, 40), line())
 
-        // 回推字数 → 那一格出现，且文案与数字都对
-        sheet.renderHostState(state(chapter = 0, totals = mapOf(0 to 40), chars = mapOf(0 to 12345)))
+        // 字数回推 → 同一行末尾接上「12,345字」
+        sheet.renderHostState(
+            state(chapter = 0, stats = stats, totals = mapOf(0 to 40), chars = mapOf(0 to 12345)),
+        )
         adapter().onBindViewHolder(holder, 0)
-        val tv = holder.itemView.findViewById<TextView>(R.id.tv_char_count)
-        assertEquals(View.VISIBLE, tv.visibility)
         assertEquals(
-            v.context.getString(R.string.novel_chapter_chars, "12,345"),
-            tv.text.toString(),
+            v.context.getString(
+                R.string.novel_chapter_progress_chars,
+                v.context.getString(R.string.novel_chapter_progress, 3, 40),
+                v.context.getString(R.string.novel_chapter_chars, "12,345"),
+            ),
+            line(),
         )
     }
 

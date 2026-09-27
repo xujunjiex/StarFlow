@@ -251,6 +251,42 @@ interface NovelParagraphTranslationDao {
     suspend fun deleteForNovelScoped(novelId: Long, novelKey: String)
 
     /**
+     * 把指定段**重置为未翻译**（长按多选 → 清除译文）。
+     *
+     * ⚠️ 是"重置"而不是"删行"：这些行同时是本章**分母**（`COUNT(*)`）的来源，删掉会让分母少算；
+     * 重置之后那几段立刻显示原文（读回只收 state==2），又能被重新翻译
+     * （`markTranslatingRows` 只跳过 state==2 的行）。
+     * 顺带清掉 `failCode`：清除就该把"为什么失败"一起清掉，否则章行还挂着旧报错。
+     */
+    @Query(
+        "UPDATE novel_paragraph_translation " +
+            "SET state = 0, translatedText = '', failCode = NULL, updatedAt = :now " +
+            "WHERE novelId = :novelId AND novelKey = :novelKey AND chapterIndex = :chapterIndex " +
+            "AND splitVersion = :splitVersion AND paraIndex IN (:paraIndexes)"
+    )
+    suspend fun resetToIdleRows(
+        novelId: Long,
+        novelKey: String,
+        chapterIndex: Int,
+        splitVersion: Int,
+        paraIndexes: List<Int>,
+        now: Long,
+    )
+
+    /** 重置为未翻译（带**空集合守卫**，同 [markFailed]：空列表会生成 `IN ()` 直接语法错）。 */
+    suspend fun resetToIdle(
+        novelId: Long,
+        novelKey: String,
+        chapterIndex: Int,
+        splitVersion: Int,
+        paraIndexes: List<Int>,
+        now: Long,
+    ) {
+        if (paraIndexes.isEmpty()) return
+        resetToIdleRows(novelId, novelKey, chapterIndex, splitVersion, paraIndexes, now)
+    }
+
+    /**
      * 删掉**非当前分段版本**的行（分段规则升级时用）。
      *
      * ⚠️ 必须有人调它：主键不含 `splitVersion`，旧版本的行会占着同一批主键，新版本的行

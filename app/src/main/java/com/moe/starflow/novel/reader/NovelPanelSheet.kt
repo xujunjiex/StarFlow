@@ -1055,14 +1055,5 @@ class NovelPanelSheet(
      * 是跟**阅读背景**走的、与全局主题无关 —— 漏了这一句，浅色系统主题下切到深色背景，
      * 弹窗就是白底白字/白底黑字的突兀块（「清空本章」和「下载」以前就是这样）。
      */
-    private fun applyDialogTheme(dlg: AlertDialog) {
-        dlg.window?.setBackgroundDrawableResource(if (darkPanel) R.drawable.bg_dialog_dark else R.drawable.bg_dialog_white)
-        if (darkPanel) recolorDark(dlg.window?.decorView)
-    }
-
-    private fun recolorDark(v: View?) {
-        if (v == null) return
-        if (v is TextView) v.setTextColor(0xFFE2E2E4.toInt())
-        if (v is ViewGroup) for (i in 0 until v.childCount) recolorDark(v.getChildAt(i))
-    }
+    private fun applyDialogTheme(dlg: AlertDialog) = applyNovelDialogTheme(dlg, darkPanel)
 }

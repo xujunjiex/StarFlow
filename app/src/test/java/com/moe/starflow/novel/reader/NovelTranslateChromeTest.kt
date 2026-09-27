@@ -32,6 +32,17 @@ class NovelTranslateChromeTest {
         assertTrue(para(0, "He lit the lamp at dusk.").isTranslatable())
     }
 
+    /**
+     * 「清除译文」按钮的判据是**选中集里有没有译过的段**，与三态那套（当前屏幕有没有译文）不同：
+     * 清除是对选中集动手，选中几段没翻过的段时不该出现（清无可清）。
+     */
+    @Test
+    fun `选中的段里有译文才显示清除按钮`() {
+        assertFalse(NovelTranslateChrome.showClear(translatedSelected = 0))
+        assertTrue(NovelTranslateChrome.showClear(translatedSelected = 1))
+        assertTrue(NovelTranslateChrome.showClear(translatedSelected = 5))
+    }
+
     /** 页面还有没翻的段 → 翻译按钮（普通「翻译」语义）。 */
     @Test
     fun `页里还有没翻的段就有翻译按钮`() {

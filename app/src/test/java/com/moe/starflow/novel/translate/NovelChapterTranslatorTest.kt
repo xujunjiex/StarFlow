@@ -327,6 +327,48 @@ class NovelChapterTranslatorTest {
         )
     }
 
+    /**
+     * **清除选中段的译文**（长按多选 → 右下角清除）：
+     * 读回立刻为空（阅读器随即回落原文），没被选的段不受影响，**行数不变**（那是本章分母）。
+     */
+    @Test
+    fun `清除选中段的译文`() = runBlocking {
+        val t = translatorFor(FakeTranslator())
+        t.translateBatch(book, 0, paragraphs, listOf(0, 2), "ja", "zh", "fake")
+        assertEquals(2, t.loadTranslations(book, 0).size)
+
+        t.clearParagraphs(book, 0, listOf(0))
+
+        val left = t.loadTranslations(book, 0)
+        assertTrue("被清的段不能再读到译文", !left.containsKey(0))
+        assertEquals("没被选的段要留着", "T:第二段原文", left[2])
+        val stat = t.chapterStats(book)[0]
+        assertEquals("分母（库里行数）不能变少 —— 清除是重置不是删行", 2, stat?.total)
+        assertEquals("成功数要少一个", 1, stat?.success)
+    }
+
+    /** 清除也要清掉失败原因（否则章行还挂着旧报错）。 */
+    @Test
+    fun `清除会一并清掉失败原因`() = runBlocking {
+        val boom = object : NovelTextTranslator {
+            override fun translate(
+                prompt: String,
+                sourceLang: String,
+                targetLang: String,
+                callback: (TranslationResult) -> Unit,
+            ) {
+                callback(TranslationResult.Error(java.io.IOException("HTTP 429 Too Many Requests")))
+            }
+        }
+        val t = NovelChapterTranslator(dao, NovelTranslationEngine(boom), SPLIT_VERSION)
+        t.translateBatch(book, 0, paragraphs, listOf(0), "ja", "zh", "boom")
+        assertTrue("前提：这一段确实失败了", t.failuresOf(book).isNotEmpty())
+
+        t.clearParagraphs(book, 0, listOf(0))
+
+        assertTrue("清除后失败明细里不该还有它", t.failuresOf(book).isEmpty())
+    }
+
     /** 整章只有不可翻译段（SKIP）→ 一个请求都不发，也不写任何行。 */
     @Test
     fun `没有可翻译段时不发请求`() = runBlocking {

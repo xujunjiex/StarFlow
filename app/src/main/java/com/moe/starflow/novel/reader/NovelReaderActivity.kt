@@ -13,6 +13,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import androidx.activity.OnBackPressedCallback
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -452,6 +453,7 @@ class NovelReaderActivity : AppCompatActivity() {
         binding.btnTranslate.setOnClickListener { onTranslateButtonClick() }
         binding.btnToggleTranslate.setOnClickListener { cycleDisplayMode() }
         binding.btnFailTranslate.setOnClickListener { showFailBubble() }
+        binding.btnClearTranslate.setOnClickListener { confirmClearSelectedTranslations() }
 
         binding.novelProgress.onSeek = { page -> goToPage(page) }
         binding.novelProgress.onLongPress = {
@@ -1334,7 +1336,8 @@ class NovelReaderActivity : AppCompatActivity() {
             // 字数与分母是同一份解析（段落缓存命中），顺手一起取 —— 章行要显示「本章多少字」
             val chars = runCatching { repository.charCountOf(b, index) }.getOrDefault(0)
             pendingTotalFetches.remove(index)
-            if (n <= 0 && chars <= 0) return@launch
+            // ⚠️ **0 也要落账**：不落的话章行的「还不知道」判据永远为真，于是每次绑定都再问一次
+            // （空章 / 整章都是短行时最明显 —— 同一章被反复解析）
             chapterTotals[index] = n
             chapterChars[index] = chars
             // 目录与面板共用同一份分母：目录开着时也要跟着刷新，否则两处判据会分叉
@@ -1492,10 +1495,14 @@ class NovelReaderActivity : AppCompatActivity() {
         }
         val showToggle = NovelTranslateChrome.showToggle(translated)
         val showFail = hasFailedChapter(chapterIndex)
+        // 清除按钮只看**选中集里有没有译过的段**（与三态那套判据不同，见 showClear）
+        val showClear = NovelTranslateChrome.showClear(selectedTranslated)
 
-        // 三块都不可用时整组收掉：留一个空的黑胶囊在右下角更奇怪
+        // 四块都不可用时整组收掉：留一个空的黑胶囊在右下角更奇怪
         binding.translateGroup.visibility =
-            if (action != null || showToggle || showFail) View.VISIBLE else View.GONE
+            if (action != null || showToggle || showFail || showClear) View.VISIBLE else View.GONE
+
+        binding.btnClearTranslate.visibility = if (showClear) View.VISIBLE else View.GONE
 
         binding.btnTranslate.visibility = if (action != null) View.VISIBLE else View.GONE
         if (action != null) {
@@ -2071,6 +2078,55 @@ class NovelReaderActivity : AppCompatActivity() {
             refreshChapterStats()
             loadChapter(chapterIndex, anchor = pendingAnchor)
             showOverlayToast(getString(R.string.novel_translate_cleared_chapter), error = false)
+        }
+    }
+
+    /**
+     * 右下角「清除译文」（长按多选后用）：**先弹窗报清多少段**，确认才动手（用户明确要求）。
+     */
+    private fun confirmClearSelectedTranslations() {
+        val n = selectedPara.count { translations.containsKey(it) }
+        if (n <= 0) return
+        val dlg = AlertDialog.Builder(this)
+            .setTitle(R.string.novel_clear_translation_title)
+            .setMessage(getString(R.string.novel_clear_translation_confirm, n))
+            .setNegativeButton(R.string.user_cancel, null)
+            .setPositiveButton(R.string.novel_clear_translation_ok) { _, _ -> clearSelectedTranslations() }
+            .create()
+        dlg.show()
+        // 弹窗跟随阅读背景深浅（面板同一套实现，见 NovelDialogs）
+        applyNovelDialogTheme(dlg, NovelPanelStyle.isDarkBackground(bgMode))
+    }
+
+    /**
+     * 清除**选中段落**的译文。
+     *
+     * - 只清选中集里**真的有译文**的那几段：没翻过的段没什么可清，也不该算进弹窗那个数字
+     * - 清除 = 把那些行**重置为未翻译**，不是删行（见 DAO `resetToIdle`：那几行是本章分母的来源）
+     * - 清完**重载本章**：显示文本由译文变回原文、长度变了必须重排；顺带刷新翻译浮层
+     *   （翻译/三态按钮按当前页重算）、底部进度条绿块、面板统计
+     */
+    private fun clearSelectedTranslations() {
+        val b = book ?: return
+        val chapter = chapterIndex
+        val target = selectedPara.filter { translations.containsKey(it) }.sorted()
+        if (target.isEmpty()) return
+        // ⚠️ 本会话别再**自动**翻回来：自动/增量盯着"当前页有没有没翻的段"，清完立刻又翻回来的话
+        // 用户看到的是"清了个寂寞"。显式操作（点翻译 / 翻译本章 / 选段重翻）不受影响。
+        queue?.skipParagraphs(target)
+        lifecycleScope.launch {
+            runCatching { translator().clearParagraphs(b, chapter, target) }
+                .onFailure {
+                    showOverlayToast(
+                        getString(R.string.novel_translate_failed_reason, it.message.orEmpty()),
+                        error = true,
+                    )
+                    return@launch
+                }
+            refreshChapterStats()
+            // 期间用户可能已经翻到别的章：那就别把他拽回来
+            if (chapter == chapterIndex) loadChapter(chapter, anchor = pendingAnchor)
+            showOverlayToast(getString(R.string.novel_clear_translation_done, target.size), error = false)
         }
     }
 

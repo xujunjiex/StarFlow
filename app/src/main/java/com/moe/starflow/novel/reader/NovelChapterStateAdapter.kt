@@ -238,19 +238,6 @@ class NovelChapterStateAdapter(
             }
         )
 
-        // 本章要翻多少字（用户拿它估翻译费用）。宿主还没算出来就 GONE，等回推再显示。
-        // ⚠️ 精确值而非「1.2万字」：费用按字符数算，四舍五入到"万"反而算不准。
-        item.findViewById<TextView>(R.id.tv_char_count).apply {
-            val chars = chars[index] ?: 0
-            if (chars > 0) {
-                text = chapterCharLabel(item.context, chars)
-                setTextColor(subColor)
-                visibility = View.VISIBLE
-            } else {
-                visibility = View.GONE
-            }
-        }
-
         // 这一行借的是「失败原因」那一格来显示段落进度 —— 章没有失败原因可言，
         // 空着反而让行高和漫画面板对不齐
         //
@@ -260,13 +247,21 @@ class NovelChapterStateAdapter(
         val failed = failures[index].orEmpty()
         item.findViewById<TextView>(R.id.tv_fail_message).apply {
             // 有失败时**优先显示失败原因**（用户要的就是"为什么失败"），否则显示段落进度
+            val charCount = chars[index] ?: 0
             text = when {
                 failed.isNotEmpty() -> item.context.getString(
                     R.string.novel_chapter_failed_hint,
                     failed.size,
                     NovelFailCode.label(item.context, failed.first().failCode),
                 )
+                // 「已翻 3/40 · 12,345字」：段数给进度，字数给**费用估算**（用户要求放同一行）
+                total > 0 && charCount > 0 -> item.context.getString(
+                    R.string.novel_chapter_progress_chars,
+                    item.context.getString(R.string.novel_chapter_progress, st?.success ?: 0, total),
+                    chapterCharLabel(item.context, charCount),
+                )
                 total > 0 -> item.context.getString(R.string.novel_chapter_progress, st?.success ?: 0, total)
+                charCount > 0 -> chapterCharLabel(item.context, charCount)
                 else -> ""
             }
             setTextColor(subColor)

@@ -56,6 +56,7 @@ data class NovelQueueState(
  * ⚠️ 三条纪律别改回去（都是踩过的坑）：
  * 1. **`OcrLock` 必须轮询等**，拿不到就 return 会让本轮什么都不做、下一轮又选到同一批 → 空转
  * 2. **失败的批要记进 [failedAnchors] 跳过**，否则每轮重挑同一批 → 无限重试、额度烧光
+ *    （用户"清除译文"另有一份 [userClearedParaIndexes]，两份账的清除时机不同）
  * 3. **面板打开时状态置空**（`NovelQueueState()`），否则用户看到一条永远不动的假进度
  */
 class NovelTranslationQueue(
@@ -94,13 +95,38 @@ class NovelTranslationQueue(
     private var panelOpen = false
 
     /**
-     * 本次会话里**翻过但没拿到译文**的批（用锚点段号记）。
+     * **翻过但没拿到译文**的批（记的是锚点段号）。[start] 会清空 —— 换模式/重启之后值得再试一次。
      *
-     * 和已翻译的段一起喂给 [NovelBatchPlanner]，让规划器直接跳过 ——
      * 不记的话每轮都会重挑同一批：无限重试、额度烧光，而且「有批在翻」不成立，
      * 用户连进度提示都看不到（只觉得队列卡死）。
      */
     private val failedAnchors = mutableSetOf<Int>()
+
+    /**
+     * **用户手动清除了译文**的段（见 [skipParagraphs]）。自动/增量本会话别再翻它们，
+     * 否则用户看到的是"清了个寂寞"（自动模式盯着"当前页有没有没翻的段"，清完立刻又翻回来）。
+     *
+     * ⚠️ **[start] 绝不能清这一份**（这是它与 [failedAnchors] 的唯一区别，别合并成一个集合）：
+     * 清除之后阅读器会重载本章 → `restartQueueIfNeeded` → 队列一重启就把账清了 → 刚清掉的段
+     * 又被翻回来。**只有用户显式要求翻的时候才清**（「翻译本章」）。
+     *
+     * ⚠️ 读取点如实记在这里，改判据前先看一遍：
+     * - **自动 / 增量**：每轮都并进 `done`（连同 [failedAnchors]）✓
+     * - **手动「翻一批」**：只在**当前页没有待翻段**时的兜底扫描里读它（页锚点那一步不读）
+     * - **「翻译本章」/ 选段重翻**：完全不读 —— 那是用户明确要求翻
+     */
+    private val userClearedParaIndexes = mutableSetOf<Int>()
+
+    /**
+     * 用户清除了这几段的译文 → 本会话别再**自动**翻回来（显式操作仍会翻，见上面那张清单）。
+     */
+    fun skipParagraphs(indexes: Collection<Int>) {
+        userClearedParaIndexes += indexes
+    }
+
+    /** 自动/增量每轮并进 `done` 的"别再挑"账。 */
+    private fun skipSetFor(translated: Set<Int>): Set<Int> =
+        translated + failedAnchors + userClearedParaIndexes
 
     /**
      * 启动（或按新参数重启）队列。[NovelTranslateMode.MANUAL] 时只把状态清空 ——
@@ -120,6 +146,7 @@ class NovelTranslationQueue(
         onBatchSettled: suspend (Int, NovelBatchResult) -> Unit,
     ) {
         job?.cancel()
+        // ⚠️ 只清**失败**账：用户"清除译文"的账必须留着（见 userClearedParaIndexes）
         failedAnchors.clear()
         if (mode == NovelTranslateMode.MANUAL) {
             _state.value = NovelQueueState()
@@ -138,7 +165,7 @@ class NovelTranslationQueue(
 
                 val chapter = currentChapter()
                 val chapterParas = chapterParaIndexes(book, chapter)
-                val done = translatedIndexes(book, chapter) + failedAnchors
+                val done = skipSetFor(translatedIndexes(book, chapter))
                 val page = currentPageParaIndexes()
                 val size = batchSize()
 
@@ -248,7 +275,7 @@ class NovelTranslationQueue(
         val chapterParas = chapterParaIndexes(book, chapterIndex)
         val done = translatedIndexes(book, chapterIndex)
         val anchor = NovelBatchPlanner.anchorOnPage(currentPageParaIndexes(), done)
-            ?: chapterParas.firstOrNull { it !in done && it !in failedAnchors }
+            ?: chapterParas.firstOrNull { it !in done && it !in failedAnchors && it !in userClearedParaIndexes }
             ?: return NovelBatchResult(emptyMap(), "没有待翻译的段落了")
         val batch = NovelBatchPlanner.nextBatch(chapterParas, anchor, done, batchSize())
         if (batch.isEmpty()) return NovelBatchResult(emptyMap(), "没有待翻译的段落了")
@@ -280,7 +307,7 @@ class NovelTranslationQueue(
      * ⚠️ 这颗按钮长期写着「翻译本章」却只翻**一批**（文案与行为对不上，用户直接问了
      * "不是有翻译本章的功能吗"）—— 现在它是真的翻整章。
      *
-     * ⚠️ 开始前**清掉 [failedAnchors]**：那是自动/增量模式"这批失败了别再空转"的记账，
+     * ⚠️ 开始前**两份账都清掉**（[failedAnchors] 与 [userClearedParaIndexes]）：那是"别再自动挑"的记账，
      * 而这里是用户**明确要求重来一次**。不清的话，之前自动模式里失败过的那几段会被静默跳过，
      * 任务却报「已翻完 N 批」—— 用户以为翻完了，其实那几段永远是原文。
      *
@@ -293,10 +320,11 @@ class NovelTranslationQueue(
         onBatch: suspend (NovelBatchResult) -> Unit,
     ): Int {
         failedAnchors.clear()
+        userClearedParaIndexes.clear()
         val chapterParas = chapterParaIndexes(book, chapterIndex)
         var done = 0
         while (currentCoroutineContext().isActive) {
-            val translated = translatedIndexes(book, chapterIndex) + failedAnchors
+            val translated = skipSetFor(translatedIndexes(book, chapterIndex))
             val anchor = chapterParas.firstOrNull { it !in translated } ?: return done
             val batch = NovelBatchPlanner.nextBatch(chapterParas, anchor, translated, batchSize())
             if (batch.isEmpty()) return done

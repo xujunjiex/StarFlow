@@ -40,16 +40,6 @@
             android:textSize="11sp"
             android:textColor="#FFFFFF"/>
 
-        <!-- 本章多少字（估算翻译费用）。⚠️ 漫画那边不设它 → GONE，漫画面板的行样式不受影响；
-             所以它必须是 wrap_content + 默认 gone，且字号与徽章一致（11sp）。 -->
-        <TextView
-            android:id="@+id/tv_char_count"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:textSize="11sp"
-            android:visibility="gone"/>
-
         <View
             android:layout_width="0dp"
             android:layout_height="1dp"
@@ -62,6 +52,21 @@
             android:padding="4dp"
             android:textSize="13sp"
             android:textColor="#55AEEA"/>
+
+        <!-- 删除**这一页的翻译数据**（整行：原文/译文/气泡坐标/状态，不是只删记录）。
+             ⚠️ **漫画独有**：本布局与小说面板共用（`NovelChapterStateAdapter`），
+             所以默认 gone，只有 `ReaderPageStateAdapter` 会在绑定时显式置 VISIBLE ——
+             小说那边不碰它，就永远不会冒出来。
+             位置按用户口径放在「详情」**后面**（同一个操作行，不用先展开详情）。 -->
+        <TextView
+            android:id="@+id/btn_row_delete"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:padding="4dp"
+            android:textSize="13sp"
+            android:textColor="#CC5555"
+            android:text="@string/reader_translate_delete_page"
+            android:visibility="gone"/>
     </LinearLayout>
 
     <TextView

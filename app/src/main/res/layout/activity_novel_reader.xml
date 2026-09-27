@@ -206,6 +206,27 @@
             android:textSize="13sp"
             android:visibility="gone" />
 
+        <!-- 清除选中段的译文（长按多选后用）。⚠️ 只在**选中集里有译过的段**时才显示 ——
+             清除是对选中集动手，与当前屏幕上有没有译文无关（判据见 NovelTranslateChrome.showClear）。
+             放在动作说明右边、三态左边：破坏性操作离主翻译按钮远一点，少误触。
+             图标复用 app 既有的删除图标（白 tint），不另画一个「差不多」的。 -->
+        <FrameLayout
+            android:id="@+id/btn_clear_translate"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:gravity="center"
+            android:clickable="true"
+            android:visibility="gone"
+            android:contentDescription="@string/reader_clear_selection_desc">
+            <ImageView
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_action_delete"
+                app:tint="#FFFFFF"
+                android:contentDescription="@string/reader_clear_selection_desc"/>
+        </FrameLayout>
+
         <FrameLayout
             android:id="@+id/btn_toggle_translate"
             android:layout_width="40dp"

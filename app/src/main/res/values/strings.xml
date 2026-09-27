@@ -1484,6 +1484,14 @@
     <string name="novel_translate_failed_chapter_hint">Chapter %1$d: %2$s</string>
     <!-- 章行的「本章多少字」：%1$s 是已格式化的数字（带千位分隔），估翻译费用用 -->
     <string name="novel_chapter_chars">%1$s chars</string>
+    <!-- 章行第二行：进度 + 字数（估翻译费用）。%1$s = 已翻 x/y，%2$s = 已格式化的字数 -->
+    <string name="novel_chapter_progress_chars">%1$s · %2$s</string>
+    <!-- 长按多选 → 右下角「清除译文」（先报段数再确认） -->
+    <string name="reader_clear_selection_desc">Clear translation of selected paragraphs</string>
+    <string name="novel_clear_translation_title">Clear translation</string>
+    <string name="novel_clear_translation_confirm">Clear the translation of the %1$d selected paragraph(s)? They will show the original text again.</string>
+    <string name="novel_clear_translation_ok">Clear</string>
+    <string name="novel_clear_translation_done">Cleared %1$d paragraph(s)</string>
     <string name="novel_chapter_progress">%1$d of %2$d paragraphs</string>
     <string name="novel_read_progress">Reading chapter %1$d of %2$d</string>
     <string name="novel_delete_confirm_multi">Delete %1$d novels? Their local files and translations will be removed.</string>

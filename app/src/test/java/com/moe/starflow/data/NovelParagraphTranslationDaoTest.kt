@@ -240,6 +240,69 @@ class NovelParagraphTranslationDaoTest {
         assertEquals("别的书不能被牵连", 1, dao.forChapter(NOVEL_ID, "9999", 0, splitVersion = 1).size)
     }
 
+    /**
+     * 「清除译文」= 把选中的段**重置为未翻译**。
+     *
+     * ⚠️ 是重置不是删行：那几行同时是本章**分母**（`COUNT(*)`）的来源，删掉会让分母少算。
+     * 顺带要清掉 `failCode`，否则章行还挂着旧报错。
+     */
+    @Test
+    fun `resetToIdle 只重置指定段并清掉译文与失败原因`() = runBlocking {
+        dao.upsert(row(0, 0, state = NovelParagraphTranslation.STATE_SUCCESS, text = "译文0"))
+        dao.upsert(row(0, 1, state = NovelParagraphTranslation.STATE_SUCCESS, text = "译文1"))
+        dao.upsert(row(0, 2, state = NovelParagraphTranslation.STATE_FAILED))
+        dao.markFailed(NOVEL_ID, KEY, 0, SPLIT_VERSION, listOf(2), "HTTP 429", 1L)
+
+        dao.resetToIdle(NOVEL_ID, KEY, 0, SPLIT_VERSION, listOf(0, 2), 2L)
+
+        val rows = dao.forChapter(NOVEL_ID, KEY, 0, SPLIT_VERSION).associateBy { it.paraIndex }
+        assertEquals(NovelParagraphTranslation.STATE_IDLE, rows.getValue(0).state)
+        assertEquals("译文必须被清空", "", rows.getValue(0).translatedText)
+        assertEquals(NovelParagraphTranslation.STATE_IDLE, rows.getValue(2).state)
+        assertNull("失败原因也要清掉", rows.getValue(2).failCode)
+        assertEquals("没被选中的段一个字段都不该动", NovelParagraphTranslation.STATE_SUCCESS, rows.getValue(1).state)
+        assertEquals("译文1", rows.getValue(1).translatedText)
+        assertEquals("行数不能变（它是本章分母）", 3, rows.size)
+    }
+
+    /**
+     * 指纹与分段版本都是过滤条件：别把别的书、别的版本的行也清了。
+     *
+     * ⚠️ 三行必须用**不同的 paraIndex**：主键不含 splitVersion，同 (书, 章, 段号) 的两行会互相覆盖。
+     */
+    @Test
+    fun `resetToIdle 不碰别的书与别的分段版本`() = runBlocking {
+        dao.upsert(row(0, 0, splitVersion = SPLIT_VERSION))                  // 要清的那行
+        dao.upsert(row(0, 1, splitVersion = SPLIT_VERSION + 1))              // 别的分段版本
+        dao.upsert(row(0, 2, key = "9999", splitVersion = SPLIT_VERSION))    // 别的书
+
+        dao.resetToIdle(NOVEL_ID, KEY, 0, splitVersion = SPLIT_VERSION, paraIndexes = listOf(0, 1, 2), now = 2L)
+
+        val mine = dao.forChapter(NOVEL_ID, KEY, 0, splitVersion = SPLIT_VERSION).associateBy { it.paraIndex }
+        assertEquals("本版本的那行要被清", NovelParagraphTranslation.STATE_IDLE, mine.getValue(0).state)
+        assertEquals(
+            "别的分段版本不能被清",
+            NovelParagraphTranslation.STATE_SUCCESS,
+            dao.forChapter(NOVEL_ID, KEY, 0, splitVersion = SPLIT_VERSION + 1).single().state,
+        )
+        assertEquals(
+            "别的书不能被清",
+            NovelParagraphTranslation.STATE_SUCCESS,
+            dao.forChapter(NOVEL_ID, "9999", 0, SPLIT_VERSION).single().state,
+        )
+    }
+
+    /** 空列表守卫：空列表会生成 `IN ()`（SQLite 语法错 → 运行时崩）。 */
+    @Test
+    fun `resetToIdle 空列表是安全的空操作`() = runBlocking {
+        dao.upsert(row(0, 0))
+        dao.resetToIdle(NOVEL_ID, KEY, 0, SPLIT_VERSION, emptyList(), 2L)
+        assertEquals(
+            NovelParagraphTranslation.STATE_SUCCESS,
+            dao.forChapter(NOVEL_ID, KEY, 0, SPLIT_VERSION).single().state,
+        )
+    }
+
     // ===== 聚合 =====
 
     @Test

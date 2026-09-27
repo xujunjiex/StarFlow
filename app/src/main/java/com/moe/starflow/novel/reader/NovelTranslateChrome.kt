@@ -65,4 +65,12 @@ object NovelTranslateChrome {
 
     /** 三态切换按钮：当前视野里有译文才显示（选中与否同一套判据）。 */
     fun showToggle(translated: Int): Boolean = translated > 0
+
+    /**
+     * 「清除译文」按钮：**选中的段里有译过的**才显示。
+     *
+     * ⚠️ 与 [showToggle] 的判据不同：三态是"当前屏幕上有没有译文"，而清除是对**选中集**动手 ——
+     * 选中几段没翻过的段时不该出现这个按钮（清无可清）。
+     */
+    fun showClear(translatedSelected: Int): Boolean = translatedSelected > 0
 }

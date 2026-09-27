@@ -272,6 +272,27 @@ class NovelChapterTranslator(
         return result
     }
 
+    /**
+     * 清除指定段的译文（长按多选 → 清除）。
+     *
+     * ⚠️ **不删行**，只把状态重置为未翻译 —— 理由见 DAO 的 `resetToIdle`（那几行是分母的来源）。
+     */
+    suspend fun clearParagraphs(
+        book: ImportedNovel,
+        chapterIndex: Int,
+        paraIndexes: List<Int>,
+    ) {
+        if (paraIndexes.isEmpty()) return
+        dao.resetToIdle(
+            novelId = book.id,
+            novelKey = book.translationKey,
+            chapterIndex = chapterIndex,
+            splitVersion = splitVersion,
+            paraIndexes = paraIndexes,
+            now = System.currentTimeMillis(),
+        )
+    }
+
     /** 失败明细（章行展开显示原因用），按章分组。 */
     suspend fun failuresOf(book: ImportedNovel): Map<Int, List<NovelFailureRow>> =
         dao.failures(book.id, book.translationKey, splitVersion).groupBy { it.chapterIndex }
