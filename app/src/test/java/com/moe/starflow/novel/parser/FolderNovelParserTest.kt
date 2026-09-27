@@ -180,4 +180,25 @@ class FolderNovelParserTest {
         d.w("a.txt", "x")
         assertTrue(FolderNovelParser.loadChapter(d, "nope.txt").isEmpty())
     }
+
+    /**
+     * 坏卷（下载被截断的 epub）只丢自己那一卷：别的卷与散章照常导入，整本书**不能**导入失败。
+     *
+     * 但「跳过」必须留痕（`LogCollector.w`）—— 静默丢卷时书照样「导入成功」，用户只会发现
+     * 凭空少了几章却无从查起。这里用「坏卷被跳过 + 兄弟章节都在」钉住行为（日志由实现保证，
+     * 测试不去断言 logger）。
+     */
+    @Test
+    fun `夹内损坏的 epub 卷被跳过且不影响其它章节`() = runBlocking {
+        val d = dir()
+        d.w("01 散章.txt", "第一章正文")
+        // 截断的 zip 头：ZipFile 打开就抛 ZipException
+        File(d, "02 坏卷.epub").writeBytes(byteArrayOf(0x50, 0x4B, 0x03, 0x04, 0x00, 0x01, 0x02, 0x03))
+        d.w("03 散章.txt", "第三章正文")
+
+        val book = FolderNovelParser.parse(d)
+        assertEquals("坏卷一章都不能出现", listOf("01 散章", "03 散章"), book.chapters.map { it.title })
+        assertEquals("跨过坏卷后 index 依然连续", listOf(0, 1), book.chapters.map { it.index })
+        assertEquals("第三章正文", FolderNovelParser.loadChapter(d, book.chapters[1].locator))
+    }
 }

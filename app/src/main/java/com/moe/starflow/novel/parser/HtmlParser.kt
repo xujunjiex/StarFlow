@@ -12,7 +12,9 @@ object HtmlParser : NovelParser {
     private const val LOCATOR = ""
 
     override suspend fun parse(file: File): NovelBook = withContext(Dispatchers.IO) {
-        val raw = TextEncoding.decode(file.readBytes())
+        // 读取上限见 NovelReadLimits（单文件 100MB）：整个文件都要进内存做正则提取，不封顶
+        // 就是给一个超大文件留了 OOM 的路
+        val raw = TextEncoding.decode(NovelReadLimits.readFile(file))
         val fallbackTitle = file.nameWithoutExtension.ifBlank { "Untitled" }
         val chapter = NovelChapterMeta(
             index = 0,
@@ -27,6 +29,6 @@ object HtmlParser : NovelParser {
     }
 
     override suspend fun loadChapter(file: File, locator: String): String = withContext(Dispatchers.IO) {
-        HtmlTextExtractor.extract(TextEncoding.decode(file.readBytes()))
+        HtmlTextExtractor.extract(TextEncoding.decode(NovelReadLimits.readFile(file)))
     }
 }

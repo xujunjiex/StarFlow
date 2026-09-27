@@ -18,7 +18,9 @@ import java.io.File
 object TxtParser : NovelParser {
 
     override suspend fun parse(file: File): NovelBook = withContext(Dispatchers.IO) {
-        val text = TextEncoding.decode(file.readBytes())
+        // 读取上限见 NovelReadLimits：超限抛 ZipException（上层归类为「格式不支持或文件损坏」），
+        // 而不是有多少读多少把堆吃爆
+        val text = TextEncoding.decode(NovelReadLimits.readFile(file))
         val chapters = TxtChapterSplitter.split(text).mapIndexed { i, c ->
             NovelChapterMeta(index = i, title = c.title, locator = locatorOf(c))
         }
@@ -31,7 +33,7 @@ object TxtParser : NovelParser {
 
     override suspend fun loadChapter(file: File, locator: String): String = withContext(Dispatchers.IO) {
         val (start, end) = parseLocator(locator)
-        val text = TextEncoding.decode(file.readBytes())
+        val text = TextEncoding.decode(NovelReadLimits.readFile(file))
         val from = start.coerceIn(0, text.length)
         val to = end.coerceIn(from, text.length)
         text.substring(from, to).trim()

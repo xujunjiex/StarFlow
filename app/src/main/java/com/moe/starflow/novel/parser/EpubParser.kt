@@ -3,6 +3,7 @@ package com.moe.starflow.novel.parser
 import android.util.Xml
 import com.moe.starflow.novel.model.NovelBook
 import com.moe.starflow.novel.model.NovelChapterMeta
+import com.moe.starflow.utils.LogCollector
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.xmlpull.v1.XmlPullParser
@@ -27,6 +28,9 @@ import java.util.zip.ZipFile
  *    懒加载」直接冲突。这里优先读 EPUB 自带的目录（EPUB2 的 NCX / EPUB3 的 nav 文档，
  *    都是一两个小文件），都没有才退化成「只读每章开头 4KB 找标题」，最后兜底「第 N 章」。
  *
+ * ⚠️ 所有 zip 读取都必须走 [NovelReadLimits] 的上限（单条目 / 单本累计 / 条目数）：这里的输入
+ * 是用户给的压缩包，一个 zip 炸弹不需要用户做任何操作就能把导入线程撑爆。
+ *
  * ⚠️ 本 object 无任何可变状态（解析状态全部是函数内的局部变量）：`parse` 会被多个导入任务
  * 并发调用，任何共享字段都会串数据。
  *
@@ -34,10 +38,10 @@ import java.util.zip.ZipFile
  */
 object EpubParser : NovelParser {
 
+    private const val TAG = "EpubParser"
+
     private const val CONTAINER = "META-INF/container.xml"
     private const val ENCRYPTION = "META-INF/encryption.xml"
-    private const val NS_CONTAINER = "urn:oasis:names:tc:opendocument:xmlns:container"
-    private const val NS_OPF = "http://www.idpf.org/2007/opf"
     private const val NS_DC = "http://purl.org/dc/elements/1.1/"
 
     /** 退化路径下每章只读这么多字节找标题（不整章解压）。 */
@@ -47,15 +51,18 @@ object EpubParser : NovelParser {
 
     override suspend fun parse(file: File): NovelBook = withContext(Dispatchers.IO) {
         ZipFile(file).use { zip ->
-            rejectIfContentEncrypted(zip)
+            // 本次解析的解压配额：局部量（本 object 无状态，见类注释）
+            val budget = NovelReadLimits.ZipBudget()
+            NovelReadLimits.checkEntryCount(zip)
+            rejectIfContentEncrypted(zip, budget)
 
             val opfPath = zip.getEntry(CONTAINER)?.let { entry ->
-                zip.getInputStream(entry).use { parseContainer(it) }
+                parseContainer(budget.readEntry(zip, entry).inputStream())
             } ?: throw IllegalStateException("EPUB 缺少 $CONTAINER")
 
             val opfEntry = zip.getEntry(opfPath) ?: throw IllegalStateException("OPF 不存在: $opfPath")
             val opfDir = opfPath.substringBeforeLast('/', "")
-            val opf = zip.getInputStream(opfEntry).use { parseOpf(it) }
+            val opf = parseOpf(budget.readEntry(zip, opfEntry).inputStream())
 
             val base = if (opfDir.isEmpty()) "" else "$opfDir/"
             val idToHref = opf.manifest.associate { it.id to it.href }
@@ -65,13 +72,13 @@ object EpubParser : NovelParser {
             }
             if (chapterPaths.isEmpty()) throw IllegalStateException("NO_TEXT_CHAPTER")
 
-            val tocTitles = readTocTitles(zip, opf, base)
+            val tocTitles = readTocTitles(zip, opf, base, budget)
 
             val chapters = chapterPaths.mapIndexed { i, path ->
                 NovelChapterMeta(
                     index = i,
                     title = tocTitles[path]
-                        ?: headTitleOf(zip, path)
+                        ?: headTitleOf(zip, path, budget)
                         ?: defaultTitle(i),
                     locator = path,
                 )
@@ -81,7 +88,7 @@ object EpubParser : NovelParser {
                 title = opf.title?.takeIf { it.isNotBlank() } ?: file.nameWithoutExtension,
                 author = opf.creator?.takeIf { it.isNotBlank() },
                 chapters = chapters,
-                coverBytes = readCover(zip, opf, base, idToHref),
+                coverBytes = readCover(zip, opf, base, idToHref, budget),
             )
         }
     }
@@ -89,7 +96,7 @@ object EpubParser : NovelParser {
     override suspend fun loadChapter(file: File, locator: String): String = withContext(Dispatchers.IO) {
         val raw = ZipFile(file).use { zip ->
             val entry = zip.getEntry(locator) ?: return@withContext ""
-            zip.getInputStream(entry).use { it.readBytes() }
+            NovelReadLimits.readZipEntry(zip, entry)
         }
         HtmlTextExtractor.extract(TextEncoding.decode(raw))
     }
@@ -99,10 +106,10 @@ object EpubParser : NovelParser {
     /**
      * 只在**正文文档**被加密时拒绝（见类注释第 2 条）。字体混淆放行。
      */
-    private fun rejectIfContentEncrypted(zip: ZipFile) {
+    private fun rejectIfContentEncrypted(zip: ZipFile, budget: NovelReadLimits.ZipBudget) {
         val entry = zip.getEntry(ENCRYPTION) ?: return
         if (entry.size == 0L) return
-        val uris = zip.getInputStream(entry).use { parseEncryptionUris(it) }
+        val uris = parseEncryptionUris(budget.readEntry(zip, entry).inputStream())
         val contentEncrypted = uris.any { uri ->
             val path = uri.substringBefore('#').lowercase()
             path.endsWith(".xhtml") || path.endsWith(".html") || path.endsWith(".htm")
@@ -254,14 +261,19 @@ object EpubParser : NovelParser {
      * 读 EPUB 自带目录取章标题。返回「zip 内全路径 → 标题」。
      * NCX 与 nav 都读不到时返回空表，由调用方走「读每章开头」的退化路径。
      */
-    private fun readTocTitles(zip: ZipFile, opf: Opf, base: String): Map<String, String> {
+    private fun readTocTitles(
+        zip: ZipFile,
+        opf: Opf,
+        base: String,
+        budget: NovelReadLimits.ZipBudget,
+    ): Map<String, String> {
         val out = mutableMapOf<String, String>()
         opf.ncxPath?.let { href ->
             val path = normalize(base, href)
             val ncxBase = path.substringBeforeLast('/', "")
             val ncxBaseDir = if (ncxBase.isEmpty()) "" else "$ncxBase/"
             zip.getEntry(path)?.let { entry ->
-                zip.getInputStream(entry).use { parseNcx(it, ncxBaseDir, out) }
+                parseNcx(budget.readEntry(zip, entry).inputStream(), ncxBaseDir, out)
             }
         }
         if (out.isEmpty()) {
@@ -270,7 +282,7 @@ object EpubParser : NovelParser {
                 val navBase = path.substringBeforeLast('/')
                 val navBaseDir = if (navBase.isEmpty()) "" else "$navBase/"
                 zip.getEntry(path)?.let { entry ->
-                    zip.getInputStream(entry).use { parseNav(it, navBaseDir, out) }
+                    parseNav(budget.readEntry(zip, entry).inputStream(), navBaseDir, out)
                 }
             }
         }
@@ -372,37 +384,36 @@ object EpubParser : NovelParser {
      * 没有目录时：只解压每章**开头** [HEAD_BYTES] 字节，取第一行短文本当标题。
      * 不整章解压，避免 300 章的书在导入时把所有正文都过一遍。
      */
-    private fun headTitleOf(zip: ZipFile, path: String): String? {
+    private fun headTitleOf(zip: ZipFile, path: String, budget: NovelReadLimits.ZipBudget): String? {
         return try {
             val entry = zip.getEntry(path) ?: return null
-            val head = zip.getInputStream(entry).use { readAtMost(it, HEAD_BYTES) }
+            val head = zip.getInputStream(entry).use { NovelReadLimits.readAtMost(it, HEAD_BYTES) }
+            // 截断读也要记进总配额：退化路径下每章 4KB，20000 章就是 80MB
+            budget.spend(path, head.size)
             val text = HtmlTextExtractor.extract(TextEncoding.decode(head))
             text.lineSequence()
                 .map { it.trim() }
                 .firstOrNull { it.isNotEmpty() && it.length <= MAX_TITLE_LEN }
+        } catch (e: NovelReadLimits.TooLargeException) {
+            // ⚠️ 超限不能被「读不到标题」的兜底吞掉：那正是本类要防的整本配额
+            throw e
         } catch (e: Exception) {
             null
         }
     }
 
-    private fun readAtMost(input: InputStream, limit: Int): ByteArray {
-        val buf = ByteArray(limit)
-        var read = 0
-        while (read < limit) {
-            val n = input.read(buf, read, limit - read)
-            if (n < 0) break
-            read += n
-        }
-        return if (read == limit) buf else buf.copyOf(read)
-    }
-
     // ===== 封面 =====
 
+    /**
+     * 封面三级兜底：EPUB3 的 `properties="cover-image"` → EPUB2 的 `<meta name="cover" content="id"/>`
+     * → manifest 里 id / 文件名含 "cover" 的图片条目（老书常见写法）。
+     */
     private fun readCover(
         zip: ZipFile,
         opf: Opf,
         base: String,
         idToHref: Map<String, String>,
+        budget: NovelReadLimits.ZipBudget,
     ): ByteArray? {
         val byProperties = opf.manifest.firstOrNull {
             it.properties?.split(' ', '\t')?.any { p -> p.equals("cover-image", true) } == true
@@ -414,10 +425,18 @@ object EpubParser : NovelParser {
                 (it.id.contains("cover", true) || it.href.contains("cover", true))
         }
         val href = byProperties?.href ?: byMetaId ?: byName?.href ?: return null
-        return runCatching {
+        return try {
             val path = normalize(base, href)
-            zip.getEntry(path)?.let { e -> zip.getInputStream(e).use { it.readBytes() } }
-        }.getOrNull()
+            zip.getEntry(path)?.let { e -> budget.readEntry(zip, e) }
+        } catch (e: NovelReadLimits.TooLargeException) {
+            // 封面超限（正常封面几百 KB，8MB 的「封面」不是封面）不拖垮整本书：正文才是用户
+            // 要的，改用占位封面。但上限本身不撤 —— 读不满就抛，OOM 依然防住，只是不再往上报。
+            LogCollector.w(TAG, "封面超过读取上限，改用占位封面: ${e.message}")
+            null
+        } catch (e: Exception) {
+            // 与旧行为一致：封面读不出来（条目损坏 / 路径不对）用占位封面，不影响导入
+            null
+        }
     }
 
     private fun defaultTitle(index: Int) = "第 ${index + 1} 章"

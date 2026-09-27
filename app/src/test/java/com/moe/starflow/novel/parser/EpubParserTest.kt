@@ -288,4 +288,136 @@ class EpubParserTest {
             .finish()
         assertNull(EpubParser.parse(f).coverBytes)
     }
+
+    /**
+     * 二级兜底：EPUB2 的 `<meta name="cover" content="id"/>`。
+     *
+     * ⚠️ id 与文件名**刻意都不含 "cover"**（`cvr` / `images/c.png`）：否则三级兜底
+     * （id/href 含 cover 的图片条目）会顺手把它捞出来，这条测试就测不到二级了。
+     */
+    @Test
+    fun `EPUB2 的 meta cover 指向的图片被当作封面`() = runBlocking {
+        val epub2Opf = """
+            <?xml version="1.0"?>
+            <package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id">
+              <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+                <dc:title>老书</dc:title>
+                <meta name="cover" content="cvr"/>
+              </metadata>
+              <manifest>
+                <item id="c1" href="text/ch1.xhtml" media-type="application/xhtml+xml"/>
+                <item id="cvr" href="images/c.png" media-type="image/png"/>
+              </manifest>
+              <spine><itemref idref="c1"/></spine>
+            </package>
+        """.trimIndent()
+        val f = epub("epub2cover.epub")
+            .put("META-INF/container.xml", containerXml)
+            .put("OEBPS/content.opf", epub2Opf)
+            .put("OEBPS/text/ch1.xhtml", "<p>正文</p>")
+            .put("OEBPS/images/c.png", "EPUB2COVER")
+            .finish()
+        assertEquals("EPUB2COVER", String(EpubParser.parse(f).coverBytes ?: ByteArray(0)))
+    }
+
+    /**
+     * 三级兜底：manifest 里 id / 文件名含 "cover" 的图片条目（老书的常见写法）。
+     */
+    @Test
+    fun `没有 cover 标记时按文件名兜底取封面`() = runBlocking {
+        val noMarkOpf = """
+            <?xml version="1.0"?>
+            <package xmlns="http://www.idpf.org/2007/opf" version="2.0" unique-identifier="id">
+              <metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>老书</dc:title></metadata>
+              <manifest>
+                <item id="c1" href="text/ch1.xhtml" media-type="application/xhtml+xml"/>
+                <item id="img1" href="images/cover.png" media-type="image/png"/>
+              </manifest>
+              <spine><itemref idref="c1"/></spine>
+            </package>
+        """.trimIndent()
+        val f = epub("namecover.epub")
+            .put("META-INF/container.xml", containerXml)
+            .put("OEBPS/content.opf", noMarkOpf)
+            .put("OEBPS/text/ch1.xhtml", "<p>正文</p>")
+            .put("OEBPS/images/cover.png", "BYNAMECOVER")
+            .finish()
+        assertEquals("BYNAMECOVER", String(EpubParser.parse(f).coverBytes ?: ByteArray(0)))
+    }
+
+    // ===== EPUB3 nav 目录（没有 NCX 时） =====
+
+    /**
+     * EPUB3 只有 nav 文档（`properties="nav"`）而没有 NCX 时，章标题必须来自 nav。
+     * 正文里的 h1 刻意与 nav 不同名，用来区分「标题取自目录」还是「退化成读正文首行」。
+     */
+    @Test
+    fun `只有 EPUB3 nav 时章标题取自 nav`() = runBlocking {
+        val navItem =
+            """<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>"""
+        val navDoc = """
+            <?xml version="1.0" encoding="utf-8"?>
+            <html xmlns="http://www.w3.org/1999/xhtml">
+              <body><nav><ol>
+                <li><a href="text/ch1.xhtml">导航标题一</a></li>
+                <li><a href="text/ch2.xhtml">导航标题二</a></li>
+              </ol></nav></body>
+            </html>
+        """.trimIndent()
+        val f = epub("navonly.epub")
+            .put("META-INF/container.xml", containerXml)
+            .put("OEBPS/content.opf", opf(extraManifest = navItem, ncx = null))
+            .put("OEBPS/nav.xhtml", navDoc)
+            .put("OEBPS/text/ch1.xhtml", "<html><body><h1>正文标题一</h1><p>一</p></body></html>")
+            .put("OEBPS/text/ch2.xhtml", "<html><body><h1>正文标题二</h1><p>二</p></body></html>")
+            .finish()
+        assertEquals(
+            listOf("导航标题一", "导航标题二"),
+            EpubParser.parse(f).chapters.map { it.title },
+        )
+    }
+
+    // ===== 读取上限 =====
+
+    /**
+     * 单条目上限：目录条目 9MB > [NovelReadLimits.MAX_ZIP_ENTRY_BYTES]（8MB）。
+     *
+     * 这是**导入路径**（parse 会读 container/opf/ncx），所以必须归类成导入失败：
+     * 抛的是 `ZipException` —— `NovelImportManager.classify` 把 `ZipException` 归为
+     * NOT_ARCHIVE（用户看到「格式不支持或文件损坏」），而不是让进程 OOM 被杀。
+     */
+    @Test
+    fun `超大条目按导入失败抛出而不是 OOM`() {
+        // UTF-8 下汉字 3 字节：3.1M 字 ≈ 9.3MB，压缩后仍很小（正是 zip 炸弹的形状）
+        val hugeNcx = "<text>" + "字".repeat(3_100_000)
+        val f = minimalEpub(hugeNcx)
+        var e: Exception? = null
+        try {
+            runBlocking { EpubParser.parse(f) }
+        } catch (ex: Exception) {
+            e = ex
+        }
+        assertTrue(
+            "超限必须抛 ZipException（classify → NOT_ARCHIVE），实际: $e",
+            e is java.util.zip.ZipException,
+        )
+    }
+
+    /** 读正文那条路（翻页）同样有上限，不能只有 parse 封顶。 */
+    @Test
+    fun `单章正文超过条目上限时抛异常`() {
+        val hugeBody = "<p>" + "字".repeat(3_100_000) + "</p>"
+        val f = epub("hugechapter.epub")
+            .put("META-INF/container.xml", containerXml)
+            .put("OEBPS/content.opf", opf(ncx = null, spine = """<itemref idref="c1"/>"""))
+            .put("OEBPS/text/ch1.xhtml", hugeBody)
+            .finish()
+        var e: Exception? = null
+        try {
+            runBlocking { EpubParser.loadChapter(f, "OEBPS/text/ch1.xhtml") }
+        } catch (ex: Exception) {
+            e = ex
+        }
+        assertTrue("超限必须抛 ZipException，实际: $e", e is java.util.zip.ZipException)
+    }
 }

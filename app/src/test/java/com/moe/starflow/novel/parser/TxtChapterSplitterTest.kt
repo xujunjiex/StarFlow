@@ -61,6 +61,62 @@ class TxtChapterSplitterTest {
     }
 
     /**
+     * 方括号里的内容必须像**卷/章标签**才算标题。
+     *
+     * ⚠️ 这条是修 bug 加的：旧规则只要「整行带【】且 ≤30 字」，「【他心想】」这种被括起来的
+     * 一句正文也会切出一章、把目录打碎。真正的卷/章标签（含半角 `[Chapter N]`）照旧命中。
+     */
+    @Test
+    fun `方括号标题必须是卷章标签`() {
+        val text = """
+            【卷一】
+
+            A
+
+            【第三章】
+
+            B
+
+            [Chapter 2]
+
+            C
+        """.trimIndent()
+        assertEquals(
+            listOf("【卷一】", "【第三章】", "[Chapter 2]"),
+            TxtChapterSplitter.split(text).map { it.title },
+        )
+        // ⚠️ `novel-fixtures/long-ko.txt` 的真实形态：韩文的「장」也是章。
+        // 白名单里漏掉它，整本韩文书会塌成「整本一章」。
+        assertEquals(listOf("[제1장 등불]"), TxtChapterSplitter.split("[제1장 등불]\n\n본문").map { it.title })
+    }
+
+    /**
+     * ⚠️ 正文里被括起来的短句不能当标题 —— 判错的代价是目录多出成百上千个碎片章，
+     * 比「漏判一个真标题」（那一行留在正文里，内容不丢）重得多。
+     */
+    @Test
+    fun `正文里被括起来的短句不算章节`() {
+        val text = "第一章 开始\n\n他愣住了。\n\n【他心想】\n\n于是转身离开。\n\n第二章 结束\n\n正文"
+        val chapters = TxtChapterSplitter.split(text)
+        assertEquals(listOf("第一章 开始", "第二章 结束"), chapters.map { it.title })
+        // 那两行必须**留在正文里**（区间完整覆盖全文），不能被静默丢掉
+        assertEquals(0, chapters[0].charStart)
+        assertEquals(text.length, chapters.last().charEnd)
+        assertEquals(chapters[0].charEnd, chapters[1].charStart)
+        assertTrue(text.substring(chapters[0].charStart, chapters[0].charEnd).contains("【他心想】"))
+    }
+
+    /** 括起来的是一句**话**（含句读）时也不是标题 —— 与「像不像标签」是两道独立的闸门。 */
+    @Test
+    fun `正文里带句读的方括号行不算章节`() {
+        val text = "第一章 开始\n\n【他说，你好。】\n\n正文\n\n第二章 结束\n\n正文"
+        assertEquals(
+            listOf("第一章 开始", "第二章 结束"),
+            TxtChapterSplitter.split(text).map { it.title },
+        )
+    }
+
+    /**
      * 正文里出现的「第N章」表述不能被当成章节 —— 正则锚定行首是唯一的防线，
      * 去掉 `^\s*` 这条测试必红。
      */

@@ -37,6 +37,19 @@ object TextEncoding {
     /** 探测用的采样上限：整本读进内存只为探编码不值得。 */
     private const val SAMPLE_BYTES = 64 * 1024
 
+    /**
+     * 采样末尾最多往前退这么多字节去凑字符边界（最长 4 字节的编码 + 余量）。
+     *
+     * ⚠️ **不退这一下会整本乱码**（真实踩过）：[sampleOf] 是硬切的，切点落在多字节字符
+     * 中间时，UTF-8 / GB18030 / Big5 **三个候选会一起**严格解码失败 → [detect] 走到
+     * `?: Charsets.UTF_8` 兜底 → 整本按 UTF-8 解，用户看到满屏替换符。
+     *
+     * 64KB 只合三万个汉字，**任何真实小说都超过**，而切点是否落在字符中间取决于正文前
+     * 65536 字节里单字节字符的个数 —— 等于掷硬币。注释原先写的「截断只会让该候选落选」
+     * 只对「还有别的候选能解」成立，三个一起落选时就没有候选可用了。
+     */
+    private const val SAMPLE_TAIL_BACKOFF = 4
+
     /** 候选编码。**顺序即平手时的优先级**（大陆网文占绝对多数，故 GB18030 先于 Big5）。 */
     private val CANDIDATES: List<Charset> = listOfNotNull(
         Charsets.UTF_8,
@@ -56,7 +69,7 @@ object TextEncoding {
         var best: Charset? = null
         var bestScore = Double.MAX_VALUE
         for (cs in CANDIDATES) {
-            val decoded = decodeFully(sample, cs) ?: continue
+            val decoded = decodeSample(sample, cs) ?: continue
             val score = privateUseRatio(decoded)
             // 严格小于：平手时保留**先出现**的候选（即优先级更高者）
             if (score < bestScore) {
@@ -88,9 +101,28 @@ object TextEncoding {
         }
     }
 
-    /** 采样：不截断到半个多字节字符要由调用方的宽容解码兜住（探测用 REPORT，截断只会让该候选落选）。 */
+    /**
+     * 采样：截断到半个多字节字符要由 [decodeSample] 退字节兜住。
+     *
+     * 探测用 REPORT 严格解码 —— 截断会让**该候选**落选，所以不能只截一次就不管了。
+     */
     private fun sampleOf(bytes: ByteArray): ByteArray =
         if (bytes.size > SAMPLE_BYTES) bytes.copyOf(SAMPLE_BYTES) else bytes
+
+    /**
+     * 严格解这个采样；**末尾退几字节**再试，直到凑上字符边界。
+     *
+     * 只对**采样**这么做（真解码是宽容模式，末尾半个字符无害）：这里要的是
+     * 「这个候选能不能完整表达这份字节流」，末尾半个字符是采样截出来的，不是文本的问题。
+     */
+    private fun decodeSample(sample: ByteArray, charset: Charset): String? {
+        for (back in 0..SAMPLE_TAIL_BACKOFF) {
+            val n = sample.size - back
+            if (n <= 0) break
+            decodeFully(if (n == sample.size) sample else sample.copyOf(n), charset)?.let { return it }
+        }
+        return null
+    }
 
     /**
      * 私用区字符占「非 ASCII 字符」的比例；纯 ASCII（无中文）返回 0.0。

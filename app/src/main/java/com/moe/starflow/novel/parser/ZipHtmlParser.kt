@@ -22,6 +22,8 @@ object ZipHtmlParser : NovelParser {
 
     override suspend fun parse(file: File): NovelBook = withContext(Dispatchers.IO) {
         val entries = ZipFile(file).use { zip ->
+            // 条目数先封顶，再开始迭代（见 NovelReadLimits）
+            NovelReadLimits.checkEntryCount(zip)
             val out = mutableListOf<String>()
             val e = zip.entries()
             while (e.hasMoreElements()) {
@@ -50,7 +52,7 @@ object ZipHtmlParser : NovelParser {
     override suspend fun loadChapter(file: File, locator: String): String = withContext(Dispatchers.IO) {
         val raw = ZipFile(file).use { zip ->
             val entry = zip.getEntry(locator) ?: return@withContext ""
-            zip.getInputStream(entry).use { it.readBytes() }
+            NovelReadLimits.readZipEntry(zip, entry)
         }
         val text = TextEncoding.decode(raw)
         // .txt 条目是纯文本，不能再走 HTML 提取（会把正文里的 `<` 之类当标签吃掉）

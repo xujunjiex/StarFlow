@@ -137,6 +137,29 @@ class HtmlTextExtractorTest {
         assertFalse(out.contains("<p"))
     }
 
+    /**
+     * 病态输入守卫：5 万个未闭合的 `<script` 标签。
+     *
+     * 旧实现是 `<(script|style)\b[^>]*>.*?</\1>` 与 `<[^>]+>` 两条正则，共同形状是「后面必须有
+     * 一个 `>` 或 `</x>` 才收口」，而引擎不会为它预扫 —— 每个起始 `<` / `<script` 都要把后面
+     * 整篇重扫一遍再回溯。实测 400KB 的这类输入在旧实现上要 **21 秒**（`<div ` / `<h1` 那种
+     * 未闭合标签更糟），导入 / 翻页线程被钉死，用户看到的就是「卡住」。
+     *
+     * 两种形状都钉：`<script `（连 `>` 都没有，考验开标签扫描）与 `<script>`（有开无闭，
+     * 考验闭合标签查找）。阈值 5 秒很宽松：线性扫描实测几十毫秒，而旧实现 21 秒起步。
+     */
+    @Test
+    fun `未闭合 script 的畸形文档不会退化成二次扫描`() {
+        listOf("<script ", "<script>").forEach { token ->
+            val html = "<p>正文</p>" + token.repeat(50_000)
+            val start = System.nanoTime()
+            val out = HtmlTextExtractor.extract(html)
+            val ms = (System.nanoTime() - start) / 1_000_000
+            assertTrue("「$token」x50k 应在 5s 内返回，实际 ${ms}ms", ms < 5_000)
+            assertTrue("「$token」时正文不能被吃掉: $out", out.contains("正文"))
+        }
+    }
+
     // ===== HtmlParser =====
 
     @Test

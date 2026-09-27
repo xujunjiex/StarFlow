@@ -34,8 +34,38 @@ object TxtChapterSplitter {
         Regex("""^\s*(序章|序言|序|楔子|引子|前言|后记|尾声|终章|结局|番外)(\s*[：:、.．\-—]?\s*.{0,30})?$"""),
         // 英文 Chapter N
         Regex("""^\s*(Chapter\s+\d+)(\s*[：:、.．\-—]?\s*.{0,30})$""", RegexOption.IGNORE_CASE),
-        // 方括号标题（部分网文用【】包裹）
-        Regex("""^\s*[\[【](.{1,30})[\]】]\s*$"""),
+    )
+
+    /** 整行被方括号包住（【】/[]）的形态。内容与判据见 [matchBracketTitle]。 */
+    private val BRACKET_LINE = Regex("""^\s*([\[【])(.{1,30})([\]】])\s*$""")
+
+    /**
+     * 方括号里的内容必须**像卷/章标签**才算标题：含「卷 / 章 / 节 / 回 / 话 / 篇」这类量词
+     * （中文 + 韩文 장/절/권/화/회/편 + 英文 Chapter），或本身就是序章/楔子/番外/后记这类特殊章名。
+     *
+     * ⚠️ 这条判据是修 bug 加的：旧规则只要求「整行带【】且 ≤30 字」，于是一句被括起来的正文
+     * （`【他心想】`）也被当成标题 —— 目录被这种短行切成一堆碎片章。
+     * 真正的 `【卷一】` / `【第三章】` / `【卷之二】` / `[제1장 등불]` 照旧命中
+     * （韩文那条是 `novel-fixtures/long-ko.txt` 的真实形态，不加就会让整本韩文书塌成一章）。
+     *
+     * ⚠️ 关键词是**白名单**：没列到的语言里「括号包着的章名」会漏判 —— 这一侧的代价是
+     * 「那一行留在正文里」（内容不丢），比把目录打碎轻得多，所以宁可漏。
+     */
+    private val BRACKET_LABEL_HINT = Regex(
+        """[卷章节節回話话篇部]|序|楔|番外|后记|後記|尾声|终章|終章|结局|結局|引子|前言""" +
+            """|장|절|권|화|회|편|[Cc]hapter"""
+    )
+
+    /**
+     * 句子标点：括号里出现这些说明括的是一句**话**，不是标题。
+     *
+     * ⚠️ 与 [BRACKET_LABEL_HINT] 是两道**独立**的闸门：`【他说，你好】` 靠这一条拦下，
+     * `【他心想】` 靠上一条拦下。只留一道都会漏。
+     * 破折号 / 波浪号（`——`、`～`）**不算**句读：它们在「第1～5章」这类真标题里也会出现。
+     */
+    private val BRACKET_PROSE_PUNCT = setOf(
+        '。', '！', '？', '，', '、', '；', '：', '…',
+        '.', ',', '!', '?', ';', ':',
     )
 
     fun split(text: String): List<TxtChapter> {
@@ -70,7 +100,25 @@ object TxtChapterSplitter {
             val title = m.value.trim().replace(Regex("""[ \t]+"""), " ")
             if (title.isNotEmpty()) return title
         }
-        return null
+        return matchBracketTitle(line)
+    }
+
+    /**
+     * 方括号标题：括号必须**配对**（`【…】` / `[…]`，混着来的不算），
+     * 内容不含句读标点、且看着像卷/章标签（见 [BRACKET_LABEL_HINT]）。
+     *
+     * 返回的是**整行（含括号）**：目录显示的就是原文那一行的样子，去掉括号反而要额外解释规则。
+     */
+    private fun matchBracketTitle(line: String): String? {
+        val m = BRACKET_LINE.find(line) ?: return null
+        val open = m.groupValues[1]
+        val inner = m.groupValues[2]
+        val close = m.groupValues[3]
+        val paired = (open == "[" && close == "]") || (open == "【" && close == "】")
+        if (!paired) return null
+        if (inner.any { it in BRACKET_PROSE_PUNCT }) return null
+        if (!BRACKET_LABEL_HINT.containsMatchIn(inner)) return null
+        return line.trim().replace(Regex("""[ \t]+"""), " ")
     }
 
     private fun buildFromStarts(text: String, starts: List<Pair<Int, String>>): List<TxtChapter> {

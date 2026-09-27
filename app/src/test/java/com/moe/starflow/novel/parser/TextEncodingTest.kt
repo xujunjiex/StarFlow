@@ -168,14 +168,42 @@ class TextEncodingTest {
     }
 
     /**
-     * 超长 GBK 文本同理：GBK 字节对 UTF-8 解不开、对 Big5 会解出大量私用区，
+     * 超长 GBK 文本：GBK 字节对 UTF-8 解不开、对 Big5 会解出大量私用区，
      * 所以只有 GB18030 能胜出。
+     *
+     * ⚠️ **必须逐个对齐试**（`pad = 0..3`）：采样是硬切 64KB，切点落在多字节字符中间时
+     * 三个候选会**一起**严格解码失败，`detect` 就兜底成 UTF-8、整本乱码。只测一个对齐
+     * 等于掷一次硬币 —— 原来的写法只断言 `decode() == 原文`，恰好那一个对齐能过，
+     * 于是这条守卫是假绿（真机上一半的 GBK 小说整本乱码，测试全绿）。
      */
     @Test
-    fun `超长 GBK 文本仍判为 GB18030 系列`() {
+    fun `超长 GBK 文本在任何采样对齐下都判对`() {
         val long = SIMPLIFIED.repeat(4000)
-        val bytes = long.toByteArray(gbk)
-        assertTrue(bytes.size > 64 * 1024)
-        assertEquals(long, TextEncoding.decode(bytes))
+        for (pad in 0..3) {
+            val bytes = ("A".repeat(pad) + long).toByteArray(gbk)
+            assertTrue("pad=$pad 的样本必须真的超过采样上限", bytes.size > 64 * 1024)
+            val decoded = TextEncoding.decode(bytes)
+            assertTrue(
+                "pad=$pad 被判成 ${TextEncoding.detect(bytes).name()}，正文出现替换符（整本乱码）",
+                !decoded.contains('�'),
+            )
+            assertTrue("pad=$pad 的正文必须完整可读", decoded.contains("他抬起头，看着远方的天空"))
+        }
+    }
+
+    /** 超长 Big5（繁体）同理 —— 私用区判据要能拿到**两个候选都解全**的采样才生效。 */
+    @Test
+    fun `超长 Big5 文本在任何采样对齐下都判对`() {
+        val long = TRADITIONAL.repeat(4000)
+        for (pad in 0..3) {
+            val bytes = ("A".repeat(pad) + long).toByteArray(big5)
+            assertTrue("pad=$pad 的样本必须真的超过采样上限", bytes.size > 64 * 1024)
+            val decoded = TextEncoding.decode(bytes)
+            assertTrue(
+                "pad=$pad 被判成 ${TextEncoding.detect(bytes).name()}，正文出现替换符（整本乱码）",
+                !decoded.contains('�'),
+            )
+            assertTrue("pad=$pad 的正文必须完整可读", decoded.contains("他抬起頭，看著遠方的天空"))
+        }
     }
 }

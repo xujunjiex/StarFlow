@@ -3,6 +3,8 @@ package com.moe.starflow.novel.parser
 import com.moe.starflow.mangaimport.data.ArchivedMangaReader
 import com.moe.starflow.novel.model.NovelBook
 import com.moe.starflow.novel.model.NovelChapterMeta
+import com.moe.starflow.utils.LogCollector
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -24,6 +26,8 @@ import java.util.Locale
  * 莫名其妙的章节。要递归的话得先明确用户意图（那是多部还是单部的混合结构）。
  */
 object FolderNovelParser : NovelParser {
+
+    private const val TAG = "FolderNovelParser"
 
     private val TEXT_EXTS = setOf("txt")
     private val VOLUME_EXTS = setOf("epub")
@@ -64,7 +68,18 @@ object FolderNovelParser : NovelParser {
 
     /** 把一本 epub 展开成若干章，标题前缀卷名，locator 带上「卷文件名 + 卷内定位」。 */
     private suspend fun expandVolume(epub: File): List<NovelChapterMeta> {
-        val inner = runCatching { EpubParser.parse(epub) }.getOrNull() ?: return emptyList()
+        val inner = try {
+            EpubParser.parse(epub)
+        } catch (e: CancellationException) {
+            // 取消（用户退出了导入 / 切走了）不是「坏卷」：吞掉它就变成「取消后照样导入成功，
+            // 但少了一卷」—— 必须原样抛出去让协程正常结束
+            throw e
+        } catch (e: Exception) {
+            // 坏卷只丢这一卷（不能让整部书导入失败 —— 用户还有别的卷能读），但**必须留日志**：
+            // 静默丢卷时书照样「导入成功」，用户只会发现凭空少了几章，却无从查起
+            LogCollector.w(TAG, "卷解析失败，已跳过: ${epub.name}", e)
+            null
+        } ?: return emptyList()
         val volumeName = epub.nameWithoutExtension
         return inner.chapters.map { c ->
             NovelChapterMeta(
@@ -85,6 +100,6 @@ object FolderNovelParser : NovelParser {
         }
         val target = File(file, locator)
         if (!target.isFile) return@withContext ""
-        TextEncoding.decode(target.readBytes())
+        TextEncoding.decode(NovelReadLimits.readFile(target))
     }
 }
