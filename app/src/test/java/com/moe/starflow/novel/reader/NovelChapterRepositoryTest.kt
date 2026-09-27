@@ -47,6 +47,22 @@ class NovelChapterRepositoryTest {
         assertTrue("显示文本要覆盖每个段落", c.displayTexts.keys.containsAll(c.paragraphs.map { it.index }))
     }
 
+    /**
+     * **一行一段的 txt 必须按行切成多段**（用户报的「三国演义只有 2 段，原文明明很多段」）。
+     *
+     * 这条从 `TxtParser.loadChapter` 走到分段，钉住「TXT 正文要先把单换行提升成段落分隔」。
+     */
+    @Test
+    fun `一行一段的 txt 按行切成多段`() = runBlocking {
+        val text = "第一章 起\n\n第一段正文至少四个字\n第二段正文至少四个字\n第三段正文至少四个字"
+        val repo = NovelChapterRepository()
+        val c = repo.load(bookOf(text), 0, emptyMap(), NovelDisplayMode.TRANSLATED, style, 1080, 1920)
+        val body = c.paragraphs.map { it.originalText }
+        for (want in listOf("第一段正文至少四个字", "第二段正文至少四个字", "第三段正文至少四个字")) {
+            assertTrue("必须按行切开（实际 ${body.size} 段：$body）", body.contains(want))
+        }
+    }
+
     @Test
     fun `章标题读得出来`() = runBlocking {
         val repo = NovelChapterRepository()

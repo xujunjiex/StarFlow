@@ -2,6 +2,7 @@ package com.moe.starflow.novel.parser
 
 import com.moe.starflow.novel.model.NovelBook
 import com.moe.starflow.novel.model.NovelChapterMeta
+import com.moe.starflow.novel.translate.NovelParagraphSplitter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -36,7 +37,9 @@ object TxtParser : NovelParser {
         val text = TextEncoding.decode(NovelReadLimits.readFile(file))
         val from = start.coerceIn(0, text.length)
         val to = end.coerceIn(from, text.length)
-        text.substring(from, to).trim()
+        // ⚠️ **一行一段**：txt 小说几乎都是一行一段、行间不留空行，而段落切分只认空行 ——
+        // 不归一化的话整章会被当成一个段落（见 NovelParagraphSplitter.linesToParagraphs）。
+        NovelParagraphSplitter.linesToParagraphs(text.substring(from, to))
     }
 
     private fun locatorOf(c: TxtChapter): String = "${c.charStart},${c.charEnd}"

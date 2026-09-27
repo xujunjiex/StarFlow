@@ -304,6 +304,29 @@ class NovelChapterTranslatorTest {
         assertEquals("同 id 不同指纹的书不能被误删", 1, dao.countFor(1, "9999"))
     }
 
+    /**
+     * 进入阅读器时顺手清掉**旧分段版本**的行（`resetStale` 里一起做）。
+     *
+     * 分段规则升级后旧行的段号映射已经错了，留着既会显示错位的译文、又会占着主键。
+     */
+    @Test
+    fun `resetStale 清掉非当前分段版本的旧行`() = runBlocking {
+        dao.upsert(
+            NovelParagraphTranslation(
+                novelId = 1, novelKey = "5000", chapterIndex = 0, paraIndex = 0,
+                sourceText = "旧版本的段", state = NovelParagraphTranslation.STATE_SUCCESS,
+                translatedText = "旧译文", splitVersion = SPLIT_VERSION - 1,
+            )
+        )
+
+        translatorFor(FakeTranslator()).resetStale(book)
+
+        assertTrue(
+            "旧版本的行必须被清掉",
+            dao.forChapter(1, "5000", 0, SPLIT_VERSION - 1).isEmpty(),
+        )
+    }
+
     /** 整章只有不可翻译段（SKIP）→ 一个请求都不发，也不写任何行。 */
     @Test
     fun `没有可翻译段时不发请求`() = runBlocking {

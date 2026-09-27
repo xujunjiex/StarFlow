@@ -108,4 +108,34 @@ class NovelParagraphSplitterTest {
         assertEquals(2, ps.size)
         assertFalse(ps.any { it.originalText.isBlank() })
     }
+    // ===== TXT 的「一行一段」归一化（用户报的「三国演义只有 2 段，原文明明很多段」）=====
+
+    /**
+     * 网文/公版 txt 是**一行一段、行间不留空行**，而 [NovelParagraphSplitter.split] 只认空行 ——
+     * 不先过这一步，整章（几千字）会被当成**一个**段落：阅读器里是一堵墙、翻译按整章发一个请求
+     * （远超模型上下文）、章行分母恒为 1。所以 `TxtParser` / `FolderNovelParser` 取章时要先归一化。
+     *
+     * ⚠️ 只对 txt 用：HTML/EPUB 的单换行是**段内**换行（`<br>`），归一化会把整段切碎。
+     */
+    @Test
+    fun `一行一段的文本被提升成空行分段`() {
+        val out = NovelParagraphSplitter.linesToParagraphs("第一段正文。\n第二段正文。\n第三段正文。")
+        assertEquals(
+            listOf("第一段正文。", "第二段正文。", "第三段正文。"),
+            NovelParagraphSplitter.split(out).map { it.originalText },
+        )
+    }
+
+    /** CRLF / 空行 / 行首行尾空白都要处理干净（Windows 下的 txt 很常见）。 */
+    @Test
+    fun `归一化处理 CRLF 空行与首尾空白`() {
+        val out = NovelParagraphSplitter.linesToParagraphs("  甲  \r\n\r\n\t乙\t\r\n\n丙")
+        assertEquals(listOf("甲", "乙", "丙"), NovelParagraphSplitter.split(out).map { it.originalText })
+    }
+
+    @Test
+    fun `归一化空文本得到空串`() {
+        assertEquals("", NovelParagraphSplitter.linesToParagraphs(""))
+        assertEquals("", NovelParagraphSplitter.linesToParagraphs("   \n\n  "))
+    }
 }

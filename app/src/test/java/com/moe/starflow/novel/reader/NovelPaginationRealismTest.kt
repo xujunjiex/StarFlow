@@ -101,22 +101,38 @@ class NovelPaginationRealismTest {
         }
     }
 
-    /** 相邻页必须画不同的文字：这是「进度条在走、画面不变」那类渲染 bug 的守门员。 */
+    /**
+     * 相邻页必须画**不同的内容**：这是「进度条在走、画面不变」那类 bug 的守门员。
+     *
+     * ⚠️ 判据用「(段号, 段内字符起点) 严格递增」，**不是**「首段文字的前 24 字不同」：
+     * 正文样本由**句子池**生成，不同段落的开头完全可能一样（实测 `long-en.txt` 就有），
+     * 拿文字前缀去比会随机假红 —— 这条测试最早就是这么写的，改分段规则时它假红过一次。
+     *
+     * ⚠️ 它守的是**分页记账**（页与页不重叠、不重复、按阅读序推进），不是渲染层：
+     * Robolectric 的文本引擎是桩，真机画面还得看现场。
+     */
     @Test
-    fun `相邻页的第一段显示文本必须不同`() = runBlocking {
+    fun `相邻页的起点必须严格递增`() = runBlocking {
         val repo = NovelChapterRepository()
         val book = novelOf("long-en.txt", NovelFormat.TXT)
         val c = repo.load(book, 0, emptyMap(), NovelDisplayMode.TRANSLATED, DEVICE_STYLE, DEVICE_W, DEVICE_H)
         assertTrue("页数太少，测不出翻页：${c.pages.size}", c.pages.size > 3)
 
-        fun headOf(pageIndex: Int): String {
+        fun startAt(pageIndex: Int): Pair<Int, Int> {
             val seg = c.pages[pageIndex].segments.first()
-            return c.displayOf(seg.paraIndex).substring(seg.charStart, seg.charEnd).take(24)
+            return seg.paraIndex to seg.charStart
         }
+
+        // Pair 不是 Comparable（Kotlin 只给它 equals/hashCode），按阅读序手写一次比较
+        fun after(a: Pair<Int, Int>, b: Pair<Int, Int>): Boolean =
+            a.first > b.first || (a.first == b.first && a.second > b.second)
+
         for (i in 0 until c.pages.size - 1) {
-            assertNotEquals(
-                "第 ${i + 1} 页与第 ${i + 2} 页的首段文字一样 —— 翻页时画面不会变",
-                headOf(i), headOf(i + 1),
+            val cur = startAt(i)
+            val next = startAt(i + 1)
+            assertTrue(
+                "第 ${i + 1} 页起点 $cur 没有落在第 ${i + 2} 页起点 $next 之前 —— 页重叠/重复/乱序",
+                after(next, cur),
             )
         }
     }

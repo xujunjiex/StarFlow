@@ -210,6 +210,10 @@ class NovelChapterTranslator(
      */
     suspend fun resetStale(book: ImportedNovel) {
         dao.resetTranslating(book.id, book.translationKey)
+        // ⚠️ 同一个入口顺手清掉**非当前分段版本**的行：主键不含 splitVersion，留着它们会让
+        // 新版本的行 `insertIgnore` 静默写不进去（分母补不齐、「翻译中」标不上）。
+        // 放在进入阅读器时做，和 resetTranslating 同一个理由（进程被杀时"退出时清理"不会执行）。
+        dao.deleteOtherVersions(book.id, book.translationKey, splitVersion)
     }
 
     /**

@@ -220,6 +220,26 @@ class NovelParagraphTranslationDaoTest {
         assertNull("旧的失败原因不该继续挂着", r.failCode)
     }
 
+    /**
+     * 分段规则升级时要能清掉**非当前版本**的行。
+     *
+     * ⚠️ 不清的后果是静默的：主键不含 `splitVersion`，旧行占着 `(书, 章, 段号)` 那一格，
+     * 新版本的行 `insertIgnore` 写不进去（分母补不齐、「翻译中」标不上），而表只增不减。
+     * 调用点在 `NovelChapterTranslator.resetStale`（进入阅读器时）。
+     */
+    @Test
+    fun `deleteOtherVersions 只删非当前版本且不碰别的书`() = runBlocking {
+        dao.upsert(row(0, 0, splitVersion = 1))          // 旧版本残留
+        dao.upsert(row(0, 1, splitVersion = 2))          // 当前版本
+        dao.upsert(row(0, 0, key = "9999", splitVersion = 1))  // 别的书，不能动
+
+        dao.deleteOtherVersions(NOVEL_ID, KEY, splitVersion = 2)
+
+        assertEquals("旧版本的行必须被清掉", 0, dao.forChapter(NOVEL_ID, KEY, 0, splitVersion = 1).size)
+        assertEquals("当前版本的行必须留着", 1, dao.forChapter(NOVEL_ID, KEY, 0, splitVersion = 2).size)
+        assertEquals("别的书不能被牵连", 1, dao.forChapter(NOVEL_ID, "9999", 0, splitVersion = 1).size)
+    }
+
     // ===== 聚合 =====
 
     @Test

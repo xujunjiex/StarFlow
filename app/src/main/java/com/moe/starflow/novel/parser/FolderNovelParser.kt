@@ -3,6 +3,7 @@ package com.moe.starflow.novel.parser
 import com.moe.starflow.mangaimport.data.ArchivedMangaReader
 import com.moe.starflow.novel.model.NovelBook
 import com.moe.starflow.novel.model.NovelChapterMeta
+import com.moe.starflow.novel.translate.NovelParagraphSplitter
 import com.moe.starflow.utils.LogCollector
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -100,6 +101,7 @@ object FolderNovelParser : NovelParser {
         }
         val target = File(file, locator)
         if (!target.isFile) return@withContext ""
-        TextEncoding.decode(NovelReadLimits.readFile(target))
+        // 夹内的散章都是 txt（见 NovelImporter.DIR_IMPORT_EXTS）→ 与 TxtParser 同一套「一行一段」
+        NovelParagraphSplitter.linesToParagraphs(TextEncoding.decode(NovelReadLimits.readFile(target)))
     }
 }

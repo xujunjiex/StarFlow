@@ -251,6 +251,20 @@ interface NovelParagraphTranslationDao {
     suspend fun deleteForNovelScoped(novelId: Long, novelKey: String)
 
     /**
+     * 删掉**非当前分段版本**的行（分段规则升级时用）。
+     *
+     * ⚠️ 必须有人调它：主键不含 `splitVersion`，旧版本的行会占着同一批主键，新版本的行
+     * `insertIgnore` 静默写不进去（"补齐分母"与"标记翻译中"全废），而且表只增不减。
+     * 调用点是 `NovelChapterTranslator.resetStale`（阅读器进入时跑）。
+     * ⚠️ 代价是旧译文被丢掉 —— 但段号映射已经整体变了，留着它只会把译文显示在**错误的段**上。
+     */
+    @Query(
+        "DELETE FROM novel_paragraph_translation " +
+            "WHERE novelId = :novelId AND novelKey = :novelKey AND splitVersion != :splitVersion"
+    )
+    suspend fun deleteOtherVersions(novelId: Long, novelKey: String, splitVersion: Int)
+
+    /**
      * 按 id 删掉该书**全部**译文行（**不分指纹**）。
      *
      * ⚠️ 只给**孤儿清理**用（`allNovelIds()` 求差后得到的那几个 id）：那时手上只有 id，
