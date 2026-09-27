@@ -1433,7 +1433,6 @@
     <string name="novel_download_original">Original (txt)</string>
     <string name="novel_download_bilingual">Bilingual (original + translation)</string>
     <string name="novel_download_writing">Exporting…</string>
-    <string name="novel_download_done">Exported to: %1$s</string>
     <string name="novel_download_failed">Export failed: %1$s</string>
     <string name="novel_translate_filter_done">Done</string>
     <string name="novel_translate_filter_running">In progress</string>

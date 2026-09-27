@@ -150,7 +150,6 @@ class NovelPanelSheet(
     private var curReaderMode = NovelPanelStyle.READER_PAGED
 
     private var curFontSp = NovelPanelStyle.FONT_SIZE_DEFAULT
-    private var curLineStep = NovelPanelStyle.LINE_SPACING_DEFAULT
 
     /** 正在由 [refreshDerivedUi] 程序化改控件（避免回调回环）。 */
     private var syncing = false
@@ -345,16 +344,15 @@ class NovelPanelSheet(
         sbFont.setOnSeekBarChangeListener(sliderLabel({ tvFontValue.text = "$it sp" }) {
             curFontSp = it.toFloat()
             cb.onFontSize(curFontSp)
-            // 字号变了 → 段距的区间跟着变
+            // 走派生 UI 的统一出口（段距区间现在是**固定**的，这里不会再动任何滑块）
             refreshDerivedUi(view)
         })
 
         sbLine.setOnSeekBarChangeListener(sliderLabel(
             onLabel = { tvLine.text = NovelPanelStyle.lineSpacingLabel(it) },
             onSettle = { v ->
-                curLineStep = v
                 cb.onLineSpacing(v)
-                // 行距一变，段距的区间跟着变 → 统一在 refreshDerivedUi 里重算
+                // 同上：统一出口，段距不再随行距重算区间
                 refreshDerivedUi(view)
             },
         ))
@@ -560,9 +558,8 @@ class NovelPanelSheet(
         sbBottom.progress = bottomDp
         view.findViewById<TextView>(R.id.tv_bottom_padding_value).text = "$bottomDp dp"
 
-        // 工作状态同步：段距的合法区间是按「当前字号 + 当前行距」算的
+        // 工作状态同步（段距的区间是固定的，不再需要记住行距）
         curFontSp = fontSp
-        curLineStep = lineStep
         refreshDerivedUi(view)
     }
 
@@ -574,7 +571,7 @@ class NovelPanelSheet(
             view,
             fontSp = font,
             lineStep = NovelPanelStyle.lineSpacingStep(p),
-            paraDp = NovelPanelStyle.paragraphSpacingDp(p, font),
+            paraDp = NovelPanelStyle.paragraphSpacingDp(p),
             padDp = NovelPanelStyle.paddingDp(p),
             topDp = NovelPanelStyle.topPaddingDp(p),
             bottomDp = NovelPanelStyle.bottomPaddingDp(p),
@@ -584,7 +581,7 @@ class NovelPanelSheet(
     /**
      * **重算全部派生 UI**（唯一出口，理由见 [curReaderMode] 上面的说明）。
      *
-     * 只读 [curReaderMode] / [curFontSp] / [curLineStep] 这几个工作状态，
+     * 只读 [curReaderMode] 这一个工作状态（段距区间已改成固定值，不再依赖字号/行距），
      * 所以任何控件改完调它一次就能收敛 —— 不需要（也不允许）在别处再补一句。
      */
     private fun refreshDerivedUi(view: View) {
@@ -596,14 +593,13 @@ class NovelPanelSheet(
                 curReaderMode != NovelPanelStyle.READER_SCROLL,
             )
 
-            // ② 段距的区间跟着**字号 + 行距**走：段距必须始终大于行距
+            // ② 段距的区间是**固定**的，不跟字号/行距走。
+            // ⚠️ 以前这里按 curFontSp/curLineStep 动态算 min/max —— SeekBar 在 setMin/压低 max 时
+            // 会把 progress **夹到新区间**，于是用户一调字号或行距，段距的滑块自己就跳走了
+            // （用户报的「调字号或行距时段间距的进度条也会一起变化」）。固定区间后滑块只受用户拖动影响。
             val sbPara = view.findViewById<SeekBar>(R.id.sb_para_spacing)
-            val min = NovelPanelStyle.minParagraphSpacingDp(curFontSp, curLineStep)
-            val max = NovelPanelStyle.maxParagraphSpacingDp(curFontSp, curLineStep)
-            sbPara.min = min
-            // 上限也要跟着抬：字号/行距很大时 min 会顶到 48 以上，SeekBar 的 max 必须 >= min
-            sbPara.max = max.coerceAtLeast(min + 1)
-            if (sbPara.progress < min) sbPara.progress = min
+            sbPara.min = NovelPanelStyle.PARA_SPACING_ABS_MIN
+            sbPara.max = NovelPanelStyle.PARA_SPACING_MAX
             view.findViewById<TextView>(R.id.tv_para_spacing_value).text = "${sbPara.progress} dp"
 
             // ③ 增量行：批数 × 每批段数 = 向后翻多少**段**（改任一个滑块都要跟着变）

@@ -14,8 +14,14 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import java.io.File
+import java.io.StringWriter
 
-/** 导出的文本规则（与阅读器共用 `NovelPageBilingual`，这里钉住的是"确实复用了它"）+ 整本落盘。 */
+/** 导出的文本规则（与阅读器共用 `NovelPageBilingual`）+ 整本拼接的字节。
+ *
+ * ⚠️ **落点那一层（MediaStore → 手机 Download）单测验不了**：Robolectric 下没有
+ * MediaProvider，`insert` 直接返回 null。所以断言落在 [NovelExport.writeBook]
+ * （拼进任意 Writer）—— 拼出来的字节就是导出的全部内容，这一层必须能验；
+ * 落点只能在真机上确认（导出后去文件管理器的 Download 里看）。 */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class NovelExportTest {
@@ -65,7 +71,7 @@ class NovelExportTest {
         assertEquals("书名", NovelExport.sanitize("书名"))
     }
 
-    // ===== 整本导出（落盘）=====
+    // ===== 整本导出（拼字节）=====
 
     private fun txtFile(text: String): File {
         val dir = File(ctx.cacheDir, "novel_export_${System.nanoTime()}").apply { mkdirs() }
@@ -91,13 +97,11 @@ class NovelExportTest {
         val repo = NovelChapterRepository()
         val ch0 = mapOf(0 to "T1", 1 to "T2")
 
-        val out = NovelExport.exportBook(ctx, book, repo, NovelExport.Kind.TRANSLATED) { i ->
+        val w = StringWriter()
+        NovelExport.writeBook(w, book, repo, NovelExport.Kind.TRANSLATED) { i ->
             if (i == 0) ch0 else emptyMap()
         }
-        val content = out.readText()
-
-        val root = (ctx.getExternalFilesDir(null) ?: ctx.filesDir).absolutePath
-        assertTrue("导出必须落在应用专属目录里（不需要任何存储权限）", out.absolutePath.startsWith(root))
+        val content = w.toString()
 
         val titles = repo.chaptersOf(book).map { it.title }
         assertEquals("前提：样本必须真有两章", 2, titles.size)
@@ -121,21 +125,19 @@ class NovelExportTest {
     }
 
     /**
-     * ⚠️ 文件名必须能区分不同的书：以前只有「书名-模式.txt」，两本**同名**的书（很常见）
-     * 会互相覆盖，用户看到的就是「导出来的不是这本书」。
+     * 文件名 = `书名-模式.txt`（与漫画的「书名 + 后缀」同一套规则）。
+     *
+     * ⚠️ 重名**不在这里去重**：两本同名的书会得到同一个文件名，MediaStore 自己会写成
+     * `名字 (1).txt`（写完把**实际**文件名回读出来提示用户，见 `writeToDownloads`）。
+     * 早先这里靠给文件名塞 `<id>_<时间戳>` 防覆盖 —— 那让 Download 里全是一串时间戳，
+     * 与漫画那边也不一致；交给系统去重才是对的做法。
      */
     @Test
-    fun `同名不同书导出的文件名不会互相覆盖`() = runBlocking {
-        val repo = NovelChapterRepository()
-        val a = NovelExport.exportBook(
-            ctx, bookOf(9, "同名书", txtFile("第一章 A\n\n这是正文")), repo, NovelExport.Kind.ORIGINAL,
-        ) { emptyMap() }
-        val b = NovelExport.exportBook(
-            ctx, bookOf(10, "同名书", txtFile("第一章 A\n\n这是正文")), repo, NovelExport.Kind.ORIGINAL,
-        ) { emptyMap() }
-
-        assertTrue("两本书的导出文件不能同名：${a.name} / ${b.name}", a.name != b.name)
-        assertTrue("文件名要能认出是哪本书", a.name.contains("9") && b.name.contains("10"))
-        assertTrue("仍然是 txt", a.name.endsWith(".txt"))
+    fun `导出文件名 = 书名-模式txt`() {
+        // 文件名与正文无关，夹具给最小内容即可
+        val book = bookOf(9, "a/b:c", txtFile("第一章 A"))
+        assertEquals("a_b_c-译文.txt", NovelExport.displayName(book, NovelExport.Kind.TRANSLATED))
+        assertEquals("a_b_c-原文.txt", NovelExport.displayName(book, NovelExport.Kind.ORIGINAL))
+        assertEquals("a_b_c-双语.txt", NovelExport.displayName(book, NovelExport.Kind.BILINGUAL))
     }
 }

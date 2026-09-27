@@ -1932,7 +1932,7 @@ class NovelReaderActivity : AppCompatActivity() {
                 bg = bgMode,
                         fontSizeSp = fontSp,
                 lineSpacingStep = NovelPanelStyle.lineSpacingStep(prefs),
-                paragraphSpacingDp = NovelPanelStyle.paragraphSpacingDp(prefs, fontSp),
+                paragraphSpacingDp = NovelPanelStyle.paragraphSpacingDp(prefs),
                 paddingDp = NovelPanelStyle.paddingDp(prefs),
                 topPaddingDp = NovelPanelStyle.topPaddingDp(prefs),
                 bottomPaddingDp = NovelPanelStyle.bottomPaddingDp(prefs),
@@ -1971,11 +1971,11 @@ class NovelReaderActivity : AppCompatActivity() {
                     loadChapter(chapterIndex, anchor = pendingAnchor)
                 },
                 onLineSpacing = { v ->
-                    NovelPanelStyle.setLineSpacingStep(prefs, v, NovelPanelStyle.fontSizeSp(prefs))
+                    NovelPanelStyle.setLineSpacingStep(prefs, v)
                     loadChapter(chapterIndex, anchor = pendingAnchor)
                 },
                 onParagraphSpacing = { v ->
-                    NovelPanelStyle.setParagraphSpacingDp(prefs, v, NovelPanelStyle.fontSizeSp(prefs))
+                    NovelPanelStyle.setParagraphSpacingDp(prefs, v)
                     loadChapter(chapterIndex, anchor = pendingAnchor)
                 },
                 onPadding = { v -> NovelPanelStyle.setPaddingDp(prefs, v); loadChapter(chapterIndex, anchor = pendingAnchor) },
@@ -2078,9 +2078,11 @@ class NovelReaderActivity : AppCompatActivity() {
         val t = runCatching { translator() }.getOrNull() ?: return
         showOverlay(getString(R.string.novel_download_writing), autoDismiss = false)
         lifecycleScope.launch {
+            // 导出落点 = 手机的 Download（MediaStore），与漫画同一条路同一个提示语
             val r = runCatching { NovelExport.exportBook(this@NovelReaderActivity, b, repository, t, kind) }
+                .getOrElse { Result.failure(it) }
             showOverlay(null)
-            r.onSuccess { showOverlayToast(getString(R.string.novel_download_done, it.absolutePath), error = false) }
+            r.onSuccess { showOverlayToast(getString(R.string.toast_saved_to_download, it), error = false) }
                 .onFailure { showOverlayToast(getString(R.string.novel_download_failed, it.message.orEmpty()), error = true) }
         }
     }

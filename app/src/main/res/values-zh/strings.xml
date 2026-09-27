@@ -1438,7 +1438,6 @@
     <string name="novel_download_original">原文（txt）</string>
     <string name="novel_download_bilingual">双语（原文 + 译文）</string>
     <string name="novel_download_writing">正在导出…</string>
-    <string name="novel_download_done">已导出到：%1$s</string>
     <string name="novel_download_failed">导出失败：%1$s</string>
     <string name="novel_translate_filter_done">完成</string>
     <string name="novel_translate_filter_running">进行中</string>

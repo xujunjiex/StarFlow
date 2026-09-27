@@ -99,15 +99,6 @@ object NovelPanelStyle {
 
     // ===== 排版间距 =====
 
-    /**
-     * 字号 → 行高的经验系数。
-     *
-     * `StaticLayout` 的行高来自字体的 `top..bottom`，对常见中文字体约为字号的 1.15 倍。
-     * 这里用它把「行距倍率」换算成**真实的行间空隙**（`字号 × 系数 × (倍率 - 1)`），
-     * 后面「段距必须大于行距」的约束全靠这个换算。
-     */
-    private const val FONT_LINE_FACTOR = 1.15f
-
     /** 行距倍率 ×10。范围 1.0× ~ 2.2×：再小中文会挤，再大就散架了。 */
     const val LINE_SPACING_MIN = 10
     const val LINE_SPACING_MAX = 22
@@ -118,14 +109,16 @@ object NovelPanelStyle {
     /** 缩小默认之前的那一档 —— 迁移时用它认出"用户其实没动过行距"。 */
     private const val LINE_SPACING_DEFAULT_LEGACY = 15
 
-    /** 段间距 dp（默认 25，用户明确要求）。**下限是动态算出来的**（见 [minParagraphSpacingDp]）。 */
+    /**
+     * 段间距 dp（默认 25，用户明确要求）。
+     *
+     * ⚠️ **区间是固定的：[PARA_SPACING_ABS_MIN]..[PARA_SPACING_MAX]，与字号/行距无关。**
+     * 从前上限还会跟着「段距必须大于行距」的动态下限一起抬，那套已经删掉了（见 [paragraphSpacingDp]）。
+     */
     const val PARA_SPACING_MAX = 48
     const val PARA_SPACING_DEFAULT = 25
 
-    /** 段落间距与行间距的最小倍数关系：段距给的空隙至少是行间空隙的 1.2 倍。 */
-    private const val PARA_OVER_LINE_RATIO = 1.2f
-
-    /** 段距的绝对下限：即使行距为 1.0×（行间空隙为 0），段距也得看得出是分段。与面板 `sb_para_spacing` 的 min 一致。 */
+    /** 段距的绝对下限。与面板 `sb_para_spacing` 的 min 一致。 */
     const val PARA_SPACING_ABS_MIN = 6
 
     const val SIDE_PADDING_MIN = 16
@@ -171,63 +164,35 @@ object NovelPanelStyle {
 
     fun lineSpacingLabel(step: Int): String = String.format(java.util.Locale.US, "%.1f×", step / 10f)
 
-    /** 行距换算出的**真实行间空隙**（sp）。 */
-    fun lineGapSp(fontSizeSp: Float, lineStep: Int): Float =
-        fontSizeSp * FONT_LINE_FACTOR * (lineStep / 10f - 1f)
-
     /**
-     * 段落间距的下限（dp）。
+     * 段落间距 dp。
      *
-     * ⚠️ **段距必须始终大于行距**，否则段落之间看起来和行之间一样，整页糊成一块、分不出段。
-     * 判据不是「数字上比行距大」而是「视觉空隙更大」：行距倍率给出的空隙是
-     * `字号 × 1.15 × (倍率-1)`，段距必须比它再大一截（[PARA_OVER_LINE_RATIO]）。
-     * 行距调到 1.0× 时行间空隙为 0，此时用绝对下限 [PARA_SPACING_ABS_MIN] 兜底。
-     */
-    fun minParagraphSpacingDp(fontSizeSp: Float, lineStep: Int): Int {
-        val gapDp = lineGapSp(fontSizeSp, lineStep) * PARA_OVER_LINE_RATIO
-        return maxOf(kotlin.math.ceil(gapDp).toInt(), PARA_SPACING_ABS_MIN)
-    }
-
-    /**
-     * 段距的**上限**。通常是 [PARA_SPACING_MAX]，但当字号/行距很大时，下限会顶到甚至超过 48dp
-     * （34sp × 2.2× 时下限 ≈ 57dp）—— 那时必须把上限抬上去。
+     * ⚠️ **只夹在固定的 [PARA_SPACING_ABS_MIN]..[PARA_SPACING_MAX] 之间，与字号、行距无关。**
      *
-     * ⚠️ 不抬的话 `coerceIn(min, 48)` 会变成 `min > max` 的空区间，**Kotlin 直接抛
-     * IllegalArgumentException**（"Cannot coerce value to an empty range"）。这是能把阅读器
-     * 打崩的那种 bug，不是显示问题。
+     * 这里以前还跟着一条「段距必须始终大于行距（按视觉空隙算）」的**动态下限**，于是：
+     * 用户调一下字号或行距，**段距的滑块自己就跳走了** —— 面板把 SeekBar 的 min/max 按
+     * 当前字号/行距动态算，而 SeekBar 会把 progress 夹到新 min，用户完全不知道为什么
+     * 自己设的段距变了（用户报的「调字号或行距时段间距的进度条也会一起变化」）。
+     *
+     * 取舍：行距拉得很大时，段距若设得小，段与段的空档可能看着和行间一样密。那是用户
+     * 自己看得见、拖一下就能改的事，**不该由系统偷偷改他设的值**。
      */
-    fun maxParagraphSpacingDp(fontSizeSp: Float, lineStep: Int): Int =
-        maxOf(PARA_SPACING_MAX, minParagraphSpacingDp(fontSizeSp, lineStep) + 4)
+    fun paragraphSpacingDp(prefs: SharedPreferences): Int =
+        prefs.getInt(KEY_PARA_SPACING, PARA_SPACING_DEFAULT)
+            .coerceIn(PARA_SPACING_ABS_MIN, PARA_SPACING_MAX)
 
-    /** 读段距时也按当前字号/行距夹一次：改了行距之后，旧段距可能已经不满足「大于行距」。 */
-    fun paragraphSpacingDp(prefs: SharedPreferences, fontSizeSp: Float): Int {
-        val step = lineSpacingStep(prefs)
-        return prefs.getInt(KEY_PARA_SPACING, PARA_SPACING_DEFAULT)
-            .coerceIn(minParagraphSpacingDp(fontSizeSp, step), maxParagraphSpacingDp(fontSizeSp, step))
-    }
-
-    fun setParagraphSpacingDp(prefs: SharedPreferences, v: Int, fontSizeSp: Float) {
-        val step = lineSpacingStep(prefs)
+    fun setParagraphSpacingDp(prefs: SharedPreferences, v: Int) {
         prefs.edit()
-            .putInt(
-                KEY_PARA_SPACING,
-                v.coerceIn(minParagraphSpacingDp(fontSizeSp, step), maxParagraphSpacingDp(fontSizeSp, step)),
-            )
+            .putInt(KEY_PARA_SPACING, v.coerceIn(PARA_SPACING_ABS_MIN, PARA_SPACING_MAX))
             .apply()
     }
 
-    /** 改行距：顺手把段距抬到新下限，避免出现「段距小于行距」的非法组合。 */
-    fun setLineSpacingStep(prefs: SharedPreferences, v: Int, fontSizeSp: Float) {
-        val step = v.coerceIn(LINE_SPACING_MIN, LINE_SPACING_MAX)
-        prefs.edit().putInt(KEY_LINE_SPACING, step).apply()
-        val min = minParagraphSpacingDp(fontSizeSp, step)
-        if (paragraphSpacingDpRaw(prefs) < min) {
-            prefs.edit().putInt(KEY_PARA_SPACING, min).apply()
-        }
+    /** 改行距。**不再顺手改段距**（段距只认用户自己设的值，见 [paragraphSpacingDp]）。 */
+    fun setLineSpacingStep(prefs: SharedPreferences, v: Int) {
+        prefs.edit()
+            .putInt(KEY_LINE_SPACING, v.coerceIn(LINE_SPACING_MIN, LINE_SPACING_MAX))
+            .apply()
     }
-
-    private fun paragraphSpacingDpRaw(prefs: SharedPreferences): Int =
-        prefs.getInt(KEY_PARA_SPACING, PARA_SPACING_DEFAULT)
 
     fun paddingDp(prefs: SharedPreferences): Int =
         prefs.getInt(KEY_PADDING, SIDE_PADDING_DEFAULT).coerceIn(SIDE_PADDING_MIN, SIDE_PADDING_MAX)
@@ -348,7 +313,7 @@ object NovelPanelStyle {
         return NovelTextStyle(
             fontSizePx = fontSp * density,
             lineSpacingMultiplier = lineSpacingStep(prefs) / 10f,
-            paragraphSpacingPx = paragraphSpacingDp(prefs, fontSp) * densityDpi * paraFactor,
+            paragraphSpacingPx = paragraphSpacingDp(prefs) * densityDpi * paraFactor,
             paddingPx = paddingDp(prefs) * densityDpi,
             topPaddingPx = topPaddingDp(prefs) * densityDpi,
             bottomPaddingPx = bottomPaddingDp(prefs) * densityDpi,

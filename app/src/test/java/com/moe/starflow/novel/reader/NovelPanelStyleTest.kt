@@ -104,62 +104,66 @@ class NovelPanelStyleTest {
         assertEquals(NovelPanelStyle.ANIM_SIMULATION, NovelPanelStyle.animation(prefs))
     }
 
-    // ===== 排版约束 =====
+    // ===== 排版约束（用户报的「改字号/行距，段距的滑块跟着变」）=====
 
     /**
-     * **段距必须始终大于行距**（用户明确要求）。
+     * **改行距不许动段距**（回归守卫）。
      *
-     * 判据是「视觉空隙」而不是数字：行距倍率给出的空隙 = 字号 × 1.15 × (倍率-1)，
-     * 段距的下限必须超过它 —— 否则段落之间和行之间看起来一样，整页糊成一块。
+     * 从前段距跟着一条「段距必须大于行距」的动态下限走，而面板把 SeekBar 的 min/max 按
+     * 字号/行距动态算 —— SeekBar 会把 progress 夹到新 min，于是用户一调行距，段距的滑块
+     * 自己就跳走了。现在段距与字号/行距**完全无关**，滑块只受用户拖动影响。
      */
     @Test
-    fun `段距下限恒大于行距给出的行间空隙`() {
-        for (font in listOf(12f, 16f, 20f, 26f, 34f)) {
+    fun `改行距不动段距`() {
+        prefs.edit().clear().commit()
+        NovelPanelStyle.setFontSizeSp(prefs, 20f)
+        NovelPanelStyle.setParagraphSpacingDp(prefs, 10)
+        NovelPanelStyle.setLineSpacingStep(prefs, NovelPanelStyle.LINE_SPACING_MIN)
+
+        NovelPanelStyle.setLineSpacingStep(prefs, NovelPanelStyle.LINE_SPACING_MAX)
+
+        assertEquals("行距改了，段距必须原样不动", 10, NovelPanelStyle.paragraphSpacingDp(prefs))
+    }
+
+    /** 改字号同理：段距的值与滑块都不该动。 */
+    @Test
+    fun `改字号不动段距`() {
+        prefs.edit().clear().commit()
+        NovelPanelStyle.setParagraphSpacingDp(prefs, 30)
+        NovelPanelStyle.setFontSizeSp(prefs, NovelPanelStyle.FONT_SIZE_MIN)
+
+        NovelPanelStyle.setFontSizeSp(prefs, NovelPanelStyle.FONT_SIZE_MAX)
+
+        assertEquals(30, NovelPanelStyle.paragraphSpacingDp(prefs))
+    }
+
+    /**
+     * 段距只在**固定区间** `PARA_SPACING_ABS_MIN..PARA_SPACING_MAX` 之间夹 ——
+     * 与字号、行距都无关（这也是「区间永不为空」，不会再出现 coerceIn 空区间抛异常的原因）。
+     */
+    @Test
+    fun `段距被夹在固定区间且与字号行距无关`() {
+        for (font in listOf(NovelPanelStyle.FONT_SIZE_MIN, 20f, NovelPanelStyle.FONT_SIZE_MAX)) {
             for (step in NovelPanelStyle.LINE_SPACING_MIN..NovelPanelStyle.LINE_SPACING_MAX) {
-                val gap = NovelPanelStyle.lineGapSp(font, step)
-                val min = NovelPanelStyle.minParagraphSpacingDp(font, step)
-                assertTrue(
-                    "字号 ${font}sp 行距 ${step / 10f}×：段距下限 $min dp 必须大于行间空隙 $gap",
-                    min > gap,
+                prefs.edit().clear().commit()
+                NovelPanelStyle.setFontSizeSp(prefs, font)
+                NovelPanelStyle.setLineSpacingStep(prefs, step)
+
+                NovelPanelStyle.setParagraphSpacingDp(prefs, 9999)
+                assertEquals(
+                    "字号 ${font}sp 行距 ${step / 10f}×：上限固定是 ${NovelPanelStyle.PARA_SPACING_MAX}",
+                    NovelPanelStyle.PARA_SPACING_MAX, NovelPanelStyle.paragraphSpacingDp(prefs),
+                )
+
+                NovelPanelStyle.setParagraphSpacingDp(prefs, -5)
+                assertEquals(
+                    "下限固定是 ${NovelPanelStyle.PARA_SPACING_ABS_MIN}",
+                    NovelPanelStyle.PARA_SPACING_ABS_MIN, NovelPanelStyle.paragraphSpacingDp(prefs),
                 )
             }
         }
     }
 
-    /** 改行距后，原来合法的段距可能已经小于新下限 —— 必须被抬上去。 */
-    @Test
-    fun `改行距会把过小的段距抬到新下限`() {
-        prefs.edit()
-            .putFloat("novel_font_size", 20f)
-            .putInt("novel_line_spacing", NovelPanelStyle.LINE_SPACING_MIN)
-            .putInt("novel_paragraph_spacing", NovelPanelStyle.PARA_SPACING_ABS_MIN)
-            .commit()
-
-        NovelPanelStyle.setLineSpacingStep(prefs, NovelPanelStyle.LINE_SPACING_MAX, 20f)
-
-        val min = NovelPanelStyle.minParagraphSpacingDp(20f, NovelPanelStyle.LINE_SPACING_MAX)
-        assertTrue(
-            "段距必须被抬到新下限（实际 ${NovelPanelStyle.paragraphSpacingDp(prefs, 20f)}，下限 $min）",
-            NovelPanelStyle.paragraphSpacingDp(prefs, 20f) >= min,
-        )
-    }
-
-    /**
-     * 极限组合（最大字号 + 最大行距）下段距的下限会超过 48dp。
-     *
-     * ⚠️ 这条守的是**崩溃**不是显示：上限不跟着抬，`coerceIn(min, 48)` 就是空区间，
-     * Kotlin 会抛 `IllegalArgumentException: Cannot coerce value to an empty range`。
-     */
-    @Test
-    fun `极限字号与行距下读写段距不抛异常`() {
-        val font = NovelPanelStyle.FONT_SIZE_MAX
-        val step = NovelPanelStyle.LINE_SPACING_MAX
-        NovelPanelStyle.setLineSpacingStep(prefs, step, font)
-        NovelPanelStyle.setParagraphSpacingDp(prefs, 9999, font)
-        val v = NovelPanelStyle.paragraphSpacingDp(prefs, font)
-        assertTrue("段距必须仍满足下限", v >= NovelPanelStyle.minParagraphSpacingDp(font, step))
-        assertTrue("上限必须被抬到下限之上", NovelPanelStyle.maxParagraphSpacingDp(font, step) > NovelPanelStyle.minParagraphSpacingDp(font, step))
-    }
 
     /**
      * 上下间距的**默认值必须相等**（用户明确要求），且要够避开上下浮层。
@@ -181,7 +185,7 @@ class NovelPanelStyleTest {
     @Test
     fun `恢复默认会把字号与全部间距一起复位`() {
         NovelPanelStyle.setFontSizeSp(prefs, NovelPanelStyle.FONT_SIZE_MAX)
-        NovelPanelStyle.setLineSpacingStep(prefs, NovelPanelStyle.LINE_SPACING_MAX, NovelPanelStyle.FONT_SIZE_MAX)
+        NovelPanelStyle.setLineSpacingStep(prefs, NovelPanelStyle.LINE_SPACING_MAX)
         NovelPanelStyle.setPaddingDp(prefs, NovelPanelStyle.SIDE_PADDING_MAX)
         NovelPanelStyle.setTopPaddingDp(prefs, NovelPanelStyle.VERTICAL_PADDING_MAX)
         NovelPanelStyle.setBottomPaddingDp(prefs, NovelPanelStyle.VERTICAL_PADDING_MIN)
