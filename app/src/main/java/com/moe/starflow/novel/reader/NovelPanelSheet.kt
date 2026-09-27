@@ -27,10 +27,10 @@ import com.moe.starflow.novel.translate.NovelTranslateMode
 import com.moe.starflow.translate.CustomLocale
 import com.moe.starflow.translate.LanguageSelectionDialog
 import com.moe.starflow.translate.TranslateTools
-import com.moe.starflow.utils.Constants
+import com.moe.starflow.llamacpp.LlamaCppLanguages
+import com.moe.starflow.llamacpp.LlamaCppModelStore
 import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.OcrEngineManager
-import translationapi.hymt2translation.HyMt2Languages
 
 /**
  * 小说阅读器底部工具栏的初始状态。
@@ -1004,13 +1004,15 @@ class NovelPanelSheet(
         val ocrGroup = if (type == 1) OcrEngineManager.getOcrEngineGroup(appPrefs) else null
         val locales = languagesList(type, ocrGroup)
         if (locales.isEmpty()) return
-        val isHyMt2 = appPrefs.getInt("Text_API", Constants.TextApi.BING.id) == Constants.TextApi.AI.id &&
-            appPrefs.getInt("Text_AI", Constants.TextAI.NLLB.id) == Constants.TextAI.HYMT2.id
+        // ⚠️ 用 [LlamaCppModelStore.isHyMt2ActiveFromPrefs] 而不是自己比 prefs：它还要求
+        // 「当前是**内置**预制模型」。少了那一半，用户**导入的任意 GGUF** 也会被套上官方
+        // 38 种目标语言白名单 —— 明明能用却被置灰。（与 `ReaderMenuSheet` 同一口径。）
+        val isHyMt2 = LlamaCppModelStore.isHyMt2ActiveFromPrefs(customPrefs)
         val disabledTargets = if (type == 2) TranslateTools.getDisabledTargetLangs(customPrefs) else emptySet()
         val enabled = when (type) {
             1 -> locales.map { ReaderTranslationInfo.isSourceSupported(it.getOriCode(), ocrGroup!!.sourceLangs) }
             2 -> locales.map {
-                ReaderTranslationInfo.isTargetSupported(it.getOriCode(), isHyMt2, HyMt2Languages.supportedCodes, disabledTargets)
+                ReaderTranslationInfo.isTargetSupported(it.getOriCode(), isHyMt2, LlamaCppLanguages.hyMt2SupportedCodes, disabledTargets)
             }
             else -> null
         }
