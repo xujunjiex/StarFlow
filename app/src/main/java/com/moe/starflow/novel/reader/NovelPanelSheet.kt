@@ -858,6 +858,7 @@ class NovelPanelSheet(
         try {
             chapterAdapter.stats = s.chapterStats
             chapterAdapter.totals = s.chapterTotals
+            chapterAdapter.chars = s.chapterChars
             chapterAdapter.failures = s.chapterFailures
             chapterAdapter.currentChapter = s.chapterIndex
 

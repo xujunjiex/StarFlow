@@ -1309,6 +1309,9 @@ class NovelReaderActivity : AppCompatActivity() {
 
     /** 每章总段数（章行分母）缓存 + 在途去重：同一个章只解析一次。 */
     private val chapterTotals = mutableMapOf<Int, Int>()
+
+    /** 每章可翻译正文字数（面板章行显示，用户拿它估翻译费用）。与 [chapterTotals] 一起懒解析。 */
+    private val chapterChars = mutableMapOf<Int, Int>()
     private val pendingTotalFetches = mutableSetOf<Int>()
 
     /**
@@ -1328,9 +1331,12 @@ class NovelReaderActivity : AppCompatActivity() {
         if (chapterTotals.containsKey(index) || !pendingTotalFetches.add(index)) return
         lifecycleScope.launch {
             val n = runCatching { repository.paragraphCountOf(b, index) }.getOrDefault(0)
+            // 字数与分母是同一份解析（段落缓存命中），顺手一起取 —— 章行要显示「本章多少字」
+            val chars = runCatching { repository.charCountOf(b, index) }.getOrDefault(0)
             pendingTotalFetches.remove(index)
-            if (n <= 0) return@launch
+            if (n <= 0 && chars <= 0) return@launch
             chapterTotals[index] = n
+            chapterChars[index] = chars
             // 目录与面板共用同一份分母：目录开着时也要跟着刷新，否则两处判据会分叉
             tocHandle?.update(chapterStats, chapterTotals.toMap())
             pushPanelState()
@@ -1346,6 +1352,7 @@ class NovelReaderActivity : AppCompatActivity() {
         chapterIndex = chapterIndex,
         chapterStats = chapterStats,
         chapterTotals = chapterTotals.toMap(),
+        chapterChars = chapterChars.toMap(),
         chapterFailures = chapterFailures,
         translateMode = NovelPanelStyle.translateMode(prefs),
         readerMode = NovelPanelStyle.readerMode(prefs),

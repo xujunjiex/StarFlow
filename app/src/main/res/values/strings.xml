@@ -1482,6 +1482,8 @@
     <string name="novel_queue_translating_para">Translating · paragraph %1$d</string>
     <string name="novel_translate_ahead_value">%1$d batches = %2$d paragraphs</string>
     <string name="novel_translate_failed_chapter_hint">Chapter %1$d: %2$s</string>
+    <!-- 章行的「本章多少字」：%1$s 是已格式化的数字（带千位分隔），估翻译费用用 -->
+    <string name="novel_chapter_chars">%1$s chars</string>
     <string name="novel_chapter_progress">%1$d of %2$d paragraphs</string>
     <string name="novel_read_progress">Reading chapter %1$d of %2$d</string>
     <string name="novel_delete_confirm_multi">Delete %1$d novels? Their local files and translations will be removed.</string>

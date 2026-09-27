@@ -10,6 +10,7 @@ import com.moe.starflow.R
 import com.moe.starflow.data.NovelChapterStat
 import com.moe.starflow.data.NovelFailureRow
 import com.moe.starflow.novel.model.NovelChapterMeta
+import java.util.Locale
 
 /**
  * 章行 / 目录 / 顶部胶囊显示的章标题。
@@ -41,6 +42,16 @@ internal fun isChapterDone(
     val total = totals[index] ?: 0
     return total > 0 && st.success >= total
 }
+
+/**
+ * 章行的「本章多少字」标签。
+ *
+ * ⚠️ 给**精确值**（千位分隔）而不是「1.2 万字」：这一格是给用户**估翻译费用**用的，
+ * 费用按字符数算，四舍五入到"万"就估不准了。
+ * ⚠️ 数量只是**可翻译段**的字数（与分母同口径），不含图片占位与不足 4 字的短行。
+ */
+internal fun chapterCharLabel(context: Context, count: Int): String =
+    context.getString(R.string.novel_chapter_chars, String.format(Locale.US, "%,d", count))
 
 /**
  * 翻译面板「每章一行」。
@@ -77,6 +88,19 @@ class NovelChapterStateAdapter(
             // ⚠️ 必须 rebuild 而不是只 notifyItemRangeChanged：`done` 与「已完成」筛选都
             // 拿 totals 当分母，分母到齐后要重算可见列表
             rebuild()
+        }
+
+    /**
+     * 每章**可翻译正文字数**（章行显示，用户拿它估翻译费用）。与 [totals] 同一次懒解析。
+     *
+     * ⚠️ 只 `notifyItemRangeChanged` 不 `rebuild`：字数不参与 [passesFilter]，
+     * 值到齐时重建整表会把用户展开的失败详情收起来。
+     */
+    var chars: Map<Int, Int> = emptyMap()
+        set(value) {
+            if (field == value) return
+            field = value
+            notifyItemRangeChanged(0, itemCount)
         }
 
     /** 某章段数还不知道时问宿主一次（宿主解析完会推回来）。 */
@@ -214,11 +238,25 @@ class NovelChapterStateAdapter(
             }
         )
 
+        // 本章要翻多少字（用户拿它估翻译费用）。宿主还没算出来就 GONE，等回推再显示。
+        // ⚠️ 精确值而非「1.2万字」：费用按字符数算，四舍五入到"万"反而算不准。
+        item.findViewById<TextView>(R.id.tv_char_count).apply {
+            val chars = chars[index] ?: 0
+            if (chars > 0) {
+                text = chapterCharLabel(item.context, chars)
+                setTextColor(subColor)
+                visibility = View.VISIBLE
+            } else {
+                visibility = View.GONE
+            }
+        }
+
         // 这一行借的是「失败原因」那一格来显示段落进度 —— 章没有失败原因可言，
         // 空着反而让行高和漫画面板对不齐
         //
         // ⚠️ 分母只认宿主解析出来的**真实可翻译段数**（见 [isChapterDone]）。
-        if (total == 0) onNeedTotal?.invoke(index)
+        // 分母或字数还缺就问宿主一次（宿主按章去重，重复调用无害）
+        if (totals[index] == null || chars[index] == null) onNeedTotal?.invoke(index)
         val failed = failures[index].orEmpty()
         item.findViewById<TextView>(R.id.tv_fail_message).apply {
             // 有失败时**优先显示失败原因**（用户要的就是"为什么失败"），否则显示段落进度

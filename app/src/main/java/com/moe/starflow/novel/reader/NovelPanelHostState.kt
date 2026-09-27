@@ -23,6 +23,9 @@ data class NovelPanelHostState(
     val chapterIndex: Int = 0,
     val chapterStats: Map<Int, NovelChapterStat> = emptyMap(),
     val chapterTotals: Map<Int, Int> = emptyMap(),
+
+    /** 每章**可翻译正文字数**（章行显示，用户拿它估翻译费用）。与 [chapterTotals] 同一次懒解析。 */
+    val chapterChars: Map<Int, Int> = emptyMap(),
     val chapterFailures: Map<Int, List<NovelFailureRow>> = emptyMap(),
     /** 宿主**此刻**的模式（打开面板会回退手动，所以必须以宿主为准）。 */
     val translateMode: NovelTranslateMode = NovelTranslateMode.MANUAL,

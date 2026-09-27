@@ -104,6 +104,9 @@ class NovelChapterRepository {
     /** 段数缓存（与段落缓存分开：章行要段数要得很频繁，不值得每次取整个列表）。 */
     private val paraCounts = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
+    /** 字数缓存（同上：章行要显示字数，同样不值得每次取整个段落列表）。 */
+    private val paraChars = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
     /**
      * 段级排版缓存（整章重排时只重建显示文本真的变了的段）。
      *
@@ -142,6 +145,22 @@ class NovelChapterRepository {
         paraCounts[key]?.let { return it }
         val n = paragraphsOf(book, chapterIndex).count { it.isTranslatable() }
         paraCounts[key] = n
+        return n
+    }
+
+    /**
+     * 某章**可翻译正文有多少字**（面板里「本章多少字」，用户拿它估翻译费用）。
+     *
+     * ⚠️ 口径必须与「分母」一致：只算**可翻译段**（TEXT 且非空白）的字符数 —— 那才是真正会
+     * 发给翻译引擎的量。把图片占位（`📷 [图片]`）与不足 4 字的短行算进去会把费用估虚高。
+     */
+    suspend fun charCountOf(book: ImportedNovel, chapterIndex: Int): Int {
+        val key = "${bookKey(book)}:$chapterIndex:${NovelParagraphSplitter.SPLIT_VERSION}"
+        paraChars[key]?.let { return it }
+        val n = paragraphsOf(book, chapterIndex)
+            .filter { it.isTranslatable() }
+            .sumOf { it.originalText.length }
+        paraChars[key] = n
         return n
     }
 
@@ -250,7 +269,7 @@ class NovelChapterRepository {
     /**
      * 释放全部缓存。
      *
-     * ⚠️ **五个都要清**：`paraCounts` 与 `layoutCache` 是另外两份（段数与段级排版），
+     * ⚠️ **六个都要清**：`paraCounts` / `paraChars` / `layoutCache` 是另外三份（段数、字数、段级排版），
      * 漏掉的话类注释承诺的「阅读器退出时整体释放」就不成立 —— 它们都按 书+章 增长，
      * 而且键与上面三个不是同一个字符串，不会跟着一起失效。
      */
@@ -259,6 +278,7 @@ class NovelChapterRepository {
         paragraphs.evictAll()
         content.evictAll()
         paraCounts.clear()
+        paraChars.clear()
         layoutCache.clear()
     }
 }

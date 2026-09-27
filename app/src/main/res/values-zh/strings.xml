@@ -1487,6 +1487,7 @@
     <string name="novel_queue_translating_para">正在翻译 · 第 %1$d 段</string>
     <string name="novel_translate_ahead_value">%1$d 批 = %2$d 段</string>
     <string name="novel_translate_failed_chapter_hint">第 %1$d 章：%2$s</string>
+    <string name="novel_chapter_chars">%1$s字</string>
     <string name="novel_chapter_progress">已翻 %1$d / 共 %2$d 段</string>
     <string name="novel_read_progress">读到第 %1$d 章 / 共 %2$d 章</string>
     <string name="novel_delete_confirm_multi">删除 %1$d 本小说？本地文件与译文记录都会一并清除。</string>

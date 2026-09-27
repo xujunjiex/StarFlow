@@ -70,6 +70,23 @@ class NovelChapterRepositoryTest {
         assertEquals("第一章 起", c.title)
     }
 
+    /**
+     * 字数的口径必须和**翻译时真正发出去的字符**一致：只算可翻译段。
+     * 图片占位（`📷 [图片]`）与不足 4 字的短行（`……`）按设计永不翻译，算进去会把费用估虚高。
+     */
+    @Test
+    fun `字数只算可翻译段`() = runBlocking {
+        val text = "第一章 起\n\n这是第一段正文八个字\n\n……\n\n📷 [图片]\n\n第二段正文也八个字"
+        val repo = NovelChapterRepository()
+        val book = bookOf(text)
+
+        val paras = repo.paragraphsOf(book, 0)
+        assertTrue("样本里必须真的有不翻译的段", paras.any { !it.isTranslatable() })
+        assertTrue("样本里必须有可翻译的段", paras.any { it.isTranslatable() })
+        val expected = paras.filter { it.isTranslatable() }.sumOf { it.originalText.length }
+        assertEquals(expected, repo.charCountOf(book, 0))
+    }
+
     @Test
     fun `文件丢失时不崩溃返回空内容`() = runBlocking {
         val repo = NovelChapterRepository()

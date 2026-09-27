@@ -40,6 +40,16 @@
             android:textSize="11sp"
             android:textColor="#FFFFFF"/>
 
+        <!-- 本章多少字（估算翻译费用）。⚠️ 漫画那边不设它 → GONE，漫画面板的行样式不受影响；
+             所以它必须是 wrap_content + 默认 gone，且字号与徽章一致（11sp）。 -->
+        <TextView
+            android:id="@+id/tv_char_count"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:textSize="11sp"
+            android:visibility="gone"/>
+
         <View
             android:layout_width="0dp"
             android:layout_height="1dp"

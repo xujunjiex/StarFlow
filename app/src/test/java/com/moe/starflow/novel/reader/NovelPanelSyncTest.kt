@@ -1,5 +1,6 @@
 package com.moe.starflow.novel.reader
 
+import android.view.View
 import android.widget.LinearLayout
 import android.widget.RadioButton
 import android.widget.SeekBar
@@ -47,11 +48,13 @@ class NovelPanelSyncTest {
         stats: Map<Int, NovelChapterStat> = emptyMap(),
         totals: Map<Int, Int> = emptyMap(),
         failures: Map<Int, List<NovelFailureRow>> = emptyMap(),
+        chars: Map<Int, Int> = emptyMap(),
     ) = NovelPanelHostState(
         chapterIndex = chapter,
         chapterStats = stats,
         chapterTotals = totals,
         chapterFailures = failures,
+        chapterChars = chars,
         translateMode = mode,
         readerMode = readerMode,
         animation = animation,
@@ -64,6 +67,45 @@ class NovelPanelSyncTest {
         rotateLabel = rotate,
         keepParagraphsWhole = keepWhole,
     )
+
+    /**
+     * **章行要显示「本章多少字」**（用户拿它估翻译费用）。
+     *
+     * 走真实链路：宿主状态 → 面板 → 章行适配器 → 布局里那一格（`tv_char_count`）。
+     */
+    @Test
+    fun `章行显示本章字数`() {
+        val (sheet, v) = attach(
+            chapters = listOf(com.moe.starflow.novel.model.NovelChapterMeta(0, "第一章", "0,10")),
+        )
+        val rv = v.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rv_translate_chapters)
+        val adapter = { rv.adapter as NovelChapterStateAdapter }
+        val holder = adapter().onCreateViewHolder(rv, 0)
+
+        // 宿主还没解析出字数 → 不显示（不占位、也不显示 0）
+        sheet.renderHostState(state(chapter = 0, totals = mapOf(0 to 40)))
+        adapter().onBindViewHolder(holder, 0)
+        assertEquals(View.GONE, holder.itemView.findViewById<TextView>(R.id.tv_char_count).visibility)
+
+        // 回推字数 → 那一格出现，且文案与数字都对
+        sheet.renderHostState(state(chapter = 0, totals = mapOf(0 to 40), chars = mapOf(0 to 12345)))
+        adapter().onBindViewHolder(holder, 0)
+        val tv = holder.itemView.findViewById<TextView>(R.id.tv_char_count)
+        assertEquals(View.VISIBLE, tv.visibility)
+        assertEquals(
+            v.context.getString(R.string.novel_chapter_chars, "12,345"),
+            tv.text.toString(),
+        )
+    }
+
+    /** 字数用**精确值 + 千位分隔**（估费用要准，不能四舍五入成「1.2 万」）。 */
+    @Test
+    fun `字数标签是精确值带千位分隔`() {
+        val ctx = org.robolectric.RuntimeEnvironment.getApplication()
+        assertTrue(chapterCharLabel(ctx, 999).contains("999"))
+        assertTrue(chapterCharLabel(ctx, 1234).contains("1,234"))
+        assertTrue(chapterCharLabel(ctx, 12345).contains("12,345"))
+    }
 
     /** 挂上面板（走真实 onCreateView + 真实布局），返回它的根视图。 */
     private fun attach(
