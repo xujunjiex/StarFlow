@@ -284,8 +284,12 @@ class NovelChapterTranslatorTest {
         assertEquals(2, t.chapterStats(book)[0]?.total)
     }
 
+    /**
+     * 删除必须按 (id, key) **成对**：书籍 id 会被复用，只按 id 删会把复用同 id 的**新书**译文删掉。
+     * （书架删书走的就是这条 SQL —— `NovelShelfFragment` 的清理路径。）
+     */
     @Test
-    fun `清空本书按指纹删且不误伤别的书`() = runBlocking {
+    fun `按指纹删且不误伤同 id 的另一本书`() = runBlocking {
         val t = translatorFor(FakeTranslator())
         t.translateBatch(book, 0, paragraphs, listOf(0, 2), "ja", "zh", "fake")
         dao.upsert(
@@ -295,7 +299,7 @@ class NovelChapterTranslatorTest {
                 splitVersion = SPLIT_VERSION,
             )
         )
-        t.clearBook(book)
+        dao.deleteForNovelScoped(1, "5000")
         assertTrue(t.loadTranslations(book, 0).isEmpty())
         assertEquals("同 id 不同指纹的书不能被误删", 1, dao.countFor(1, "9999"))
     }

@@ -280,6 +280,10 @@ class NovelTranslationQueue(
      * ⚠️ 这颗按钮长期写着「翻译本章」却只翻**一批**（文案与行为对不上，用户直接问了
      * "不是有翻译本章的功能吗"）—— 现在它是真的翻整章。
      *
+     * ⚠️ 开始前**清掉 [failedAnchors]**：那是自动/增量模式"这批失败了别再空转"的记账，
+     * 而这里是用户**明确要求重来一次**。不清的话，之前自动模式里失败过的那几段会被静默跳过，
+     * 任务却报「已翻完 N 批」—— 用户以为翻完了，其实那几段永远是原文。
+     *
      * @param onBatch 每批落定就回调一次（宿主逐批上屏 + 刷新统计）
      * @return 成功翻完的**批数**；一批都没翻成才 0
      */
@@ -288,6 +292,7 @@ class NovelTranslationQueue(
         chapterIndex: Int,
         onBatch: suspend (NovelBatchResult) -> Unit,
     ): Int {
+        failedAnchors.clear()
         val chapterParas = chapterParaIndexes(book, chapterIndex)
         var done = 0
         while (currentCoroutineContext().isActive) {

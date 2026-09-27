@@ -135,8 +135,10 @@ class NovelTranslationEngineBatchTest {
     /**
      * 请求成功但**返回为空** → 报错要说清是"空返回"，而不是笼统一句「模型没返回译文」。
      *
-     * ⚠️ 注意别用「模型回了一段废话」当反例：`parseTolerant` 的按位置兜底会把单段废话
-     * 当成译文接受（条数一致时无法区分），那是既有的容错设计，不是 bug。
+     * ⚠️ 别用「模型回了一段废话」当反例：位置兜底会把它按条数当成译文接受。
+     * 长度明显不合理的回复已经被 `NovelTranslationBatch.looksLikeTranslation` 的闸门挡掉
+     * （见 `NovelTranslationBatchTest` 的单段拒绝语用例），但**短段的废话仍会通过** ——
+     * 那是启发式，不是证明。
      */
     @Test
     fun `返回为空时报错说明是空返回`() = runBlocking {

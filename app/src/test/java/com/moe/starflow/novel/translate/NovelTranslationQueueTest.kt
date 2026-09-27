@@ -216,6 +216,33 @@ class NovelTranslationQueueTest {
         q.stop()
     }
 
+    /**
+     * **「翻译本章」必须重试之前失败过的段**（回归）。
+     *
+     * `failedAnchors` 是自动/增量模式"这批别再空转"的记账（见类注释纪律 2），而
+     * 「翻译本章」是用户**明确要求重来一次**。不清它的话，自动模式里失败过的那几段会被
+     * 静默跳过，任务却报「已翻完 N 批」—— 用户以为翻完了，其实那几段永远是原文。
+     */
+    @Test
+    fun `翻译整章会重试之前失败过的段`() = runTest {
+        val t = FakeTranslator().apply { failAll = true }
+        val translated = mutableSetOf<Int>()
+        val q = queue(backgroundScope, t, translated, page = { listOf(0, 1) }, chapterSize = 4, batchSize = 2)
+
+        // 自动模式先全失败一轮 —— 每个锚点都进 failedAnchors
+        q.start(book(), NovelTranslateMode.AUTO, currentChapter = { 0 }) { _, r -> translated += r.translations.keys }
+        advanceTimeBy(5_000)
+        assertTrue("前提：自动模式确实失败过", t.batches.isNotEmpty())
+        q.stop()
+
+        t.failAll = false
+        val done = q.translateWholeChapter(book(), 0) { r -> translated += r.translations.keys }
+
+        assertEquals("4 段 / 每批 2 段 → 必须真的翻成 2 批（跳过失败段的话是 0）", 2, done)
+        assertTrue("4 段必须都拿到译文", translated.containsAll(listOf(0, 1, 2, 3)))
+        q.stop()
+    }
+
     /** 空选择不发请求（白抢一次锁、白烧一次额度）。 */
     @Test
     fun `空选择不发请求`() = runTest {

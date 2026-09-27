@@ -15,17 +15,20 @@ import com.moe.starflow.manga.config.TranslationTextRules
 data class NovelUnit(val paraIndex: Int, val text: String)
 
 /**
- * 小说翻译的分批与编号协议。
+ * 小说翻译的**编号协议**（拼提示词 / 解析回复）。
+ *
+ * ### 分批规则不在这里
+ * 成批规则是 `NovelBatchPlanner.nextBatch`（按面板的「每批段数」切），批次大小由用户在
+ * 面板里配。这个类只管「怎么把一批段拼成请求」和「怎么把回复对应回段号」。
+ *
+ * ⚠️ 这里曾经有一套自己的 `buildBatches`（默认 8 段一批 + 超长段独占一批），
+ * 生产路径从来没调用过它 —— 于是类注释写的「默认 8 段一批（可配）」和实际默认值
+ * （面板的每批段数，默认 3）长期不一致，读注释的人会按错的口径理解。已删。
  *
  * ### 为什么分批规则要单独拎成纯函数
  * 参考实现 (Kototoro) 的 20 段批次被一条「文本长度 ≥ 28 就单独成批」的规则拆成了
  * **每段一个 HTTP 请求且串行** —— 那是为漫画 OCR 的噪声短文本设计的启发式，套到小说上
- * 让批次形同虚设，是它小说翻译慢的根因。这里的规则必须能被单测钉住，避免回归。
- *
- * 规则：
- * - 默认 8 段一批（可配）
- * - **只有单段字符数超过 [MAX_BATCH_CHARS] 时才单独成批**（模型上下文压力）
- * - 普通长段落（几百字）照常成批 —— 这正是与参考实现的关键差别
+ * 让批次形同虚设，是它小说翻译慢的根因。所以成批规则必须能被单测钉住（见 `NovelBatchPlannerTest`）。
  *
  * ### 与漫画链路的关系
  * 漫画的 `TranslateUtils.parseNumberedTranslations(text, expectedCount)` 是**按序号补位**
@@ -35,36 +38,16 @@ data class NovelUnit(val paraIndex: Int, val text: String)
  */
 object NovelTranslationBatch {
 
-    const val DEFAULT_BATCH_PARAGRAPHS = 8
-
-    /** 单段字符上限，超过则独占一批。 */
-    const val MAX_BATCH_CHARS = 1500
-
     /**
-     * 按批分组。返回的每一批是**真实 paraIndex 的列表**（不是位置）。
+     * 位置兜底时的长度比下限（原文字符数 ≥ [MIN_RATIO_SOURCE_MIN] 才启用）。
+     *
+     * 见 [parseByPosition] 的说明：拒绝语远短于长段落，这个比值能把它们挡掉。
+     * 3 是留了余量取的（中/日/英互译的译文长度都在原文的 1/3~3 倍之间）。
      */
-    fun buildBatches(units: List<NovelUnit>, batchSize: Int): List<List<Int>> {
-        val size = batchSize.coerceAtLeast(1)
-        val out = mutableListOf<List<Int>>()
-        var current = mutableListOf<Int>()
-        for (u in units) {
-            if (u.text.length > MAX_BATCH_CHARS) {
-                if (current.isNotEmpty()) {
-                    out.add(current)
-                    current = mutableListOf()
-                }
-                out.add(listOf(u.paraIndex))
-                continue
-            }
-            current.add(u.paraIndex)
-            if (current.size >= size) {
-                out.add(current)
-                current = mutableListOf()
-            }
-        }
-        if (current.isNotEmpty()) out.add(current)
-        return out
-    }
+    private const val MIN_POSITIONAL_LENGTH_RATIO = 3
+
+    /** 短于此长度的原文不做长度比判断（那个量级上比值没有区分力）。 */
+    private const val MIN_RATIO_SOURCE_MIN = 20
 
     /**
      * 拼成 `[5] 第一段\n[9] 第二段`。
@@ -101,23 +84,65 @@ object NovelTranslationBatch {
     }
 
     /**
-     * 容错解析：先按编号对应；模型**完全丢掉编号**时按位置兜底。
+     * 容错解析：先按编号对应；模型**完全丢掉编号**时才按位置兜底。
      *
      * 位置兜底**必须条数完全一致**才接受：模型少回/多回/合并了段落时条数就对不上，
      * 此时宁可返回空让上层标记失败重试，也不能猜着对应 —— 猜错就是把 A 段译文写到 B 段，
      * 用户看到的只是「某几段翻了但不对」，比整章未翻译难查得多。
      *
+     * ⚠️ 条数一致**还不够**（真实踩过）：只请求一段时条数一致不携带任何信息 ——
+     * 任何非空回复切出来都是 1 条。所以位置兜底还要过 [looksLikeTranslation] 的合理性闸门，
+     * 否则模型那句「抱歉，我无法翻译这段内容。」会被当成译文写进库。
+     *
      * （漫画链路同样有这层兜底，见 `TranslateUtils.parseNumberedTranslations` 的降级分支。）
+     *
+     * @param sourceOf 取某段的原文（合理性闸门用；拿不到就传空串）
      */
-    fun parseTolerant(reply: String, paraIndices: List<Int>): Map<Int, String> {
+    fun parseTolerant(
+        reply: String,
+        paraIndices: List<Int>,
+        sourceOf: (Int) -> String = { "" },
+    ): Map<Int, String> {
         parse(reply, paraIndices).let { if (it.isNotEmpty()) return it }
+        return parseByPosition(reply, paraIndices, sourceOf)
+    }
+
+    /**
+     * 按位置兜底。**全部条目通过合理性闸门才返回**，否则返回空表。
+     *
+     * 返回空表的上层行为是「标失败 + 把模型原话报给用户」（见
+     * `NovelTranslationEngine.requestAndParse`），这正是想要的：一句拒绝语被报成
+     * "这段翻译失败：返回内容无法解析为编号段落：抱歉，我无法翻译这段内容。" 用户可以处理；
+     * 而被当成成功译文写进库里则**永久错误且不会再重试**。
+     */
+    fun parseByPosition(
+        reply: String,
+        paraIndices: List<Int>,
+        sourceOf: (Int) -> String,
+    ): Map<Int, String> {
         if (paraIndices.isEmpty()) return emptyMap()
         for (chunks in listOf(splitByBlankLine(reply), splitByLine(reply))) {
-            if (chunks.size == paraIndices.size) {
-                return paraIndices.zip(chunks).toMap()
-            }
+            if (chunks.size != paraIndices.size) continue
+            val out = paraIndices.zip(chunks).toMap()
+            if (out.all { (pi, t) -> looksLikeTranslation(sourceOf(pi), t) }) return out
         }
         return emptyMap()
+    }
+
+    /**
+     * 这条回复像不像**译文**（位置兜底的合理性闸门）。
+     *
+     * 判据只有长度比：真实译文与原文同量级（中/日/英互译在 1/3~3 倍之间），
+     * 而模型的拒绝语/元回答（「抱歉，我无法翻译这段内容。」）远短于一段小说正文。
+     *
+     * ⚠️ 这是**启发式，不是证明**：原文短到几字时长度比没有区分力，所以
+     * [MIN_RATIO_SOURCE_MIN] 以下直接放行。彻底解决要靠上层把回复判失败，
+     * 但那条路会把「模型不重复编号」的正常回复也判掉（每批 1 段时很常见），代价更大。
+     */
+    fun looksLikeTranslation(source: String, translation: String): Boolean {
+        if (translation.isBlank()) return false
+        if (source.length < MIN_RATIO_SOURCE_MIN) return true
+        return translation.length * MIN_POSITIONAL_LENGTH_RATIO >= source.length
     }
 
     private fun splitByBlankLine(reply: String): List<String> =

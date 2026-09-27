@@ -22,13 +22,6 @@ data class NovelBatchResult(
     val isEmpty: Boolean get() = translations.isEmpty()
 }
 
-/** 一章的翻译进度快照（累积：每次 emit 带上目前已拿到的全部译文）。 */
-data class NovelChapterProgress(
-    val chapterIndex: Int,
-    val translations: Map<Int, String>,
-    val isComplete: Boolean,
-)
-
 /**
  * 文本翻译的薄适配层。
  *
@@ -98,9 +91,9 @@ class NovelTranslationEngine(private val translator: NovelTextTranslator) {
     /**
      * 翻**一批**（[paraIndexes] 指定的段，来自 `NovelBatchPlanner.nextBatch`）。
      *
-     * ⚠️ 与 [translateChapter] 的唯一区别：**它只发一次请求，翻完就返回**。
-     * 队列靠「一批一批地要」实现「点一次翻一批」和「增量配额 x 批」——
-     * 这里若偷偷把整章翻完，上面两个功能就都没法计数了（`NovelTranslationEngineBatchTest` 盯着这条）。
+     * ⚠️ **它只发一次请求，翻完就返回** —— 这里若偷偷把整章翻完，「点一次翻一批」和
+     * 「增量配额 x 批」两个功能就都没法计数了（`NovelTranslationEngineBatchTest` 盯着这条）。
+     * 要翻整章走 `NovelTranslationQueue.translateWholeChapter`（它一批批地调这里）。
      */
     suspend fun translateBatch(
         paragraphs: List<NovelParagraph>,
@@ -135,7 +128,7 @@ class NovelTranslationEngine(private val translator: NovelTextTranslator) {
     ): NovelBatchResult {
         var lastError: String? = null
         val parsed = requestAndParse(
-            buildPromptText(units, batch), batch, sourceLang, targetLang,
+            units, buildPromptText(units, batch), batch, sourceLang, targetLang,
             onError = { lastError = it },
         )
         if (parsed.isNotEmpty() || batch.size <= 1) {
@@ -146,6 +139,7 @@ class NovelTranslationEngine(private val translator: NovelTextTranslator) {
         var out = parsed
         for (pi in batch) {
             out = out + requestAndParse(
+                units,
                 buildPromptText(units, listOf(pi)),
                 listOf(pi),
                 sourceLang,
@@ -160,6 +154,7 @@ class NovelTranslationEngine(private val translator: NovelTextTranslator) {
         "$NUMBERING_INSTRUCTION\n${NovelTranslationBatch.buildPrompt(units, batch)}"
 
     private suspend fun requestAndParse(
+        units: List<NovelUnit>,
         prompt: String,
         batch: List<Int>,
         sourceLang: String,
@@ -167,7 +162,10 @@ class NovelTranslationEngine(private val translator: NovelTextTranslator) {
         onError: (String) -> Unit = {},
     ): Map<Int, String> {
         val reply = requestOnce(prompt, sourceLang, targetLang, onError) ?: return emptyMap()
-        val parsed = NovelTranslationBatch.parseTolerant(reply, batch)
+        // ⚠️ 位置兜底要拿到原文才判得出「这条回复像不像译文」：只请求一段时条数一致不带信息，
+        // 模型回一句拒绝语会被当成译文写库（永久错误且不会再重试）。见 parseByPosition。
+        val sourceOf = { pi: Int -> units.firstOrNull { it.paraIndex == pi }?.text.orEmpty() }
+        val parsed = NovelTranslationBatch.parseTolerant(reply, batch, sourceOf)
         if (parsed.isEmpty()) {
             // 请求成功但解析不出编号 —— 用户要的就是"模型到底回了什么"
             onError("返回内容无法解析为编号段落：${reply.trim().take(120)}")

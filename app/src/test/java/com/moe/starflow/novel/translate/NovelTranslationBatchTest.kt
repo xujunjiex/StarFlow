@@ -7,62 +7,64 @@ import org.junit.Test
 
 class NovelTranslationBatchTest {
 
-    private fun units(vararg texts: String): List<NovelUnit> =
-        texts.mapIndexed { i, t -> NovelUnit(i, t) }
+    // ===== 位置兜底（模型丢掉编号时）=====
 
-    // ===== 分批 =====
-
+    /** 条数一致、长度也合理 → 按顺序对应。模型不重复编号是常见行为，不能因此判失败。 */
     @Test
-    fun `按批大小分组且编号全覆盖`() {
-        val us = (0 until 20).map { NovelUnit(it, "段落$it") }
-        val batches = NovelTranslationBatch.buildBatches(us, batchSize = 8)
-        assertEquals(listOf(8, 8, 4), batches.map { it.size })
-        assertEquals((0 until 20).toList(), batches.flatten())
-    }
+    fun `位置兜底条数一致且长度合理时按顺序对应`() {
+        val source = "字".repeat(60)
+        val map = NovelTranslationBatch.parseTolerant(
+            "译".repeat(25) + "\n\n" + "译".repeat(30),
+            listOf(5, 9),
+        ) { source }
 
-    @Test
-    fun `超长段落单独成批`() {
-        val long = "字".repeat(NovelTranslationBatch.MAX_BATCH_CHARS + 100)
-        val batches = NovelTranslationBatch.buildBatches(units("短一", long, "短二"), batchSize = 8)
-        assertEquals(listOf(listOf(0), listOf(1), listOf(2)), batches)
+        assertEquals(25, map[5]?.length)
+        assertEquals(30, map[9]?.length)
     }
 
     /**
-     * 关键差别：普通长段落（几百字，网文常态）**必须仍能成批**。
-     * 参考实现的「长度 ≥ 28 就单独成批」规则正是把小说翻译拖慢的根因。
+     * **回归**：只请求一段时「条数一致」不携带任何信息 —— 任何非空回复切出来都是 1 条，
+     * 于是模型那句「抱歉，我无法翻译这段内容。」会被当成译文、以 SUCCESS 写库，
+     * 用户正文里永久出现这句拒绝语**且再也不会被重试**（引擎恰好在整批被拒时降级成
+     * 单段请求，而内容审查正是它最可能的输出）。
      */
     @Test
-    fun `普通长段落不会被打散成单条`() {
-        val us = List(6) { NovelUnit(it, "字".repeat(300) + it) }
-        val batches = NovelTranslationBatch.buildBatches(us, batchSize = 8)
-        assertEquals(1, batches.size)
-        assertEquals(6, batches[0].size)
+    fun `单段位置兜底不接受明显不是译文的短回复`() {
+        val source = "他抬起头，看了看窗外的天色，心中忽然涌起一阵说不清的怅惘。风从窗缝里钻进来，带着土腥气。"
+        val refusal = "抱歉，我无法翻译这段内容。"
+
+        val map = NovelTranslationBatch.parseTolerant(refusal, listOf(3)) { source }
+
+        assertTrue("拒绝语不能被当成译文，实际=$map", map.isEmpty())
     }
 
+    /** 长度合理的单段译文照样接受 —— 闸门只管明显不像译文的那种。 */
     @Test
-    fun `批大小非法时至少一段一批而不是死循环`() {
-        val batches = NovelTranslationBatch.buildBatches(units("一", "二"), batchSize = 0)
-        assertEquals(listOf(listOf(0), listOf(1)), batches)
-    }
+    fun `单段位置兜底仍接受正常长度的译文`() {
+        val source = "他抬起头，看了看窗外的天色，心中忽然涌起一阵说不清的怅惘。风从窗缝里钻进来，带着土腥气。"
+        val translated = "He looked up at the sky outside the window, a vague melancholy rising in his chest."
 
-    @Test
-    fun `空输入得到空批表`() {
-        assertTrue(NovelTranslationBatch.buildBatches(emptyList(), 8).isEmpty())
+        val map = NovelTranslationBatch.parseTolerant(translated, listOf(3)) { source }
+
+        assertEquals(3, map.keys.single())
     }
 
     /**
-     * 回归守卫：批里的编号必须是**真实 paraIndex**，不能是「在待翻列表里的位置」。
-     *
-     * 一章里若有图片段/过短段（占 index 但不参与翻译），两者就会错开，
-     * 译文会被静默写到错误的段落上。
+     * ⚠️ 长度比是**启发式，不是证明**：原文短到几个字时比值没有区分力，闸门直接放行。
+     * 这条把已知的界限钉住，免得下次有人以为闸门能挡住一切。
      */
     @Test
-    fun `批里带的是真实 paraIndex 而不是位置`() {
-        // 段 0 与 2 是图形/短段被跳过，真正待翻的是 1、5、9
-        val us = listOf(NovelUnit(1, "甲"), NovelUnit(5, "乙"), NovelUnit(9, "丙"))
-        val batches = NovelTranslationBatch.buildBatches(us, batchSize = 8)
-        assertEquals(listOf(listOf(1, 5, 9)), batches)
-        assertFalse("位置 0 不该出现在批里", batches.flatten().contains(0))
+    fun `原文很短时位置兜底不设长度下限`() {
+        val map = NovelTranslationBatch.parseTolerant("抱歉", listOf(3)) { "甲" }
+        assertEquals("抱歉", map[3])
+    }
+
+    /** 编号还在时走编号路径，压根不进位置兜底（闸门不该影响正常解析）。 */
+    @Test
+    fun `带编号的回复不受位置闸门影响`() {
+        val short = "抱歉，我无法翻译这段内容。"
+        val map = NovelTranslationBatch.parseTolerant("[3] $short", listOf(3)) { "字".repeat(60) }
+        assertEquals(short, map[3])
     }
 
     // ===== 拼 prompt =====
