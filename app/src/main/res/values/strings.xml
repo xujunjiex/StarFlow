@@ -8,6 +8,10 @@
     <string name="history_page">History</string>
     <string name="me_page">Settings</string>
     <string name="import_manga_page">Import</string>
+    <!-- 导入页内的「漫画 | 小说」分段，以及漫画书架自身的标题。
+         ⚠️ 不要复用 import_manga_page（那是底部导航的「导入」）—— 分段里第一格必须写「漫画」，
+         否则会出现「导入 | 小说」这种一边是动作、一边是品类的错位。 -->
+    <string name="import_tab_manga">Manga</string>
     <string name="display_options">Display</string>
     <string name="import_manga_empty_hint">Tap + to import manga</string>
     <string name="import_manga_deleted">Deleted</string>
@@ -1382,5 +1386,123 @@
     <string name="llamacpp_section_sampling">Sampling</string>
     <string name="llamacpp_section_performance">Performance</string>
     <string name="llamacpp_view_intro">Feature guide</string>
+
+    <!-- ===== 小说（文本）导入 ===== -->
+    <string name="novel_shelf_title">Novels</string>
+    <string name="novel_import_file">Import files</string>
+    <string name="novel_import_dir">Import folder</string>
+    <string name="novel_import_dir_hint">Folder import: each text file inside becomes one book</string>
+    <string name="novel_import_wrong_format_manga">This is a manga file. Import it from the manga shelf.</string>
+    <string name="novel_import_wrong_format_text">Not a supported text format.</string>
+    <string name="novel_import_no_chapters">No readable chapters found.</string>
+    <string name="novel_import_failed">Import failed</string>
+    <string name="novel_import_reason_not_archive">Unsupported format or corrupted file.</string>
+    <string name="novel_import_reason_unreadable">File is unreadable. Check access permission.</string>
+    <string name="novel_import_reason_no_text_chapter">No readable text chapters.</string>
+    <string name="novel_import_reason_empty">Empty file.</string>
+    <string name="novel_import_reason_too_large">File is too large to import.</string>
+    <string name="novel_import_reason_encrypted">This EPUB is DRM-encrypted and not supported.</string>
+    <string name="novel_import_reason_unknown">Unknown error.</string>
+    <string name="novel_importing_percent">Importing %1$s</string>
+    <string name="novel_chapter_count">%1$d chapters</string>
+    <string name="novel_cover_desc">Novel cover</string>
+    <string name="novel_file_lost">File missing</string>
+
+    <!-- ===== 小说阅读器 ===== -->
+    <string name="novel_toc">Contents</string>
+    <string name="novel_page_label">%1$d / %2$d</string>
+    <string name="novel_tab_style">Style</string>
+    <string name="novel_tab_translate">Translate</string>
+    <string name="novel_tab_more">More</string>
+    <string name="novel_style_font_size">Font size</string>
+    <string name="novel_style_line_spacing">Line spacing</string>
+    <string name="novel_style_paragraph_spacing">Paragraph spacing</string>
+    <string name="novel_style_padding">Side margin</string>
+    <string name="novel_style_top_padding">Top space</string>
+    <string name="novel_style_bottom_padding">Bottom space</string>
+    <string name="novel_translate_failed_reason">Translation failed: %1$s</string>
+    <string name="novel_translate_hint_running">Translating chapter %1$d — double-tap to pause</string>
+    <string name="novel_translate_window_done">%1$d batches ahead done · turn the page to continue</string>
+    <string name="novel_translate_pending_batches">Translate chapter</string>
+    <string name="novel_translate_clear_chapter">Clear this chapter</string>
+    <string name="novel_translate_clear_chapter_confirm">Only this chapter\'s translations will be cleared. Continue?</string>
+    <string name="novel_translate_clear_ok">Clear</string>
+    <string name="novel_translate_cleared_chapter">Chapter translations cleared</string>
+    <string name="novel_download_title">Download</string>
+    <string name="novel_download_translated">Translation (txt)</string>
+    <string name="novel_download_original">Original (txt)</string>
+    <string name="novel_download_bilingual">Bilingual (original + translation)</string>
+    <string name="novel_download_writing">Exporting…</string>
+    <string name="novel_download_done">Exported to: %1$s</string>
+    <string name="novel_download_failed">Export failed: %1$s</string>
+    <string name="novel_translate_filter_done">Done</string>
+    <string name="novel_translate_filter_running">In progress</string>
+    <string name="novel_fail_translate_empty">Model returned nothing</string>
+    <string name="novel_chapter_failed_hint">%1$d paragraphs failed: %2$s</string>
+    <string name="novel_chapter_failed_meta">Chapter %1$d · %2$d failed</string>
+    <string name="novel_style_keep_paragraphs">Keep paragraphs whole</string>
+    <string name="novel_style_keep_paragraphs_hint">Move a paragraph to the next page when it does not fit; off = fill pages by spacing (paragraphs may split)</string>
+    <string name="novel_style_reset">Reset to defaults</string>
+    <string name="novel_style_reader_mode">Reading mode</string>
+    <string name="novel_reader_mode_paged">Horizontal</string>
+    <string name="novel_reader_mode_vertical">Vertical</string>
+    <string name="novel_reader_mode_scroll">Scroll</string>
+    <string name="novel_display_translated">Translation</string>
+    <string name="novel_display_original">Original</string>
+    <string name="novel_display_bilingual">Bilingual</string>
+    <string name="novel_translate_mode">Translation mode</string>
+    <string name="novel_translate_debounce">Start delay</string>
+    <string name="novel_translate_debounce_value">%1$d ms</string>
+    <string name="novel_translate_ahead">Batches ahead</string>
+    <string name="novel_chapter_label">Chapter %1$d</string>
+    <string name="novel_chapter_unread">Not translated</string>
+    <string name="novel_chapter_partial">%1$d/%2$d</string>
+    <string name="novel_chapter_done">Translated</string>
+    <string name="novel_translate_need_config">Configure a translation engine first</string>
+    <string name="novel_translate_busy">Waiting for another translation task…</string>
+    <string name="novel_file_missing_hint">Local file is missing. Re-import the book.</string>
+    <string name="novel_empty_chapter">This chapter has no readable text.</string>
+    <string name="novel_first_chapter">Already at the first chapter</string>
+    <string name="novel_last_chapter">Already at the last chapter</string>
+    <string name="novel_back">Back</string>
+    <string name="novel_prev_chapter">Previous chapter</string>
+    <string name="novel_next_chapter">Next chapter</string>
+    <string name="novel_translate_batch">Paragraphs per batch</string>
+    <string name="novel_style_hint">Layout is rebuilt immediately</string>
+    <!-- 顶部胶囊右侧的页码/滚动进度。前面的「·」是分隔号，与左侧章名连读。 -->
+    <string name="novel_page_counter">· %1$d/%2$d</string>
+    <string name="novel_select_hint">Tap paragraphs to select · tap a blank area to finish</string>
+    <string name="novel_select_not_translatable">Images and very short lines are not translated</string>
+    <string name="novel_action_translate_n">Translate %1$d</string>
+    <string name="novel_action_retranslate_n">Retranslate %1$d</string>
+    <string name="novel_action_both_n">Translate + retranslate %1$d</string>
+    <string name="novel_translate_chapter_done">Chapter done · %1$d batches</string>
+    <string name="novel_translate_selected_done">Translated %1$d paragraphs</string>
+    <string name="novel_queue_translating">Translating chapter %1$d…</string>
+    <string name="novel_queue_translating_page">Translating · page %1$d/%2$d</string>
+    <string name="novel_queue_translating_para">Translating · paragraph %1$d</string>
+    <string name="novel_translate_ahead_value">%1$d batches = %2$d paragraphs</string>
+    <string name="novel_translate_failed_chapter_hint">Chapter %1$d: %2$s</string>
+    <string name="novel_chapter_progress">%1$d of %2$d paragraphs</string>
+    <string name="novel_read_progress">Reading chapter %1$d of %2$d</string>
+    <string name="novel_delete_confirm_multi">Delete %1$d novels? Their local files and translations will be removed.</string>
+    <string name="novel_cover_failed">Could not use that image as the cover.</string>
+
+    <!-- ===== 小说书架管理 ===== -->
+    <string name="novel_shelf_empty">No novels yet. Tap + at the bottom right to add some.</string>
+    <string name="novel_manage_rename">Rename</string>
+    <string name="novel_manage_mark_read">Mark as read</string>
+    <string name="novel_manage_mark_unread">Mark as unread</string>
+    <string name="novel_manage_delete">Delete</string>
+    <string name="novel_delete_confirm">Delete “%1$s”? Its local files and translations will be removed.</string>
+    <string name="import_already_done">That import already finished</string>
+
+    <!-- ===== 导入弹窗的选项说明（措辞与 koto 统一；只保留「文件」「文件夹(单部)」，不含多部入口）===== -->
+    <string name="import_desc_files_manga">Pick one or more CBZ or ZIP files. Each file is imported as one manga.</string>
+    <string name="import_desc_dir_manga">Pick a folder holding a single manga. Subfolders are treated as chapters.</string>
+    <string name="import_desc_files_novel">Pick one or more EPUB or TXT files. Each file is imported as one novel.</string>
+    <string name="import_desc_dir_novel">Pick a folder holding a single novel. TXT files inside become chapters; each EPUB becomes a volume and keeps its own chapters.</string>
+    <string name="import_option_dir_manga_single">Import folder (single manga)</string>
+    <string name="import_option_dir_novel_single">Import folder (single novel)</string>
 
 </resources>

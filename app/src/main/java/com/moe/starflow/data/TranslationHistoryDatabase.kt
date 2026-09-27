@@ -9,8 +9,8 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [HistoryEntity::class, PageCacheEntity::class, TextTranslateRecord::class, ChatMessageEntity::class, ImportedPageTranslation::class],
-    version = 17,
+    entities = [HistoryEntity::class, PageCacheEntity::class, TextTranslateRecord::class, ChatMessageEntity::class, ImportedPageTranslation::class, NovelParagraphTranslation::class],
+    version = 18,
     exportSchema = false
 )
 abstract class TranslationHistoryDatabase : RoomDatabase() {
@@ -22,6 +22,8 @@ abstract class TranslationHistoryDatabase : RoomDatabase() {
     abstract fun chatMessageDao(): ChatMessageDao
 
     abstract fun importedPageTranslationDao(): ImportedPageTranslationDao
+
+    abstract fun novelParagraphTranslationDao(): NovelParagraphTranslationDao
 
     companion object {
         @Volatile
@@ -225,13 +227,44 @@ abstract class TranslationHistoryDatabase : RoomDatabase() {
             }
         }
 
+        // 版本 17 → 18：新增 novel_paragraph_translation（小说段落译文）。
+        // ⚠️ 纯新增、幂等，绝不 ALTER 现有表。fallbackToDestructiveMigration 已启用，
+        //    不提供此迁移会导致升级用户整库删除（数据丢失）——此迁移是数据安全的第一道保障。
+        //
+        // ⚠️ 列定义必须与 NovelParagraphTranslation **逐字对齐**，包括**不要写 DEFAULT**：
+        //    Kotlin 的数据类默认值（`translatedText = ""`）是语言层的，Room 生成的建表语句
+        //    里**没有** DEFAULT 子句。这里多写一个 `DEFAULT ''` 就会与 Entity 的 schema 不符，
+        //    升级用户一打开库即抛 IllegalStateException —— 而全新安装的用户完全遇不到。
+        //    有守卫测试逐列比对（NovelParagraphTranslationDaoTest）。
+        val MIGRATION_17_18 = object : Migration(17, 18) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS novel_paragraph_translation (" +
+                    "novelId INTEGER NOT NULL, " +
+                    "novelKey TEXT NOT NULL, " +
+                    "chapterIndex INTEGER NOT NULL, " +
+                    "paraIndex INTEGER NOT NULL, " +
+                    "sourceText TEXT NOT NULL, " +
+                    "translatedText TEXT NOT NULL, " +
+                    "state INTEGER NOT NULL, " +
+                    "failCode TEXT, " +
+                    "translatorName TEXT, " +
+                    "sourceLang TEXT, " +
+                    "targetLang TEXT, " +
+                    "splitVersion INTEGER NOT NULL, " +
+                    "updatedAt INTEGER NOT NULL, " +
+                    "PRIMARY KEY(novelId, novelKey, chapterIndex, paraIndex))"
+                )
+            }
+        }
+
         fun getInstance(context: Context): TranslationHistoryDatabase {
             return instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext,
                     TranslationHistoryDatabase::class.java,
                     "translation_history.db"
-                ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
+                ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18)
                 .fallbackToDestructiveMigration()
                 .build().also { instance = it }
             }

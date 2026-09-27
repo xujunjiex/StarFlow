@@ -1,0 +1,277 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  小说书架：**与 `fragment_import_manga.xml` 的漫画书架逐项对齐**（同一个顶部栏两态、
+  同一条多选操作栏、同样的 `bg_action_bar` 容器与 11sp 图标文案、同一个右下 FAB）。
+
+  只去掉漫画特有的两项：「换封面」「编辑简介」—— 小说的封面与简介来自文件本身，
+  没有可编辑的来源。其余（已读/未读/删除/重命名/全选/显示选项）一一对应。
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/surface_variant">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical">
+
+        <!-- 顶部栏：正常模式（标题 + 显示选项）/ 多选模式（已选数 + 全选 + 关闭） -->
+        <LinearLayout
+            android:id="@+id/novel_top_bar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:padding="12dp">
+
+            <TextView
+                android:id="@+id/novel_tv_title"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:text="@string/novel_shelf_title"/>
+
+            <TextView
+                android:id="@+id/novel_tv_selection_count"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:visibility="gone"/>
+
+            <!-- 全选 / 退出多选：与漫画同规格（40dp 可点区 + 22dp 图标 + 同色 tint） -->
+            <FrameLayout
+                android:id="@+id/novel_iv_select_all"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:gravity="center"
+                android:clickable="true"
+                android:contentDescription="@string/select_all"
+                android:visibility="gone">
+
+                <ImageView
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_select_all"
+                    android:tint="@color/text_primary"
+                    android:contentDescription="@string/select_all"/>
+            </FrameLayout>
+
+            <TextView
+                android:id="@+id/novel_tv_settings"
+                android:layout_width="wrap_content"
+                android:layout_height="40dp"
+                android:gravity="center"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
+                android:textSize="14sp"
+                android:clickable="true"
+                android:text="@string/display_options"/>
+
+            <FrameLayout
+                android:id="@+id/novel_tv_close_selection"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:gravity="center"
+                android:clickable="true"
+                android:contentDescription="@string/import_close_selection"
+                android:visibility="gone">
+
+                <ImageView
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_close"
+                    android:tint="@color/text_primary"
+                    android:contentDescription="@string/import_close_selection"/>
+            </FrameLayout>
+
+        </LinearLayout>
+
+        <!-- 多选操作栏：与漫画同款（两行三列图标+文字） -->
+        <LinearLayout
+            android:id="@+id/novel_selection_actions"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:layout_marginTop="2dp"
+            android:layout_marginEnd="10dp"
+            android:layout_marginBottom="6dp"
+            android:background="@drawable/bg_action_bar"
+            android:orientation="vertical"
+            android:paddingTop="8dp"
+            android:paddingBottom="8dp"
+            android:visibility="gone">
+
+            <!-- 第一行：已读 / 未读 / 删除（任意多选可用） -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <LinearLayout
+                    android:id="@+id/novel_action_read"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:orientation="vertical"
+                    android:padding="4dp"
+                    android:clickable="true">
+                    <ImageView android:layout_width="20dp" android:layout_height="20dp" android:src="@drawable/ic_action_read"/>
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp" android:text="@string/import_mark_read"
+                        android:textSize="11sp" android:textColor="@color/text_primary"
+                        android:maxLines="1" android:singleLine="true"/>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/novel_action_unread"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:orientation="vertical"
+                    android:padding="4dp"
+                    android:clickable="true">
+                    <ImageView android:layout_width="20dp" android:layout_height="20dp" android:src="@drawable/ic_action_unread"/>
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp" android:text="@string/import_mark_unread"
+                        android:textSize="11sp" android:textColor="@color/text_primary"
+                        android:maxLines="1" android:singleLine="true"/>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/novel_action_delete"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:orientation="vertical"
+                    android:padding="4dp"
+                    android:clickable="true">
+                    <ImageView android:layout_width="20dp" android:layout_height="20dp" android:src="@drawable/ic_action_delete"/>
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp" android:text="@string/import_delete"
+                        android:textSize="11sp" android:textColor="#E53935"
+                        android:maxLines="1" android:singleLine="true"/>
+                </LinearLayout>
+
+            </LinearLayout>
+
+            <View
+                android:id="@+id/novel_action_divider"
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginStart="8dp"
+                android:layout_marginTop="6dp"
+                android:layout_marginEnd="8dp"
+                android:background="@color/divider"
+                android:visibility="gone"/>
+
+            <!-- 第二行：换封面 / 写简介 / 重命名（仅单选显示，与漫画逐项一致） -->
+            <LinearLayout
+                android:id="@+id/novel_selection_actions_single"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:id="@+id/novel_action_cover"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:orientation="vertical"
+                    android:padding="4dp"
+                    android:clickable="true">
+                    <ImageView android:layout_width="20dp" android:layout_height="20dp" android:src="@drawable/ic_action_cover"/>
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp" android:text="@string/import_change_cover"
+                        android:textSize="11sp" android:textColor="@color/text_primary"
+                        android:maxLines="1" android:singleLine="true"/>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/novel_action_desc"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:orientation="vertical"
+                    android:padding="4dp"
+                    android:clickable="true">
+                    <ImageView android:layout_width="20dp" android:layout_height="20dp" android:src="@drawable/ic_action_desc"/>
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp" android:text="@string/import_edit_desc"
+                        android:textSize="11sp" android:textColor="@color/text_primary"
+                        android:maxLines="1" android:singleLine="true"/>
+                </LinearLayout>
+
+                <LinearLayout
+                    android:id="@+id/novel_action_rename"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:orientation="vertical"
+                    android:padding="4dp"
+                    android:clickable="true">
+                    <ImageView android:layout_width="20dp" android:layout_height="20dp" android:src="@drawable/ic_action_rename"/>
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp" android:text="@string/import_rename"
+                        android:textSize="11sp" android:textColor="@color/text_primary"
+                        android:maxLines="1" android:singleLine="true"/>
+                </LinearLayout>
+
+            </LinearLayout>
+        </LinearLayout>
+
+        <FrameLayout
+            android:id="@+id/novel_content"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1">
+
+            <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+                android:id="@+id/novel_shelf_refresh"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent">
+
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/novel_shelf_list"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"/>
+            </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+
+            <TextView
+                android:id="@+id/novel_shelf_empty"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:text="@string/novel_shelf_empty"
+                android:textSize="14sp"
+                android:visibility="gone"/>
+        </FrameLayout>
+    </LinearLayout>
+
+    <!-- 导入按钮：右下角 FAB，与漫画书架一致 -->
+    <com.google.android.material.floatingactionbutton.FloatingActionButton
+        android:id="@+id/novel_shelf_import"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_margin="16dp"
+        android:src="@drawable/ic_add"
+        android:contentDescription="@string/novel_shelf_title"
+        android:layout_gravity="bottom|end"/>
+</FrameLayout>

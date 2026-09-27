@@ -917,6 +917,11 @@ class MangaReaderActivity : AppCompatActivity() {
     /** 刷新进度条上的「已翻译」绿色区间。 */
     private fun refreshProgressTranslation() {
         binding.readerProgress.setTranslatedPages(translationController?.translatedPages() ?: emptySet())
+        // 顺带把打开着的面板一起刷新：面板是打开那一刻的快照，宿主不推它就停在旧状态
+        // （`ReaderMenuSheet.notifyTranslateChanged` 以前从来没有调用方 —— 面板开着时
+        // 译文在涨、每页列表与汇总却一直不动）
+        (supportFragmentManager.findFragmentByTag(ReaderMenuSheet.TAG) as? ReaderMenuSheet)
+            ?.notifyTranslateChanged(translationController?.records() ?: emptyList())
     }
 
     /** 把指定页显示切到 controller 的当前态（译文/原文/原图）。

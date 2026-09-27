@@ -29,6 +29,14 @@ data class ImportProgress(
 enum class ImportPhase { SCANNING, COPYING }
 
 /**
+ * 导入内容的类型：属于哪个书架。
+ *
+ * 两个书架（漫画 / 小说）各有自己的 `ImportManager`，但共用 [ImportTask] 这类纯数据编排件；
+ * 用这个枚举把「这条任务是谁的」标出来，避免两边的占位卡片串台。
+ */
+enum class ImportFormat { MANGA, NOVEL }
+
+/**
  * 进行中的导入任务。**纯内存态**：不落盘、不进 SharedPreferences、不随进程存活。
  *
  * 书架用 [toPlaceholder] 把它渲染成占位卡片（图片位置显示进度），导入完成后占位被真实条目
@@ -39,7 +47,9 @@ data class ImportTask(
     val title: String,
     val isArchive: Boolean,
     val addedAt: Long,
-    val progress: ImportProgress
+    val progress: ImportProgress,
+    /** 该任务属于哪个书架。**带默认值**，漫画侧既有调用点零改动也能编译。 */
+    val format: ImportFormat = ImportFormat.MANGA,
 ) {
     val percent: Int get() = progress.percent
 

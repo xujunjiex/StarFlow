@@ -1,0 +1,17 @@
+<!--
+  显示三态之一：**双语**（原文 + 译文对照）。
+  画成上下两块文字：**上一块是两行等宽细行（原文），下一块是一行粗行 + 一行细行（译文）** ——
+  粗行代表"换成译文了"，与 `ic_display_original` 的纯文本块一眼可分。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M4,3.6h16v1.7H4zM4,7.1h16v1.7H4z" />
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M4,13.2h16v2.7H4zM4,17.7h9v1.7H4z" />
+</vector>

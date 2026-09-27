@@ -23,11 +23,17 @@ object ImportDialog {
         onPickSingleDir: () -> Unit
     ) {
         val view = LayoutInflater.from(context).inflate(R.layout.dialog_import_manga, null, false)
+        // 选项说明：措辞与 koto 的导入介绍统一（两个书架共用同一份布局，各自填自己的文案）
+        view.findViewById<TextView>(R.id.btn_import_file).setText(R.string.import_manga_option_files)
+        view.findViewById<TextView>(R.id.btn_import_single_dir)
+            .setText(R.string.import_option_dir_manga_single)
+        view.findViewById<TextView>(R.id.tv_import_file_desc).setText(R.string.import_desc_files_manga)
+        view.findViewById<TextView>(R.id.tv_import_dir_desc).setText(R.string.import_desc_dir_manga)
         // 存储位置提示：方便用户知道导入的漫画保存在哪
         view.findViewById<TextView>(R.id.tv_storage_hint).text =
             context.getString(R.string.import_storage_hint, StorageDirStore.root(context).absolutePath)
         val dialog = AlertDialog.Builder(context)
-            .setTitle(R.string.import_manga_page)
+            .setTitle(R.string.import_tab_manga)
             .setView(view)
             .setNegativeButton(R.string.cancel, null)
             .create()

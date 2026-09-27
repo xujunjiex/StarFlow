@@ -1,0 +1,3 @@
+# 真格式测试样本：GBK / Big5 是多字节编码，**任何换行转换都会破坏字节**
+# （git 会把它们当文本，autocrlf 生效时在检出阶段插入 CR，导致样本与真实文件不符）
+app/src/test/resources/novel-fixtures/** -text

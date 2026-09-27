@@ -45,6 +45,12 @@
             android:exported="false"
             android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode|keyboardHidden" />
+        <!-- 小说阅读器：与漫画阅读器同样锁定竖屏 + 自处理配置变化（避免旋转时重走一遍加载） -->
+        <activity
+            android:name=".novel.reader.NovelReaderActivity"
+            android:exported="false"
+            android:theme="@style/Theme.MaterialComponents.DayNight.NoActionBar"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|uiMode|keyboardHidden" />
         <activity
             android:name=".launch.FirstLaunchPage"
             android:exported="false"

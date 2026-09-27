@@ -10,17 +10,44 @@
         android:id="@+id/btn_import_file"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:padding="12dp"
+        android:paddingStart="12dp"
+        android:paddingTop="12dp"
+        android:paddingEnd="12dp"
         android:textSize="15sp"
         android:text="@string/import_manga_option_files"/>
+
+    <!-- 选项说明：与 koto 的导入介绍同一套措辞（两个书架各自填自己的文案） -->
+    <TextView
+        android:id="@+id/tv_import_file_desc"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="12dp"
+        android:paddingTop="4dp"
+        android:paddingEnd="12dp"
+        android:textSize="11sp"
+        android:lineSpacingExtra="2dp"
+        android:textColor="@color/text_hint"/>
 
     <TextView
         android:id="@+id/btn_import_single_dir"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:padding="12dp"
+        android:paddingStart="12dp"
+        android:paddingTop="14dp"
+        android:paddingEnd="12dp"
         android:textSize="15sp"
         android:text="@string/import_manga_option_single_dir"/>
+
+    <TextView
+        android:id="@+id/tv_import_dir_desc"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="12dp"
+        android:paddingTop="4dp"
+        android:paddingEnd="12dp"
+        android:textSize="11sp"
+        android:lineSpacingExtra="2dp"
+        android:textColor="@color/text_hint"/>
 
     <TextView
         android:id="@+id/tv_storage_hint"

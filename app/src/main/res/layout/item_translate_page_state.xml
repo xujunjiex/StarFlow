@@ -13,10 +13,18 @@
         android:orientation="horizontal"
         android:gravity="center_vertical">
 
+        <!-- 标签（漫画=「P{n}」，小说=章名）。
+             ⚠️ `maxWidth` 是**长章名**的硬闸门：这一行是
+             `[标签][徽章][weight=1 的填充][详情]`，标签是 `wrap_content` —— 章名一长就把徽章和
+             「详情」挤出屏幕（`第一回　宴桃园豪杰三结义斩黄巾英雄首立功` 这种回目就够长）。
+             ⚠️ 加 maxWidth 而不是把标签改成 `0dp + weight=1`：后者会让徽章右移，**改动漫画面板的观感**；
+             maxWidth 只封顶，漫画的「P1」短得根本碰不到它，两个阅读器的行样式保持原样。
+             省略号由绑定处设置的 `singleLine + ellipsize=end` 生效。 -->
         <TextView
             android:id="@+id/tv_page_label"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:maxWidth="180dp"
             android:textSize="14sp"
             android:textStyle="bold"/>
 

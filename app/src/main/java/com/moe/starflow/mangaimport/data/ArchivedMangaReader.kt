@@ -59,4 +59,27 @@ object ArchivedMangaReader {
         }
         return sortNaturally(out)
     }
+
+    /**
+     * 枚举压缩包内的图片条目名（自然排序）。
+     *
+     * 用途：小说导入判定「这个 zip 其实是漫画包吗」，据此给出对得上的提示文案
+     * （「请到漫画书架导入」而不是「不是受支持的格式」）。
+     * 包损坏/读不了时返回空表，由调用方按「不是漫画」处理。
+     */
+    fun listImageFilesInArchive(archive: File): List<String> {
+        val out = mutableListOf<String>()
+        try {
+            java.util.zip.ZipFile(archive).use { zip ->
+                val entries = zip.entries()
+                while (entries.hasMoreElements()) {
+                    val e = entries.nextElement()
+                    if (!e.isDirectory && isImageFile(e.name)) out.add(e.name)
+                }
+            }
+        } catch (e: Exception) {
+            return emptyList()
+        }
+        return sortNaturally(out)
+    }
 }

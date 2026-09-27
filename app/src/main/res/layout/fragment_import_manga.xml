@@ -10,6 +10,26 @@
         android:layout_height="match_parent"
         android:orientation="vertical">
 
+
+        <!-- 「漫画 | 小说」切换：底部导航硬限 5 个 item（正好已满），小说不占新 tab -->
+        <LinearLayout
+            android:id="@+id/import_tab_bar"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:orientation="horizontal"
+            android:background="@color/surface">
+
+            <TextView
+                android:id="@+id/import_tab_manga"
+                style="@style/ImportTabSegment"
+                android:text="@string/import_tab_manga" />
+
+            <TextView
+                android:id="@+id/import_tab_novel"
+                style="@style/ImportTabSegment"
+                android:text="@string/novel_shelf_title" />
+        </LinearLayout>
+
         <!-- 顶部栏：正常模式（标题 + 显示选项）/ 多选模式（已选数 + 关闭） -->
         <LinearLayout
             android:id="@+id/topBar"
@@ -26,9 +46,9 @@
                 android:layout_weight="1"
                 android:textSize="14sp"
                 android:textStyle="bold"
-                android:text="@string/import_manga_page"/>
+                android:text="@string/import_tab_manga"/>
 
-            <TextView android:ellipsize="end" android:maxLines="1" 
+            <TextView android:ellipsize="end" android:maxLines="1"
                 android:id="@+id/tv_selection_count"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
@@ -37,39 +57,54 @@
                 android:textStyle="bold"
                 android:visibility="gone"/>
 
-            <ImageView
+            <!-- 全选 / 退出多选：两个按钮**同规格**（40dp 可点区 + 22dp 图标 + 同色 tint）。
+                 不要一个用图标、一个用「×」文字 —— 字号、基线、点击区都会对不齐。 -->
+            <FrameLayout
                 android:id="@+id/iv_select_all"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:padding="8dp"
-                android:src="@drawable/ic_select_all"
-                android:contentDescription="@string/select_all"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:gravity="center"
                 android:clickable="true"
-                android:visibility="gone"/>
+                android:contentDescription="@string/select_all"
+                android:visibility="gone">
+
+                <ImageView
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_select_all"
+                    android:tint="@color/text_primary"
+                    android:contentDescription="@string/select_all"/>
+            </FrameLayout>
 
             <TextView
                 android:id="@+id/tv_settings"
                 android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:padding="8dp"
+                android:layout_height="40dp"
+                android:gravity="center"
+                android:paddingStart="8dp"
+                android:paddingEnd="8dp"
                 android:textSize="14sp"
                 android:clickable="true"
                 android:text="@string/display_options"/>
 
-            <TextView
+            <FrameLayout
                 android:id="@+id/tv_close_selection"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:paddingStart="12dp"
-                android:paddingTop="4dp"
-                android:paddingEnd="8dp"
-                android:paddingBottom="4dp"
-                android:textSize="14sp"
-                android:textColor="@color/text_secondary"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:gravity="center"
                 android:clickable="true"
-                android:text="×"
                 android:contentDescription="@string/import_close_selection"
-                android:visibility="gone"/>
+                android:visibility="gone">
+
+                <ImageView
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_close"
+                    android:tint="@color/text_primary"
+                    android:contentDescription="@string/import_close_selection"/>
+            </FrameLayout>
 
         </LinearLayout>
 
@@ -277,6 +312,7 @@
 
         <!-- 书架网格 + 下拉刷新 -->
         <FrameLayout
+            android:id="@+id/manga_content"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1">
@@ -303,6 +339,14 @@
                 android:layout_gravity="center"/>
 
         </FrameLayout>
+
+        <!-- 小说书架容器：切到小说时显示，漫画侧整块隐藏 -->
+        <FrameLayout
+            android:id="@+id/novel_shelf_container"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:visibility="gone" />
 
     </LinearLayout>
 
