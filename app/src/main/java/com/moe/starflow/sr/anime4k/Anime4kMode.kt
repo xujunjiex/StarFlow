@@ -86,24 +86,22 @@ enum class Anime4kMode(
         /** prefs 键：Anime4K 基础层总开关（与超分模型互相独立） */
         const val KEY_ENABLED = "anime4k_enabled"
 
-        val DEFAULT_MODE = C
+        /** 默认档位 = 线条修复（最保守，先给用户看"几乎无损"的效果） */
+        val DEFAULT_MODE = CA
 
         fun fromPrefs(prefs: SharedPreferences): Anime4kMode {
             val raw = prefs.getString(KEY_MODE, null) ?: return DEFAULT_MODE
-            return entries.firstOrNull { it.id == raw } ?: DEFAULT_MODE
+            val stored = entries.firstOrNull { it.id == raw } ?: return DEFAULT_MODE
+            // 旧档位（C/A/BB）折到新的三档，老用户的已存档位不失效
+            return canonical(stored)
         }
 
         fun setMode(prefs: SharedPreferences, mode: Anime4kMode) {
             prefs.edit().putString(KEY_MODE, mode.id).apply()
         }
 
-        /**
-         * 面板点击的循环顺序：**关闭 → C → CA → B → BB → A → AA → 关闭**（由弱到强，再回关闭）。
-         *
-         * ⚠️ 「关闭」必须包含在循环里，否则用户在面板里打开之后**没法再关掉**（只能去个性化页）。
-         * 顺序刻意从最保守的 C 起步：它是实测最忠实原画的一档，先给用户看"几乎无损"的效果。
-         */
-        private val CYCLE = listOf(C, CA, B, BB, A, AA)
+        /** 面板点击的循环顺序：**关闭 → 线条修复 → 均衡 → 强恢复 → 关闭**（由弱到强，再回关闭）。 */
+        private val CYCLE = listOf(CA, B, AA)
 
         /** 当前档位的下一个；传 null（=已关闭）返回第一档，最后一档返回 null（=关闭） */
         fun nextAfter(current: Anime4kMode?): Anime4kMode? {
@@ -112,32 +110,43 @@ enum class Anime4kMode(
             return if (i < 0 || i == CYCLE.size - 1) null else CYCLE[i + 1]
         }
 
-        /** 面板显示的档位名（唯一一份映射，别在 UI 里再写一套 when） */
-        fun labelResOf(mode: Anime4kMode): Int = when (mode) {
-            A -> R.string.reader_anime4k_mode_a
-            B -> R.string.reader_anime4k_mode_b
-            C -> R.string.reader_anime4k_mode_c
-            AA -> R.string.reader_anime4k_mode_aa
-            BB -> R.string.reader_anime4k_mode_bb
-            CA -> R.string.reader_anime4k_mode_ca
+        /**
+         * 面板/存档解析：把**旧档位**映射到新的三档（老用户的已存档位不能失效）。
+         * `C→CA`、`BB→B`、`A→AA`，其余原样。
+         */
+        fun canonical(mode: Anime4kMode): Anime4kMode = when (mode) {
+            C -> CA
+            BB -> B
+            A -> AA
+            else -> mode
         }
 
-        /** 每档的一句话说明（弹窗里跟着档位名一起显示，让用户看得懂各档差别） */
-        fun descResOf(mode: Anime4kMode): Int = when (mode) {
-            A -> R.string.reader_anime4k_desc_a
-            B -> R.string.reader_anime4k_desc_b
-            C -> R.string.reader_anime4k_desc_c
-            AA -> R.string.reader_anime4k_desc_aa
-            BB -> R.string.reader_anime4k_desc_bb
-            CA -> R.string.reader_anime4k_desc_ca
+        /** 面板显示的档位名（唯一一份映射，别在 UI 里再写一套 when） */
+        fun labelResOf(mode: Anime4kMode): Int = when (canonical(mode)) {
+            CA -> R.string.reader_anime4k_mode_repair
+            B -> R.string.reader_anime4k_mode_balanced
+            AA -> R.string.reader_anime4k_mode_strong
+            // 下面三档已不再暴露（canonical 会把它们折上去），仅为穷尽 when 保留
+            A, C, BB -> R.string.reader_anime4k_mode_strong
         }
 
         /** 直接开关（面板循环到"关闭"时用） */
         fun setEnabled(prefs: SharedPreferences, enabled: Boolean) {
             prefs.edit().putBoolean(KEY_ENABLED, enabled).apply()
         }
-        /** Anime4K 基础层是否开启（默认**开**：零成本，作为"没下载模型时的兜底"） */
+
+        /**
+         * Anime4K 基础层是否开启。
+         *
+         * ⚠️ **默认关**（2026-10 用户口径：「默认用 Anime4K 无」）。
+         * 它曾经默认开，作为"没下模型时的零成本兜底"；现在定位改成
+         * **超分的替代显示层** —— 两者互斥（见 [SuperResolutionEngines.resolveSteps]），
+         * 默认开启会让人以为超分没生效。
+         */
         fun isEnabled(prefs: SharedPreferences): Boolean =
-            prefs.getBoolean(KEY_ENABLED, true)
+            prefs.getBoolean(KEY_ENABLED, DEFAULT_ENABLED)
+
+        /** 默认值：**关** */
+        const val DEFAULT_ENABLED = false
     }
 }

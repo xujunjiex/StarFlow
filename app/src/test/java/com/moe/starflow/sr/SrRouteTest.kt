@@ -9,17 +9,21 @@ import org.junit.Test
  * 工序组合的回归守卫（纯 JVM）。
  *
  * [SuperResolutionEngines.resolveSteps] 是**唯一**决定"跑哪几道工序"的地方。
- * 2026-10 按用户口径从「二选一」改成「**可叠加**」—— 用户明确问过
- * 「为什么 Anime4K 不能和超分一起用」，所以这里既锁"各自独立"，也锁"能叠"。
+ *
+ * ⚠️ **2026-10 v2 口径：两者互斥**（用户：「默认用 Anime4K 无，开启超分禁用这个」）。
+ * 曾经的「可叠加」是错的：`Anime4kEngine.MAX_INPUT_PIXELS = 1.5MP`，而 1MP 的页 2x 后
+ * 就是 4MP → 在超分底图上跑 Anime4K **必被跳过**（抬上限则 RGBA16F 中间纹理必 OOM）。
+ * ⇒ 语义是 **超分模型 > Anime4K**，Anime4K 只在"超分不可用"时兜底。
  */
 class SrRouteTest {
 
     @Test
-    fun bothEnabled_bothStepsInOrderUpscaleThenSharpen() {
-        // ⚠️ 顺序是契约：先放大、后描线。反过来 Anime4K 的结果会被放大糊掉，等于白跑。
+    fun bothEnabled_srWinsAndAnime4kIsDisabled() {
+        // ⚠️ 互斥是契约：超分可用时 Anime4K 那一道**必须不跑**，否则它会因像素上限静默跳过，
+        //    用户却在面板上看到"Anime4K 已开启" → 又一个"设置了没效果"。
         assertEquals(
-            "两道工序都要跑，且先 SR 后 Anime4K",
-            listOf(SrStep.SR_MODEL, SrStep.ANIME4K),
+            "超分可用时只跑超分，Anime4K 让位",
+            listOf(SrStep.SR_MODEL),
             SuperResolutionEngines.resolveSteps(
                 srEnabled = true, srModelUsable = true, anime4kEnabled = true
             )
@@ -78,7 +82,7 @@ class SrRouteTest {
         data class Case(val sr: Boolean, val model: Boolean, val a4k: Boolean, val expect: List<SrStep>)
 
         val table = listOf(
-            Case(true, true, true, listOf(SrStep.SR_MODEL, SrStep.ANIME4K)),
+            Case(true, true, true, listOf(SrStep.SR_MODEL)),
             Case(true, true, false, listOf(SrStep.SR_MODEL)),
             Case(true, false, true, listOf(SrStep.ANIME4K)),
             Case(true, false, false, emptyList()),

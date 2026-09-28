@@ -1075,14 +1075,11 @@
     <string name="reader_sr_switch_off">Reader super resolution off</string>
     <!-- Anime4K baseline (reader colour panel, 2026-10) -->
     <string name="reader_anime4k_label">Anime4K line enhance</string>
-    <string name="reader_anime4k_hint">Sharpens and denoises line art without changing resolution. **Stacks with super resolution**: upscale first, then sharpen, for the best result — or use it on its own with no model downloaded. Tap to pick a level.</string>
+    <string name="reader_anime4k_hint">Sharpens and denoises line art without changing resolution and without any model download. Unavailable while super resolution is on (super resolution wins). Tap to cycle levels.</string>
     <string name="reader_anime4k_off">Off</string>
-    <string name="reader_anime4k_mode_a">A · Strong restore</string>
-    <string name="reader_anime4k_mode_b">B · Balanced</string>
-    <string name="reader_anime4k_mode_c">C · Line restore</string>
-    <string name="reader_anime4k_mode_aa">AA · Strong restore+</string>
-    <string name="reader_anime4k_mode_bb">BB · Balanced+</string>
-    <string name="reader_anime4k_mode_ca">CA · Line restore+</string>
+    <string name="reader_anime4k_mode_strong">Strong restore</string>
+    <string name="reader_anime4k_mode_balanced">Balanced</string>
+    <string name="reader_anime4k_mode_repair">Line restore</string>
     <string name="reader_anime4k_switched">Anime4K switched to %1$s</string>    
     <string name="reader_translate_source_lang_label">Source</string>
     <string name="reader_translate_target_lang_label">Target</string>
@@ -1659,12 +1656,5 @@
 
     <!-- Image quality (colour panel, 2026-10) -->
     <string name="reader_sr_switch_label">Super resolution</string>
-    <string name="reader_anime4k_desc_off">Off — no line enhancement</string>
-    <string name="reader_anime4k_desc_c">Line restore — lightest; denoise and outline only, barely alters the art</string>
-    <string name="reader_anime4k_desc_ca">Line restore+ — outlines more strongly than Line restore</string>
-    <string name="reader_anime4k_desc_b">Balanced — restore and upscale in balance, moderate change</string>
-    <string name="reader_anime4k_desc_bb">Balanced+ — a stronger version of Balanced</string>
-    <string name="reader_anime4k_desc_a">Strong restore — sharpest lines, largest change to the art</string>
-    <string name="reader_anime4k_desc_aa">Strong restore+ — the heaviest and slowest</string>
     <string name="reader_chapter_badge_waiting">%1$d pages waiting</string>
 </resources>

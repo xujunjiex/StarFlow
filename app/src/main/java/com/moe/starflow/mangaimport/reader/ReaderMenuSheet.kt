@@ -622,13 +622,21 @@ class ReaderMenuSheet(
             }
         }
 
-        // Anime4K 档位：**弹窗选择**（不是点一下循环切档）—— 每档带一句说明，
-        // 同时解决"切换不美观"与"看不懂各档是什么意思"。
+        // Anime4K 档位：**点一下循环切档**（点击关闭 → 线条修复 → 均衡 → 强恢复 → 关闭）。
+        // ⚠️ 曾经是"弹窗 7 项 + 每档一句说明"，用户口径：不要弹窗、不要那么多选项、去掉「＋」。
+        //    6 档里有 3 个是假的（`均衡` 与 `均衡＋` 逐字节等价，因为放大 pass 被剥掉了）。
         fun refreshAnime4kRow() {
             val p = CustomPreference.getInstance(requireContext()).getSharedPreferences()
+            val srOn = SrSettings.isEnabledForReader(p)
             view.findViewById<TextView>(R.id.tv_anime4k_value).text =
                 if (!Anime4kMode.isEnabled(p)) getString(R.string.reader_anime4k_off)
                 else getString(Anime4kMode.labelResOf(Anime4kMode.fromPrefs(p)))
+            // ⚠️ 超分开启时 **禁用** Anime4K 行：两者互斥（超分优先，见 resolveSteps 注释）。
+            //    不置灰的话用户点了循环切档却看不到任何变化 —— 正是"设置了没效果"那类投诉。
+            view.findViewById<View>(R.id.btn_anime4k).apply {
+                isEnabled = !srOn
+                alpha = if (srOn) 0.4f else 1f
+            }
         }
         fun applyAnime4k(enabled: Boolean, mode: Anime4kMode?) {
             val p = CustomPreference.getInstance(requireContext()).getSharedPreferences()
@@ -642,23 +650,11 @@ class ReaderMenuSheet(
         }
         view.findViewById<View>(R.id.btn_anime4k).setOnClickListener {
             val p = CustomPreference.getInstance(requireContext()).getSharedPreferences()
-            // 顺序由 Anime4kMode.nextAfter 定义（由弱到强），第 0 项固定是「关闭」
-            val order = generateSequence(Anime4kMode.nextAfter(null)) { Anime4kMode.nextAfter(it) }.toList()
+            // 超分开着时这一行是禁用的（互斥），理论上点不到；兜一道防误触
+            if (SrSettings.isEnabledForReader(p)) return@setOnClickListener
             val curMode = if (Anime4kMode.isEnabled(p)) Anime4kMode.fromPrefs(p) else null
-            val labels = ArrayList<String>(order.size + 1)
-            labels.add(getString(R.string.reader_anime4k_desc_off))
-            order.forEach {
-                labels.add(getString(Anime4kMode.labelResOf(it)) + " — " + getString(Anime4kMode.descResOf(it)))
-            }
-            val checked = curMode?.let { order.indexOf(it) + 1 } ?: 0
-            ReaderDialogs.show(requireContext(), darkPanel) {
-                setTitle(R.string.reader_anime4k_label)
-                setSingleChoiceItems(labels.toTypedArray(), checked) { dlg, which ->
-                    if (which == 0) applyAnime4k(false, null) else applyAnime4k(true, order[which - 1])
-                    dlg.dismiss()
-                }
-                setNegativeButton(android.R.string.cancel, null)
-            }
+            val next = Anime4kMode.nextAfter(curMode)
+            if (next == null) applyAnime4k(false, null) else applyAnime4k(true, next)
         }
         refreshAnime4kRow()
 
@@ -727,12 +723,17 @@ class ReaderMenuSheet(
     }
 
     /**
-     * 调色面板右侧「处理后」预览格用的增强 —— 走**阅读器同一条链路**
-     * （`SrPageEnhancer.enhanceForReader`）。预览里看到什么，翻页后页面上就是什么。
-     * 失败/未开启 → null，调用方回退原图。
+     * 调色面板右侧「处理后」预览格用的增强 —— **暂时返回 null（= 回退原图）**。
+     *
+     * ⚠️ 2026-10 v2 架构把超分移出了「喂 OCR」的位置，改成 OCR **之后**的**显示底图**：
+     * 超分产物是 2x 的，而之前的 `SrPageEnhancer.enhanceForReader`（超分→缩回原尺寸）
+     * 已随架构删除。显示底图那条路径（`SrDisplaySource`）接完后，这里改成
+     * 「取该页的超分底图并按预览格缩放」，**并且必须在后台线程**（不能在主线程跑推理）。
+     *
+     * ⚠️ 预览格是**主线程**渲染的（`state.previewBitmap` 就在面板构建里用），
+     * 所以这里绝不能同步跑 ONNX —— 那正是"一开调色面板就卡死"的原因之一。
      */
-    private fun enhancedPreview(src: android.graphics.Bitmap): android.graphics.Bitmap? =
-        runCatching { com.moe.starflow.sr.SrPageEnhancer.enhanceForReader(src) }.getOrNull()
+    private fun enhancedPreview(src: android.graphics.Bitmap): android.graphics.Bitmap? = null
 
     /**
      * 面板主题的**标题色**控件（浅色 `#333333` / 深色 `#E2E2E4`）。

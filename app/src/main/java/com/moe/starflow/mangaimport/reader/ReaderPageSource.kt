@@ -21,12 +21,13 @@ import java.util.zip.ZipFile
 private const val TAG = "ReaderPageSource"
 
 /**
- * 阅读器「先超分再翻译」的增强结果缓存预算（按像素计）。
+ * ⚠️ 超分/增强结果的缓存预算（按像素计）—— **当前无消费者**。
  *
- * ⚠️ 增强结果**与原图同尺寸**（见 [com.moe.starflow.sr.SrPageEnhancer] 类注释），
- * 所以一份就是一张整页 ARGB_8888。给 24MB ≈ 6~8 张 A4 页面；翻回去能秒出，
- * 又不会把整本书攒在内存里。
+ * v2 架构（2026-10）把超分移出 `ReaderPageSource`（见类内大段注释），
+ * 显示底图的缓存在新的「显示底图」路径里。这个常量留着是因为它是**像素预算的口径来源**，
+ * 新路径会复用同一个数字；真接完新路径后若仍无引用，直接删。
  */
+@Suppress("unused")
 private const val ENHANCE_CACHE_PIXEL_BUDGET = 24 * 1024 * 1024
 
 class ReaderPageSource(
@@ -59,38 +60,20 @@ class ReaderPageSource(
             value.allocationByteCount.coerceAtLeast(value.rowBytes * value.height)
     }
 
-    // ── 阅读器「先超分再翻译」的增强结果缓存 ──
-    // 超分一次 1~3s，不缓存的话每次翻回同一页都要重算（翻页体验直接崩）。
-    private val enhanceCache = object : LruCache<Int, Bitmap>(ENHANCE_CACHE_PIXEL_BUDGET) {
-        override fun sizeOf(key: Int, value: Bitmap) =
-            value.allocationByteCount.coerceAtLeast(value.rowBytes * value.height)
-    }
-
-    /** 上次增强所用的设置指纹（[com.moe.starflow.sr.SrPageEnhancer.signature]）；变了就清缓存 */
-    @Volatile
-    private var enhanceSignature: String? = null
-
-    /**
-     * 按当前设置增强一页。
-     *
-     * 增强**必须与原图同尺寸**（否则 OCR 出的 `bubbleRects` 会整体放大，之后按原图重渲染时错位），
-     * 这一点由 [com.moe.starflow.sr.SrPageEnhancer] 保证。
-     *
-     * 任何一环不满足（没开开关 / 没选模型也没开 Anime4K / 增强失败）都**返回原图** ——
-     * 增强是锦上添花，绝不能因为它翻不了页或翻不了译。
-     */
-    private fun enhanceForReader(position: Int, src: Bitmap): Bitmap {
-        val sig = com.moe.starflow.sr.SrPageEnhancer.signature() ?: return src
-        if (sig != enhanceSignature) {
-            // 设置变了（换模型/换档位/开关）→ 旧的增强图全部作废
-            enhanceCache.evictAll()
-            enhanceSignature = sig
-        }
-        enhanceCache.get(position)?.let { return it }
-        val out = com.moe.starflow.sr.SrPageEnhancer.enhanceForReader(src) ?: return src
-        if (out !== src) enhanceCache.put(position, out)
-        return out
-    }
+    // ── ⚠️ 这里**不再有任何超分/增强**（2026-10 v2 架构，改动前必读）──
+    //
+    // 曾经的 `enhanceCache` + `enhanceForReader(position, src)` 已整体删除。原因有两条，都是硬的：
+    //
+    // 1. **它在主线程上跑推理 → ANR / 系统卡死**。`loadFull` 的调用方里有
+    //    `ReaderAdapters.kt:89/:221`（在 `onBindViewHolder` 里！）—— 一次 ONNX 2x 是 1~3 秒、
+    //    Anime4K mode A 是 49 趟 GL，直接卡死整个界面。用户报的"开启超分系统卡死"就是这个。
+    //
+    // 2. **超分与 OCR 解耦**（用户口径 2026-10）：OCR **永远在原图上**做，
+    //    超分只在 OCR **之后**、作为**显示底图**出现。所以 `loadFull` 只管解码，
+    //    增强归「显示底图」那条独立路径（`SrDisplaySource`）。
+    //
+    // ⇒ **`loadFull` / `loadWebtoon` 里绝不允许出现任何 `upscale*` / 增强调用。**
+    //    `ReaderSrThreadingTest` 用源码级断言钉死这一条。
 
     // 复用一个打开的 ZipFile：避免每页都重新读中央目录（400 页漫画的关键开销）
     @Volatile private var cachedZip: ZipFile? = null
@@ -135,8 +118,9 @@ class ReaderPageSource(
                 BitmapFactory.decodeFile(File(localRoot, key).absolutePath)
             }
             if (bmp == null) LogCollector.w(TAG, "loadFull: 解码失败（返回 null）key=$key")
-            // 「先超分再翻译」：增强结果与原图同尺寸，坐标空间不变（见 enhanceForReader 注释）
-            bmp?.let { enhanceForReader(position, it) }
+            // ⚠️ 这里**只解码、不增强**：超分/Anime4K 一律不在此处做（见上方大段注释）。
+            //    本函数的调用方包含 onBindViewHolder（主线程），任何重计算都会 ANR。
+            bmp
         } catch (e: Exception) {
             // ⚠️ **不能再静默吞掉**：解不出来必须留下可供排查的原因（条目缺失/流被关/解码异常）。
             // 这条 W 日志是"cbz 无法翻译"这类问题的第一现场证据。

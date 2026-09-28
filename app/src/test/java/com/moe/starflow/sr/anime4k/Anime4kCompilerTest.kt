@@ -171,22 +171,41 @@ class Anime4kCompilerTest {
             seen.add(cur)
             cur = Anime4kMode.nextAfter(cur)
         }
-        assertEquals("循环必须覆盖全部档位", Anime4kMode.entries.size, seen.size)
+        // ⚠️ 面板只暴露 3 档（关闭 / 线条修复 / 均衡 / 强恢复）——
+        //    原来的 6 档里 `均衡` 与 `均衡＋` 逐字节等价（放大 pass 被剥掉），是纯空选项。
+        assertEquals("循环必须覆盖三个面板档位", 3, seen.size)
+        assertEquals(
+            "面板档位固定是 线条修复 → 均衡 → 强恢复",
+            listOf(Anime4kMode.CA, Anime4kMode.B, Anime4kMode.AA),
+            seen
+        )
         assertNull("循环必须能回到「关闭」", cur)
     }
 
-    /** 第一次点开给最保守的一档（实测最忠实原画），不是改动最大的 A */
+    /** 第一次点开给最保守的一档（实测最忠实原画），不是改动最大的 AA */
     @Test
     fun anime4kCycle_startsFromMostConservative() {
-        assertEquals(Anime4kMode.C, Anime4kMode.nextAfter(null))
+        assertEquals(Anime4kMode.CA, Anime4kMode.nextAfter(null))
     }
 
-    /** 每个档位都要有自己的显示名，且互不相同（否则面板切了看不出变化） */
+    /**
+     * 每个**面板档位**都要有自己的显示名，且互不相同（否则面板切了看不出变化）。
+     * ⚠️ 只查面板那 3 档：`A`/`C`/`BB` 已不再暴露（`canonical` 会把它们折上去）。
+     */
     @Test
     fun anime4kLabels_areDistinctForEveryMode() {
-        val res = Anime4kMode.entries.map { Anime4kMode.labelResOf(it) }
-        assertEquals("档位数与标签数不符", Anime4kMode.entries.size, res.size)
+        val panel = listOf(Anime4kMode.CA, Anime4kMode.B, Anime4kMode.AA)
+        val res = panel.map { Anime4kMode.labelResOf(it) }
         assertEquals("档位标签有重复", res.size, res.toSet().size)
         assertTrue("标签资源不能为 0", res.all { it != 0 })
+    }
+
+    /** 旧档位必须折到新的三档上（老用户的已存档位不能失效） */
+    @Test
+    fun legacyModes_foldIntoPanelModes() {
+        assertEquals(Anime4kMode.CA, Anime4kMode.canonical(Anime4kMode.C))
+        assertEquals(Anime4kMode.B, Anime4kMode.canonical(Anime4kMode.BB))
+        assertEquals(Anime4kMode.AA, Anime4kMode.canonical(Anime4kMode.A))
+        assertEquals(Anime4kMode.CA, Anime4kMode.canonical(Anime4kMode.CA))
     }
 }

@@ -87,20 +87,26 @@ object SuperResolutionEngines {
     /**
      * 算出这一轮要跑的工序（**纯函数**，单测直接调）。
      *
-     * 两道工序**互相独立**：
+     * ## ⚠️ 两者是**互斥**的（2026-10 用户口径）
+     * 「默认用 Anime4K 无，开启超分禁用这个」——
      * - `SR_MODEL`：需要「超分开关打开」**且**「模型已选且文件在」
-     * - `ANIME4K`：只看 Anime4K 自己的开关（调色面板里那个），**不受超分开关影响**
+     * - `ANIME4K`：只在**超分不可用时**才跑（用户没下模型 / 没选模型 / 超分开关关）
      *
-     * 顺序固定 **先放大、后描线**：反过来的话 Anime4K 会在放大前的图上工作，
-     * 放大又会把它的描线结果糊掉，等于白跑。
+     * 为什么必须互斥（而不是"先放大再描线"的叠加）：
+     * `Anime4kEngine.MAX_INPUT_PIXELS = 1.5MP`（`Anime4kEngine.kt:67`，超限即跳过），
+     * 而 1MP 的页 2x 之后就是 **4MP** —— 在超分底图上跑 Anime4K **必被跳过**。
+     * 想叠加就得抬高上限，而 2x 图的 RGBA16F 中间纹理会直接 OOM。所以按互斥处理。
+     *
+     * ⇒ 语义变成：**超分模型 > Anime4K**，Anime4K 是"没有模型时的基础显示层"。
      */
     fun resolveSteps(
         srEnabled: Boolean,
         srModelUsable: Boolean,
         anime4kEnabled: Boolean
     ): List<SrStep> = buildList {
-        if (srEnabled && srModelUsable) add(SrStep.SR_MODEL)
-        if (anime4kEnabled) add(SrStep.ANIME4K)
+        val sr = srEnabled && srModelUsable
+        if (sr) add(SrStep.SR_MODEL)
+        if (!sr && anime4kEnabled) add(SrStep.ANIME4K)
     }
 
     /** 按当前选择取超分模型引擎（同一模型复用，切模型重建）。未选/未下载/失败 → null */

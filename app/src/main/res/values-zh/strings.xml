@@ -1010,14 +1010,11 @@
     <string name="reader_sr_switch_off">阅读器超分已关闭</string>
     <!-- Anime4K 基础层（阅读器调色面板，2026-10） -->
     <string name="reader_anime4k_label">Anime4K 线条增强</string>
-    <string name="reader_anime4k_hint">对画面做线条描深与去噪，分辨率不变、体积为零。**可以和超分叠加**：先放大、再描线，画质最好；也可以单独使用（不下载任何模型也能开）。点这一行选档位。</string>
+    <string name="reader_anime4k_hint">对画面做线条描深与去噪，分辨率不变、不下载任何模型。开启超分时本项不可用（超分优先）。点这一行循环切档。</string>
     <string name="reader_anime4k_off">已关闭</string>
-    <string name="reader_anime4k_mode_a">A · 强恢复</string>
-    <string name="reader_anime4k_mode_b">B · 均衡</string>
-    <string name="reader_anime4k_mode_c">C · 线条修复</string>
-    <string name="reader_anime4k_mode_aa">AA · 强恢复＋</string>
-    <string name="reader_anime4k_mode_bb">BB · 均衡＋</string>
-    <string name="reader_anime4k_mode_ca">CA · 线条修复＋</string>
+    <string name="reader_anime4k_mode_strong">强恢复</string>
+    <string name="reader_anime4k_mode_balanced">均衡</string>
+    <string name="reader_anime4k_mode_repair">线条修复</string>
     <string name="reader_anime4k_switched">Anime4K 已切到 %1$s</string>    
     <string name="reader_translate_source_lang_label">源语言</string>
     <string name="reader_translate_target_lang_label">目标语言</string>
@@ -1657,12 +1654,5 @@
 
     <!-- 画质增强（调色面板，2026-10） -->
     <string name="reader_sr_switch_label">超分放大</string>
-    <string name="reader_anime4k_desc_off">关闭 — 不做线条增强</string>
-    <string name="reader_anime4k_desc_c">线条修复 — 最轻，只去噪描线，几乎不改动画面（最忠实原画）</string>
-    <string name="reader_anime4k_desc_ca">线条修复＋ — 比线条修复描得更重一些</string>
-    <string name="reader_anime4k_desc_b">均衡 — 修复与放大的均衡组合，改动中等</string>
-    <string name="reader_anime4k_desc_bb">均衡＋ — 均衡档的加强版</string>
-    <string name="reader_anime4k_desc_a">强恢复 — 线条最锐，但对原画改动最大</string>
-    <string name="reader_anime4k_desc_aa">强恢复＋ — 最强的一档，耗时也最长</string>
     <string name="reader_chapter_badge_waiting">等待 %1$d 页</string>
 </resources>
