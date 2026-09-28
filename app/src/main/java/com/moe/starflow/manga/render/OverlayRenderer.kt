@@ -111,28 +111,47 @@ object OverlayRenderer {
          *
          * ⚠️ 上限 [MAX_RENDER_SCALE]（2f）：倍率是**平方级**的内存代价（×2 = 4 倍像素）。
          */
-        renderScale: Float = 1f
+        renderScale: Float = 1f,
+        /**
+         * **底图相对「坐标空间」的倍率**（2026-10 v2，超分底图用）。
+         *
+         * 默认 1f = 底图尺寸**就是**坐标空间（`bubbleRects` 所在的源图空间）。
+         * 传 2f 表示：底图是源图的精确 2x（超分底图）→
+         * - **坐标空间 = `original.width / baseScale`**（气泡坐标仍按源图解释）
+         * - 输出 = 坐标空间 × [renderScale]
+         * - 底图铺满输出：`baseScale == renderScale` 时**恰好 1:1 落上去、零重采样**
+         *
+         * ⚠️ **为什么必须是"精确"的倍率**：超分图的尺寸由 [com.moe.starflow.sr.AnimeJaNaiEngine]
+         * 的硬契约保证（`out.width == src.width * 2`，靠补边 + 精确裁剪，不是"大约 2 倍"）。
+         * 模型原始输出其实比 2x 少 72px（cunet）/ 32px（swin），直接按同一个倍率去映射会
+         * **整体平移**；所以契约必须由引擎兜住，这里才敢用纯缩放。
+         */
+        baseScale: Float = 1f
     ): Bitmap {
         val scale = renderScale.coerceIn(1f, MAX_RENDER_SCALE)
-        val result: Bitmap
-        if (scale == 1f) {
-            result = original.copy(Bitmap.Config.ARGB_8888, true)
+        val base = baseScale.coerceAtLeast(0.01f)
+        // 坐标空间（= bubbleRects 的空间）尺寸。底图是 2x 超分图时它就是源图尺寸。
+        val spaceW = (original.width / base).toInt().coerceAtLeast(1)
+        val spaceH = (original.height / base).toInt().coerceAtLeast(1)
+        val outW = (spaceW * scale).toInt().coerceAtLeast(1)
+        val outH = (spaceH * scale).toInt().coerceAtLeast(1)
+
+        val result: Bitmap = if (outW == original.width && outH == original.height) {
+            // 尺寸一致 → 直接复制（今天 renderScale=1 的常规路径）
+            original.copy(Bitmap.Config.ARGB_8888, true)
         } else {
-            result = Bitmap.createBitmap(
-                (original.width * scale).toInt().coerceAtLeast(1),
-                (original.height * scale).toInt().coerceAtLeast(1),
-                Bitmap.Config.ARGB_8888
-            )
+            Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
         }
         val canvas = Canvas(result)
-        if (scale != 1f) {
-            // 底图先铺满新尺寸（底图该多糊还多糊 —— 那是图源决定的，这里要救的是**文字**）
+        if (outW != original.width || outH != original.height) {
+            // 底图铺满输出。⚠️ baseScale == renderScale 时这里是 1:1（超分底图零重采样）；
+            // baseScale < renderScale 时是放大（底图该多糊还多糊 —— 那是图源决定的）。
             canvas.drawBitmap(
                 original, null,
-                android.graphics.RectF(0f, 0f, result.width.toFloat(), result.height.toFloat()),
+                android.graphics.RectF(0f, 0f, outW.toFloat(), outH.toFloat()),
                 FILTER_PAINT
             )
-            // 之后所有绘制仍用**原坐标系** → 字号/字距/气泡位置全部自动按 scale 放大，
+            // 之后所有绘制仍用**坐标空间** → 字号/字距/气泡位置全部自动跟着 scale 放大，
             // 字形在最终分辨率上栅格化。不要在这里手动乘坐标，那会与 LayoutEngine 的计划打架。
             canvas.scale(scale, scale)
         }

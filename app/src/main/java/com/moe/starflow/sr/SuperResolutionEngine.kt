@@ -68,12 +68,12 @@ enum class SrStep {
  * `SrSettings` 只回答"超分开关开没开"、`Anime4kMode` 只回答"Anime4K 开关与档位"，
  * 三者的组合判断收在 [resolveSteps] 里。
  *
- * ## 每一步的产物都**与原图同尺寸**
- * 超分模型输出 2x，这里**立即缩回原尺寸**再交给下一步。原因（改动前必读）：
- * `bubbleRects` 是**持久化坐标**，之后还会在**原图**上重渲染；若让 OCR 跑在 2x 图上，
- * 检出的框就是 2x 坐标 → 以后按原图重渲染时整片译文成倍错位，而且**只有"翻回去/重开"才现形**。
- * 收益一点没少：OCR 引擎本来就会把输入缩到自己的工作尺寸，决定识别率的是**信息质量**；
- * 先放大再缩回 = 一次「去噪 + 锐化 + 去 JPEG 块效应」。
+ * ## 产物是**显示底图**，尺寸各自保留（v2，2026-10）
+ * `SR_MODEL` 产出**精确 2x**（引擎的硬契约，见 [AnimeJaNaiEngine]），`ANIME4K` 产出 1x。
+ * **不再缩回原尺寸** —— v1 那个归一化是为了喂 OCR（坐标空间要等于原图），
+ * 而 v2 里 OCR 永远吃原图（超分与 OCR 解耦），归一化只会把刚补出来的细节扔掉。
+ *
+ * 渲染时用 `baseScale = out.width / src.width` 把源坐标映射到底图（`OverlayRenderer`）。
  */
 object SuperResolutionEngines {
 
@@ -195,43 +195,45 @@ object SuperResolutionEngines {
         return applySteps(context, prefs, src, steps)
     }
 
-    /** 依次执行工序；每一步都保证**输出与输入同尺寸**。任何一步失败就退回该步的输入 */
+    /**
+     * 依次执行工序。**产物尺寸各自保留**（不再缩回原尺寸）。
+     *
+     * ⚠️ **2026-10 v2：这里不再做"缩回原尺寸"的归一化**。原因：
+     * - v1 的归一化是为了让产物能喂 OCR（坐标空间必须与原图一致）
+     * - v2 超分与 OCR 解耦（OCR 永远吃原图），产物是**显示底图** → **2x 必须保留**，
+     *   归一化会把刚补出来的细节直接扔掉（等于白做）
+     * - 由于 [resolveSteps] 已保证两者**互斥**，这里实际只会跑一道工序，
+     *   所以"输出尺寸 != 输入尺寸"完全正常：`SR_MODEL` 出 2x、`ANIME4K` 出 1x
+     *
+     * 调用方拿到的倍率 = `out.width / src.width`（渲染时作为 `baseScale`）。
+     */
     private fun applySteps(
         context: Context,
         prefs: SharedPreferences,
         src: Bitmap,
         steps: List<SrStep>
     ): Bitmap? {
-        var cur: Bitmap? = null
-        var last: Bitmap = src
+        var last: Bitmap? = null
         for (step in steps) {
+            val input = last ?: src
             val out = try {
                 when (step) {
-                    SrStep.SR_MODEL -> obtain(context, prefs)?.upscale(last)
-                    SrStep.ANIME4K -> obtainAnime4k(context, prefs)?.upscale(last)
+                    SrStep.SR_MODEL -> obtain(context, prefs)?.upscale(input)
+                    SrStep.ANIME4K -> obtainAnime4k(context, prefs)?.upscale(input)
                 }
             } catch (e: Throwable) {
                 LogCollector.e(TAG, "工序 $step 异常", e)
                 null
             }
             if (out == null) {
-                LogCollector.d(TAG, "工序 $step 未产出，跳过（保留上一步结果）")
+                LogCollector.d(TAG, "工序 $step 未产出，跳过")
                 continue
             }
-            // ⚠️ 关键：把产物**缩回原尺寸**再进下一步 —— 坐标空间必须始终等于原图
-            val normalized = if (out.width == last.width && out.height == last.height) {
-                out
-            } else {
-                Bitmap.createScaledBitmap(out, last.width, last.height, true).also {
-                    if (it !== out) out.recycle()
-                }
-            }
-            // 释放上一步的中间产物（不是原始 src）
-            if (last !== src && last !== normalized) last.recycle()
-            last = normalized
-            cur = normalized
+            // 释放上一道的中间产物（不是原始 src）
+            if (last != null && last !== out) last.recycle()
+            last = out
         }
-        return cur
+        return last
     }
 
     private fun isSrModelUsable(context: Context, prefs: SharedPreferences): Boolean {
