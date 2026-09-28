@@ -44,6 +44,8 @@ backup/
 .superpowers/
 # docs/ 一律只留本地，不提交到远端（含 docs/docs/ 架构文档与 superpowers 草稿）
 docs/
+# 临时调研脚本 / 分析草稿（本地）
+.research-tmp/
 
 # Claude Code
 CLAUDE.md
