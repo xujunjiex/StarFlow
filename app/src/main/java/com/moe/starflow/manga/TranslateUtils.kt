@@ -28,6 +28,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import com.moe.starflow.llamacpp.LlamaCppTranslation
+import com.moe.starflow.translate.isLocalHeavyEngine
 import translationapi.openaitranslation.OpenAITranslation
 import java.util.LinkedList
 import kotlin.coroutines.resume
@@ -199,7 +200,7 @@ object TranslateUtils {
         // 等待翻译结果。超时策略：
         //  - 网络 API：请求发出起 API_TIMEOUT_MS 内必须返回（无响应即超时）
         //  - 本地引擎（Hy-MT2）：不设总时长（本地总会翻完），由看门狗按「30s 无新输出」判卡死——有输出就一直等
-        val isLocalEngine = translator is LlamaCppTranslation
+        val isLocalEngine = translator.isLocalHeavyEngine()   // 判据唯一来源：覆盖 LlamaCpp + NLLB（曾漏 NLLB）
         val lastProgressAt = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
         val timedOut = java.util.concurrent.atomic.AtomicBoolean(false)
         val cancelledByUser = java.util.concurrent.atomic.AtomicBoolean(false)

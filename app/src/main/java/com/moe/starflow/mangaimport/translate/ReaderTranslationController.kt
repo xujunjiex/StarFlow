@@ -32,6 +32,10 @@ import com.moe.starflow.manga.types.TranslatedBubble
 import com.moe.starflow.mangaimport.data.ImportedManga
 import com.moe.starflow.mangaimport.reader.ReaderPageSource
 import com.moe.starflow.translate.TranslationTextAPI
+import com.moe.starflow.translate.isLocalHeavyEngine
+import com.moe.starflow.sr.SrModelManager
+import com.moe.starflow.sr.SrProcessor
+import com.moe.starflow.sr.SrSettings
 import com.moe.starflow.translate.batch.ChapterJob
 import com.moe.starflow.translate.batch.ChapterJobRunner
 import com.moe.starflow.translate.batch.ChapterJobState
@@ -665,6 +669,8 @@ class ReaderTranslationController(
      * @return true = 这一页真的翻出来了（用于任务面板上的成功计数）
      */
     private suspend fun translatePhase(page: Int, prep: PreparedPage): Boolean {
+        // ⚠️ 声明在 try 之外：`finally` 里要 `join()` 它再回收 prep.bitmap（并行超分时它还在用那张图）
+        var srJob: Job? = null
         try {
             if (prep.bubbles.isEmpty()) {
                 val msg = context.getString(R.string.reader_translate_ocr_empty)
@@ -682,6 +688,11 @@ class ReaderTranslationController(
                 fail(page, "TRANSLATION_API_NOT_CONFIGURED", context.getString(R.string.reader_translate_api_not_configured))
                 return false
             }
+            // ── 超分（v2）：OCR 已完成 → 此刻才是启动点 ──
+            // • 网络 API：srJob 不 join，超分与翻译请求**并行**
+            // • 本地引擎（LlamaCpp/NLLB）：都是 CPU 重活，**必须串行** → 立刻 join
+            srJob = maybeStartAutoSr(page, prep, translator)
+            if (translator.isLocalHeavyEngine()) srJob?.join()
             val overlayConfig = cacheManager.getOverlayConfig(appPrefs)
             val cfg = BatchPipelineConfig(
                 detEngine = prep.det,
@@ -748,7 +759,60 @@ class ReaderTranslationController(
             fail(page, "PROCESS_EXCEPTION", e.message ?: "Unknown error")
             return false
         } finally {
+            // ⚠️ 超分任务可能还在用 prep.bitmap（它与翻译请求**并行**跑）——
+            //    必须先等它结束再回收，否则就是 use-after-recycle（native 崩溃，Java 层抓不到）。
+            srJob?.join()
             if (!prep.bitmap.isRecycled) prep.bitmap.recycle()
+        }
+    }
+
+    /**
+     * 「翻译时自动超分」的启动点 —— **在这里是因为 OCR 已经完成了**。
+     *
+     * ## 时机（用户口径 2026-10，别改）
+     * ```
+     * 点翻译 → ① 原图 OCR（持 OcrLock）→ ② 本函数被 translatePhase 调用
+     *                                        ├─ 超分（本函数）
+     *                                        └─ 翻译请求
+     * ```
+     * - **不与 OCR 同时启动**：`translatePhase` 收到 `prep` 就说明 OCR 已经结束
+     * - **可与网络 API 请求并行**：返回的 Job 不 join，让它在后台与请求重叠
+     * - **本地引擎必须串行**：本地翻译（LlamaCpp / NLLB）也是 CPU 重活，
+     *   同时跑只会互相抢核 —— 这种情况下由调用方 `join`（见 [isLocalHeavyEngine]）
+     *
+     * ## 输入永远是**原图**
+     * `prep.bitmap` 是 `ocrPhase` 里从 `loadFull` 拿到的**原图**（v2 起 `loadFull` 零增强）。
+     * ⚠️ **绝不能传渲染后的译图** —— 那会把画好的字当像素放大，坐标就真的无解了。
+     *
+     * @return 超分任务（未开启/未选中模型 → null）
+     */
+    private fun maybeStartAutoSr(
+        page: Int,
+        prep: PreparedPage,
+        translator: TranslationTextAPI?
+    ): Job? {
+        if (!SrSettings.isAutoEnabledForReader(appPrefs)) return null
+        if (!SrSettings.isEnabledForReader(appPrefs)) return null
+        if (!SrModelManager.isDownloaded(context, SrModelManager.getActiveKey(appPrefs) ?: return null)) {
+            return null
+        }
+        if (prep.bitmap.isRecycled) return null
+        return scope.launch(Dispatchers.IO) {
+            val ok = SrProcessor.enhanceAndStore(context, manga.id, page, prep.bitmap)
+            if (ok) {
+                // 该页底图换了 → 所有渲染缓存作废（key 里也含超分签名，这里是双保险 + 立刻刷新）
+                withContext(Dispatchers.Main) {
+                    renderLru.remove(renderKey(page, TranslationCacheManager.OverlayMode.TRANSLATED))
+                    renderLru.remove(renderKey(page, TranslationCacheManager.OverlayMode.ORIGINAL))
+                    renderLru.remove(renderKey(page, TranslationCacheManager.OverlayMode.PLAIN))
+                    webtoonLru.remove(page)
+                    if (uiAttached && page == currentPageProvider()) onVisual()
+                }
+                LogCollector.d(TAG, "翻译时自动超分完成 page=$page")
+            } else {
+                // 自动超分失败不打扰用户（可能是没选模型/超像素上限/未开启）
+                LogCollector.d(TAG, "翻译时自动超分未产出 page=$page")
+            }
         }
     }
 
