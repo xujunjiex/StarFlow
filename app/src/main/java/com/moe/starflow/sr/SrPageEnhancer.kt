@@ -9,6 +9,10 @@ import com.moe.starflow.utils.LogCollector
 /**
  * 阅读器链路对一页图片的增强入口（"先超分再翻译"的落点）。
  *
+ * ⚠️ **超分只服务阅读器**（2026-10 用户口径）：截图 / 录屏链路**不做超分**。
+ * 原来的 `enhanceForCapture(src, forGame)` 已删除 —— `MangaFloatingService` 与
+ * `FloatingBallService` 都恢复成「裁剪后直接喂 OCR」，个性化里的三个超分开关也一并删除。
+ *
  * ## 为什么输出尺寸必须等于输入尺寸
  * `ReaderPageSource.loadFull` 出来的 bitmap 同时喂给**两个**下游：
  * 1. OCR/检测 —— 希望它更清晰（这就是超分的目的）
@@ -68,40 +72,12 @@ object SrPageEnhancer {
      * @return **与 [src] 同尺寸**的新 bitmap；未开开关 / 没选模型且没开 Anime4K / 任何失败 → **null**
      *   （调用方直接用原图，绝不因为增强失败而翻不了页或翻不了译）
      */
-    fun enhanceForReader(src: Bitmap): Bitmap? = enhance(src, forGame = false, readerSwitch = true)
-
-    /**
-     * 截图 / 录屏链路增强一张图（游戏或漫画模式）。
-     *
-     * @param forGame true=游戏模式，false=漫画模式。两者各自有开关，且**都受个性化里的总开关约束**
-     *   （`SrSettings.isEnabledForGame/Comic` 内部已经 AND 了总开关）。
-     *
-     * @return **与 [src] 同尺寸**的新 bitmap；开关未开 / 无可用的增强 / 任何失败 → **null**
-     *
-     * ## ⚠️ 接入位置：**裁剪之后、进 OCR 之前**，绝不能挂在截图入口
-     * `MangaFloatingService.processMangaScreenshot` 收到的整屏截图**同时参与 pHash 计算**，
-     * 而 pHash 是缓存键（256-bit 扩展 hash）。在那一层增强 = **缓存键整体变化** →
-     * 与用户已存的译文/图片缓存**全部失配**（表现为历史记录里的缓存再也命中不了、重复 OCR）。
-     * 所以调用点要找「已经裁成 crop 区域、正要喂给检测/识别」的那一步。
-     *
-     * 也正因为本函数**保证不改尺寸**，挂在裁剪后的图上不会影响 `bubbleRects` 的坐标空间。
-     */
-    fun enhanceForCapture(src: Bitmap, forGame: Boolean): Bitmap? =
-        enhance(src, forGame = forGame, readerSwitch = false)
-
-    /**
-     * @param readerSwitch true=走阅读器独立开关；false=走截图链路的模式开关（受总开关约束）
-     */
-    private fun enhance(src: Bitmap, forGame: Boolean, readerSwitch: Boolean): Bitmap? {
+    fun enhanceForReader(src: Bitmap): Bitmap? {
         val ctx = appContext ?: return null
         if (src.width <= 0 || src.height <= 0) return null
         return try {
             val prefs = PreferenceManager.getDefaultSharedPreferences(ctx)
-            val out = if (readerSwitch) {
-                SuperResolutionEngines.upscaleForReader(ctx, prefs, src)
-            } else {
-                SuperResolutionEngines.upscaleIfEnabled(ctx, prefs, src, forGame = forGame)
-            } ?: return null
+            val out = SuperResolutionEngines.upscaleForReader(ctx, prefs, src) ?: return null
             val w = src.width
             val h = src.height
             if (out.width == w && out.height == h) {

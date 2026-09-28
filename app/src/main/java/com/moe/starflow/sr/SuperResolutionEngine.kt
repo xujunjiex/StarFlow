@@ -59,6 +59,11 @@ enum class SrStep {
 /**
  * 超分引擎的门面：算出要跑哪些工序、按选择取引擎（带缓存）、统一失败降级。
  *
+ * ⚠️ **超分只服务阅读器**（2026-10 用户口径）：截图 / 录屏链路（`MangaFloatingService` /
+ * `FloatingBallService`）**不做超分**，那两个服务已恢复成「裁剪后直接喂 OCR」。
+ * 原先的 `upscaleIfEnabled(forGame)` + 三个开关（总开关/游戏/漫画）已整体删除，
+ * 现在唯一入口是 [upscaleForReader]。
+ *
  * ⚠️ **全项目只从这里拿引擎**：`SrModelManager` 只回答"选了哪个/下没下"、
  * `SrSettings` 只回答"超分开关开没开"、`Anime4kMode` 只回答"Anime4K 开关与档位"，
  * 三者的组合判断收在 [resolveSteps] 里。
@@ -165,43 +170,18 @@ object SuperResolutionEngines {
     }
 
     /**
-     * 截图/录屏链路：按游戏/漫画各自的开关跑工序。
-     * （两个开关都受个性化里的总开关约束，见 `SrSettings.isEnabledFor*`）
-     */
-    fun upscaleIfEnabled(
-        context: Context,
-        prefs: SharedPreferences,
-        src: Bitmap,
-        forGame: Boolean
-    ): Bitmap? {
-        val enabled = if (forGame) SrSettings.isEnabledForGame(prefs)
-        else SrSettings.isEnabledForComic(prefs)
-        return run(context, prefs, src, enabled)
-    }
-
-    /**
      * 阅读器链路：**超分开关**只管超分模型；Anime4K 由它自己的开关独立决定。
      *
      * ⚠️ 这里刻意**不用**超分开关去闸 Anime4K：Anime4K 是调色面板里的"画面观感"设置，
      * 用户在调色面板打开它却因为另一个面板的开关没开而毫无反应，正是之前
      * 「切了档、预览和阅读器都没效果」的根因。
+     *
+     * ⚠️ **超分只服务阅读器**（2026-10 用户口径）：截图/录屏链路不再超分，
+     * 原来的 `upscaleIfEnabled(forGame)` 已删除。
      */
-    fun upscaleForReader(context: Context, prefs: SharedPreferences, src: Bitmap): Bitmap? =
-        run(context, prefs, src, SrSettings.isEnabledForReader(prefs))
-
-    /**
-     * @param srSwitch 超分模型那一道是否允许。
-     *   ⚠️ 这里**不再**有第二个开关入参：Anime4K 的开关语义已完全解耦（见 [resolveSteps]），
-     *   曾经那个被忽略的形参是死代码，删掉以免误导后来人以为"还有个开关在起作用"。
-     */
-    private fun run(
-        context: Context,
-        prefs: SharedPreferences,
-        src: Bitmap,
-        srSwitch: Boolean
-    ): Bitmap? {
+    fun upscaleForReader(context: Context, prefs: SharedPreferences, src: Bitmap): Bitmap? {
         val steps = resolveSteps(
-            srEnabled = srSwitch,
+            srEnabled = SrSettings.isEnabledForReader(prefs),
             srModelUsable = isSrModelUsable(context, prefs),
             anime4kEnabled = Anime4kMode.isEnabled(prefs)
         )

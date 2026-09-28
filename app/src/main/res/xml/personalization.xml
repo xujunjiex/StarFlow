@@ -344,38 +344,16 @@
     </PreferenceCategory>
 
     <!-- ════════════════════════════════════════════════════════════
-         超分（SR）—— 2026-10 新增
+         超分（SR）—— 2026-10
 
-         ⚠️ 总开关与两个分项是 **AND** 关系（总开关关 = 全关），判据统一走
-            `com.moe.starflow.sr.SrSettings`，**不要在调用点直接读 prefs 键**。
-         ⚠️ 阅读器的独立开关**不在这里** —— 它在阅读器面板上，与这里的开关
-            各自独立生效（用户口径）。
-         ⚠️ 新增 key 后要把它们加进两个悬浮服务的 watchedKeys，否则改完不实时生效。
+         ⚠️ 这里**只有模型管理入口**，没有开关：
+         - 超分**只服务阅读器**（先超分再识别 + 每页手动超分），开关在**阅读器调色面板**上。
+           按用户口径「截图/录屏链路不做超分」，所以个性化里不设总开关/游戏/漫画开关。
+         - Anime4K 的开关与档位同样在阅读器调色面板（它作用在阅读器的底图上）。
          ════════════════════════════════════════════════════════════ -->
     <PreferenceCategory
         android:title="@string/sr_settings_category"
         app:iconSpaceReserved="false">
-
-        <SwitchPreference
-            android:key="sr_enabled"
-            android:title="@string/sr_enabled_title"
-            android:summary="@string/sr_enabled_summary"
-            android:defaultValue="false"
-            app:iconSpaceReserved="false" />
-
-        <SwitchPreference
-            android:key="sr_enabled_game"
-            android:title="@string/sr_enabled_game_title"
-            android:summary="@string/sr_enabled_game_summary"
-            android:defaultValue="true"
-            app:iconSpaceReserved="false" />
-
-        <SwitchPreference
-            android:key="sr_enabled_comic"
-            android:title="@string/sr_enabled_comic_title"
-            android:summary="@string/sr_enabled_comic_summary"
-            android:defaultValue="true"
-            app:iconSpaceReserved="false" />
 
         <Preference
             android:key="sr_model_manage"

@@ -98,28 +98,27 @@ class SrRouteTest {
     }
 
     /**
-     * 阅读器开关与截图开关**各自独立**（用户明确要求），
-     * 总开关只管截图链路 —— 这条断言防止以后有人"顺手统一"成同一个开关。
+     * **超分只服务阅读器**（2026-10 用户口径）：只有一个开关，默认关，写它才生效。
+     *
+     * ⚠️ 这里同时钉死"截图链路不做超分"这个决定：曾经的三个开关
+     * （总开关 / 游戏 / 漫画）已删除，`SrSettings` 里**不允许**再出现
+     * `isEnabledForGame` / `isEnabledForComic` / `isEnabled` / `isUsedAnywhere` ——
+     * 它们一旦回来，就说明有人把超分又接回了截屏/录屏链路。
      */
     @Test
-    fun readerSwitchIsIndependentFromMasterSwitch() {
+    fun readerIsTheOnlySrConsumer() {
         val prefs = FakePrefs()
-        assertEquals(false, SrSettings.isEnabled(prefs))
-        assertEquals(false, SrSettings.isEnabledForReader(prefs))
-        assertEquals(false, SrSettings.isEnabledForGame(prefs))
-        assertEquals(false, SrSettings.isEnabledForComic(prefs))
+        assertEquals("默认必须关", false, SrSettings.isEnabledForReader(prefs))
 
         SrSettingsPut(prefs, SrSettings.KEY_READER_ENABLED, true)
-        assertEquals("阅读器独立生效", true, SrSettings.isEnabledForReader(prefs))
-        assertEquals("总开关仍关", false, SrSettings.isEnabled(prefs))
-        assertEquals("游戏模式仍关", false, SrSettings.isEnabledForGame(prefs))
-        assertEquals("漫画模式仍关", false, SrSettings.isEnabledForComic(prefs))
-        assertEquals("没有任何截图链路在用", true, SrSettings.isUsedAnywhere(prefs))
+        assertEquals(true, SrSettings.isEnabledForReader(prefs))
 
-        SrSettingsPut(prefs, SrSettings.KEY_ENABLED, true)
-        SrSettingsPut(prefs, SrSettings.KEY_ENABLED_COMIC, false)
-        assertEquals(true, SrSettings.isEnabledForGame(prefs))
-        assertEquals(false, SrSettings.isEnabledForComic(prefs))
+        // 老版本遗留的截图开关键必须被彻底无视（读到也不生效）
+        SrSettingsPut(prefs, "sr_enabled", true)
+        SrSettingsPut(prefs, "sr_enabled_game", true)
+        SrSettingsPut(prefs, "sr_enabled_comic", true)
+        SrSettingsPut(prefs, SrSettings.KEY_READER_ENABLED, false)
+        assertEquals("遗留截图开关不得影响阅读器开关", false, SrSettings.isEnabledForReader(prefs))
     }
 
     // ---------- 极简 SharedPreferences 替身（只用 getBoolean/putBoolean） ----------

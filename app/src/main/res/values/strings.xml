@@ -701,12 +701,6 @@
     <string name="sr_active_switched">Switched to %1$s</string>
     <!-- Personalization · Super resolution -->
     <string name="sr_settings_category">Super resolution (AI upscaling)</string>
-    <string name="sr_enabled_title">Enable super resolution</string>
-    <string name="sr_enabled_summary">Master switch. Uses AI to upscale a low-resolution image 2x before OCR and translation. Only genuinely low-resolution sources benefit — pages 1000px+ wide barely change, and it costs battery and time.</string>
-    <string name="sr_enabled_game_title">Super resolution in game mode</string>
-    <string name="sr_enabled_game_summary">Upscale before OCR in the screen-capture game translation pipeline</string>
-    <string name="sr_enabled_comic_title">Super resolution in comic mode</string>
-    <string name="sr_enabled_comic_summary">Upscale before OCR in the screen-capture comic translation pipeline</string>
     <string name="sr_model_manage_title">Super-resolution models</string>
     <string name="sr_model_manage_summary">Download and pick a super-resolution model</string>
     <string name="sr_model_missing_format">%1$s (model not downloaded)</string>

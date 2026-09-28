@@ -635,12 +635,6 @@
     <string name="sr_active_switched">已切换到 %1$s</string>
     <!-- 个性化设置 · 超分分类 -->
     <string name="sr_settings_category">超分（AI 放大）</string>
-    <string name="sr_enabled_title">启用超分</string>
-    <string name="sr_enabled_summary">总开关。用 AI 把低分辨率图片放大 2 倍后再识别与翻译。只对真正低分辨率的图源有明显效果，宽度 1000px 以上的页面几乎看不出变化，且会更耗电、更慢。</string>
-    <string name="sr_enabled_game_title">游戏模式超分</string>
-    <string name="sr_enabled_game_summary">截屏/录屏的游戏翻译链路先超分再识别</string>
-    <string name="sr_enabled_comic_title">漫画模式超分</string>
-    <string name="sr_enabled_comic_summary">截屏/录屏的漫画翻译链路先超分再识别</string>
     <string name="sr_model_manage_title">超分模型管理</string>
     <string name="sr_model_manage_summary">下载并选择超分模型</string>
     <string name="sr_model_missing_format">%1$s（模型未下载）</string>
