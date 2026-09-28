@@ -684,8 +684,32 @@
     <string name="builtin_api_prefix">Built-in</string>
 
     <!-- 模型管理 -->
-    <string name="model_management">OCR Model Management</string>
-    <string name="model_management_tip">Manage downloaded OCR recognition models</string>
+    <string name="model_management">Model Management</string>
+    <string name="model_management_tip">Manage downloaded OCR and super-resolution models</string>
+    <!-- 顶部 Tab（OCR / 超分） -->
+    <string name="model_tab_ocr">OCR Models</string>
+    <string name="model_tab_sr">Super Resolution</string>
+    <string name="sr_group_animejanai">AnimeJaNai (2x, ONNX)</string>
+    <string name="sr_group_animejanai_desc">For anime/manga line art and colour pages. Four levels share one architecture family — pick Balanced for quality or Performance for speed.</string>
+    <string name="sr_model_animejanai_balanced">AnimeJaNai HD V3.1 · Balanced</string>
+    <string name="sr_model_animejanai_performance">AnimeJaNai HD V3.1 · Performance</string>
+    <string name="sr_model_animejanai_sharp1_balanced">AnimeJaNai HD V3.1 · Sharp1 Balanced</string>
+    <string name="sr_model_animejanai_sharp1_performance">AnimeJaNai HD V3.1 · Sharp1 Performance</string>
+    <string name="sr_model_animejanai_sd_compact">AnimeJaNai SD · Compact</string>
+    <string name="sr_low_res_tip">💡 Super resolution can only help genuinely low-resolution sources. Pages already 1000px+ wide barely change, and heavy screentone may be re-drawn. Keep it off unless the source is small.</string>
+    <string name="sr_no_model_selected">No super-resolution model selected — download one below</string>
+    <string name="sr_active_switched">Switched to %1$s</string>
+    <!-- Personalization · Super resolution -->
+    <string name="sr_settings_category">Super resolution (AI upscaling)</string>
+    <string name="sr_enabled_title">Enable super resolution</string>
+    <string name="sr_enabled_summary">Master switch. Uses AI to upscale a low-resolution image 2x before OCR and translation. Only genuinely low-resolution sources benefit — pages 1000px+ wide barely change, and it costs battery and time.</string>
+    <string name="sr_enabled_game_title">Super resolution in game mode</string>
+    <string name="sr_enabled_game_summary">Upscale before OCR in the screen-capture game translation pipeline</string>
+    <string name="sr_enabled_comic_title">Super resolution in comic mode</string>
+    <string name="sr_enabled_comic_summary">Upscale before OCR in the screen-capture comic translation pipeline</string>
+    <string name="sr_model_manage_title">Super-resolution models</string>
+    <string name="sr_model_manage_summary">Download and pick a super-resolution model</string>
+    <string name="sr_model_missing_format">%1$s (model not downloaded)</string>
     <string name="detector_section">Detector</string>
     <string name="detector_rtdetr_desc">Block-level + bubble detection, fast, 11MB</string>
     <string name="detector_mlkit_desc">Google ML Kit detection + recognition, ~10MB, fast for subtitles</string>
@@ -1048,7 +1072,24 @@
     <string name="reader_translate_summary">%1$d pages · %2$d done · %3$d ongoing · %4$d failed</string>
     <string name="reader_translate_ocr_model">OCR Model: %1$s</string>
     <string name="reader_translate_translator_model">Translation Model: %1$s</string>
-    
+    <!-- Super resolution row (reader translate panel, 2026-10) -->
+    <string name="reader_sr_model_row">Super resolution: %1$s</string>
+    <string name="reader_sr_none">Not selected</string>
+    <string name="reader_sr_not_downloaded">%1$s (not downloaded)</string>
+    <string name="reader_sr_hint">Tap to download or switch super-resolution models. With the switch above on, pages are upscaled before OCR (better on low-resolution sources). It works together with Anime4K.</string>
+    <string name="reader_sr_switch_on">Reader super resolution on — pages are upscaled before OCR</string>
+    <string name="reader_sr_switch_off">Reader super resolution off</string>
+    <!-- Anime4K baseline (reader colour panel, 2026-10) -->
+    <string name="reader_anime4k_label">Anime4K line enhance</string>
+    <string name="reader_anime4k_hint">Sharpens and denoises line art without changing resolution. **Stacks with super resolution**: upscale first, then sharpen, for the best result — or use it on its own with no model downloaded. Tap to pick a level.</string>
+    <string name="reader_anime4k_off">Off</string>
+    <string name="reader_anime4k_mode_a">A · Strong restore</string>
+    <string name="reader_anime4k_mode_b">B · Balanced</string>
+    <string name="reader_anime4k_mode_c">C · Line restore</string>
+    <string name="reader_anime4k_mode_aa">AA · Strong restore+</string>
+    <string name="reader_anime4k_mode_bb">BB · Balanced+</string>
+    <string name="reader_anime4k_mode_ca">CA · Line restore+</string>
+    <string name="reader_anime4k_switched">Anime4K switched to %1$s</string>    
     <string name="reader_translate_source_lang_label">Source</string>
     <string name="reader_translate_target_lang_label">Target</string>
     <string name="reader_translate_filter_all">All</string>
@@ -1604,4 +1645,32 @@
     <string name="import_option_dir_manga_single">Import folder (single manga)</string>
     <string name="import_option_dir_novel_single">Import folder (single novel)</string>
 
+    <string name="reader_clear_page_desc">Clear this page</string>
+    <string name="reader_clear_page_confirm_title">Clear this page\'s translation?</string>
+    <string name="reader_clear_page_confirm_msg">This deletes the translation of page %1$d (source text and bubble data included) and shows the original image again. This cannot be undone.</string>
+    <string name="reader_clear_page_confirm_ok">Clear</string>
+    <string name="reader_clear_row_confirm_msg">This deletes the translation record of page %1$d and shows the original image again. This cannot be undone.</string>
+
+    <!-- waifu2x family (2026-10, official ONNX build from deepghs/waifu2x_onnx) -->
+    <string name="sr_group_waifu2x_cunet">waifu2x cunet (2x, ONNX)</string>
+    <string name="sr_group_waifu2x_cunet_desc">The cunet architecture from the official waifu2x model set. The four levels are denoise strengths: n0 leaves the source alone (most faithful, line restore + upscale only), n3 aggressively removes scan noise and JPEG artefacts. Highest measured quality of all families.</string>
+    <string name="sr_group_waifu2x_swin">waifu2x swin_unet (2x, ONNX)</string>
+    <string name="sr_group_waifu2x_swin_desc">the SwinIR architecture from the waifu2x model set — best quality but large (16.8MB per level) and slower. For colour pages and covers where quality matters more than waiting.</string>
+    <string name="sr_model_w2x_cunet_n0">cunet · No denoise (n0)</string>
+    <string name="sr_model_w2x_cunet_n1">cunet · Light denoise (n1)</string>
+    <string name="sr_model_w2x_cunet_n2">cunet · Medium denoise (n2)</string>
+    <string name="sr_model_w2x_cunet_n3">cunet · Strong denoise (n3)</string>
+    <string name="sr_model_w2x_swin_n0">swin_unet · No denoise (n0)</string>
+    <string name="sr_model_w2x_swin_n1">swin_unet · Light denoise (n1)</string>
+
+    <!-- Image quality (colour panel, 2026-10) -->
+    <string name="reader_sr_switch_label">Super resolution</string>
+    <string name="reader_anime4k_desc_off">Off — no line enhancement</string>
+    <string name="reader_anime4k_desc_c">Line restore — lightest; denoise and outline only, barely alters the art</string>
+    <string name="reader_anime4k_desc_ca">Line restore+ — outlines more strongly than Line restore</string>
+    <string name="reader_anime4k_desc_b">Balanced — restore and upscale in balance, moderate change</string>
+    <string name="reader_anime4k_desc_bb">Balanced+ — a stronger version of Balanced</string>
+    <string name="reader_anime4k_desc_a">Strong restore — sharpest lines, largest change to the art</string>
+    <string name="reader_anime4k_desc_aa">Strong restore+ — the heaviest and slowest</string>
+    <string name="reader_chapter_badge_waiting">%1$d pages waiting</string>
 </resources>

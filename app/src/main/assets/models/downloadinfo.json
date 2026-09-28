@@ -204,6 +204,138 @@
           "checksum": "436f3ec23b236b2ac1d05dd7a713f8ae"
         }
       ]
+    },
+    {
+      "model_key": "SR_ANIMEJANAI_HD_BALANCED",
+      "browser_url": "https://github.com/the-database/mpv-upscale-2x_animejanai/tree/main/BuildMpvUpscale2xAnimeJaNai/mpv-upscale-2x_animejanai/animejanai/onnx",
+      "files": [
+        {
+          "file_name": "2x_AnimeJaNai_HD_V3.1_Balanced_SPANF3_b8f64_unshuffle_fp16.onnx",
+          "download_url": "https://raw.githubusercontent.com/the-database/mpv-AnimeJaNai/main/BuildMpvUpscale2xAnimeJaNai/mpv-upscale-2x_animejanai/animejanai/onnx/2x_AnimeJaNai_HD_V3.1_Balanced_SPANF3_b8f64_unshuffle_fp16.onnx",
+          "file_size": 1971970,
+          "checksum": "cb7f3529cf6b13b1831cac6a6badae4d"
+        }
+      ]
+    },
+    {
+      "model_key": "SR_ANIMEJANAI_HD_PERFORMANCE",
+      "browser_url": "https://github.com/the-database/mpv-upscale-2x_animejanai/tree/main/BuildMpvUpscale2xAnimeJaNai/mpv-upscale-2x_animejanai/animejanai/onnx",
+      "files": [
+        {
+          "file_name": "2x_AnimeJaNai_HD_V3.1_Performance_SPANF3_b5f48_unshuffle_fp16.onnx",
+          "download_url": "https://raw.githubusercontent.com/the-database/mpv-AnimeJaNai/main/BuildMpvUpscale2xAnimeJaNai/mpv-upscale-2x_animejanai/animejanai/onnx/2x_AnimeJaNai_HD_V3.1_Performance_SPANF3_b5f48_unshuffle_fp16.onnx",
+          "file_size": 740318,
+          "checksum": "33518b897ed0e4b59e262f9f6b801591"
+        }
+      ]
+    },
+    {
+      "model_key": "SR_ANIMEJANAI_HD_SHARP1_BALANCED",
+      "browser_url": "https://github.com/the-database/mpv-upscale-2x_animejanai/tree/main/BuildMpvUpscale2xAnimeJaNai/mpv-upscale-2x_animejanai/animejanai/onnx",
+      "files": [
+        {
+          "file_name": "2x_AnimeJaNai_HD_V3.1Sharp1_Balanced_SPANF3_b8f64_unshuffle_fp16.onnx",
+          "download_url": "https://raw.githubusercontent.com/the-database/mpv-AnimeJaNai/main/BuildMpvUpscale2xAnimeJaNai/mpv-upscale-2x_animejanai/animejanai/onnx/2x_AnimeJaNai_HD_V3.1Sharp1_Balanced_SPANF3_b8f64_unshuffle_fp16.onnx",
+          "file_size": 1971970,
+          "checksum": "de4b479835d6bc890a9e3bdc0738aaf2"
+        }
+      ]
+    },
+    {
+      "model_key": "SR_ANIMEJANAI_HD_SHARP1_PERFORMANCE",
+      "browser_url": "https://github.com/the-database/mpv-upscale-2x_animejanai/tree/main/BuildMpvUpscale2xAnimeJaNai/mpv-upscale-2x_animejanai/animejanai/onnx",
+      "files": [
+        {
+          "file_name": "2x_AnimeJaNai_HD_V3.1Sharp1_Performance_SPANF3_b5f48_unshuffle_fp16.onnx",
+          "download_url": "https://raw.githubusercontent.com/the-database/mpv-AnimeJaNai/main/BuildMpvUpscale2xAnimeJaNai/mpv-upscale-2x_animejanai/animejanai/onnx/2x_AnimeJaNai_HD_V3.1Sharp1_Performance_SPANF3_b5f48_unshuffle_fp16.onnx",
+          "file_size": 740318,
+          "checksum": "9f6c6e0d944d320d68ba136adf3b6ebb"
+        }
+      ]
+    },
+    {
+      "model_key": "SR_ANIMEJANAI_SD_COMPACT",
+      "browser_url": "https://github.com/the-database/mpv-upscale-2x_animejanai/tree/main/BuildMpvUpscale2xAnimeJaNai/mpv-upscale-2x_animejanai/animejanai/onnx",
+      "files": [
+        {
+          "file_name": "2x_AnimeJaNai_SD_V1beta34_Compact_1x3xHxW_dyn-HW_strong_fp16_op21_dynamo.onnx",
+          "download_url": "https://raw.githubusercontent.com/the-database/mpv-AnimeJaNai/main/BuildMpvUpscale2xAnimeJaNai/mpv-upscale-2x_animejanai/animejanai/onnx/2x_AnimeJaNai_SD_V1beta34_Compact_1x3xHxW_dyn-HW_strong_fp16_op21_dynamo.onnx",
+          "file_size": 1212903,
+          "checksum": "809f53d7496ad26f8bc53b1eb2e7c05e"
+        }
+      ]
+    },
+    {
+      "model_key": "SR_WAIFU2X_CUNET_N0",
+      "browser_url": "https://huggingface.co/deepghs/waifu2x_onnx/tree/main/20230131/onnx_models",
+      "files": [
+        {
+          "file_name": "w2x_cunet_art_n0_2x.onnx",
+          "download_url": "https://huggingface.co/deepghs/waifu2x_onnx/resolve/main/20230131/onnx_models/cunet/art/noise0_scale2x.onnx",
+          "file_size": 5178789,
+          "checksum": "3a7f05edf64813c09bca6e6ec3b0c4e0"
+        }
+      ]
+    },
+    {
+      "model_key": "SR_WAIFU2X_CUNET_N1",
+      "browser_url": "https://huggingface.co/deepghs/waifu2x_onnx/tree/main/20230131/onnx_models",
+      "files": [
+        {
+          "file_name": "w2x_cunet_art_n1_2x.onnx",
+          "download_url": "https://huggingface.co/deepghs/waifu2x_onnx/resolve/main/20230131/onnx_models/cunet/art/noise1_scale2x.onnx",
+          "file_size": 5178789,
+          "checksum": "0c319c5cd19d1f2914ea1aabca5ac19a"
+        }
+      ]
+    },
+    {
+      "model_key": "SR_WAIFU2X_CUNET_N2",
+      "browser_url": "https://huggingface.co/deepghs/waifu2x_onnx/tree/main/20230131/onnx_models",
+      "files": [
+        {
+          "file_name": "w2x_cunet_art_n2_2x.onnx",
+          "download_url": "https://huggingface.co/deepghs/waifu2x_onnx/resolve/main/20230131/onnx_models/cunet/art/noise2_scale2x.onnx",
+          "file_size": 5178789,
+          "checksum": "dee72bced5196aa3fe2c7114f82e1afe"
+        }
+      ]
+    },
+    {
+      "model_key": "SR_WAIFU2X_CUNET_N3",
+      "browser_url": "https://huggingface.co/deepghs/waifu2x_onnx/tree/main/20230131/onnx_models",
+      "files": [
+        {
+          "file_name": "w2x_cunet_art_n3_2x.onnx",
+          "download_url": "https://huggingface.co/deepghs/waifu2x_onnx/resolve/main/20230131/onnx_models/cunet/art/noise3_scale2x.onnx",
+          "file_size": 5178789,
+          "checksum": "980841fb57bdb4ccdc0c9f82bae60973"
+        }
+      ]
+    },
+    {
+      "model_key": "SR_WAIFU2X_SWIN_N0",
+      "browser_url": "https://huggingface.co/deepghs/waifu2x_onnx/tree/main/20230131/onnx_models",
+      "files": [
+        {
+          "file_name": "w2x_swin_art_n0_2x.onnx",
+          "download_url": "https://huggingface.co/deepghs/waifu2x_onnx/resolve/main/20230131/onnx_models/swin_unet/art/noise0_scale2x.onnx",
+          "file_size": 16827545,
+          "checksum": "ed8ea7108bb8fbf623cf5067efc048a4"
+        }
+      ]
+    },
+    {
+      "model_key": "SR_WAIFU2X_SWIN_N1",
+      "browser_url": "https://huggingface.co/deepghs/waifu2x_onnx/tree/main/20230131/onnx_models",
+      "files": [
+        {
+          "file_name": "w2x_swin_art_n1_2x.onnx",
+          "download_url": "https://huggingface.co/deepghs/waifu2x_onnx/resolve/main/20230131/onnx_models/swin_unet/art/noise1_scale2x.onnx",
+          "file_size": 16827545,
+          "checksum": "c7df3a439319400f0840faa4315a7d15"
+        }
+      ]
     }
   ]
 }

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 深色阅读背景下的缩略图格子底（浅色是 bg_preview_cell，见 ReaderPagePreviewDialog） -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#2A2F36" />
+    <corners android:radius="8dp" />
+</shape>

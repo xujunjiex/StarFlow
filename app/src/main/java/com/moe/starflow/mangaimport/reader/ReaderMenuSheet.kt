@@ -31,7 +31,12 @@ import com.moe.starflow.translate.TranslateTools
 import com.moe.starflow.utils.Constants
 import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.MangaFontSize
+import com.moe.starflow.sr.SrModelManager
+import com.moe.starflow.sr.SrSettings
+import com.moe.starflow.sr.SuperResolutionEngines
+import com.moe.starflow.sr.anime4k.Anime4kMode
 import com.moe.starflow.utils.OcrEngineManager
+import com.moe.starflow.utils.ReaderDialogs
 
 /** 阅读器底部工具栏初始状态。mode:0=LTR 1=RTL 2=竖排 3=Webtoon；animation:0无 1默认 2高级 3仿真；bg:0默认 1浅 2深 3白 4黑 5自动。 */
 class ReaderMenuState(
@@ -88,6 +93,12 @@ class ReaderMenuCallbacks(
     val onPanelClosed: () -> Unit = {},
     val onOpenModelManagement: () -> Unit = {},
     val onOpenApiConfig: () -> Unit = {},
+    /** 点调色面板的「超分模型」行：跳模型管理页的**超分 Tab**。 */
+    val onOpenSrModelManagement: () -> Unit = {},
+    /** 阅读器超分开关被切换（值已写入 prefs）。 */
+    val onReaderSrChanged: (Boolean) -> Unit = {},
+    /** Anime4K 档位被切换（值已写入 prefs）：宿主需作废渲染缓存。 */
+    val onAnime4kModeChanged: () -> Unit = {},
     /** 点章卡片主按钮：没有任务 = 翻译本章；跑着 = 暂停；暂停了 = 继续。 */
     val onChapterPrimary: (Int) -> Unit = {},
     /** 点章卡片次按钮：没有任务 = 清除本章译文（宿主负责二次确认）；有任务 = 取消该章任务。 */
@@ -574,8 +585,83 @@ class ReaderMenuSheet(
         val ivProc = view.findViewById<ImageView>(R.id.iv_proc_preview)
         state.previewBitmap?.let { bmp ->
             ivOrig.setImageBitmap(bmp)
-            ivProc.setImageBitmap(bmp)
+            // ⚠️ 右侧「处理后」要**真的走一遍增强**：此前只套调色滤镜，
+            // 于是切 Anime4K 档 / 开超分在预览里看不到任何变化（用户报的"预览没效果"）。
+            // 增强结果与输入同尺寸，换 bitmap 不改变格子里的构图。
+            ivProc.setImageBitmap(enhancedPreview(bmp) ?: bmp)
         }
+        // ── 画质增强（调色面板，2026-10）──
+        // ⚠️ 超分控件都在**调色面板**（用户口径：它调的是"画面看起来怎样"，与调色同类）。
+        // ⚠️ 超分开关与 Anime4K **互不干涉、可叠加**：开关只管超分模型那一道。
+        //    之前 Anime4K 被超分开关闸住（而那个开关默认还关着）→ 用户在调色面板开了它却毫无反应，
+        //    这正是「切了档、预览和阅读器都没任何效果」的根因。
+        /**
+         * 让调色面板右侧「处理后」立刻反映当前的增强设置。
+         *
+         * ⚠️ 不能调下面那个 `refreshProc()`：Kotlin 的局部函数**不允许前向引用**，
+         * 而它定义在更后面 —— 这里就地套一遍同一份调色滤镜（`cur()` 与 `ivProc` 此刻已可用）。
+         */
+        fun refreshEnhancedPreview() {
+            val raw = state.previewBitmap ?: return
+            ivProc.setImageBitmap(enhancedPreview(raw) ?: raw)
+            ivProc.colorFilter = cur().toColorFilter()
+        }
+
+        val srPrefs = CustomPreference.getInstance(requireContext()).getSharedPreferences()
+        view.findViewById<TextView>(R.id.tv_sr_model_row).text =
+            getString(R.string.reader_sr_model_row, srModelLabel(srPrefs))
+        view.findViewById<View>(R.id.btn_model_sr).setOnClickListener { cb.onOpenSrModelManagement() }
+        view.findViewById<Switch>(R.id.sw_reader_sr).apply {
+            isChecked = SrSettings.isEnabledForReader(srPrefs)
+            setOnCheckedChangeListener { _, checked ->
+                SrSettings.setReaderEnabled(srPrefs, checked)
+                // 关掉时把已加载的超分引擎放掉（2x 模型几百 MB）；打开时不预热 —— 首翻再建
+                if (!checked) SuperResolutionEngines.releaseSrModel()
+                refreshEnhancedPreview()
+                cb.onReaderSrChanged(checked)
+            }
+        }
+
+        // Anime4K 档位：**弹窗选择**（不是点一下循环切档）—— 每档带一句说明，
+        // 同时解决"切换不美观"与"看不懂各档是什么意思"。
+        fun refreshAnime4kRow() {
+            val p = CustomPreference.getInstance(requireContext()).getSharedPreferences()
+            view.findViewById<TextView>(R.id.tv_anime4k_value).text =
+                if (!Anime4kMode.isEnabled(p)) getString(R.string.reader_anime4k_off)
+                else getString(Anime4kMode.labelResOf(Anime4kMode.fromPrefs(p)))
+        }
+        fun applyAnime4k(enabled: Boolean, mode: Anime4kMode?) {
+            val p = CustomPreference.getInstance(requireContext()).getSharedPreferences()
+            Anime4kMode.setEnabled(p, enabled)
+            if (mode != null) Anime4kMode.setMode(p, mode)
+            // 换档 = 之前那份增强结果全部作废（引擎缓存 + 设置指纹都会跟着变）
+            SuperResolutionEngines.releaseAnime4k()
+            refreshAnime4kRow()
+            refreshEnhancedPreview()
+            cb.onAnime4kModeChanged()
+        }
+        view.findViewById<View>(R.id.btn_anime4k).setOnClickListener {
+            val p = CustomPreference.getInstance(requireContext()).getSharedPreferences()
+            // 顺序由 Anime4kMode.nextAfter 定义（由弱到强），第 0 项固定是「关闭」
+            val order = generateSequence(Anime4kMode.nextAfter(null)) { Anime4kMode.nextAfter(it) }.toList()
+            val curMode = if (Anime4kMode.isEnabled(p)) Anime4kMode.fromPrefs(p) else null
+            val labels = ArrayList<String>(order.size + 1)
+            labels.add(getString(R.string.reader_anime4k_desc_off))
+            order.forEach {
+                labels.add(getString(Anime4kMode.labelResOf(it)) + " — " + getString(Anime4kMode.descResOf(it)))
+            }
+            val checked = curMode?.let { order.indexOf(it) + 1 } ?: 0
+            ReaderDialogs.show(requireContext(), darkPanel) {
+                setTitle(R.string.reader_anime4k_label)
+                setSingleChoiceItems(labels.toTypedArray(), checked) { dlg, which ->
+                    if (which == 0) applyAnime4k(false, null) else applyAnime4k(true, order[which - 1])
+                    dlg.dismiss()
+                }
+                setNegativeButton(android.R.string.cancel, null)
+            }
+        }
+        refreshAnime4kRow()
+
         fun refreshProc() {
             ivProc.colorFilter = cur().toColorFilter()
         }
@@ -628,37 +714,77 @@ class ReaderMenuSheet(
     }
 
     /** 面板配色随阅读背景深浅联动：根背景 + 标题/行文字颜色 + 分段轨道。 */
+    /**
+     * 「超分模型」行要显示的文案。三种状态都显式给出：未选 / 选了但没下载 / 正常。
+     *
+     * ⚠️「选了但没下载」必须露出来 —— 否则用户开了开关却什么都没发生，面板上看着一切正常。
+     */
+    private fun srModelLabel(prefs: SharedPreferences): String {
+        val key = SrModelManager.getActiveKey(prefs) ?: return getString(R.string.reader_sr_none)
+        val name = getString(SrModelManager.nameResOf(key))
+        return if (SrModelManager.isDownloaded(requireContext(), key)) name
+        else getString(R.string.reader_sr_not_downloaded, name)
+    }
+
+    /**
+     * 调色面板右侧「处理后」预览格用的增强 —— 走**阅读器同一条链路**
+     * （`SrPageEnhancer.enhanceForReader`）。预览里看到什么，翻页后页面上就是什么。
+     * 失败/未开启 → null，调用方回退原图。
+     */
+    private fun enhancedPreview(src: android.graphics.Bitmap): android.graphics.Bitmap? =
+        runCatching { com.moe.starflow.sr.SrPageEnhancer.enhanceForReader(src) }.getOrNull()
+
+    /**
+     * 面板主题的**标题色**控件（浅色 `#333333` / 深色 `#E2E2E4`）。
+     *
+     * ⚠️ **一个控件只能出现在本数组与 [panelSubIds] 之一**：两段 `setTextColor` 先后执行、
+     * **后写的赢** —— 同一个 id 两处都登记，它会静默变成次要色（「翻译模型最大同时请求数」的标题
+     * 就这样被反复改回淡色）。这条由 `PanelThemeGuardTest` 机械守卫（读下面的 BEGIN/END 标记）。
+     */
+    // PANEL_THEME_LABEL_IDS_BEGIN
+    private val panelLabelIds = intArrayOf(
+        R.id.tv_mode_label, R.id.tv_animation_label, R.id.tv_background_label,
+        R.id.tv_translate_mode_label,
+        R.id.tv_color_title, R.id.tv_color_inverted, R.id.tv_color_grayscale, R.id.tv_color_book,
+        R.id.tv_brightness_label, R.id.tv_contrast_label,
+        R.id.tv_rotate_label, R.id.tv_auto_turn_label, R.id.tv_download_label, R.id.tv_settings_label,
+        R.id.tv_ocr_model_row, R.id.tv_translator_model_row,
+        R.id.tv_sr_model_row, R.id.tv_sr_switch_label, R.id.tv_anime4k_label,
+        R.id.tv_source_lang_value, R.id.tv_target_lang_value,
+        R.id.tv_debounce_label, R.id.tv_ahead_label,
+        // 与「OCR模型 / 翻译模型」两行同为 14sp 正文色
+        R.id.tv_font_size_row,
+        // 「同时请求数」的**标题**和其它标题同色（用户口径 2026-09-28：改成和其他标题一样的纯黑）
+        R.id.tv_concurrency_label,
+    )
+    // PANEL_THEME_LABEL_IDS_END
+
+    /** 面板主题的**次要色**控件（值 / 说明行）。⚠️ 不许与 [panelLabelIds] 重复。 */
+    // PANEL_THEME_SUB_IDS_BEGIN
+    private val panelSubIds = intArrayOf(
+        R.id.tv_brightness_value, R.id.tv_contrast_value, R.id.tv_color_hint,
+        R.id.tv_rotate_value, R.id.tv_interval_value, R.id.tv_download_value,
+        R.id.tv_source_caption, R.id.tv_target_caption,
+        R.id.tv_debounce_value, R.id.tv_ahead_value,
+        R.id.tv_sr_hint, R.id.tv_anime4k_hint, R.id.tv_anime4k_value,
+        // 「同时请求数」只剩**值/说明**走次要色
+        R.id.tv_concurrency_hint,
+        // 字号行的值与说明（「自动」胶囊的配色在 refreshFontSizeRow 里按状态给）
+        R.id.tv_font_size_value, R.id.tv_font_size_hint,
+        // 启动延迟的说明行
+        R.id.tv_debounce_hint,
+    )
+    // PANEL_THEME_SUB_IDS_END
+
     private fun applyPanelTheme(view: View, root: View) {
         val dark = darkPanel
         root.setBackgroundColor(if (dark) 0xFF1C1C1E.toInt() else 0xFFFFFFFF.toInt())
         val labelColor = if (dark) 0xFFE2E2E4.toInt() else 0xFF333333.toInt()
         val subColor = if (dark) 0xFF9A9A9F.toInt() else 0xFF888888.toInt()
-        listOf(
-            R.id.tv_mode_label, R.id.tv_animation_label, R.id.tv_background_label,
-            R.id.tv_translate_mode_label,
-            R.id.tv_color_title, R.id.tv_color_inverted, R.id.tv_color_grayscale, R.id.tv_color_book,
-            R.id.tv_brightness_label, R.id.tv_contrast_label,
-            R.id.tv_rotate_label, R.id.tv_auto_turn_label, R.id.tv_download_label, R.id.tv_settings_label,
-            R.id.tv_ocr_model_row, R.id.tv_translator_model_row,
-            R.id.tv_source_lang_value, R.id.tv_target_lang_value,
-            R.id.tv_debounce_label, R.id.tv_ahead_label,
-            // 与「OCR模型 / 翻译模型」两行同为 14sp 正文色
-            R.id.tv_font_size_row
-        ).forEach { id ->
+        panelLabelIds.forEach { id ->
             view.findViewById<TextView>(id).setTextColor(labelColor)
         }
-        listOf(
-            R.id.tv_brightness_value, R.id.tv_contrast_value, R.id.tv_color_hint,
-            R.id.tv_rotate_value, R.id.tv_interval_value, R.id.tv_download_value,
-            R.id.tv_source_caption, R.id.tv_target_caption,
-            R.id.tv_debounce_value, R.id.tv_ahead_value,
-            // 「同时请求数」两行：标签走说明色，与其它滑块行一致
-            R.id.tv_concurrency_label, R.id.tv_concurrency_hint,
-            // 字号行的值与说明（「自动」胶囊的配色在 refreshFontSizeRow 里按状态给）
-            R.id.tv_font_size_value, R.id.tv_font_size_hint,
-            // 启动延迟的说明行
-            R.id.tv_debounce_hint
-        ).forEach { id ->
+        panelSubIds.forEach { id ->
             view.findViewById<TextView>(id).setTextColor(subColor)
         }
         // 分段未选中文字 + 复合图标颜色（随深浅）
@@ -667,7 +793,7 @@ class ReaderMenuSheet(
         pageAdapter.dark = darkPanel
         // 调色/更多面板 Switch 配色（避免与面板背景重叠/看不清）
         val swTrack = if (dark) 0xFF3A4046.toInt() else 0xFFCFD8DC.toInt()
-        listOf(R.id.sw_invert, R.id.sw_grayscale, R.id.sw_book, R.id.sw_auto_turn).forEach { id ->
+        listOf(R.id.sw_invert, R.id.sw_grayscale, R.id.sw_book, R.id.sw_auto_turn, R.id.sw_reader_sr).forEach { id ->
             view.findViewById<Switch>(id).let {
                 it.thumbTintList = ColorStateList.valueOf(0xFF55AEEA.toInt())
                 it.trackTintList = ColorStateList.valueOf(swTrack)
@@ -906,21 +1032,16 @@ class ReaderMenuSheet(
         ).show()
     }
 
-    /** 置灰语言提示弹窗（主题随 darkPanel；深浅文字重着色）。 */
+    /** 置灰语言提示弹窗（走共享的 ReaderDialogs：底与字同源）。 */
     private fun showHintDialog(msg: String) {
-        val dlg = AlertDialog.Builder(requireContext())
-            .setMessage(msg)
-            .setPositiveButton(R.string.user_known, null)
-            .create()
-        dlg.show()
-        dlg.window?.setBackgroundDrawableResource(if (darkPanel) R.drawable.bg_dialog_dark else R.drawable.bg_dialog_white)
-        if (darkPanel) recolorLang(dlg.window?.decorView)
-    }
-
-    private fun recolorLang(v: View?) {
-        if (v == null) return
-        if (v is TextView) v.setTextColor(0xFFE2E2E4.toInt())
-        if (v is android.view.ViewGroup) for (i in 0 until v.childCount) recolorLang(v.getChildAt(i))
+        // ⚠️ 这里以前是「换窗口底 + recolorLang 把字刷浅」——**白底白字**的元凶：
+        // `AlertDialog` 的面板底由主题给（系统浅色时是白的），窗口底被面板盖住，而字被刷成了浅色
+        // → 完全看不见（用户 2026-09-28 报的「背景白色文字你也搞成白色」）。
+        // 现在用**对应 night 模式的上下文**建弹窗：面板/文字/按钮统一由主题给色。
+        ReaderDialogs.show(requireContext(), darkPanel) {
+            setMessage(msg)
+            setPositiveButton(R.string.user_known, null)
+        }
     }
 
     /**

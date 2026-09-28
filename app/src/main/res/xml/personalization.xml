@@ -343,4 +343,46 @@
 
     </PreferenceCategory>
 
+    <!-- ════════════════════════════════════════════════════════════
+         超分（SR）—— 2026-10 新增
+
+         ⚠️ 总开关与两个分项是 **AND** 关系（总开关关 = 全关），判据统一走
+            `com.moe.starflow.sr.SrSettings`，**不要在调用点直接读 prefs 键**。
+         ⚠️ 阅读器的独立开关**不在这里** —— 它在阅读器面板上，与这里的开关
+            各自独立生效（用户口径）。
+         ⚠️ 新增 key 后要把它们加进两个悬浮服务的 watchedKeys，否则改完不实时生效。
+         ════════════════════════════════════════════════════════════ -->
+    <PreferenceCategory
+        android:title="@string/sr_settings_category"
+        app:iconSpaceReserved="false">
+
+        <SwitchPreference
+            android:key="sr_enabled"
+            android:title="@string/sr_enabled_title"
+            android:summary="@string/sr_enabled_summary"
+            android:defaultValue="false"
+            app:iconSpaceReserved="false" />
+
+        <SwitchPreference
+            android:key="sr_enabled_game"
+            android:title="@string/sr_enabled_game_title"
+            android:summary="@string/sr_enabled_game_summary"
+            android:defaultValue="true"
+            app:iconSpaceReserved="false" />
+
+        <SwitchPreference
+            android:key="sr_enabled_comic"
+            android:title="@string/sr_enabled_comic_title"
+            android:summary="@string/sr_enabled_comic_summary"
+            android:defaultValue="true"
+            app:iconSpaceReserved="false" />
+
+        <Preference
+            android:key="sr_model_manage"
+            android:title="@string/sr_model_manage_title"
+            android:summary="@string/sr_model_manage_summary"
+            app:iconSpaceReserved="false" />
+
+    </PreferenceCategory>
+
 </androidx.preference.PreferenceScreen>

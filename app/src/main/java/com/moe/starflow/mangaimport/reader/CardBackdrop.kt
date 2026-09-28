@@ -82,6 +82,18 @@ object CardBackdrop {
     private fun dp(v: Float): Float = v * android.content.res.Resources.getSystem().displayMetrics.density
 
     /**
+     * 子行**不画底**（透出卡片的底）：它已经在卡片的框里，再画一块底就又多出一层"卡片感"。
+     * 仍然补一层点击水波，保证点行有反馈。
+     */
+    fun applyFlat(view: View, dark: Boolean) {
+        view.background = RippleDrawable(
+            ColorStateList.valueOf(if (dark) 0x22FFFFFF else 0x14000000),
+            GradientDrawable().apply { setColor(0x00000000) },
+            null,
+        )
+    }
+
+    /**
      * **嵌在章卡片里的行**（展开出来的页 / 段）。
      *
      * 用户口径（2026-09-27）：「章节的每一页的展开要放到章节的卡片组里面」——

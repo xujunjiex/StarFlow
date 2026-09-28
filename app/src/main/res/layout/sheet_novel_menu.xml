@@ -95,7 +95,7 @@
                 android:padding="14dp">
 
                 <TextView android:id="@+id/tv_mode_label" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:text="@string/reader_reading_mode" android:textSize="12sp" android:textColor="#888888"/>
+                    android:text="@string/reader_reading_mode" android:textSize="14sp" android:textColor="#888888"/>
 
                 <LinearLayout android:id="@+id/seg_mode" android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:orientation="horizontal" android:layout_marginTop="2dp">
@@ -118,7 +118,7 @@
                 </LinearLayout>
 
                 <TextView android:id="@+id/tv_animation_label" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp" android:text="@string/reader_animation" android:textSize="12sp" android:textColor="#888888"/>
+                    android:layout_marginTop="12dp" android:text="@string/reader_animation" android:textSize="14sp" android:textColor="#888888"/>
 
                 <LinearLayout android:id="@+id/seg_animation" android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:orientation="horizontal" android:layout_marginTop="2dp" android:gravity="center">
@@ -146,7 +146,7 @@
                 </LinearLayout>
 
                 <TextView android:id="@+id/tv_background_label" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp" android:text="@string/reader_background" android:textSize="12sp" android:textColor="#888888"/>
+                    android:layout_marginTop="12dp" android:text="@string/reader_background" android:textSize="14sp" android:textColor="#888888"/>
 
                 <LinearLayout android:id="@+id/seg_background" android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:orientation="horizontal" android:layout_marginTop="2dp" android:gravity="center">
@@ -195,14 +195,14 @@
                 android:padding="14dp">
 
                 <TextView android:id="@+id/tv_translate_mode_label" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:text="@string/reader_translate_mode_title" android:textSize="12sp" android:textColor="#888888"/>
+                    android:text="@string/reader_translate_mode_title" android:textSize="14sp" android:textColor="#888888"/>
 
                 <RadioGroup android:id="@+id/seg_translate_mode"
                     android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:orientation="horizontal" android:layout_marginTop="2dp">
                     <RadioButton android:id="@+id/translate_mode_manual" android:layout_width="0dp" android:layout_height="wrap_content"
                         android:layout_weight="1" android:text="@string/reader_translate_mode_manual" android:checked="true"
-                        android:paddingTop="6dp" android:paddingBottom="6dp"/>
+                        android:paddingTop="10dp" android:paddingBottom="10dp"/>
                     <RadioButton android:id="@+id/translate_mode_auto" android:layout_width="0dp" android:layout_height="wrap_content"
                         android:layout_weight="1" android:text="@string/reader_translate_mode_auto"/>
                     <RadioButton android:id="@+id/translate_mode_incremental" android:layout_width="0dp" android:layout_height="wrap_content"
@@ -221,7 +221,7 @@
                         android:orientation="horizontal" android:gravity="center_vertical">
                         <TextView android:id="@+id/tv_debounce_label" android:layout_width="0dp" android:layout_weight="1"
                             android:layout_height="wrap_content" android:text="@string/reader_translate_debounce"
-                            android:textSize="13sp" android:textColor="#333333"/>
+                            android:textSize="14sp" android:textColor="#333333"/>
                         <TextView android:id="@+id/tv_debounce_value" android:layout_width="wrap_content"
                             android:layout_height="wrap_content" android:text="500 ms" android:textSize="12sp" android:textColor="#55AEEA"/>
                     </LinearLayout>
@@ -237,7 +237,7 @@
                      用户口径（2026-09-27）：除了「启动延迟」之外的四个批次相关参数**收进这一组折叠起来**，
                      组名「批次处理」，组内第一项是「启动增量翻译向后」。默认折叠（记在 prefs 里）。 -->
                 <LinearLayout android:id="@+id/row_batch_group" android:layout_width="match_parent"
-                    android:layout_height="wrap_content" android:orientation="vertical" android:layout_marginTop="8dp" android:layout_marginBottom="10dp">
+                    android:layout_height="wrap_content" android:orientation="vertical" android:layout_marginTop="4dp" android:layout_marginBottom="4dp">
 
                     <LinearLayout android:id="@+id/btn_batch_group" android:layout_width="match_parent"
                         android:layout_height="wrap_content" android:orientation="horizontal"
@@ -245,13 +245,14 @@
                         android:paddingTop="4dp" android:paddingBottom="4dp">
                         <TextView android:id="@+id/tv_batch_group_title" android:layout_width="0dp"
                             android:layout_height="wrap_content" android:layout_weight="1"
-                            android:text="@string/novel_translate_batch_group" android:textSize="13sp" android:textColor="#333333"/>
+                            android:text="@string/novel_translate_batch_group" android:textSize="14sp" android:textColor="#333333"/>
                         <TextView android:id="@+id/tv_batch_group_arrow" android:layout_width="wrap_content"
-                            android:layout_height="wrap_content" android:text="▸" android:textSize="13sp" android:textColor="#888888"/>
+                            android:layout_height="wrap_content" android:text="▸" android:textSize="20sp" android:textColor="#888888"/>
                     </LinearLayout>
 
                     <LinearLayout android:id="@+id/batch_group_content" android:layout_width="match_parent"
-                        android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone">
+                        android:layout_height="wrap_content" android:orientation="vertical" android:visibility="gone"
+                        android:paddingStart="12dp">
 
                 <!-- 向后翻译**批数**（仅增量模式显示；批 = 每批段数指定的连续段，不跨章） -->
                 <LinearLayout android:id="@+id/row_ahead_chapters" android:layout_width="match_parent"
@@ -260,7 +261,7 @@
                         android:orientation="horizontal" android:gravity="center_vertical">
                         <TextView android:id="@+id/tv_ahead_label" android:layout_width="0dp" android:layout_weight="1"
                             android:layout_height="wrap_content" android:text="@string/novel_translate_ahead"
-                            android:textSize="13sp" android:textColor="#333333"/>
+                            android:textSize="14sp" android:textColor="#333333"/>
                         <TextView android:id="@+id/tv_ahead_value" android:layout_width="wrap_content"
                             android:layout_height="wrap_content" android:text="5" android:textSize="12sp" android:textColor="#55AEEA"/>
                     </LinearLayout>
@@ -279,7 +280,7 @@
                         android:orientation="horizontal" android:gravity="center_vertical">
                         <TextView android:id="@+id/tv_batch_label" android:layout_width="0dp" android:layout_weight="1"
                             android:layout_height="wrap_content" android:text="@string/novel_translate_batch"
-                            android:textSize="13sp" android:textColor="#333333"/>
+                            android:textSize="14sp" android:textColor="#333333"/>
                         <TextView android:id="@+id/tv_batch_value" android:layout_width="wrap_content"
                             android:layout_height="wrap_content" android:text="3" android:textSize="12sp" android:textColor="#55AEEA"/>
                     </LinearLayout>
@@ -299,7 +300,7 @@
                         android:orientation="horizontal" android:gravity="center_vertical">
                         <TextView android:id="@+id/tv_batch_warn_label" android:layout_width="0dp" android:layout_weight="1"
                             android:layout_height="wrap_content" android:text="@string/novel_translate_warn"
-                            android:textSize="13sp" android:textColor="#333333"/>
+                            android:textSize="14sp" android:textColor="#333333"/>
                         <TextView android:id="@+id/tv_batch_warn_value" android:layout_width="wrap_content"
                             android:layout_height="wrap_content" android:text="4096" android:textSize="12sp" android:textColor="#55AEEA"/>
                     </LinearLayout>
@@ -319,7 +320,7 @@
                         android:orientation="horizontal" android:gravity="center_vertical">
                         <TextView android:id="@+id/tv_concurrency_label" android:layout_width="0dp" android:layout_weight="1"
                             android:layout_height="wrap_content" android:text="@string/novel_translate_concurrency"
-                            android:textSize="13sp" android:textColor="#333333"/>
+                            android:textSize="14sp" android:textColor="#333333"/>
                         <TextView android:id="@+id/tv_concurrency_value" android:layout_width="wrap_content"
                             android:layout_height="wrap_content" android:text="5" android:textSize="12sp" android:textColor="#55AEEA"/>
                     </LinearLayout>
@@ -335,15 +336,14 @@
 
                 <!-- 翻译模型（小说没有 OCR，所以只有这一行） -->
                 <LinearLayout android:id="@+id/btn_model_translate" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:paddingTop="10dp" android:paddingBottom="10dp"
-                    android:layout_marginTop="6dp"
+                    android:orientation="horizontal" android:paddingTop="6dp" android:paddingBottom="6dp"
+                    android:layout_marginTop="2dp"
                     android:gravity="center_vertical" android:clickable="true">
                     <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="14sp" android:autoSizeStepGranularity="1sp"  android:id="@+id/tv_translator_model_row" android:layout_width="0dp" android:layout_height="wrap_content"
                         android:layout_weight="1" android:textSize="14sp" android:textColor="#333333"/>
                     <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:text="›" android:textSize="16sp" android:textColor="#BBBBBB"/>
                 </LinearLayout>
-                <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000"/>
 
                 <!-- 语言区：源/目标语言（两格圆角并排 + 互换） -->
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
@@ -380,7 +380,6 @@
                         </LinearLayout>
                     </LinearLayout>
                 </LinearLayout>
-                <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000"/>
 
                 <!-- 汇总那一行**已删除**（用户要求）：章数/完成/进行中/失败在下面的
                      状态标签里已经有了，两处显示同一件事就是重复。
@@ -398,7 +397,6 @@
                 </HorizontalScrollView>
 
                 
-                <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000"/>
 
                 <!-- 章节列表（每章一行，状态徽章 + 点击跳章） -->
                 <androidx.recyclerview.widget.RecyclerView
@@ -436,7 +434,7 @@
                 <!-- 恢复默认：字号 + 全部间距回到默认 -->
                 <LinearLayout android:id="@+id/btn_reset_typography" android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:orientation="horizontal" android:padding="12dp" android:gravity="center_vertical" android:clickable="true">
-                    <TextView android:id="@+id/tv_reset_typography" android:layout_width="0dp" android:layout_height="wrap_content"
+                    <TextView android:layout_width="0dp" android:layout_height="wrap_content"
                         android:layout_weight="1" android:text="@string/novel_style_reset" android:textSize="14sp" android:textColor="#55AEEA"/>
                     <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:text="›" android:textSize="16sp" android:textColor="#BBBBBB"/>
@@ -450,7 +448,7 @@
                          小说不做「自动字号」（那是漫画按气泡尺寸算的，对纯文本没意义） -->
                     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
                         <TextView android:id="@+id/tv_font_size_label" android:layout_width="0dp" android:layout_height="wrap_content"
-                            android:layout_weight="1" android:text="@string/novel_style_font_size" android:textSize="13sp" android:textColor="#333333"/>
+                            android:layout_weight="1" android:text="@string/novel_style_font_size" android:textSize="14sp" android:textColor="#333333"/>
                         <TextView android:id="@+id/tv_font_size_value" android:layout_width="wrap_content" android:layout_height="wrap_content"
                             android:text="" android:textSize="12sp" android:textColor="#55AEEA"/>
                     </LinearLayout>
@@ -460,7 +458,7 @@
 
                     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:paddingTop="6dp">
                         <TextView android:id="@+id/tv_line_spacing_label" android:layout_width="0dp" android:layout_height="wrap_content"
-                            android:layout_weight="1" android:text="@string/novel_style_line_spacing" android:textSize="13sp" android:textColor="#333333"/>
+                            android:layout_weight="1" android:text="@string/novel_style_line_spacing" android:textSize="14sp" android:textColor="#333333"/>
                         <TextView android:id="@+id/tv_line_spacing_value" android:layout_width="wrap_content" android:layout_height="wrap_content"
                             android:text="" android:textSize="12sp" android:textColor="#55AEEA"/>
                     </LinearLayout>
@@ -470,7 +468,7 @@
 
                     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:paddingTop="6dp">
                         <TextView android:id="@+id/tv_para_spacing_label" android:layout_width="0dp" android:layout_height="wrap_content"
-                            android:layout_weight="1" android:text="@string/novel_style_paragraph_spacing" android:textSize="13sp" android:textColor="#333333"/>
+                            android:layout_weight="1" android:text="@string/novel_style_paragraph_spacing" android:textSize="14sp" android:textColor="#333333"/>
                         <TextView android:id="@+id/tv_para_spacing_value" android:layout_width="wrap_content" android:layout_height="wrap_content"
                             android:text="" android:textSize="12sp" android:textColor="#55AEEA"/>
                     </LinearLayout>
@@ -480,7 +478,7 @@
 
                     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:paddingTop="6dp">
                         <TextView android:id="@+id/tv_padding_label" android:layout_width="0dp" android:layout_height="wrap_content"
-                            android:layout_weight="1" android:text="@string/novel_style_padding" android:textSize="13sp" android:textColor="#333333"/>
+                            android:layout_weight="1" android:text="@string/novel_style_padding" android:textSize="14sp" android:textColor="#333333"/>
                         <TextView android:id="@+id/tv_padding_value" android:layout_width="wrap_content" android:layout_height="wrap_content"
                             android:text="" android:textSize="12sp" android:textColor="#55AEEA"/>
                     </LinearLayout>
@@ -493,7 +491,7 @@
                          ⚠️ 不要再加「上下间距」这类分组标题：滑块自己就叫上间距/下间距 -->
                     <LinearLayout android:id="@+id/row_top_padding" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:paddingTop="10dp">
                         <TextView android:id="@+id/tv_top_padding_label" android:layout_width="0dp" android:layout_height="wrap_content"
-                            android:layout_weight="1" android:text="@string/novel_style_top_padding" android:textSize="13sp" android:textColor="#333333"/>
+                            android:layout_weight="1" android:text="@string/novel_style_top_padding" android:textSize="14sp" android:textColor="#333333"/>
                         <TextView android:id="@+id/tv_top_padding_value" android:layout_width="wrap_content" android:layout_height="wrap_content"
                             android:text="" android:textSize="12sp" android:textColor="#55AEEA"/>
                     </LinearLayout>
@@ -503,7 +501,7 @@
 
                     <LinearLayout android:id="@+id/row_bottom_padding" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:paddingTop="6dp">
                         <TextView android:id="@+id/tv_bottom_padding_label" android:layout_width="0dp" android:layout_height="wrap_content"
-                            android:layout_weight="1" android:text="@string/novel_style_bottom_padding" android:textSize="13sp" android:textColor="#333333"/>
+                            android:layout_weight="1" android:text="@string/novel_style_bottom_padding" android:textSize="14sp" android:textColor="#333333"/>
                         <TextView android:id="@+id/tv_bottom_padding_value" android:layout_width="wrap_content" android:layout_height="wrap_content"
                             android:text="" android:textSize="12sp" android:textColor="#55AEEA"/>
                     </LinearLayout>

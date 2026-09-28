@@ -6,15 +6,18 @@ import com.moe.starflow.translate.screenshot.*
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.LinearLayout
 import android.widget.RadioButton
 import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.preference.PreferenceManager
 import android.app.AlertDialog
 import androidx.lifecycle.lifecycleScope
+import com.google.android.material.tabs.TabLayout
 import com.moe.starflow.R
 import com.moe.starflow.download.DownloadState
 import com.moe.starflow.download.ModelDownloadRepository
@@ -24,6 +27,7 @@ import com.moe.starflow.manga.engine.MangaOcrModelFiles
 import com.moe.starflow.manga.config.OcrEngineGroup
 import com.moe.starflow.manga.engine.PPOcrModelFiles
 import com.moe.starflow.manga.engine.RTDetrModelFiles
+import com.moe.starflow.sr.SrModelManager
 import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.LogCollector
 import com.moe.starflow.utils.OcrEngineManager
@@ -53,6 +57,21 @@ class ModelManagementFragment : Fragment() {
     private lateinit var rootView: View
     private val handler = Handler(Looper.getMainLooper())
     private val repo by lazy { ModelDownloadRepository.getInstance(requireContext()) }
+
+    companion object {
+        private const val ARG_SHOW_SR = "show_sr_tab"
+
+        /**
+         * 直接打开「超分」Tab。
+         *
+         * 供个性化设置的「超分模型管理」、阅读器面板的超分模型入口等使用 ——
+         * 用户从别处跳进来时想看的就是超分，不该让他再点一次 Tab。
+         */
+        fun newInstance(showSrTab: Boolean = false): ModelManagementFragment =
+            ModelManagementFragment().apply {
+                arguments = Bundle().apply { putBoolean(ARG_SHOW_SR, showSrTab) }
+            }
+    }
 
     /** 页面展示的所有模型行配置（顺序即页面顺序） */
     private data class ModelRow(
@@ -97,6 +116,73 @@ class ModelManagementFragment : Fragment() {
             R.id.ppocrv6_medium_rec_row, fileBrowserBtnIds = listOf(R.id.row_browser))
     )
 
+    // ══════════════════════════════════════════════════════════════════
+    // 超分（SR）Tab —— 2026-10
+    //
+    // ⚠️ **结构与 OCR Tab 完全一致**（XML 里逐行 `<include>`，不再动态拼控件）：
+    //      组标题(14sp bold + @drawable/ocr_group_selector + clickable)
+    //      → 组「当前使用」(12sp @color/success)
+    //      → 卡片(@drawable/setting_shape)
+    //           ├ 组描述(11sp #888)
+    //           └ 每个模型：标题(14sp bold) → `<include item_model_row_browser>` → 分隔线(@color/divider)
+    //
+    // 「组」= **模型族**（AnimeJaNai / waifu2x cunet / waifu2x swin_unet）。
+    // 点组标题 = 选中该族的**推荐档**（各族第一行）—— 与 OCR「点 4 组标题选引擎」同义。
+    //
+    // 与 OCR 共用同一套下载/状态/浏览器机制（同一个 ModelDownloadRepository +
+    // item_model_row_browser 模板 + renderRowState），差别只有「组」的语义。
+    // ⚠️ 行内 ID 跨行重复 → 一律以**行根 View** 为作用域查找（同 OCR 页约定）。
+    // ══════════════════════════════════════════════════════════════════
+
+    /** 一行 = 一个超分模型：XML 里的行根 id + 对应 ModelKey */
+    private data class SrRow(val modelKey: ModelKey, val rowRootId: Int)
+
+    /** 一族 = XML 里一个分组（组标题 / 「当前使用」标记 / 若干行） */
+    private data class SrFamily(val titleId: Int, val selectedId: Int, val rows: List<SrRow>)
+
+    /**
+     * 超分模型族。**顺序必须与 `fragment_model_management.xml` 里的组顺序一致**
+     * （两边各写一份是有意的：XML 管版式、这里管语义；错位了「当前使用」会标到别的族上）。
+     */
+    private val srFamilies: List<SrFamily> = listOf(
+        SrFamily(R.id.sr_aji_group_title, R.id.sr_aji_group_selected, listOf(
+            SrRow(ModelKey.SR_ANIMEJANAI_HD_BALANCED, R.id.sr_aji_balanced_row),
+            SrRow(ModelKey.SR_ANIMEJANAI_HD_PERFORMANCE, R.id.sr_aji_perf_row),
+            SrRow(ModelKey.SR_ANIMEJANAI_HD_SHARP1_BALANCED, R.id.sr_aji_sharp1_balanced_row),
+            SrRow(ModelKey.SR_ANIMEJANAI_HD_SHARP1_PERFORMANCE, R.id.sr_aji_sharp1_perf_row),
+            SrRow(ModelKey.SR_ANIMEJANAI_SD_COMPACT, R.id.sr_aji_sd_row),
+        )),
+        SrFamily(R.id.sr_w2xc_group_title, R.id.sr_w2xc_group_selected, listOf(
+            SrRow(ModelKey.SR_WAIFU2X_CUNET_N0, R.id.sr_w2xc_n0_row),
+            SrRow(ModelKey.SR_WAIFU2X_CUNET_N1, R.id.sr_w2xc_n1_row),
+            SrRow(ModelKey.SR_WAIFU2X_CUNET_N2, R.id.sr_w2xc_n2_row),
+            SrRow(ModelKey.SR_WAIFU2X_CUNET_N3, R.id.sr_w2xc_n3_row),
+        )),
+        SrFamily(R.id.sr_w2xs_group_title, R.id.sr_w2xs_group_selected, listOf(
+            SrRow(ModelKey.SR_WAIFU2X_SWIN_N0, R.id.sr_w2xs_n0_row),
+            SrRow(ModelKey.SR_WAIFU2X_SWIN_N1, R.id.sr_w2xs_n1_row),
+        ))
+    )
+
+    /** 扁平化的全部超分行（磁盘刷新 / 渲染都要遍历它） */
+    private val srRows: List<SrRow> get() = srFamilies.flatMap { it.rows }
+
+    /** 每个超分模型的预估体积文案（仅展示用；真实值以 downloadinfo.json 为准） */
+    private fun srExpectedSize(key: ModelKey): String = when (key) {
+        ModelKey.SR_ANIMEJANAI_HD_BALANCED,
+        ModelKey.SR_ANIMEJANAI_HD_SHARP1_BALANCED -> "~1.9MB"
+        ModelKey.SR_ANIMEJANAI_HD_PERFORMANCE,
+        ModelKey.SR_ANIMEJANAI_HD_SHARP1_PERFORMANCE -> "~0.7MB"
+        ModelKey.SR_ANIMEJANAI_SD_COMPACT -> "~1.2MB"
+        ModelKey.SR_WAIFU2X_CUNET_N0,
+        ModelKey.SR_WAIFU2X_CUNET_N1,
+        ModelKey.SR_WAIFU2X_CUNET_N2,
+        ModelKey.SR_WAIFU2X_CUNET_N3 -> "~5.2MB"
+        ModelKey.SR_WAIFU2X_SWIN_N0,
+        ModelKey.SR_WAIFU2X_SWIN_N1 -> "~16.8MB"
+        else -> ""
+    }
+
     /** 行根 View —— 模板内部 ID 跨行重复，所有子控件查找必须以它为作用域 */
     private fun rowRoot(row: ModelRow): View = rootView.findViewById(row.rowRootId)
 
@@ -112,10 +198,21 @@ class ModelManagementFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
+        // 顶部 Tab（OCR / 超分）+ 绑定超分组（行来自 XML，这里只接事件）
+        setupTabs()
+        bindSrGroups()
+
+        // 从别处跳进来（个性化「超分模型管理」、阅读器超分入口）时直接落在超分 Tab
+        if (arguments?.getBoolean(ARG_SHOW_SR) == true) selectSrTab()
+
         // Subscribe to Repository state changes; refresh all model status blocks on each emission.
         viewLifecycleOwner.lifecycleScope.launch {
             // 页面进入时先按磁盘文件重新计算状态（识别已下载/部分下载的模型）
             for (row in modelRows) {
+                repo.refreshFromDisk(row.modelKey)
+            }
+            // 超分模型同样按磁盘刷新 —— 否则刚下载完的超分模型在本页显示为「未下载」
+            for (row in srRows) {
                 repo.refreshFromDisk(row.modelKey)
             }
             repo.observe().collect {
@@ -180,16 +277,30 @@ class ModelManagementFragment : Fragment() {
         }
     }
 
-    /** 渲染所有模型行（数据驱动，遍历 [modelRows]） */
+    /** 渲染所有模型行（数据驱动，遍历 [modelRows] + 超分行） */
     private fun renderAll() {
         for (row in modelRows) {
             renderModelBlock(row, repo.getState(row.modelKey))
         }
+        for (row in srRows) {
+            renderRowState(
+                rootView.findViewById(row.rowRootId), row.modelKey,
+                getString(SrModelManager.nameResOf(row.modelKey)), srExpectedSize(row.modelKey)
+            )
+        }
+        refreshSrSelection()
         updateV6TierVisibility()
     }
 
     /** 接线所有浏览器按钮（数据驱动，作用域限定在各自的 [rowRoot]） */
     private fun setupBrowserDownloadButtons() {
+        // 超分行（2026-10）：版式与 OCR 行相同（模板 A，单浏览器按钮），
+        // 这里跟 OCR 行走同一条接线，别再各写一份
+        for (row in srRows) {
+            rootView.findViewById<View>(row.rowRootId)
+                .findViewById<TextView>(R.id.row_browser)
+                ?.setOnClickListener { openBrowser(repo.getBrowserUrl(row.modelKey) ?: "") }
+        }
         for (row in modelRows) {
             val root = rowRoot(row)
             row.browserBtnIds.forEach { btnId ->
@@ -233,7 +344,37 @@ class ModelManagementFragment : Fragment() {
         row: ModelRow,
         state: DownloadState
     ) {
-        val root = rowRoot(row)
+        renderRowStateInto(rowRoot(row), row.modelKey, row.displayName, row.expectedSize, state)
+        LogCollector.d(TAG, "${row.displayName} state=$state")
+    }
+
+    /** 超分行：状态直接问 Repository（OCR 行由 observe 回调带 state 进来） */
+    private fun renderRowState(
+        root: View,
+        modelKey: ModelKey,
+        displayName: String,
+        expectedSize: String
+    ) {
+        renderRowStateInto(root, modelKey, displayName, expectedSize, repo.getState(modelKey))
+    }
+
+    /**
+     * 统一渲染一个模型的状态块（2 按钮版）—— OCR 行与超分行共用。
+     *
+     * - Idle / Partial: 单按钮「下载」
+     * - Running: 双按钮「暂停」+「取消」
+     * - Paused: 单按钮「继续」
+     * - Done: 单按钮「删除」
+     *
+     * ⚠️ 所有子控件一律以传入的 [root] 为作用域查找（模板内部 ID 跨行重复）。
+     */
+    private fun renderRowStateInto(
+        root: View,
+        modelKey: ModelKey,
+        displayName: String,
+        expectedSize: String,
+        state: DownloadState
+    ) {
         val statusText = root.findViewById<TextView>(R.id.row_status)
         val actionBtn = root.findViewById<TextView>(R.id.row_action)
         val cancelBtn = root.findViewById<TextView>(R.id.row_cancel)
@@ -243,11 +384,11 @@ class ModelManagementFragment : Fragment() {
 
         when (state) {
             DownloadState.Idle, is DownloadState.Partial -> {
-                statusText.text = getString(R.string.model_status_undownloaded_format, row.expectedSize)
+                statusText.text = getString(R.string.model_status_undownloaded_format, expectedSize)
                 actionBtn.text = getString(R.string.model_download)
                 setButtonDeleteStyle(actionBtn, false)
                 actionBtn.setOnClickListener {
-                    ModelDownloadService.startDownload(requireContext(), row.modelKey, isResume = state is DownloadState.Partial)
+                    ModelDownloadService.startDownload(requireContext(), modelKey, isResume = state is DownloadState.Partial)
                 }
             }
             is DownloadState.Running -> {
@@ -269,11 +410,11 @@ class ModelManagementFragment : Fragment() {
                 actionBtn.text = getString(R.string.model_btn_pause)
                 setButtonDeleteStyle(actionBtn, false)
                 actionBtn.setOnClickListener {
-                    ModelDownloadService.pauseDownload(requireContext(), row.modelKey)
+                    ModelDownloadService.pauseDownload(requireContext(), modelKey)
                 }
                 cancelBtn.visibility = View.VISIBLE
                 cancelBtn.setOnClickListener {
-                    ModelDownloadService.cancelDownload(requireContext(), row.modelKey)
+                    ModelDownloadService.cancelDownload(requireContext(), modelKey)
                 }
             }
             is DownloadState.Paused -> {
@@ -295,20 +436,19 @@ class ModelManagementFragment : Fragment() {
                 actionBtn.text = getString(R.string.model_btn_resume)
                 setButtonDeleteStyle(actionBtn, false)
                 actionBtn.setOnClickListener {
-                    ModelDownloadService.startDownload(requireContext(), row.modelKey, isResume = true)
+                    ModelDownloadService.startDownload(requireContext(), modelKey, isResume = true)
                 }
             }
             DownloadState.Done -> {
-                val total = repo.getModelInfo(row.modelKey)?.files?.sumOf { it.fileSize } ?: 0L
+                val total = repo.getModelInfo(modelKey)?.files?.sumOf { it.fileSize } ?: 0L
                 statusText.text = getString(R.string.model_status_with_size_format, formatBytes(total))
                 actionBtn.text = getString(R.string.model_delete)
                 setButtonDeleteStyle(actionBtn, true)
                 actionBtn.setOnClickListener {
-                    confirmDelete(row.modelKey, row.displayName)
+                    confirmDelete(modelKey, displayName)
                 }
             }
         }
-        LogCollector.d(TAG, "${row.displayName} state=$state")
     }
 
     private fun confirmDelete(modelKey: ModelKey, displayName: String) {
@@ -376,6 +516,90 @@ class ModelManagementFragment : Fragment() {
                 android.widget.Toast.makeText(requireContext(), "PP-OCRv6 已切换到 medium 模型", android.widget.Toast.LENGTH_SHORT).show()
             }
         }
+    }
+
+    // ========== 超分（SR）Tab ==========
+
+    /** 顶部 Tab：OCR / 超分。切 Tab 只切两个 ScrollView 的可见性，不重建任何内容。 */
+    private fun setupTabs() {
+        val tabs = rootView.findViewById<TabLayout>(R.id.model_tabs)
+        val ocrScroll = rootView.findViewById<View>(R.id.ocr_scroll)
+        val srScroll = rootView.findViewById<View>(R.id.sr_scroll)
+        tabs.removeAllTabs()
+        tabs.addTab(tabs.newTab().setText(R.string.model_tab_ocr))
+        tabs.addTab(tabs.newTab().setText(R.string.model_tab_sr))
+        tabs.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
+            override fun onTabSelected(tab: TabLayout.Tab) {
+                val isSr = tab.position == 1
+                ocrScroll.visibility = if (isSr) View.GONE else View.VISIBLE
+                srScroll.visibility = if (isSr) View.VISIBLE else View.GONE
+                // 切到超分时按磁盘重算一次状态（用户可能刚在别的入口删过模型）
+                if (isSr) {
+                    viewLifecycleOwner.lifecycleScope.launch {
+                        for (row in srRows) repo.refreshFromDisk(row.modelKey)
+                    }
+                    refreshSrSelection()
+                }
+            }
+
+            override fun onTabUnselected(tab: TabLayout.Tab) = Unit
+            override fun onTabReselected(tab: TabLayout.Tab) = Unit
+        })
+    }
+
+    /**
+     * 绑定超分组的事件（行本身来自 XML，与 OCR 页同一套 include）。
+     *
+     * - 点**组标题** = 选中该族**推荐档**（各族第一行）；与 OCR「点组标题选引擎」同义
+     * - 点**行** = 选中该行模型
+     * - 行内「🔗 浏览器」按钮的接线由 `setupBrowserDownloadButtons()` 统一处理（同 OCR）
+     */
+    private fun bindSrGroups() {
+        for (family in srFamilies) {
+            rootView.findViewById<View>(family.titleId).setOnClickListener {
+                family.rows.firstOrNull()?.let { selectSrModel(it.modelKey) }
+            }
+            for (row in family.rows) {
+                rootView.findViewById<View>(row.rowRootId).setOnClickListener {
+                    selectSrModel(row.modelKey)
+                }
+            }
+        }
+        refreshSrSelection()
+    }
+
+    /** 选中某个超分模型（写 prefs + 刷新「当前使用」+ 提示） */
+    private fun selectSrModel(key: ModelKey) {
+        val prefs = CustomPreference.getInstance(requireContext()).getSharedPreferences()
+        SrModelManager.setActive(prefs, key)
+        refreshSrSelection()
+        UiUtils.showToast(
+            requireContext(),
+            getString(R.string.sr_active_switched, getString(SrModelManager.nameResOf(key))),
+            isShort = true
+        )
+        LogCollector.d(TAG, "SR active model -> $key")
+    }
+
+    /**
+     * 刷新各族的「当前使用」标记（与 OCR 页 `*_group_selected` 完全同一套）。
+     *
+     * ⚠️ **每个族都要显式赋值 VISIBLE/GONE** —— 只写 VISIBLE 会把上一轮的状态留在屏幕上
+     * （配置页那批开关踩过同一个坑）。
+     */
+    private fun refreshSrSelection() {
+        val prefs = CustomPreference.getInstance(requireContext()).getSharedPreferences()
+        val active = SrModelManager.getActiveKey(prefs)
+        for (family in srFamilies) {
+            val owned = family.rows.any { it.modelKey == active }
+            rootView.findViewById<View>(family.selectedId).visibility =
+                if (owned) View.VISIBLE else View.GONE
+        }
+    }
+
+    /** 跳转到超分模型页（供阅读器调试面板等入口使用） */
+    fun selectSrTab() {
+        rootView.findViewById<TabLayout>(R.id.model_tabs)?.getTabAt(1)?.select()
     }
 
     override fun onDestroyView() {

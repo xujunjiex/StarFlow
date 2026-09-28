@@ -8,6 +8,7 @@ import com.moe.starflow.R
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -27,7 +28,12 @@ class ModelManagementLayoutTest {
 
     private fun inflate(): View {
         val ctx = RuntimeEnvironment.getApplication()
-        return LayoutInflater.from(ctx).inflate(R.layout.fragment_model_management, null, false)
+        // ⚠️ 必须套 app 主题再 inflate：布局里有 Material 的 TabLayout（超分 Tab，2026-10 新增），
+        // 裸 application context 的主题不是 Material 主题 → TabLayout 构造直接抛
+        // UnsupportedOperationException/InflateException，6 个用例会一起红。
+        // 项目里 fragment_history / fragment_openai_api 也用 TabLayout，但只有本测试会 inflate 整个布局。
+        val themed = androidx.appcompat.view.ContextThemeWrapper(ctx, R.style.Theme_MT)
+        return LayoutInflater.from(themed).inflate(R.layout.fragment_model_management, null, false)
     }
 
     /** 9 个模型行的行根 View（顺序同 ModelManagementFragment.modelRows） */
@@ -138,4 +144,87 @@ class ModelManagementLayoutTest {
         assertNotNull("缺少 small 切档", root.findViewById<RadioButton>(R.id.ppocrv6_tier_small))
         assertNotNull("缺少 medium 切档", root.findViewById<RadioButton>(R.id.ppocrv6_tier_medium))
     }
+
+    /**
+     * 超分 Tab 结构守卫（2026-10）。
+     *
+     * ⚠️ 本页与 OCR Tab **完全同构**：行是 XML 里的 `<include>`（2026-10 改版前是代码动态
+     * inflate 的，那时的断言是「sr_content 必须为空」—— 已随改版反转）。
+     * 这里锁三件事：
+     * ① 两个 ScrollView + TabLayout 都在；
+     * ② 3 个族的「组标题 / 当前使用」与 11 个模型行都在，行根唯一、作用域查找能拿到本行控件；
+     * ③ **Fragment 里写的 id 与 XML 里的 id 一一对应**（两边各写一份清单，错位了
+     *    「当前使用」会标到别的族上，而这种错在 UI 上是"看着有点怪"、极难归因）。
+     */
+    @Test
+    fun superResolutionTabStructureIsSound() {
+        val root = inflate()
+        assertNotNull("缺少顶部 TabLayout", root.findViewById<View>(R.id.model_tabs))
+        assertNotNull("缺少 OCR ScrollView", root.findViewById<View>(R.id.ocr_scroll))
+        assertNotNull("缺少超分 ScrollView", root.findViewById<View>(R.id.sr_scroll))
+
+        val srContent = root.findViewById<android.widget.LinearLayout>(R.id.sr_content)
+        assertNotNull("缺少超分容器 sr_content", srContent)
+        assertTrue("超分行必须在 XML 里（与 OCR Tab 同构，不再动态 inflate）", srContent.childCount > 0)
+    }
+
+    /** 超分组：组标题 + 「当前使用」+ 每行 include 的模板控件 */
+    @Test
+    fun superResolutionGroupsAndRowsAreComplete() {
+        val root = inflate()
+
+        for (id in listOf(R.id.sr_aji_group_title, R.id.sr_w2xc_group_title, R.id.sr_w2xs_group_title)) {
+            assertNotNull("缺超分组标题 $id", root.findViewById<View>(id))
+        }
+        for (id in listOf(R.id.sr_aji_group_selected, R.id.sr_w2xc_group_selected, R.id.sr_w2xs_group_selected)) {
+            assertNotNull("缺超分组「当前使用」$id", root.findViewById<View>(id))
+        }
+
+        val rows = srRowIds()
+        val roots = rows.map { root.findViewById<View>(it) }
+        rows.forEachIndexed { i, id -> assertNotNull("超分行根缺失: $id", roots[i]) }
+        assertEquals("超分行根 id 必须唯一", rows.size, roots.toSet().size)
+
+        for (id in rows) {
+            val row = root.findViewById<View>(id)
+            assertNotNull("超分行 $id 缺 row_status", row.findViewById<TextView>(R.id.row_status))
+            assertNotNull("超分行 $id 缺 row_action", row.findViewById<TextView>(R.id.row_action))
+            assertNotNull("超分行 $id 缺 row_browser", row.findViewById<TextView>(R.id.row_browser))
+        }
+    }
+
+    /**
+     * ⚠️ **Fragment 里的超分 id 必须全部存在于布局里**。
+     *
+     * `ModelManagementFragment.srFamilies` 与 `fragment_model_management.xml` 各写一份清单
+     * （XML 管版式、代码管语义）。漏一个 id 的后果不是崩溃，而是**某个族的「当前使用」永远不显示**
+     * 或**某行不可点** —— 静默、且看着像"偶尔不灵"。所以在这里做一次源码级对齐检查。
+     */
+    @Test
+    fun fragmentSrIdsAllExistInLayout() {
+        val fragment = java.io.File("src/main/java/com/moe/starflow/me/model/ModelManagementFragment.kt")
+        if (!fragment.isFile) return   // 非 Gradle 工作目录下跳过
+        val src = fragment.readText()
+        val ids = Regex("R\\.id\\.(sr_[a-z0-9_]+)").findAll(src).map { it.groupValues[1] }.toSet()
+        assertTrue("Fragment 里一个超分 id 都没解析到（正则或常量改名了？）", ids.size >= 14)
+
+        val layout = java.io.File("src/main/res/layout/fragment_model_management.xml").readText()
+        val missing = ids.filter { "@+id/$it" !in layout }
+        assertTrue("Fragment 引用了布局里不存在的 id: $missing", missing.isEmpty())
+    }
+
+    /** 超分模型行的行根 id（顺序同 ModelManagementFragment.srFamilies） */
+    private fun srRowIds() = listOf(
+        R.id.sr_aji_balanced_row,
+        R.id.sr_aji_perf_row,
+        R.id.sr_aji_sharp1_balanced_row,
+        R.id.sr_aji_sharp1_perf_row,
+        R.id.sr_aji_sd_row,
+        R.id.sr_w2xc_n0_row,
+        R.id.sr_w2xc_n1_row,
+        R.id.sr_w2xc_n2_row,
+        R.id.sr_w2xc_n3_row,
+        R.id.sr_w2xs_n0_row,
+        R.id.sr_w2xs_n1_row
+    )
 }

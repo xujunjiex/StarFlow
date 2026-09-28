@@ -60,6 +60,7 @@ import com.moe.starflow.translate.batch.TranslationJobService
 import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.LogCollector
 import com.moe.starflow.utils.TranslationConcurrency
+import com.moe.starflow.utils.ReaderDialogs
 import com.moe.starflow.utils.UiUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -1963,14 +1964,19 @@ class NovelReaderActivity : AppCompatActivity() {
                     return@suspendCancellableCoroutine
                 }
                 var answered = false
-                val dlg = AlertDialog.Builder(this@NovelReaderActivity)
-                    .setTitle(R.string.novel_translate_oversize_title)
-                    .setMessage(getString(R.string.novel_translate_oversize_msg, estimate, threshold))
-                    .setPositiveButton(R.string.novel_translate_oversize_continue) { _, _ ->
+                // ⚠️ 走共享的 ReaderDialogs（用对应 night 模式的上下文建弹窗）：
+                // 面板/标题/正文/按钮全由主题给色，不再"换底 + 一律刷浅色"（那是白底白字的来源）
+                val dlg = ReaderDialogs.show(
+                    this@NovelReaderActivity,
+                    NovelPanelStyle.isDarkBackground(bgMode),
+                ) {
+                    setTitle(R.string.novel_translate_oversize_title)
+                    setMessage(getString(R.string.novel_translate_oversize_msg, estimate, threshold))
+                    setPositiveButton(R.string.novel_translate_oversize_continue) { _, _ ->
                         answered = true
                         cont.resume(true)
                     }
-                    .setNegativeButton(R.string.novel_translate_oversize_skip) { _, _ ->
+                    setNegativeButton(R.string.novel_translate_oversize_skip) { _, _ ->
                         answered = true
                         UiUtils.showToast(
                             this@NovelReaderActivity,
@@ -1979,13 +1985,11 @@ class NovelReaderActivity : AppCompatActivity() {
                         )
                         cont.resume(false)
                     }
-                    .setOnCancelListener {
+                    setOnCancelListener {
                         answered = true
                         cont.resume(false)
                     }
-                    .create()
-                dlg.show()
-                applyNovelDialogTheme(dlg, NovelPanelStyle.isDarkBackground(bgMode))
+                }
                 cont.invokeOnCancellation { if (!answered) runCatching { dlg.dismiss() } }
             }
         }
@@ -2351,15 +2355,13 @@ class NovelReaderActivity : AppCompatActivity() {
     private fun confirmClearSelectedTranslations() {
         val n = selectedPara.count { translations.containsKey(it) }
         if (n <= 0) return
-        val dlg = AlertDialog.Builder(this)
-            .setTitle(R.string.novel_clear_translation_title)
-            .setMessage(getString(R.string.novel_clear_translation_confirm, n))
-            .setNegativeButton(R.string.user_cancel, null)
-            .setPositiveButton(R.string.novel_clear_translation_ok) { _, _ -> clearSelectedTranslations() }
-            .create()
-        dlg.show()
-        // 弹窗跟随阅读背景深浅（面板同一套实现，见 NovelDialogs）
-        applyNovelDialogTheme(dlg, NovelPanelStyle.isDarkBackground(bgMode))
+        // 共享实现：弹窗用对应 night 模式的上下文建，底与字同源（见 ReaderDialogs）
+        ReaderDialogs.show(this, NovelPanelStyle.isDarkBackground(bgMode)) {
+            setTitle(R.string.novel_clear_translation_title)
+            setMessage(getString(R.string.novel_clear_translation_confirm, n))
+            setNegativeButton(R.string.user_cancel, null)
+            setPositiveButton(R.string.novel_clear_translation_ok) { _, _ -> clearSelectedTranslations() }
+        }
     }
 
     /**

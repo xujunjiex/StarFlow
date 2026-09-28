@@ -143,4 +143,13 @@
             android:textSize="12sp"
             android:textColor="#55AEEA"/>
     </LinearLayout>
+
+    <!-- ⚠️ **展开出来的等待/在飞批行挂在这里**（在卡片的框里面）。
+         与漫画同一套：**一个章 = 一个 item**，子行由
+         `NovelChapterStateAdapter.bindChildren()` inflate 进这个容器。 -->
+    <LinearLayout
+        android:id="@+id/chapter_children"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"/>
 </LinearLayout>

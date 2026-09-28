@@ -8,6 +8,7 @@ import com.moe.starflow.mangaimport.data.MangaChapter
 import com.moe.starflow.mangaimport.data.MangaChapterSplitter
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import com.moe.starflow.utils.LogCollector
 import java.util.zip.ZipFile
 
 /**
@@ -17,6 +18,17 @@ import java.util.zip.ZipFile
  * - 缩略图：按目标尺寸降采样解码，带 LruCache（进度条/预览网格用，避免重复解大图）
  * 统一处理 zip（ZipFile 读 entry）与目录（File 枚举）两种存储源。
  */
+private const val TAG = "ReaderPageSource"
+
+/**
+ * 阅读器「先超分再翻译」的增强结果缓存预算（按像素计）。
+ *
+ * ⚠️ 增强结果**与原图同尺寸**（见 [com.moe.starflow.sr.SrPageEnhancer] 类注释），
+ * 所以一份就是一张整页 ARGB_8888。给 24MB ≈ 6~8 张 A4 页面；翻回去能秒出，
+ * 又不会把整本书攒在内存里。
+ */
+private const val ENHANCE_CACHE_PIXEL_BUDGET = 24 * 1024 * 1024
+
 class ReaderPageSource(
     private val isArchive: Boolean,
     private val localRoot: String
@@ -47,6 +59,39 @@ class ReaderPageSource(
             value.allocationByteCount.coerceAtLeast(value.rowBytes * value.height)
     }
 
+    // ── 阅读器「先超分再翻译」的增强结果缓存 ──
+    // 超分一次 1~3s，不缓存的话每次翻回同一页都要重算（翻页体验直接崩）。
+    private val enhanceCache = object : LruCache<Int, Bitmap>(ENHANCE_CACHE_PIXEL_BUDGET) {
+        override fun sizeOf(key: Int, value: Bitmap) =
+            value.allocationByteCount.coerceAtLeast(value.rowBytes * value.height)
+    }
+
+    /** 上次增强所用的设置指纹（[com.moe.starflow.sr.SrPageEnhancer.signature]）；变了就清缓存 */
+    @Volatile
+    private var enhanceSignature: String? = null
+
+    /**
+     * 按当前设置增强一页。
+     *
+     * 增强**必须与原图同尺寸**（否则 OCR 出的 `bubbleRects` 会整体放大，之后按原图重渲染时错位），
+     * 这一点由 [com.moe.starflow.sr.SrPageEnhancer] 保证。
+     *
+     * 任何一环不满足（没开开关 / 没选模型也没开 Anime4K / 增强失败）都**返回原图** ——
+     * 增强是锦上添花，绝不能因为它翻不了页或翻不了译。
+     */
+    private fun enhanceForReader(position: Int, src: Bitmap): Bitmap {
+        val sig = com.moe.starflow.sr.SrPageEnhancer.signature() ?: return src
+        if (sig != enhanceSignature) {
+            // 设置变了（换模型/换档位/开关）→ 旧的增强图全部作废
+            enhanceCache.evictAll()
+            enhanceSignature = sig
+        }
+        enhanceCache.get(position)?.let { return it }
+        val out = com.moe.starflow.sr.SrPageEnhancer.enhanceForReader(src) ?: return src
+        if (out !== src) enhanceCache.put(position, out)
+        return out
+    }
+
     // 复用一个打开的 ZipFile：避免每页都重新读中央目录（400 页漫画的关键开销）
     @Volatile private var cachedZip: ZipFile? = null
 
@@ -68,14 +113,34 @@ class ReaderPageSource(
 
     /** 载入全尺寸页图（应在 IO 线程调用）。 */
     fun loadFull(position: Int): Bitmap? {
-        val key = pageKeys.getOrNull(position) ?: return null
+        val key = pageKeys.getOrNull(position)
+        if (key == null) {
+            // ⚠️ 以前这里静默返回 null：调用方只知道"图没了"，不知道是"页号越界 / 页表为空"。
+            // 阅读器翻译在 cbz 上"点了没反应、日志一片空白"就是被这类静默 return 埋掉的。
+            LogCollector.w(TAG, "loadFull: 页号越界 position=$position（size=${pageKeys.size}）")
+            return null
+        }
         return try {
-            if (isArchive) {
-                ZipFile(File(localRoot)).use { zip -> decodeZipEntry(zip, key, 1) }
+            val bmp = if (isArchive) {
+                // 复用缓存的 ZipFile（与 openEntry 同一条路径）：每次新开都要重读中央目录，
+                // 大包上尤其亏（原来这里每次 loadFull 都 new 一个）
+                val zip = zip()
+                if (zip == null) {
+                    LogCollector.w(TAG, "loadFull: 压缩包打不开 isArchive=true path=$localRoot key=$key")
+                    null
+                } else {
+                    decodeZipEntry(zip, key, 1)
+                }
             } else {
                 BitmapFactory.decodeFile(File(localRoot, key).absolutePath)
             }
+            if (bmp == null) LogCollector.w(TAG, "loadFull: 解码失败（返回 null）key=$key")
+            // 「先超分再翻译」：增强结果与原图同尺寸，坐标空间不变（见 enhanceForReader 注释）
+            bmp?.let { enhanceForReader(position, it) }
         } catch (e: Exception) {
+            // ⚠️ **不能再静默吞掉**：解不出来必须留下可供排查的原因（条目缺失/流被关/解码异常）。
+            // 这条 W 日志是"cbz 无法翻译"这类问题的第一现场证据。
+            LogCollector.w(TAG, "loadFull: 解码异常 key=$key（${e.javaClass.simpleName}: ${e.message}）")
             null
         }
     }

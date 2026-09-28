@@ -48,5 +48,52 @@ enum class ModelKey(val stableId: Int) {
      * Hy-MT2 1.8B **Q4_K_M**（标准量化，单文件 ~1.08GB）—— 官方 HuggingFace 仓库直接下载。
      * 与 1.25-bit 一样是「可下载的内置模型」，不打进 APK；标准量化无需重打标。
      */
-    HY_MT2_Q4_KM(2012);
+    HY_MT2_Q4_KM(2012),
+
+    // ══════════════════════════════════════════════════════════════════
+    // 超分（SR）模型组 —— 单文件 ONNX，全部走下载（不打进 APK）
+    //
+    // 一族一个「等级」条目：AnimeJaNai HD V3.1 有 4 个等级
+    // （均衡/性能 × 标准/锐化），另加 SD 紧凑档。
+    // 运行时由 `SuperResolutionEngine` 按 [stableId] 反查；模型管理页「超分」Tab
+    // 与 OCR 用同一套下载/状态/浏览器机制（见 ModelManagementFragment）。
+    // ══════════════════════════════════════════════════════════════════
+
+    /** AnimeJaNai HD V3.1 均衡档（2x，SPANF3 b8f64，fp16，~1.9MB） */
+    SR_ANIMEJANAI_HD_BALANCED(3010),
+
+    /** AnimeJaNai HD V3.1 性能档（2x，SPANF3 b5f48，fp16，~0.7MB，最快） */
+    SR_ANIMEJANAI_HD_PERFORMANCE(3011),
+
+    /** AnimeJaNai HD V3.1 锐化·均衡档（2x，输出更锐，改动原图更多） */
+    SR_ANIMEJANAI_HD_SHARP1_BALANCED(3012),
+
+    /** AnimeJaNai HD V3.1 锐化·性能档（2x，最快 + 更锐） */
+    SR_ANIMEJANAI_HD_SHARP1_PERFORMANCE(3013),
+
+    /** AnimeJaNai SD 紧凑档（2x，低清源向，实测最慢且最弱，默认不推荐） */
+    SR_ANIMEJANAI_SD_COMPACT(3014),
+
+    // ── waifu2x（官方模型集的 ONNX 版，`deepghs/waifu2x_onnx`）─────────────────
+    // 这些是**同一条流水线的第二个模型族**：与 AnimeJaNai 是不同架构（cunet / SwinIR），
+    // 「等级」这一维在这里是**降噪强度**（n0 不降噪 → n3 强力降噪），不是画质档。
+    // 本地实测：cunet 一族是质量最高的（缩回 PSNR ≈ 41，比 AnimeJaNai 的 34 高 7 分）。
+
+    /** waifu2x cunet · 不降噪（2x，opset 14，~5.2MB） */
+    SR_WAIFU2X_CUNET_N0(3020),
+
+    /** waifu2x cunet · 轻度降噪（2x） */
+    SR_WAIFU2X_CUNET_N1(3021),
+
+    /** waifu2x cunet · 中度降噪（2x） */
+    SR_WAIFU2X_CUNET_N2(3022),
+
+    /** waifu2x cunet · 强力降噪（2x） */
+    SR_WAIFU2X_CUNET_N3(3023),
+
+    /** waifu2x swin_unet · 不降噪（2x，SwinIR，质量最高档，~16.8MB） */
+    SR_WAIFU2X_SWIN_N0(3030),
+
+    /** waifu2x swin_unet · 轻度降噪（2x，~16.8MB） */
+    SR_WAIFU2X_SWIN_N1(3031);
 }

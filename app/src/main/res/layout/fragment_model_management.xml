@@ -10,10 +10,32 @@
   ⚠️ 每个 include **必须**有唯一的 android:id（行根 View，ModelManagementFragment
   以它为作用域查找内部控件）。新增模型见 ModelManagementFragment.modelRows。
 -->
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:padding="12dp">
+    android:orientation="vertical">
+
+    <!-- ════════════════════════════════════════════════════════
+         顶部 Tab：OCR 模型 / 超分模型（2026-10 超分适配新增）
+         ⚠️ 两个 Tab 的正文各自一个 ScrollView；超分那一页的行由
+         ModelManagementFragment 动态 inflate（复用 item_model_row_browser），
+         不在本 XML 里逐行 include —— 超分模型数量会随模型族增长。
+         ════════════════════════════════════════════════════════ -->
+    <com.google.android.material.tabs.TabLayout
+        android:id="@+id/model_tabs"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="?attr/colorSurface"
+        app:tabMode="fixed"
+        app:tabGravity="fill" />
+
+    <ScrollView
+        android:id="@+id/ocr_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:padding="12dp">
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -493,4 +515,356 @@
             android:layout_marginBottom="8dp"/>
 
     </LinearLayout>
-</ScrollView>
+    </ScrollView>
+
+    <!-- ════════════════════════════════════════════════════════
+         超分模型 Tab（2026-10）
+
+         ⚠️ **结构与 OCR Tab 完全一致**（改了照着 OCR 那几组抄，别自创版式）：
+            组标题(14sp bold + @drawable/ocr_group_selector + clickable)
+            → 组「当前使用」(12sp @color/success)
+            → 卡片(@drawable/setting_shape, padding 12dp)
+                 ├ 组描述(11sp #888)
+                 └ 每个模型：标题(14sp bold) → <include item_model_row_browser> → 分隔线(@color/divider)
+
+         「组」= 模型族（AnimeJaNai / waifu2x cunet / waifu2x swin_unet）。
+         点组标题 = 选中该族的**推荐档**（各族第一行，与 OCR「点组标题选引擎」同义）。
+         行内 ID 跨行重复 → 一律以行根 View 为作用域查找（同 OCR 页约定）。
+         ════════════════════════════════════════════════════════ -->
+    <ScrollView
+        android:id="@+id/sr_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:padding="12dp"
+        android:visibility="gone">
+
+        <LinearLayout
+            android:id="@+id/sr_content"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+
+            <!-- ── 族 1 ── -->
+            <TextView
+                android:id="@+id/sr_aji_group_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/sr_group_animejanai"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:padding="4dp"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/ocr_group_selector"
+                android:clickable="true"/>
+            <TextView
+                android:id="@+id/sr_aji_group_selected"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/ocr_group_selected"
+                android:textColor="@color/success"
+                android:textSize="12sp"
+                android:visibility="gone"/>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/setting_shape"
+                android:padding="12dp"
+                android:layout_marginTop="8dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_group_animejanai_desc"
+                    android:textSize="11sp"
+                    android:textColor="#888"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_animejanai_balanced"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_aji_balanced_row"/>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/divider"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_animejanai_performance"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_aji_perf_row"/>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/divider"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_animejanai_sharp1_balanced"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_aji_sharp1_balanced_row"/>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/divider"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_animejanai_sharp1_performance"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_aji_sharp1_perf_row"/>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/divider"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_animejanai_sd_compact"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_aji_sd_row"/>
+
+            </LinearLayout>
+
+            <!-- ── 族 2 ── -->
+            <TextView
+                android:id="@+id/sr_w2xc_group_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/sr_group_waifu2x_cunet"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:padding="4dp"
+                android:layout_marginTop="16dp"
+                android:background="@drawable/ocr_group_selector"
+                android:clickable="true"/>
+            <TextView
+                android:id="@+id/sr_w2xc_group_selected"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/ocr_group_selected"
+                android:textColor="@color/success"
+                android:textSize="12sp"
+                android:visibility="gone"/>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/setting_shape"
+                android:padding="12dp"
+                android:layout_marginTop="8dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_group_waifu2x_cunet_desc"
+                    android:textSize="11sp"
+                    android:textColor="#888"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_w2x_cunet_n0"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_w2xc_n0_row"/>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/divider"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_w2x_cunet_n1"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_w2xc_n1_row"/>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/divider"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_w2x_cunet_n2"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_w2xc_n2_row"/>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/divider"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_w2x_cunet_n3"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_w2xc_n3_row"/>
+
+            </LinearLayout>
+
+            <!-- ── 族 3 ── -->
+            <TextView
+                android:id="@+id/sr_w2xs_group_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/sr_group_waifu2x_swin"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:padding="4dp"
+                android:layout_marginTop="16dp"
+                android:background="@drawable/ocr_group_selector"
+                android:clickable="true"/>
+            <TextView
+                android:id="@+id/sr_w2xs_group_selected"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/ocr_group_selected"
+                android:textColor="@color/success"
+                android:textSize="12sp"
+                android:visibility="gone"/>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/setting_shape"
+                android:padding="12dp"
+                android:layout_marginTop="8dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_group_waifu2x_swin_desc"
+                    android:textSize="11sp"
+                    android:textColor="#888"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_w2x_swin_n0"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_w2xs_n0_row"/>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/divider"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_w2x_swin_n1"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_w2xs_n1_row"/>
+
+            </LinearLayout>
+
+            <!-- 底部提示（与 OCR 页 model_hint_need_both 同版式） -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/sr_low_res_tip"
+                android:textSize="11sp"
+                android:textColor="#888"
+                android:layout_marginTop="8dp"
+                android:layout_marginBottom="4dp"/>
+        </LinearLayout>
+    </ScrollView>
+
+</LinearLayout>

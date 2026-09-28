@@ -19,6 +19,10 @@ import com.moe.starflow.manga.types.TextDirection
 import com.moe.starflow.manga.types.TextAlign
 import com.moe.starflow.utils.CustomPreference
 
+private const val MAX_RENDER_SCALE = 2f
+
+private val FILTER_PAINT = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG)
+
 object OverlayRenderer {
 
     /**
@@ -93,10 +97,45 @@ object OverlayRenderer {
          * 没必要（也不该）逼用户重翻一遍 API。顺带覆盖历史/缓存里的老译文。
          */
         replacementRules: List<com.moe.starflow.manga.config.ReplacementRule> = emptyList(),
-        density: Float = 1f                            // 用于把 MIN_PADDING_DP 换算成 px
+        density: Float = 1f,                           // 用于把 MIN_PADDING_DP 换算成 px
+        /**
+         * 渲染超采样倍率（2026-10，修「低分辨率漫画译文模糊」）。
+         *
+         * **为什么需要它**：此前输出位图恒等于原图尺寸，气泡白块与译文就按**源分辨率**栅格化；
+         * 低分辨率页（如 800px 宽）被 `ZoomableImageView` 拉到屏幕宽（1080）时，
+         * **文字是被插值放大的像素** → 糊。而 Canvas 绘制时**字形是按当前 CTM 的有效缩放栅格化的**，
+         * 所以只要让文字在"已被放大的坐标系"里落笔，它天然清晰 —— 不需要超分、也不需要放大底图。
+         *
+         * ⚠️ **默认 1f 是刻意的**：导出 / `MangaViewerActivity` / `HistoryFragment` 不吃屏幕分辨率，
+         * 而它们的渲染结果还进 `BitmapLruCache`，放大尺寸纯属白占内存。只有阅读器上屏该传 >1f。
+         *
+         * ⚠️ 上限 [MAX_RENDER_SCALE]（2f）：倍率是**平方级**的内存代价（×2 = 4 倍像素）。
+         */
+        renderScale: Float = 1f
     ): Bitmap {
-        val result = original.copy(Bitmap.Config.ARGB_8888, true)
+        val scale = renderScale.coerceIn(1f, MAX_RENDER_SCALE)
+        val result: Bitmap
+        if (scale == 1f) {
+            result = original.copy(Bitmap.Config.ARGB_8888, true)
+        } else {
+            result = Bitmap.createBitmap(
+                (original.width * scale).toInt().coerceAtLeast(1),
+                (original.height * scale).toInt().coerceAtLeast(1),
+                Bitmap.Config.ARGB_8888
+            )
+        }
         val canvas = Canvas(result)
+        if (scale != 1f) {
+            // 底图先铺满新尺寸（底图该多糊还多糊 —— 那是图源决定的，这里要救的是**文字**）
+            canvas.drawBitmap(
+                original, null,
+                android.graphics.RectF(0f, 0f, result.width.toFloat(), result.height.toFloat()),
+                FILTER_PAINT
+            )
+            // 之后所有绘制仍用**原坐标系** → 字号/字距/气泡位置全部自动按 scale 放大，
+            // 字形在最终分辨率上栅格化。不要在这里手动乘坐标，那会与 LayoutEngine 的计划打架。
+            canvas.scale(scale, scale)
+        }
 
         // 竖排方向覆盖：所有竖排气泡（RL 或 LR）统一用当前配置方向，横排保持。
         // 保证历史/缓存命中的气泡（方向可能是旧设置时存的）也按当前设置实时渲染。

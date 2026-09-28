@@ -366,18 +366,29 @@ class NovelPanelSyncTest {
             ),
         )
 
-        assertEquals("卡片 + 两条等待行（当前章默认展开）", 3, adapter.itemCount)
-        val batchViewType = adapter.getItemViewType(1)
-        val batchHolder = adapter.onCreateViewHolder(rv, batchViewType)
-        adapter.onBindViewHolder(batchHolder, 1)
+        // ⚠️ 结构变了（2026-09-27 用户口径「pxx 行要在章卡片的框里面」）：
+        // **一个章 = 一个列表项**，展开的批行挂在卡片内部的 `chapter_children` 容器里，
+        // 不再是独立的列表项 —— 所以断言从「itemCount = 卡片 + N 行」改成
+        // 「itemCount = 1，卡片内子视图 = N」。
+        assertEquals("一个章就是一个列表项", 1, adapter.itemCount)
+        val cardHolder = adapter.onCreateViewHolder(rv, 0)
+        adapter.onBindViewHolder(cardHolder, 0)
+        val box = cardHolder.itemView.findViewById<android.widget.LinearLayout>(R.id.chapter_children)
+        assertEquals("两条等待行挂在卡片内部（框里面）", 2, box.childCount)
+        // ⚠️ 下标 0 就是**第一条**批行（卡片本身不在这个容器里）—— 以前位置 1 才是第一条，
+        // 因为那时卡片是列表的第 0 项、批行是列表的第 1 项
+        val firstBatch = box.getChildAt(0)
         assertEquals(
             v.context.getString(R.string.reader_translate_state_waiting),
-            batchHolder.itemView.findViewById<TextView>(R.id.tv_state_badge).text.toString(),
+            firstBatch.findViewById<TextView>(R.id.tv_state_badge).text.toString(),
         )
-        val label = batchHolder.itemView.findViewById<TextView>(R.id.tv_page_label).text.toString()
         assertEquals(
             v.context.getString(R.string.novel_translate_batch_row, 2, 4, 6),
-            label,
+            firstBatch.findViewById<TextView>(R.id.tv_page_label).text.toString(),
+        )
+        assertEquals(
+            v.context.getString(R.string.novel_translate_batch_row, 3, 7, 9),
+            box.getChildAt(1).findViewById<TextView>(R.id.tv_page_label).text.toString(),
         )
     }
 

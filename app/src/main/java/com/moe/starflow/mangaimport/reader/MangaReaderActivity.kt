@@ -1,6 +1,9 @@
 package com.moe.starflow.mangaimport.reader
 
 import android.content.ContentValues
+import android.animation.AnimatorSet
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Color
@@ -46,6 +49,7 @@ import com.moe.starflow.translate.TranslationStatusOverlay
 import com.moe.starflow.utils.LogCollector
 import androidx.preference.PreferenceManager
 import com.moe.starflow.utils.TranslationConcurrency
+import com.moe.starflow.utils.ReaderDialogs
 import com.moe.starflow.utils.UiUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -70,6 +74,12 @@ class MangaReaderActivity : AppCompatActivity() {
 
         /** 通知栏点进来时带的目标页（该章第一页）；不传 = 按断点续读。 */
         const val EXTRA_START_PAGE = "start_page"
+
+        /** ReaderAnim 日志最小间隔（逐帧打日志会把 300 行日志窗口冲光，见 `onPageScrolled`）。 */
+        private const val ANIM_LOG_MIN_MS = 250L
+
+        /** 章节目录弹窗的实时刷新间隔（只在弹窗打开时跑。见 `openChapterDialog`）。 */
+        private const val CHAPTER_TOC_REFRESH_MS = 400L
 
         private const val PREFS = "manga_reader"
         private const val KEY_MODE = "reader_mode"          // 0 LTR 1 RTL 2 竖排 3 Webtoon
@@ -331,7 +341,9 @@ class MangaReaderActivity : AppCompatActivity() {
      */
     private fun showPausedToManualNotice() {
         val text = getString(R.string.reader_translate_paused_to_manual)
-        if (statusOverlayEnabled()) {
+        // ⚠️ 两个条件都要判：开关关掉、或**没有悬浮窗权限**（画不出来且不报错）→ 退回 Toast。
+        // 只判开关的话，权限缺失时提示会凭空消失（用户报"什么提示都没有"就是这个）。
+        if (statusOverlayEnabled() && TranslationStatusOverlay.canDraw(this)) {
             TranslationStatusOverlay.getInstance(this).show(text)
         } else {
             UiUtils.showToast(this, text)
@@ -498,6 +510,7 @@ class MangaReaderActivity : AppCompatActivity() {
         // 退出阅读器：停止前台队列并回退手动模式（章节后台任务保留）。
         // ⚠️ 提示统一在 onStop 里发（`isFinishing` 那条路径），这里**只兜底**：
         // Activity 正在销毁时弹的东西经常看不见
+        setTranslatingPulse(false)
         val wasActive = translationController?.translateMode?.value != ReaderTranslationController.MODE_MANUAL
         translationController?.let { c ->
             jobFinishedListener?.let { l -> c.removeJobFinishedListener(l) }
@@ -514,6 +527,16 @@ class MangaReaderActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
+    /** 章节目录弹窗打开期间的实时刷新任务（关闭即结束）。 */
+    private var chapterTocRefresh: Job? = null
+
+    /** 「正在翻译」时翻译按钮的呼吸动画（结束/取消时停掉）。 */
+    private var translatingPulse: AnimatorSet? = null
+
+    /** ReaderAnim 日志限流（见 onPageScrolled：逐帧打日志会把 300 行日志窗口冲光）。 */
+    private var lastAnimLogMs = 0L
+    private var lastAnimLogPage = -1
+
     private val pageChangeCallback = object : ViewPager2.OnPageChangeCallback() {
         override fun onPageScrolled(position: Int, positionOffset: Float, positionOffsetPixels: Int) {
             // 滚动标记（连续）。回翻判定用「标记相对锚点」而非瞬时增量：
@@ -528,7 +551,22 @@ class MangaReaderActivity : AppCompatActivity() {
             // 导航进度 = 滚动标记 - 锚点（Kototoro resolveAdvancedNavigationProgress）
             animState.navigationProgress = (marker - animState.anchorPage).coerceIn(-1f, 1f)
             if (mode == 1 || animationMode >= 2) {
-                LogCollector.i("ReaderAnim", "scroll p=$position off=$positionOffset marker=$marker nav=${animState.navigationProgress} anchor=${animState.anchorPage} mode=$mode anim=$animationMode bw=${animState.isBackward}")
+                // ⚠️ **不要每帧都打**：`onPageScrolled` 每帧回调一次（~8ms），I 级日志会把
+                // `starflow.log` 的 300 行窗口几秒内冲光 —— 用户报"翻译没反应，日志里什么都没有"，
+                // 根因就是翻译日志被打进来几秒后被这些刷屏挤掉了（排查时完全看不到真凶）。
+                // 只在「翻到新页」或「停稳（offset≈0）」时打一条，并限流到 ≥250ms。
+                val now = SystemClock.elapsedRealtime()
+                val settled = positionOffset < 0.01f
+                val pageChanged = position != lastAnimLogPage
+                if ((pageChanged || settled) && now - lastAnimLogMs >= ANIM_LOG_MIN_MS) {
+                    lastAnimLogPage = position
+                    lastAnimLogMs = now
+                    LogCollector.i(
+                        "ReaderAnim",
+                        "scroll p=$position off=$positionOffset marker=$marker nav=${animState.navigationProgress} " +
+                            "anchor=${animState.anchorPage} mode=$mode anim=$animationMode bw=${animState.isBackward}"
+                    )
+                }
             }
         }
 
@@ -859,6 +897,9 @@ class MangaReaderActivity : AppCompatActivity() {
         refreshTranslationChrome()
         val controller = translationController ?: return
         binding.btnTranslate.setOnClickListener {
+            // ⚠️ "点了没反应"排查的第一现场：这条日志只说明"点击到了"，后面没别的日志
+            // 才说明是流程里被拦住了（配合 ReaderAnim 已限流，日志窗口不会再被刷掉）
+            LogCollector.d("ReaderTranslate", "翻译按钮点击：page=$currentPage mode=$mode disableByMode=${isTranslateDisabledByMode()}")
             if (isTranslateDisabledByMode()) {
                 UiUtils.showToast(this, getString(R.string.reader_translate_disabled_mode))
                 return@setOnClickListener
@@ -870,15 +911,17 @@ class MangaReaderActivity : AppCompatActivity() {
 
             when (val r = controller.onTranslateButtonClick(isDouble)) {
                 is TranslateClick.Hint -> {
-                    // ⚠️ 状态浮层受 status_overlay_enabled 开关控制，关掉后 showImmediate 直接 return，
-                    // 用户点按钮会**毫无反馈**（像坏了）。所以开关关闭时退回系统 Toast。
-                    if (statusOverlayEnabled()) {
+                    // ⚠️ 状态浮层受 status_overlay_enabled 开关控制，关掉后 showImmediate 直接 return；
+                    // **没有悬浮窗权限时同样画不出来**（且不报错）—— 两种情况都必须退回系统 Toast，
+                    // 否则用户点翻译"毫无反馈"（连提示都看不到）。
+                    if (statusOverlayEnabled() && TranslationStatusOverlay.canDraw(this)) {
                         TranslationStatusOverlay.getInstance(this).showImmediate(r.text, autoDismiss = true)
                     } else {
                         UiUtils.showToast(this, r.text)
                     }
                 }
                 TranslateClick.CancelledToManual -> {
+                    setTranslatingPulse(false)
                     val overlay = TranslationStatusOverlay.getInstance(this)
                     overlay.dismiss()
                     overlay.show(getString(R.string.reader_translate_cancelled))
@@ -896,11 +939,70 @@ class MangaReaderActivity : AppCompatActivity() {
         // Webtoon 没有单页三态（连续滚动下"当前页"语义不唯一），整屏切换改由阅读模式分段器
         // 上「连续滑动」按钮的两态控制（见 ReaderMenuSheet），本按钮在 Webtoon 下整组隐藏。
         binding.btnToggleTranslate.setOnClickListener {
+            // 三态切换也给点反馈：图标转一下（用户口径：点任何按钮都不该毫无反应）
+            binding.btnToggleTranslate.animate().rotationBy(180f).setDuration(220).start()
             controller.cycleVisual(currentPage)
         }
         // 失败页：感叹号 → 小气泡显示失败原因（不弹窗）
         binding.btnFailTranslate.setOnClickListener { showFailBubble() }
+        // 清除本页译文：**必须先二次确认**（用户口径：所有删除/清空操作都要确认）
+        binding.btnClearTranslate.setOnClickListener { confirmClearPage(currentPage) }
+        // 右下角按钮组 + 底部左右翻页键：按下缩放反馈（原先点了完全没有视觉反馈）
+        attachPressFeedback(
+            binding.btnTranslate, binding.btnToggleTranslate, binding.btnFailTranslate,
+            binding.btnPrev, binding.btnNext,
+        )
         applyPageImageSource()
+    }
+
+    /**
+     * 按下反馈：按下缩到 0.9、抬起/取消弹回。
+     *
+     * ⚠️ 监听器**返回 false**（不消费事件）：这样点击照旧走 `OnClickListener`，
+     * 只是额外多一层动画 —— 若返回 true 就得自己补 `performClick()`，容易把别人的点击逻辑吃掉。
+     */
+    private fun attachPressFeedback(vararg views: View) {
+        views.forEach { v ->
+            v.setOnTouchListener { view, e ->
+                when (e.actionMasked) {
+                    MotionEvent.ACTION_DOWN ->
+                        view.animate().scaleX(0.9f).scaleY(0.9f).setDuration(80).start()
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                        view.animate().scaleX(1f).scaleY(1f).setDuration(140).start()
+                }
+                false
+            }
+        }
+    }
+
+    /**
+     * 「正在翻译」时的呼吸动画（翻译按钮轻微脉动）。
+     *
+     * 用户口径：点翻译/三态等按钮**必须有反馈**。除了按下缩放，翻译期间也让按钮"活着"，
+     * 一眼能看出任务在跑；结束（成功/失败/取消）时停掉并复位。
+     */
+    private fun setTranslatingPulse(on: Boolean) {
+        val v = binding.btnTranslate
+        if (on) {
+            if (translatingPulse != null) return
+            // ⚠️ X/Y 两个动画要装进**同一个 AnimatorSet** 一并持有：只存其中一个的话，
+            // 取消时另一个会一直循环下去（按钮永远在抖）。
+            val sx = ObjectAnimator.ofFloat(v, View.SCALE_X, 1f, 1.08f)
+            val sy = ObjectAnimator.ofFloat(v, View.SCALE_Y, 1f, 1.08f)
+            listOf(sx, sy).forEach {
+                it.duration = 520
+                it.repeatMode = ValueAnimator.REVERSE
+                it.repeatCount = ValueAnimator.INFINITE
+            }
+            translatingPulse = AnimatorSet().apply {
+                playTogether(sx, sy)
+                start()
+            }
+        } else {
+            translatingPulse?.cancel()
+            translatingPulse = null
+            v.animate().scaleX(1f).scaleY(1f).setDuration(140).start()
+        }
     }
 
     /** Webtoon（连续滚动）暂不支持单页翻译（"当前页"语义不唯一）。横竖屏都是单页，翻译不受朝向影响。 */
@@ -943,14 +1045,40 @@ class MangaReaderActivity : AppCompatActivity() {
     /** 章节目录弹窗（顶部页码胶囊 / 翻译面板章标题点开，同一个）。 */
     private fun openChapterDialog() {
         if (chapters.isEmpty()) return
-        val controller = translationController
-        ReaderChapterDialog.show(
+        val handle = ReaderChapterDialog.show(
             context = this,
             chapters = chapters,
             currentIndex = currentChapterIndex(),
-            successOf = { ch -> controller?.successCount(ch.startPage, ch.endPage) ?: 0 },
+            statusOf = { index -> chapterTocStatus(index) },
             dark = isDarkBackground(),
         ) { index -> goToChapterIndex(index) }
+
+        // 弹窗打开期间**持续推状态**（用户要"看得到各章的实时反应状态"）：
+        // 任务进度/等待页数/译文数都在变，只取打开那一刻的快照就会出现"翻译在涨、目录不动"。
+        // 轮询 400ms 足够（只在弹窗开着时跑，关闭即结束）。
+        chapterTocRefresh?.cancel()
+        chapterTocRefresh = lifecycleScope.launch {
+            while (handle.isShowing && isActive) {
+                delay(CHAPTER_TOC_REFRESH_MS)
+                handle.refresh()
+            }
+        }
+    }
+
+    /** 章节目录里某章的实时状态（与面板的章卡片同一批数据源）。 */
+    private fun chapterTocStatus(index: Int): ReaderChapterDialog.Status {
+        val controller = translationController ?: return ReaderChapterDialog.Status()
+        val chapter = chapters.getOrNull(index) ?: return ReaderChapterDialog.Status()
+        val job = controller.chapterJob(index)
+        val waiting = controller.waitingPages.value.count { it in chapter.startPage..chapter.endPage }
+        return ReaderChapterDialog.Status(
+            success = controller.successCount(chapter.startPage, chapter.endPage),
+            total = chapter.pageCount,
+            running = job?.state == ChapterJobState.RUNNING || job?.state == ChapterJobState.QUEUED,
+            paused = job?.state == ChapterJobState.PAUSED,
+            jobDone = job?.done ?: 0,
+            waiting = waiting,
+        )
     }
 
     /**
@@ -1016,8 +1144,18 @@ class MangaReaderActivity : AppCompatActivity() {
      * - 已暂停 → 继续
      */
     private fun onChapterPrimaryClicked(chapterIndex: Int) {
-        val controller = translationController ?: return
-        val chapter = chapters.getOrNull(chapterIndex) ?: return
+        // ⚠️ 这两个"静默 return"以前什么都不打 —— 用户报"点了没反应"时无从下手。
+        // 现在各留一条 W 级日志：面板按钮点了没反应时，看日志立刻能分清是哪一种。
+        val controller = translationController
+        if (controller == null) {
+            LogCollector.w("ReaderTranslate", "翻译本章：控制器为空（阅读器还没准备好）")
+            return
+        }
+        val chapter = chapters.getOrNull(chapterIndex)
+        if (chapter == null) {
+            LogCollector.w("ReaderTranslate", "翻译本章：章节 $chapterIndex 不在章节表（size=${chapters.size}）")
+            return
+        }
         when (controller.chapterJob(chapterIndex)?.state) {
             ChapterJobState.RUNNING, ChapterJobState.QUEUED -> {
                 controller.pauseChapterJob(chapterIndex)
@@ -1038,24 +1176,25 @@ class MangaReaderActivity : AppCompatActivity() {
         val done = pages.count { controller.stateOf(it) == ImportedPageTranslation.STATE_SUCCESS }
         val all = pages.toList()
         val pending = all.filter { controller.stateOf(it) != ImportedPageTranslation.STATE_SUCCESS }
-        AlertDialog.Builder(this)
-            .setTitle(R.string.reader_translate_chapter_confirm_title)
-            .setMessage(
+        // 弹窗跟随**阅读背景**深浅（用户口径：弹窗也要适配主题配色，别跟系统主题走）
+        ReaderDialogs.show(this, isDarkBackground()) {
+            setTitle(R.string.reader_translate_chapter_confirm_title)
+            setMessage(
                 getString(
                     R.string.reader_translate_chapter_confirm_msg,
                     chapter.pageCount, untranslated, failed, done
                 )
             )
             // 正按钮 = 「只翻未完成」→ 系统默认聚焦它 = 默认**不覆盖**（用户口径）
-            .setPositiveButton(R.string.reader_translate_chapter_only_pending) { _, _ ->
+            setPositiveButton(R.string.reader_translate_chapter_only_pending) { _, _ ->
                 startChapterBatch(chapterIndex, pending)
             }
             // 中按钮 = 强行覆盖（连已成功的页一起重翻）
-            .setNeutralButton(R.string.reader_translate_chapter_overwrite) { _, _ ->
+            setNeutralButton(R.string.reader_translate_chapter_overwrite) { _, _ ->
                 startChapterBatch(chapterIndex, all)
             }
-            .setNegativeButton(R.string.cancel, null)
-            .show()
+            setNegativeButton(R.string.cancel, null)
+        }
     }
 
     /**
@@ -1100,7 +1239,14 @@ class MangaReaderActivity : AppCompatActivity() {
      * ⚠️ 译文字号**不在渲染缓存 key 里**（key 只有 `page:idx:MODE`）→ 必须先把已渲染的译图作废，
      * 再按新字号重渲染当前页，否则拖完滑块屏幕上还是旧字号（`invalidateRenders` 就是干这个的）。
      */
-    private fun onFontSizeChangedFromPanel() {
+    /**
+     * 底图/排版输入变了 → 作废渲染缓存并重渲染当前页。
+     *
+     * ⚠️ 两处共用（字号变更 / Anime4K 档位变更）：它们改的都不是「译文」而是**渲染的输入**
+     * —— 字号影响排版，Anime4K 影响底图（`SrPageEnhancer` 会按设置指纹自动作废增强缓存）。
+     * 不作废的话屏幕上还是旧档/旧字号的图。
+     */
+    private fun invalidateRenderInputsAndReRender() {
         val c = translationController ?: return
         c.invalidateRenders()
         if (mode == 3) {
@@ -1111,6 +1257,11 @@ class MangaReaderActivity : AppCompatActivity() {
             applyPageVisual(currentPage)
         }
     }
+
+    private fun onFontSizeChangedFromPanel() = invalidateRenderInputsAndReRender()
+
+    /** Anime4K 档位变更（阅读器调色面板）：与字号同一条链路 */
+    private fun onAnime4kModeChangedFromPanel() = invalidateRenderInputsAndReRender()
     /** 清除本章译文（二次确认，防误删；用户口径：**只清当前章**，不做整本清理入口）。 */
     private fun confirmClearChapter(chapterIndex: Int = currentChapterIndex()) {
         val controller = translationController ?: return
@@ -1122,10 +1273,11 @@ class MangaReaderActivity : AppCompatActivity() {
             UiUtils.showToast(this, getString(R.string.reader_translate_chapter_nothing))
             return
         }
-        AlertDialog.Builder(this)
-            .setTitle(R.string.reader_translate_clear_confirm_title)
-            .setMessage(getString(R.string.reader_translate_clear_confirm_msg, affected))
-            .setPositiveButton(R.string.confirm) { _, _ ->
+        // 清空本章也要跟阅读背景（用户口径：所有弹窗都要适配主题配色）
+        ReaderDialogs.show(this, isDarkBackground()) {
+            setTitle(R.string.reader_translate_clear_confirm_title)
+            setMessage(getString(R.string.reader_translate_clear_confirm_msg, affected))
+            setPositiveButton(R.string.confirm) { _, _ ->
                 lifecycleScope.launch {
                     val removed = controller.clearPageRange(chapter.startPage, chapter.endPage)
                     refreshProgressTranslation()
@@ -1136,11 +1288,28 @@ class MangaReaderActivity : AppCompatActivity() {
                     }
                 }
             }
-            .setNegativeButton(R.string.cancel, null)
-            .show()
+            setNegativeButton(R.string.cancel, null)
+        }
     }
 
-    /** 删除某一页的翻译数据（面板行内「删除」）。删完该页回落原图、进度条绿条同步缩短。 */
+    /**
+     * 清除**本页**译文（右下角清除图标 + 面板行内「删除」共用）。
+     *
+     * ⚠️ **所有删除/清空操作都要二次确认**（用户口径）——以前这两个入口都是点了立刻删。
+     */
+    private fun confirmClearPage(page: Int) {
+        if (translationController == null) return
+        // ⚠️ 走 showReaderDialog（= 跟随**阅读背景**深浅）：裸 AlertDialog 跟系统主题走，
+        // 深色阅读背景 + 浅色系统下就是一块突兀的白底（用户报的"弹窗没适配主题配色"）
+        ReaderDialogs.show(this, isDarkBackground()) {
+            setTitle(R.string.reader_clear_page_confirm_title)
+            setMessage(getString(R.string.reader_clear_page_confirm_msg, page + 1))
+            setNegativeButton(R.string.user_cancel, null)
+            setPositiveButton(R.string.reader_clear_page_confirm_ok) { _, _ -> deletePageTranslation(page) }
+        }
+    }
+
+    /** 删除某一页的翻译数据（确认之后才调）。删完该页回落原图、进度条绿条同步缩短。 */
     private fun deletePageTranslation(page: Int) {
         val controller = translationController ?: return
         lifecycleScope.launch {
@@ -1177,13 +1346,20 @@ class MangaReaderActivity : AppCompatActivity() {
 
             when (phase) {
                 // message 优先：分批时管线会给出「识别中（1/2）…」这类带批次的文案（与截屏翻译对齐）
-                ReaderTranslatePhase.DETECTING -> overlay.showImmediate(
-                    withPage(message ?: getString(R.string.reader_translate_detecting)), autoDismiss = false
-                )
-                ReaderTranslatePhase.TRANSLATING -> overlay.showImmediate(
-                    withPage(message ?: getString(R.string.reader_translate_in_progress)), autoDismiss = false
-                )
+                ReaderTranslatePhase.DETECTING -> {
+                    setTranslatingPulse(true)
+                    overlay.showImmediate(
+                        withPage(message ?: getString(R.string.reader_translate_detecting)), autoDismiss = false
+                    )
+                }
+                ReaderTranslatePhase.TRANSLATING -> {
+                    setTranslatingPulse(true)
+                    overlay.showImmediate(
+                        withPage(message ?: getString(R.string.reader_translate_in_progress)), autoDismiss = false
+                    )
+                }
                 ReaderTranslatePhase.SUCCESS -> {
+                    setTranslatingPulse(false)
                     overlay.dismiss()
                     // message 携带缓存说明（「12 条里命中 3 条」）；无缓存命中时它是 null，走原文案。
                     // 用户必须能分辨「真的调了 API」和「全部命中缓存」——否则同页重翻会像凭空成功。
@@ -1193,6 +1369,7 @@ class MangaReaderActivity : AppCompatActivity() {
                     refreshTranslationChrome()
                 }
                 ReaderTranslatePhase.FAILED -> {
+                    setTranslatingPulse(false)
                     overlay.dismiss()
                     overlay.showError(message ?: getString(R.string.reader_translate_failed))
                     refreshProgressTranslation()
@@ -1203,6 +1380,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 }
                 // 队列跑完：提示一下随即消失，翻页后队列会自动重启
                 ReaderTranslatePhase.QUEUE_DRAINED -> {
+                    setTranslatingPulse(false)
                     overlay.dismiss()
                     overlay.show(getString(R.string.reader_translate_queue_drained))
                     refreshProgressTranslation()
@@ -1238,6 +1416,8 @@ class MangaReaderActivity : AppCompatActivity() {
 
         binding.btnToggleTranslate.visibility = if (translated) View.VISIBLE else View.GONE
         binding.btnFailTranslate.visibility = if (failed) View.VISIBLE else View.GONE
+        // 清除本页译文（**最右边**，用户口径）：只在当前页**有译文**时出现
+        binding.btnClearTranslate.visibility = if (translated) View.VISIBLE else View.GONE
         // 翻译按钮图标：成功 → 重翻图标；未译/失败 → 翻译图标
         binding.ivTranslate.setImageResource(
             if (translated) R.drawable.ic_refresh else R.drawable.ic_reader_translate
@@ -1302,7 +1482,8 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     private fun openPagePreview() {
-        ReaderPagePreviewDialog(this, source, currentPage) { page ->
+        // dark = 阅读背景深浅（缩略图预览弹窗也要适配，不再恒白底）
+        ReaderPagePreviewDialog(this, source, currentPage, isDarkBackground()) { page ->
             goToPage(page)
             refreshOverlay()
         }.show()
@@ -1453,11 +1634,29 @@ class MangaReaderActivity : AppCompatActivity() {
                     startActivity(Intent(this@MangaReaderActivity, SettingPageActivity::class.java)
                         .putExtra(SettingPageActivity.EXTRA_FRAGMENT_TYPE, SettingPageActivity.TYPE_FRAGMENT_API_CONFIG))
                 },
+                // 超分模型行：跳模型管理页的「超分」Tab（EXTRA_MODEL_SHOW_SR 让页面直接落在超分那一页）
+                onOpenSrModelManagement = {
+                    startActivity(Intent(this@MangaReaderActivity, SettingPageActivity::class.java)
+                        .putExtra(SettingPageActivity.EXTRA_FRAGMENT_TYPE, SettingPageActivity.TYPE_FRAGMENT_MODEL_MANAGEMENT)
+                        .putExtra(SettingPageActivity.EXTRA_MODEL_SHOW_SR, true))
+                },
+                // 阅读器独立超分开关：值已由面板写入 prefs，这里只负责提示。
+                // ⚠️ 不在这里预热引擎：2x 模型加载要 1s+，开关一拨就卡一下体感很差；
+                //   首次真正翻页时自然建立，失败也会按约定静默降级回原图。
+                onReaderSrChanged = { enabled ->
+                    // ⚠️ 必须写限定名 this@MangaReaderActivity：这段回调是在协程作用域里构建的，
+                    // 裸 `this` 会解析成 CoroutineScope（编译期就报类型不匹配）
+                    UiUtils.showToast(
+                        this@MangaReaderActivity,
+                        getString(if (enabled) R.string.reader_sr_switch_on else R.string.reader_sr_switch_off)
+                    )
+                },
                 // ===== 章节卡片：主按钮（翻译本章/暂停/继续）+ 次按钮（清除本章译文/取消）=====
                 onChapterSelected = { index -> goToChapterIndex(index) },
                 onChapterPrimary = { index -> onChapterPrimaryClicked(index) },
                 onChapterSecondary = { index -> onChapterSecondaryClicked(index) },
-                onDeletePage = { page -> deletePageTranslation(page) },
+                // 面板行内「删除」与右下角清除图标共用同一个确认流程
+                onDeletePage = { page -> confirmClearPage(page) },
                 currentChapterState = { chapterPanelState() },
                 onConcurrency = { n ->
                     // ⚠️ 必须写**默认 prefs**：控制器（`ReaderTranslationController.appPrefs`）与
@@ -1468,7 +1667,9 @@ class MangaReaderActivity : AppCompatActivity() {
                         .edit().putInt(TranslationConcurrency.KEY_MANGA, n).apply()
                 },
                 // 面板里拖字号滑块 / 切「自动」：作废已渲染译图并重渲染当前页
-                onFontSizeChanged = { onFontSizeChangedFromPanel() }
+                onFontSizeChanged = { onFontSizeChangedFromPanel() },
+                // Anime4K 档位变更：与字号同一条链路（作废渲染缓存 + 重渲染当前页）
+                onAnime4kModeChanged = { onAnime4kModeChangedFromPanel() }
             )
         )
         sheet.show(supportFragmentManager, ReaderMenuSheet.TAG)
@@ -1578,17 +1779,15 @@ class MangaReaderActivity : AppCompatActivity() {
 
     private fun showDownloadDialog() {
         val dark = isDarkBackground()
-        val view = LayoutInflater.from(this).inflate(R.layout.dialog_reader_download, null, false)
-        val dialog = AlertDialog.Builder(this).setView(view).setNegativeButton(R.string.cancel, null).create()
+        // ⚠️ 用**对应 night 模式的上下文**建弹窗（面板/按钮色由主题给），
+        // 自定义内容视图再过 tintCustomView 按亮度翻转 —— 不再"换底 + 一律刷浅色"
+        // （那正是"白底白字"的来源：面板底是主题给的白色，文字却被刷成了浅色）
+        val themed = ReaderDialogs.context(this, dark)
+        val view = LayoutInflater.from(themed).inflate(R.layout.dialog_reader_download, null, false)
+        val dialog = AlertDialog.Builder(themed).setView(view).setNegativeButton(R.string.cancel, null).create()
         dialog.show()
-        dialog.window?.setBackgroundDrawableResource(if (dark) R.drawable.bg_dialog_dark else R.drawable.bg_dialog_white)
-        if (dark) {
-            fun recolor(v: View) {
-                if (v is android.widget.TextView) v.setTextColor(0xFFE2E2E4.toInt())
-                if (v is ViewGroup) for (i in 0 until v.childCount) recolor(v.getChildAt(i))
-            }
-            recolor(view as ViewGroup)
-        }
+        ReaderDialogs.style(dialog, dark)
+        ReaderDialogs.tintCustomView(view, dark)
 
         view.findViewById<View>(R.id.row_download_original).setOnClickListener {
             dialog.dismiss(); exportOriginal()

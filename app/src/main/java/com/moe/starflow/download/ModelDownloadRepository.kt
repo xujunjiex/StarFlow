@@ -406,6 +406,13 @@ class ModelDownloadRepository private constructor(private val context: Context) 
         ModelKey.PP_OCR_V5_DET, ModelKey.PP_OCR_V5_REC_ZH,
         ModelKey.PP_OCR_V5_REC_EN, ModelKey.PP_OCR_V5_REC_KO,
         ModelKey.PP_OCR_V5_REC_RU -> File(context.getExternalFilesDir(null), "ppocrv5")
+        // 超分模型统一放一个目录，模型文件名本身已带族/等级前缀，不会重名
+        ModelKey.SR_ANIMEJANAI_HD_BALANCED, ModelKey.SR_ANIMEJANAI_HD_PERFORMANCE,
+        ModelKey.SR_ANIMEJANAI_HD_SHARP1_BALANCED, ModelKey.SR_ANIMEJANAI_HD_SHARP1_PERFORMANCE,
+        ModelKey.SR_ANIMEJANAI_SD_COMPACT -> File(context.getExternalFilesDir(null), "sr")
+        ModelKey.SR_WAIFU2X_CUNET_N0, ModelKey.SR_WAIFU2X_CUNET_N1,
+        ModelKey.SR_WAIFU2X_CUNET_N2, ModelKey.SR_WAIFU2X_CUNET_N3,
+        ModelKey.SR_WAIFU2X_SWIN_N0, ModelKey.SR_WAIFU2X_SWIN_N1 -> File(context.getExternalFilesDir(null), "sr")
     }
 
     /** 返回某模型的目标文件（未下载时为期望路径；仅用于已完整下载的模型）。 */

@@ -42,6 +42,12 @@ class SettingPageActivity : BaseActivity() {
         const val TYPE_FRAGMENT_FAQ = 5
         const val TYPE_FRAGMENT_DEVELOPER = 7
         const val TYPE_FRAGMENT_MODEL_MANAGEMENT = 8
+
+        /**
+         * 打开模型管理页时**直接落在「超分」Tab**（2026-10）。
+         * 个性化设置的「超分模型管理」、阅读器面板的超分入口都带这个 extra 过来。
+         */
+        const val EXTRA_MODEL_SHOW_SR = "model_show_sr"
     }
 
     private lateinit var binding: ActivitySettingPageBinding
@@ -72,7 +78,9 @@ class SettingPageActivity : BaseActivity() {
             ).commit()
             TYPE_FRAGMENT_MODEL_MANAGEMENT->supportFragmentManager.beginTransaction().replace(
                 binding.fragmentContainerView.id,
-                ModelManagementFragment()
+                ModelManagementFragment.newInstance(
+                    showSrTab = intent.getBooleanExtra(EXTRA_MODEL_SHOW_SR, false)
+                )
             ).commit()
             else->Toast.makeText(applicationContext,"Unknown Error.", Toast.LENGTH_LONG).show()
         }

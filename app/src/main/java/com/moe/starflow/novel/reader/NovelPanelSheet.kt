@@ -18,6 +18,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.moe.starflow.R
+import com.moe.starflow.utils.ReaderDialogs
 import com.moe.starflow.data.NovelChapterStat
 import com.moe.starflow.manga.config.OcrEngineGroup
 import com.moe.starflow.mangaimport.translate.ReaderTranslationInfo
@@ -538,18 +539,17 @@ class NovelPanelSheet(
 
         // 下载：三选（译文 / 原文 / 双语），与漫画「更多」页同一套交互
         view.findViewById<View>(R.id.btn_download).setOnClickListener {
-            val dlg = AlertDialog.Builder(requireContext())
-                .setTitle(R.string.novel_download_title)
-                .setItems(
+            // 共享实现（底与字同源，不跟系统主题）
+            ReaderDialogs.show(requireContext(), darkPanel) {
+                setTitle(R.string.novel_download_title)
+                setItems(
                     arrayOf(
                         getString(R.string.novel_download_translated),
                         getString(R.string.novel_download_original),
                         getString(R.string.novel_download_bilingual),
                     ),
                 ) { _, which -> cb.onDownload(which) }
-                .create()
-            dlg.show()
-            applyDialogTheme(dlg)
+            }
         }
 
         val rv = view.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rv_translate_chapters)
@@ -698,40 +698,55 @@ class NovelPanelSheet(
 
     // ===== 主题（与 ReaderMenuSheet.applyPanelTheme 同一套取值） =====
 
+    /**
+     * 面板主题的**标题色**控件（浅色 `#333333` / 深色 `#E2E2E4`）。
+     *
+     * ⚠️ **一个控件只能出现在本数组与 [panelSubIds] 之一**：两段 `setTextColor` 后写的赢 ——
+     * 同一个 id 两处都登记，它会静默变成次要色（淡色）。守卫：`PanelThemeGuardTest`。
+     */
+    // PANEL_THEME_LABEL_IDS_BEGIN
+    private val panelLabelIds = intArrayOf(
+        R.id.tv_mode_label, R.id.tv_animation_label, R.id.tv_background_label,
+        R.id.tv_translate_mode_label,
+        R.id.tv_rotate_label, R.id.tv_auto_turn_label, R.id.tv_settings_label, R.id.tv_download_label,
+        R.id.tv_translator_model_row,
+        R.id.tv_source_lang_value, R.id.tv_target_lang_value,
+        R.id.tv_debounce_label, R.id.tv_ahead_label, R.id.tv_batch_label,
+        R.id.tv_batch_group_title,
+        R.id.tv_batch_warn_label, R.id.tv_concurrency_label,
+        R.id.tv_font_size_label,
+        R.id.tv_line_spacing_label, R.id.tv_para_spacing_label,
+        R.id.tv_padding_label, R.id.tv_keep_paragraphs_label,
+        R.id.tv_top_padding_label, R.id.tv_bottom_padding_label,
+    )
+    // PANEL_THEME_LABEL_IDS_END
+
+    /** 面板主题的**次要色**控件（值 / 说明行）。⚠️ 不许与 [panelLabelIds] 重复。 */
+    // PANEL_THEME_SUB_IDS_BEGIN
+    private val panelSubIds = intArrayOf(
+        R.id.tv_rotate_value, R.id.tv_interval_value,
+        R.id.tv_source_caption, R.id.tv_target_caption,
+        R.id.tv_debounce_value, R.id.tv_ahead_value, R.id.tv_batch_value,
+        // 说明行（11sp）与「值」同组：都是"依附于某项的次要文字"，深浅一起翻
+        R.id.tv_debounce_hint, R.id.tv_ahead_hint, R.id.tv_batch_hint,
+        R.id.tv_batch_warn_value, R.id.tv_batch_warn_hint,
+        R.id.tv_concurrency_value, R.id.tv_concurrency_hint,
+        R.id.tv_font_size_value,
+        R.id.tv_line_spacing_value, R.id.tv_para_spacing_value,
+        R.id.tv_padding_value, R.id.tv_keep_paragraphs_hint,
+        R.id.tv_top_padding_value, R.id.tv_bottom_padding_value,
+        R.id.tv_style_hint,
+        R.id.tv_batch_group_arrow,
+    )
+    // PANEL_THEME_SUB_IDS_END
+
     private fun applyPanelTheme(view: View, root: View) {
         val dark = darkPanel
         root.setBackgroundColor(if (dark) 0xFF1C1C1E.toInt() else 0xFFFFFFFF.toInt())
         val labelColor = if (dark) 0xFFE2E2E4.toInt() else 0xFF333333.toInt()
         val subColor = if (dark) 0xFF9A9A9F.toInt() else 0xFF888888.toInt()
-        listOf(
-            R.id.tv_mode_label, R.id.tv_animation_label, R.id.tv_background_label,
-            R.id.tv_translate_mode_label,
-            R.id.tv_rotate_label, R.id.tv_auto_turn_label, R.id.tv_settings_label, R.id.tv_download_label,
-            R.id.tv_translator_model_row,
-            R.id.tv_source_lang_value, R.id.tv_target_lang_value,
-            R.id.tv_debounce_label, R.id.tv_ahead_label, R.id.tv_batch_label,
-            R.id.tv_batch_group_title,
-            R.id.tv_batch_warn_label, R.id.tv_concurrency_label,
-            R.id.tv_font_size_label,
-            R.id.tv_line_spacing_label, R.id.tv_para_spacing_label,
-            R.id.tv_padding_label, R.id.tv_keep_paragraphs_label,
-            R.id.tv_top_padding_label, R.id.tv_bottom_padding_label,
-        ).forEach { view.findViewById<TextView>(it).setTextColor(labelColor) }
-        listOf(
-            R.id.tv_rotate_value, R.id.tv_interval_value,
-            R.id.tv_source_caption, R.id.tv_target_caption,
-            R.id.tv_debounce_value, R.id.tv_ahead_value, R.id.tv_batch_value,
-            // 说明行（11sp）与「值」同组：都是"依附于某项的次要文字"，深浅一起翻
-            R.id.tv_debounce_hint, R.id.tv_ahead_hint, R.id.tv_batch_hint,
-            R.id.tv_batch_warn_value, R.id.tv_batch_warn_hint,
-            R.id.tv_concurrency_value, R.id.tv_concurrency_hint,
-            R.id.tv_font_size_value,
-            R.id.tv_line_spacing_value, R.id.tv_para_spacing_value,
-            R.id.tv_padding_value, R.id.tv_keep_paragraphs_hint,
-            R.id.tv_top_padding_value, R.id.tv_bottom_padding_value,
-            R.id.tv_style_hint,
-            R.id.tv_batch_group_arrow,
-        ).forEach { view.findViewById<TextView>(it).setTextColor(subColor) }
+        panelLabelIds.forEach { view.findViewById<TextView>(it).setTextColor(labelColor) }
+        panelSubIds.forEach { view.findViewById<TextView>(it).setTextColor(subColor) }
         reapplySegments(view)
         // ⚠️ Tab 图标与筛选 chip 原来**只在创建/点击时**着色，主题重喷漏了它们 ——
         // 表现就是「切了阅读背景，有几处颜色不跟着变，关掉面板再打开才正常」。
@@ -1035,7 +1050,7 @@ class NovelPanelSheet(
         for ((key, label) in options) {
             val chip = TextView(requireContext()).apply {
                 text = getString(label)
-                textSize = 15f
+                textSize = 13f
                 setPadding(dp8 * 2, dp8, dp8 * 2, dp8)
                 tag = key
                 setOnClickListener { applyFilter(key, view) }
@@ -1146,12 +1161,11 @@ class NovelPanelSheet(
     }
 
     private fun showHintDialog(msg: String) {
-        val dlg = AlertDialog.Builder(requireContext())
-            .setMessage(msg)
-            .setPositiveButton(R.string.user_known, null)
-            .create()
-        dlg.show()
-        applyDialogTheme(dlg)
+        // 共享实现：底与字同源（见 ReaderDialogs）
+        ReaderDialogs.show(requireContext(), darkPanel) {
+            setMessage(msg)
+            setPositiveButton(R.string.user_known, null)
+        }
     }
 
     /**
@@ -1161,22 +1175,12 @@ class NovelPanelSheet(
      * 只有"清除本章译文"这条会丢数据，所以确认只留在这里。
      */
     private fun confirmClearChapter(chapterIndex: Int) {
-        val dlg = AlertDialog.Builder(requireContext())
-            .setTitle(R.string.novel_translate_clear_chapter)
-            .setMessage(R.string.novel_translate_clear_chapter_confirm)
-            .setNegativeButton(R.string.user_cancel, null)
-            .setPositiveButton(R.string.novel_translate_clear_ok) { _, _ -> cb.onChapterClear(chapterIndex) }
-            .create()
-        dlg.show()
-        applyDialogTheme(dlg)
+        // 共享实现：底与字同源（见 ReaderDialogs）
+        ReaderDialogs.show(requireContext(), darkPanel) {
+            setTitle(R.string.novel_translate_clear_chapter)
+            setMessage(R.string.novel_translate_clear_chapter_confirm)
+            setNegativeButton(R.string.user_cancel, null)
+            setPositiveButton(R.string.novel_translate_clear_ok) { _, _ -> cb.onChapterClear(chapterIndex) }
+        }
     }
-
-    /**
-     * 弹窗统一上深色主题（与 [showHintDialog] 同一套）。
-     *
-     * ⚠️ **新加弹窗必须过这里**：`AlertDialog` 默认跟系统主题走，小说阅读器的面板深浅
-     * 是跟**阅读背景**走的、与全局主题无关 —— 漏了这一句，浅色系统主题下切到深色背景，
-     * 弹窗就是白底白字/白底黑字的突兀块（「清空本章」和「下载」以前就是这样）。
-     */
-    private fun applyDialogTheme(dlg: AlertDialog) = applyNovelDialogTheme(dlg, darkPanel)
 }

@@ -1,12 +1,13 @@
 package com.moe.starflow.novel.reader
 
-import android.app.AlertDialog
+import androidx.appcompat.app.AlertDialog
 import android.content.Context
 import android.view.LayoutInflater
 import android.view.ViewGroup
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.moe.starflow.R
+import com.moe.starflow.utils.ReaderDialogs
 import com.moe.starflow.data.NovelChapterStat
 import com.moe.starflow.databinding.DialogNovelTocBinding
 import com.moe.starflow.databinding.ItemNovelTocRowBinding
@@ -98,17 +99,16 @@ object NovelTocDialog {
             }
         }
 
-        dialog = AlertDialog.Builder(context)
-            .setView(binding.root)
-            .create()
+        // ⚠️ 走 `ReaderDialogs.show`（**带兜底**）：主题/上下文失败会退回原上下文再建，
+        // 绝不能因为"配色"闪退（漫画目录弹窗崩过两次：AppCompat 主题 + window token）
+        val dlg = ReaderDialogs.show(context, dark) { setView(binding.root) }
+        dialog = dlg
         binding.btnTocCancel.setOnClickListener { dialog?.dismiss() }
 
-        dialog.show()
-        dialog.window?.setBackgroundDrawableResource(if (dark) R.drawable.bg_dialog_dark else R.drawable.bg_dialog_white)
         // ⚠️ 宽度也要显式限：AlertDialog 的自定义 View 默认按内容撑，宽屏上会贴满整屏
         val dm = context.resources.displayMetrics
-        dialog.window?.setLayout((dm.widthPixels * 0.88).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT)
-        return Handle(dialog, adapter)
+        dlg.window?.setLayout((dm.widthPixels * 0.88).toInt(), ViewGroup.LayoutParams.WRAP_CONTENT)
+        return Handle(dlg, adapter)
     }
 
     /**

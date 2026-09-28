@@ -402,4 +402,74 @@ class OverlayRendererTest {
         bitmap.recycle()
         out.recycle()
     }
+
+    // ================= renderScale（2026-10：修「低分辨率漫画译文模糊」）=================
+
+    private fun solid(w: Int, h: Int, color: Int): Bitmap =
+        Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { it.eraseColor(color) }
+
+    /**
+     * ⚠️ **超采样的视觉效果在 Robolectric 里验不了 —— 别再试着写这类断言。**
+     *
+     * 实测（两次踩坑记录，别重走）：
+     * 1. `canvas.scale(2,2)` **不兑现** —— `renderScale = 2f` 时白块仍在 (20,20)，而非应有的 (40,40)；
+     * 2. `drawBitmap(src, srcRect, dstRect, paint)` 的**目标矩形也不兑现** ——
+     *    2 倍输出的右下角是全透明(0)，说明底图仍按 1:1 画在左上角。
+     *
+     * 所以「文字变清晰」只能靠**真机验证**；这里只锁**能锁的契约**（尺寸与夹取）。
+     * 「排版不变」那条由**构造**保证：`renderScale` 分支只建大位图 + `canvas.scale`，
+     * **没有动任何绘制坐标** —— 坐标仍全是原坐标系，与 scale = 1 时逐字相同。
+     */
+
+    /** 默认必须是 1f：导出/查看器/历史都不吃屏幕分辨率，放大只会白占 BitmapLruCache */
+    @Test
+    fun renderScale_default_isOne_andKeepsSize() {
+        val src = solid(200, 100, Color.WHITE)
+        val out = OverlayRenderer.renderOverlay(src, emptyList())
+        assertEquals(200, out.width)
+        assertEquals(100, out.height)
+    }
+
+    @Test
+    fun renderScale_two_doublesOutputSize() {
+        val src = solid(200, 100, Color.WHITE)
+        val out = OverlayRenderer.renderOverlay(src, emptyList(), renderScale = 2f)
+        assertEquals(400, out.width)
+        assertEquals(200, out.height)
+    }
+
+    /** 越界必须夹到 [1,2]：倍率是**平方级**内存代价，不能让人传 8 倍把手机打爆 */
+    @Test
+    fun renderScale_isClamped() {
+        val src = solid(200, 100, Color.WHITE)
+        val big = OverlayRenderer.renderOverlay(src, emptyList(), renderScale = 8f)
+        assertEquals("上界必须夹到 2", 400, big.width)
+        assertEquals(200, big.height)
+
+        val small = OverlayRenderer.renderOverlay(src, emptyList(), renderScale = 0.1f)
+        assertEquals("下界必须夹到 1（缩小没意义，还会丢像素）", 200, small.width)
+        assertEquals(100, small.height)
+    }
+
+    /** 2 倍渲染仍然画得出来（不崩、不空）；位置在 Robolectric 里不作数，见上方说明 */
+    @Test
+    fun renderScale_two_stillRenders() {
+        val src = solid(200, 100, Color.rgb(0, 255, 0))
+        val bubble = TranslatedBubble(
+            rect = Rect(20, 20, 120, 80),
+            originalText = "あああ",
+            translatedText = "いいい",
+            backgroundColor = Color.WHITE,
+            fontSize = 20f,
+            direction = TextDirection.VERTICAL_LR
+        )
+        val two = OverlayRenderer.renderOverlay(src, listOf(bubble), renderScale = 2f)
+        assertEquals(400, two.width)
+        var white = 0
+        for (y in 0 until two.height) for (x in 0 until two.width) {
+            val c = two.getPixel(x, y)
+            if (Color.red(c) > 200 && Color.green(c) > 200 && Color.blue(c) > 200) white++
+        }
+        assertTrue("2 倍输出里必须画出了气泡白块", white > 0)
+    }
 }

@@ -198,6 +198,26 @@
                 app:tint="#FFFFFF"
                 android:contentDescription="@string/reader_tab_translate"/>
         </FrameLayout>
+
+        <!-- 清除本页译文（**放在最右边**，用户口径）：只在当前页有译文时出现，
+             点击**必须二次确认**（所有删除/清空操作都要确认）。图标复用既有删除图标。 -->
+        <FrameLayout
+            android:id="@+id/btn_clear_translate"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:gravity="center"
+            android:clickable="true"
+            android:visibility="gone"
+            android:contentDescription="@string/reader_clear_page_desc">
+            <ImageView
+                android:id="@+id/iv_clear_translate"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_action_delete"
+                app:tint="#FFFFFF"
+                android:contentDescription="@string/reader_clear_page_desc"/>
+        </FrameLayout>
     </LinearLayout>
 
 </FrameLayout>

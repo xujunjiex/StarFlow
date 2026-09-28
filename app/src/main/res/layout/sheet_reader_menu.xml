@@ -85,7 +85,7 @@
                 android:padding="14dp">
 
                 <TextView android:id="@+id/tv_mode_label" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:text="@string/reader_reading_mode" android:textSize="12sp" android:textColor="#888888"/>
+                    android:text="@string/reader_reading_mode" android:textSize="14sp" android:textColor="#888888"/>
 
                 <LinearLayout android:id="@+id/seg_mode" android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:orientation="horizontal" android:layout_marginTop="2dp">
@@ -122,7 +122,7 @@
                 </LinearLayout>
 
                 <TextView android:id="@+id/tv_animation_label" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp" android:text="@string/reader_animation" android:textSize="12sp" android:textColor="#888888"/>
+                    android:layout_marginTop="12dp" android:text="@string/reader_animation" android:textSize="14sp" android:textColor="#888888"/>
 
                 <LinearLayout android:id="@+id/seg_animation" android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:orientation="horizontal" android:layout_marginTop="2dp" android:gravity="center">
@@ -150,7 +150,7 @@
                 </LinearLayout>
 
                 <TextView android:id="@+id/tv_background_label" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp" android:text="@string/reader_background" android:textSize="12sp" android:textColor="#888888"/>
+                    android:layout_marginTop="12dp" android:text="@string/reader_background" android:textSize="14sp" android:textColor="#888888"/>
 
                 <LinearLayout android:id="@+id/seg_background" android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:orientation="horizontal" android:layout_marginTop="2dp" android:gravity="center">
@@ -199,7 +199,7 @@
                 android:padding="14dp">
 
                 <TextView android:id="@+id/tv_translate_mode_label" android:layout_width="wrap_content" android:layout_height="wrap_content"
-                    android:text="@string/reader_translate_mode_title" android:textSize="12sp" android:textColor="#888888"/>
+                    android:text="@string/reader_translate_mode_title" android:textSize="14sp" android:textColor="#888888"/>
 
                 <RadioGroup android:id="@+id/seg_translate_mode"
                     android:layout_width="match_parent" android:layout_height="wrap_content"
@@ -221,7 +221,7 @@
                         android:orientation="horizontal" android:gravity="center_vertical">
                         <TextView android:id="@+id/tv_debounce_label" android:layout_width="0dp"
                             android:layout_weight="1" android:layout_height="wrap_content"
-                            android:text="@string/reader_translate_debounce" android:textSize="12sp" android:textColor="#888888"/>
+                            android:text="@string/reader_translate_debounce" android:textSize="14sp" android:textColor="#888888"/>
                         <TextView android:id="@+id/tv_debounce_value" android:layout_width="wrap_content"
                             android:layout_height="wrap_content" android:text="500 ms" android:textSize="12sp" android:textColor="#55AEEA"/>
                     </LinearLayout>
@@ -237,6 +237,33 @@
                         android:textSize="11sp" android:textColor="#888888"/>
                 </LinearLayout>
 
+                <!-- 字体大小：**与文本阅读器同一个样式**（标签在左、值贴右，进度条另起一行；用户口径）。
+                     仍走 utils/MangaFontSize（与个性化设置页、悬浮窗菜单同一份设置，三处一致）；
+                     「自动」是漫画独有的（按气泡尺寸自适应），做成右侧小胶囊，点一下切换。 -->
+                <LinearLayout android:id="@+id/row_font_size" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:orientation="vertical" android:layout_marginTop="8dp">
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:gravity="center_vertical">
+                        <TextView android:id="@+id/tv_font_size_row" android:layout_width="0dp"
+                            android:layout_height="wrap_content" android:layout_weight="1"
+                            android:text="@string/reader_translate_font_size_label" android:textSize="14sp" android:textColor="#333333"/>
+                        <TextView android:id="@+id/btn_font_auto" android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" android:layout_marginEnd="8dp"
+                            android:paddingStart="9dp" android:paddingEnd="9dp" android:paddingTop="3dp" android:paddingBottom="3dp"
+                            android:clickable="true" android:focusable="true"
+                            android:text="@string/manga_font_size_auto" android:textSize="12sp"/>
+                        <TextView android:id="@+id/tv_font_size_value" android:layout_width="wrap_content"
+                            android:layout_height="wrap_content" android:minWidth="40dp" android:gravity="end"
+                            android:textSize="12sp" android:textColor="#55AEEA"/>
+                    </LinearLayout>
+                    <SeekBar android:id="@+id/sb_font_size" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:min="0" android:max="11" android:layout_marginTop="2dp"
+                        android:thumbTint="#55AEEA" android:progressTint="#55AEEA" android:progressBackgroundTint="#55AEEA"/>
+                    <TextView android:id="@+id/tv_font_size_hint" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:text="@string/reader_translate_font_size_hint"
+                        android:textSize="11sp" android:textColor="#888888"/>
+                </LinearLayout>
+                <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000"/>
                 <!-- 向后翻译页数：仅增量模式显示 -->
                 <LinearLayout android:id="@+id/row_ahead_pages" android:layout_width="match_parent"
                     android:layout_height="wrap_content" android:orientation="vertical"
@@ -246,7 +273,7 @@
                         android:orientation="horizontal" android:gravity="center_vertical">
                         <TextView android:id="@+id/tv_ahead_label" android:layout_width="0dp"
                             android:layout_weight="1" android:layout_height="wrap_content"
-                            android:text="@string/reader_translate_ahead_pages" android:textSize="12sp" android:textColor="#888888"/>
+                            android:text="@string/reader_translate_ahead_pages" android:textSize="14sp" android:textColor="#888888"/>
                         <TextView android:id="@+id/tv_ahead_value" android:layout_width="wrap_content"
                             android:layout_height="wrap_content" android:text="5" android:textSize="12sp" android:textColor="#55AEEA"/>
                     </LinearLayout>
@@ -266,45 +293,14 @@
                     <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:text="›" android:textSize="16sp" android:textColor="#BBBBBB"/>
                 </LinearLayout>
-                <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000"/>
                 <LinearLayout android:id="@+id/btn_model_translate" android:layout_width="match_parent" android:layout_height="wrap_content"
-                    android:orientation="horizontal" android:paddingTop="10dp" android:paddingBottom="10dp"
+                    android:orientation="horizontal" android:paddingTop="6dp" android:paddingBottom="6dp"
                     android:gravity="center_vertical" android:clickable="true">
                     <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="14sp" android:autoSizeStepGranularity="1sp"  android:id="@+id/tv_translator_model_row" android:layout_width="0dp" android:layout_height="wrap_content"
                         android:layout_weight="1" android:textSize="14sp" android:textColor="#333333"/>
                     <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:text="›" android:textSize="16sp" android:textColor="#BBBBBB"/>
                 </LinearLayout>
-                <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000"/>
-
-                <!-- 字体大小：**与文本阅读器同一个样式**（标签在左、值贴右，进度条另起一行；用户口径）。
-                     仍走 utils/MangaFontSize（与个性化设置页、悬浮窗菜单同一份设置，三处一致）；
-                     「自动」是漫画独有的（按气泡尺寸自适应），做成右侧小胶囊，点一下切换。 -->
-                <LinearLayout android:id="@+id/row_font_size" android:layout_width="match_parent"
-                    android:layout_height="wrap_content" android:orientation="vertical" android:layout_marginTop="8dp">
-                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                        android:orientation="horizontal" android:gravity="center_vertical">
-                        <TextView android:id="@+id/tv_font_size_row" android:layout_width="0dp"
-                            android:layout_height="wrap_content" android:layout_weight="1"
-                            android:text="@string/reader_translate_font_size_label" android:textSize="13sp" android:textColor="#333333"/>
-                        <TextView android:id="@+id/btn_font_auto" android:layout_width="wrap_content"
-                            android:layout_height="wrap_content" android:layout_marginEnd="8dp"
-                            android:paddingStart="9dp" android:paddingEnd="9dp" android:paddingTop="3dp" android:paddingBottom="3dp"
-                            android:clickable="true" android:focusable="true"
-                            android:text="@string/manga_font_size_auto" android:textSize="12sp"/>
-                        <TextView android:id="@+id/tv_font_size_value" android:layout_width="wrap_content"
-                            android:layout_height="wrap_content" android:minWidth="40dp" android:gravity="end"
-                            android:textSize="12sp" android:textColor="#55AEEA"/>
-                    </LinearLayout>
-                    <SeekBar android:id="@+id/sb_font_size" android:layout_width="match_parent"
-                        android:layout_height="wrap_content" android:min="0" android:max="11" android:layout_marginTop="2dp"
-                        android:thumbTint="#55AEEA" android:progressTint="#55AEEA" android:progressBackgroundTint="#55AEEA"/>
-                    <TextView android:id="@+id/tv_font_size_hint" android:layout_width="match_parent"
-                        android:layout_height="wrap_content" android:text="@string/reader_translate_font_size_hint"
-                        android:textSize="11sp" android:textColor="#888888"/>
-                </LinearLayout>
-                <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000"/>
-
                 <!-- 语言区：源/目标语言选择（两格圆角并排 + 互换），下拉弹窗 -->
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:orientation="horizontal" android:gravity="center_vertical"
@@ -352,7 +348,7 @@
                         android:orientation="horizontal" android:gravity="center_vertical">
                         <TextView android:id="@+id/tv_concurrency_label" android:layout_width="0dp"
                             android:layout_weight="1" android:layout_height="wrap_content"
-                            android:text="@string/reader_translate_concurrency" android:textSize="12sp" android:textColor="#888888"/>
+                            android:text="@string/reader_translate_concurrency" android:textSize="14sp" android:textColor="#333333"/>
                         <TextView android:id="@+id/tv_concurrency_value" android:layout_width="wrap_content"
                             android:layout_height="wrap_content" android:textSize="12sp" android:textColor="#55AEEA"/>
                     </LinearLayout>
@@ -391,7 +387,7 @@
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                     android:orientation="horizontal" android:padding="8dp">
 
-                    <FrameLayout android:layout_width="0dp" android:layout_height="150dp" android:layout_weight="1"
+                    <FrameLayout android:id="@+id/cell_orig_preview" android:layout_width="0dp" android:layout_height="150dp" android:layout_weight="1"
                         android:layout_marginEnd="4dp" android:background="@drawable/bg_preview_cell">
                         <ImageView android:id="@+id/iv_orig_preview" android:layout_width="match_parent" android:layout_height="match_parent"
                             android:scaleType="centerCrop"/>
@@ -401,7 +397,7 @@
                             android:textSize="10sp" android:textColor="#FFFFFF"/>
                     </FrameLayout>
 
-                    <FrameLayout android:layout_width="0dp" android:layout_height="150dp" android:layout_weight="1"
+                    <FrameLayout android:id="@+id/cell_proc_preview" android:layout_width="0dp" android:layout_height="150dp" android:layout_weight="1"
                         android:layout_marginStart="4dp" android:background="@drawable/bg_preview_cell">
                         <ImageView android:id="@+id/iv_proc_preview" android:layout_width="match_parent" android:layout_height="match_parent"
                             android:scaleType="centerCrop"/>
@@ -440,7 +436,7 @@
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingStart="16dp" android:paddingEnd="16dp">
                     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
                         <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="13sp" android:autoSizeStepGranularity="1sp"  android:id="@+id/tv_brightness_label" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
-                            android:text="@string/reader_brightness" android:textSize="13sp" android:textColor="#333333"/>
+                            android:text="@string/reader_brightness" android:textSize="14sp" android:textColor="#333333"/>
                         <TextView android:id="@+id/tv_brightness_value" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="0%" android:textSize="12sp" android:textColor="#55AEEA"/>
                     </LinearLayout>
                     <SeekBar android:id="@+id/sb_brightness" android:layout_width="match_parent" android:layout_height="wrap_content"
@@ -448,12 +444,64 @@
                         android:thumbTint="#55AEEA" android:progressTint="#55AEEA" android:progressBackgroundTint="#55AEEA"/>
                     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:paddingTop="6dp">
                         <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="13sp" android:autoSizeStepGranularity="1sp"  android:id="@+id/tv_contrast_label" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
-                            android:text="@string/reader_contrast" android:textSize="13sp" android:textColor="#333333"/>
+                            android:text="@string/reader_contrast" android:textSize="14sp" android:textColor="#333333"/>
                         <TextView android:id="@+id/tv_contrast_value" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="0%" android:textSize="12sp" android:textColor="#55AEEA"/>
                     </LinearLayout>
                     <SeekBar android:id="@+id/sb_contrast" android:layout_width="match_parent" android:layout_height="wrap_content"
                         android:min="-100" android:max="100" android:layout_marginTop="2dp"
                         android:thumbTint="#55AEEA" android:progressTint="#55AEEA" android:progressBackgroundTint="#55AEEA"/>
+                    <!-- ══════════════════════════════════════════════
+                         画质增强（2026-10）
+                         ⚠️ 超分控件放在**调色面板**（用户口径：它调的是"画面看起来怎样"，与调色同类）；
+                            翻译面板里不再有超分行。
+                         ① 超分模型行 = 点开模型管理页的「超分」Tab
+                         ② 阅读器超分开关 = 只管**超分模型**那一道（与 Anime4K 互不干涉，可叠加）
+                         ③ Anime4K = 独立档位，点行弹窗选择（带每档说明）
+                         ⚠️ 下面 5 个 TextView 都要在 applyPanelTheme 登记（label 组 / sub 组），
+                            漏登记 = 深色调色面板下同色字压同色底、看不见
+                         ══════════════════════════════════════════════ -->
+                    <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000" android:layout_marginTop="6dp"/>
+
+                    <LinearLayout android:id="@+id/btn_model_sr" android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:paddingTop="10dp" android:paddingBottom="10dp"
+                        android:gravity="center_vertical" android:clickable="true">
+                        <TextView android:id="@+id/tv_sr_model_row" android:layout_width="0dp" android:layout_height="wrap_content"
+                            android:layout_weight="1" android:textSize="14sp" android:textColor="#333333"
+                            android:ellipsize="end" android:maxLines="1"
+                            android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="14sp" android:autoSizeStepGranularity="1sp"/>
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:text="›" android:textSize="16sp" android:textColor="#BBBBBB"/>
+                    </LinearLayout>
+
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:paddingBottom="8dp"
+                        android:gravity="center_vertical">
+                        <TextView android:id="@+id/tv_sr_switch_label" android:layout_width="0dp" android:layout_height="wrap_content"
+                            android:layout_weight="1" android:text="@string/reader_sr_switch_label" android:textSize="14sp" android:textColor="#333333"
+                            android:ellipsize="end" android:maxLines="1"
+                            android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="14sp" android:autoSizeStepGranularity="1sp"/>
+                        <Switch android:id="@+id/sw_reader_sr" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                    </LinearLayout>
+
+                    <LinearLayout android:id="@+id/btn_anime4k" android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:paddingTop="10dp" android:paddingBottom="6dp"
+                        android:gravity="center_vertical" android:clickable="true">
+                        <TextView android:id="@+id/tv_anime4k_label" android:layout_width="0dp" android:layout_height="wrap_content"
+                            android:layout_weight="1" android:text="@string/reader_anime4k_label" android:textSize="14sp" android:textColor="#333333"
+                            android:ellipsize="end" android:maxLines="1"
+                            android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="14sp" android:autoSizeStepGranularity="1sp"/>
+                        <TextView android:id="@+id/tv_anime4k_value" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:textSize="13sp" android:textColor="#888888" android:layout_marginEnd="6dp"/>
+                        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                            android:text="›" android:textSize="16sp" android:textColor="#BBBBBB"/>
+                    </LinearLayout>
+
+                    <TextView android:id="@+id/tv_sr_hint" android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:text="@string/reader_sr_hint" android:textSize="11sp" android:textColor="#BBBBBB" android:layout_marginBottom="4dp"/>
+                    <TextView android:id="@+id/tv_anime4k_hint" android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:text="@string/reader_anime4k_hint" android:textSize="11sp" android:textColor="#BBBBBB"
+                        android:layout_marginBottom="12dp"/>
+
                     <TextView android:id="@+id/tv_color_hint" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginBottom="12dp"
                         android:text="@string/reader_color_hint" android:textSize="11sp" android:textColor="#BBBBBB"/>
                 </LinearLayout>
@@ -466,7 +514,7 @@
 
             <LinearLayout android:id="@+id/btn_rotate" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:padding="12dp" android:gravity="center_vertical" android:clickable="true">
                 <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="14sp" android:autoSizeStepGranularity="1sp"  android:id="@+id/tv_rotate_label" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/reader_rotate" android:textSize="14sp" android:textColor="#333333"/>
-                <TextView android:id="@+id/tv_rotate_value" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/reader_rotate_portrait" android:textSize="12sp" android:textColor="#888888"/>
+                <TextView android:id="@+id/tv_rotate_value" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/reader_rotate_portrait" android:textSize="13sp" android:textColor="#888888"/>
             </LinearLayout>
             <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000"/>
             <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:padding="12dp" android:gravity="center_vertical">
@@ -479,7 +527,7 @@
             <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000"/>
             <LinearLayout android:id="@+id/btn_download" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:padding="12dp" android:gravity="center_vertical" android:clickable="true">
                 <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="14sp" android:autoSizeStepGranularity="1sp"  android:id="@+id/tv_download_label" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="@string/reader_download" android:textSize="14sp" android:textColor="#333333"/>
-                <TextView android:id="@+id/tv_download_value" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/reader_download_original" android:textSize="12sp" android:textColor="#888888"/>
+                <TextView android:id="@+id/tv_download_value" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/reader_download_original" android:textSize="13sp" android:textColor="#888888"/>
             </LinearLayout>
             <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000"/>
             <LinearLayout android:id="@+id/btn_settings" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:padding="12dp" android:gravity="center_vertical" android:clickable="true">

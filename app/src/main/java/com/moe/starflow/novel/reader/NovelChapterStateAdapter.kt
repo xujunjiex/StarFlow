@@ -5,6 +5,7 @@ import android.graphics.drawable.GradientDrawable
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.moe.starflow.R
@@ -104,7 +105,6 @@ class NovelChapterStateAdapter(
 
         /** ⚠️ 章节卡片必须是 0：测试与调用方按 `viewType = 0` 取卡片视图。 */
         private const val TYPE_CHAPTER = 0
-        private const val TYPE_BATCH = 1
     }
 
     /**
@@ -242,7 +242,6 @@ class NovelChapterStateAdapter(
         }
 
     class ChapterVH(item: View) : RecyclerView.ViewHolder(item)
-    class BatchVH(item: View) : RecyclerView.ViewHolder(item)
 
     /**
      * 过滤后的章号列表（缓存）。
@@ -256,7 +255,8 @@ class NovelChapterStateAdapter(
     private val expanded = mutableSetOf<Int>()
 
     /** 整表行（卡片 + 展开章里的批行）。 */
-    private var rows: List<NovelTranslateRow> = emptyList()
+    /** 列表项 = **每章一个**（展开的批行挂在卡片内部）。 */
+    private var rows: List<NovelTranslateRow.Chapter> = emptyList()
 
     private fun rebuild() {
         if (chapters.isNotEmpty() && expanded.isEmpty()) expanded += currentChapter
@@ -267,18 +267,42 @@ class NovelChapterStateAdapter(
         notifyDataSetChanged()
     }
 
-    private fun buildRows(): List<NovelTranslateRow> {
+    /**
+     * **每章一行**（一个章 = 一个列表项）。
+     *
+     * ⚠️ 展开的批行**不再是独立列表项**：它们由 [bindChildren] inflate 进卡片自己的
+     * `chapter_children` 容器 → 视觉上落在卡片的框**之内**（用户口径：
+     * 「每个章节卡片外面有一个框，pxx 行要在框里面」）。
+     */
+    private fun buildRows(): List<NovelTranslateRow.Chapter> {
         if (visible.isEmpty()) return emptyList()
-        val out = ArrayList<NovelTranslateRow>(visible.size)
-        for (index in visible) {
-            val isExpanded = index in expanded
-            out += NovelTranslateRow.Chapter(index, isExpanded)
-            if (!isExpanded) continue
-            // 在飞批（正在提交/等待返回）排前面：用户最关心"现在轮到哪几批"
-            active[index].orEmpty().forEach { out += NovelTranslateRow.Batch(index, it, active = true) }
-            waiting[index].orEmpty().forEach { out += NovelTranslateRow.Batch(index, it, active = false) }
-        }
+        return visible.map { NovelTranslateRow.Chapter(it, it in expanded) }
+    }
+
+    /** 某章展开后要显示的批行（在飞批在前、等待批在后）。 */
+    private fun childRowsOf(index: Int): List<NovelTranslateRow.Batch> {
+        if (index !in expanded) return emptyList()
+        val out = ArrayList<NovelTranslateRow.Batch>()
+        active[index].orEmpty().forEach { out += NovelTranslateRow.Batch(index, it, active = true) }
+        waiting[index].orEmpty().forEach { out += NovelTranslateRow.Batch(index, it, active = false) }
         return out
+    }
+
+    /**
+     * 把该章展开后的批行填进卡片的 `chapter_children`。
+     * ⚠️ 数量一致时只重绑、不重建（面板每次推送都会整表重建，重复 inflate 会卡）。
+     */
+    private fun bindChildren(card: View, index: Int) {
+        val box = card.findViewById<LinearLayout>(R.id.chapter_children) ?: return
+        val children = childRowsOf(index)
+        if (box.childCount != children.size) {
+            box.removeAllViews()
+            val inflater = LayoutInflater.from(box.context)
+            repeat(children.size) {
+                box.addView(inflater.inflate(R.layout.item_translate_page_state, box, false))
+            }
+        }
+        children.forEachIndexed { i, row -> bindBatch(box.getChildAt(i), row) }
     }
 
     /** 章行是否命中当前状态标签。 */
@@ -304,24 +328,16 @@ class NovelChapterStateAdapter(
 
     private fun isDone(index: Int): Boolean = isChapterDone(stats, totals, index)
 
-    override fun getItemViewType(position: Int): Int =
-        if (rows.getOrNull(position) is NovelTranslateRow.Batch) TYPE_BATCH else TYPE_CHAPTER
+    override fun getItemViewType(position: Int): Int = TYPE_CHAPTER
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder =
-        if (viewType == TYPE_BATCH) {
-            BatchVH(LayoutInflater.from(parent.context).inflate(R.layout.item_translate_page_state, parent, false))
-        } else {
-            ChapterVH(LayoutInflater.from(parent.context).inflate(R.layout.item_novel_chapter_card, parent, false))
-        }
+        ChapterVH(LayoutInflater.from(parent.context).inflate(R.layout.item_novel_chapter_card, parent, false))
 
     override fun getItemCount(): Int = rows.size
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
-        when (val row = rows.getOrNull(position)) {
-            is NovelTranslateRow.Chapter -> bindChapter(holder.itemView, row)
-            is NovelTranslateRow.Batch -> bindBatch(holder.itemView, row)
-            null -> Unit
-        }
+        // 列表项只有章卡片；批行由 bindChapter → bindChildren 填进卡片内部
+        rows.getOrNull(position)?.let { bindChapter(holder.itemView, it) }
     }
 
     /**
@@ -333,6 +349,7 @@ class NovelChapterStateAdapter(
      * - 暂停：`继续` / `取消`
      */
     private fun bindChapter(item: View, row: NovelTranslateRow.Chapter) {
+        if (density == 1f) density = item.resources.displayMetrics.density
         val ctx = item.context
         val labelColor = if (dark) 0xFFE2E2E4.toInt() else 0xFF333333.toInt()
         val subColor = if (dark) 0xFF9A9A9F.toInt() else 0xFF888888.toInt()
@@ -490,6 +507,9 @@ class NovelChapterStateAdapter(
             onJump(index)
             expandChapter(index)
         }
+
+        // **展开的批行填进卡片自己的容器**（在卡片的框里面）
+        bindChildren(item, index)
     }
 
     /** 章内「等待」的批：一行一批，徽章固定「等待」（复用共用的页行布局）。 */
@@ -499,9 +519,8 @@ class NovelChapterStateAdapter(
         val batch = row.batch
         if (density == 1f) density = item.resources.displayMetrics.density
         // 等待行也做成卡片（用户口径：展开出来的行不能是一行裸文字）
-        // 在飞批=琥珀高亮（"正在提交/等待返回"），排队批=中性（"等待"）
-        // ⚠️ 用 applyNested（方角 + 左侧竖线）：与漫画一样，展开出来的行要**看着在章卡片里面**
-        CardBackdrop.applyNested(
+        // 子行**在卡片的框里**：只有状态需要区分时才染色（在飞=琥珀、等待=中性）
+        CardBackdrop.apply(
             item,
             if (row.active) CardBackdrop.Tone.ACTIVE else CardBackdrop.Tone.WAITING,
             dark,

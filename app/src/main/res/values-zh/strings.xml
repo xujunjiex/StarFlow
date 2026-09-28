@@ -618,8 +618,32 @@
     <string name="builtin_api_prefix">内置</string>
 
     <!-- 模型管理 -->
-    <string name="model_management">OCR 模型管理</string>
-    <string name="model_management_tip">管理已下载的 OCR 识别模型</string>
+    <string name="model_management">模型管理</string>
+    <string name="model_management_tip">管理已下载的 OCR 与超分模型</string>
+    <!-- 顶部 Tab（OCR / 超分） -->
+    <string name="model_tab_ocr">OCR 模型</string>
+    <string name="model_tab_sr">超分模型</string>
+    <string name="sr_group_animejanai">AnimeJaNai（2x，ONNX）</string>
+    <string name="sr_group_animejanai_desc">适合动漫/漫画线稿与彩页。同一套网络有四个等级——均衡档画质优先，性能档速度优先。</string>
+    <string name="sr_model_animejanai_balanced">AnimeJaNai HD V3.1 · 均衡档</string>
+    <string name="sr_model_animejanai_performance">AnimeJaNai HD V3.1 · 性能档</string>
+    <string name="sr_model_animejanai_sharp1_balanced">AnimeJaNai HD V3.1 · 锐化·均衡档</string>
+    <string name="sr_model_animejanai_sharp1_performance">AnimeJaNai HD V3.1 · 锐化·性能档</string>
+    <string name="sr_model_animejanai_sd_compact">AnimeJaNai SD · 紧凑档</string>
+    <string name="sr_low_res_tip">💡 超分只对真正低分辨率的图源有明显效果。宽度 1000px 以上的页面几乎看不出变化，网点重的页还可能被重新绘制。图源不小就别开。</string>
+    <string name="sr_no_model_selected">尚未选择超分模型——请在下方下载</string>
+    <string name="sr_active_switched">已切换到 %1$s</string>
+    <!-- 个性化设置 · 超分分类 -->
+    <string name="sr_settings_category">超分（AI 放大）</string>
+    <string name="sr_enabled_title">启用超分</string>
+    <string name="sr_enabled_summary">总开关。用 AI 把低分辨率图片放大 2 倍后再识别与翻译。只对真正低分辨率的图源有明显效果，宽度 1000px 以上的页面几乎看不出变化，且会更耗电、更慢。</string>
+    <string name="sr_enabled_game_title">游戏模式超分</string>
+    <string name="sr_enabled_game_summary">截屏/录屏的游戏翻译链路先超分再识别</string>
+    <string name="sr_enabled_comic_title">漫画模式超分</string>
+    <string name="sr_enabled_comic_summary">截屏/录屏的漫画翻译链路先超分再识别</string>
+    <string name="sr_model_manage_title">超分模型管理</string>
+    <string name="sr_model_manage_summary">下载并选择超分模型</string>
+    <string name="sr_model_missing_format">%1$s（模型未下载）</string>
     <string name="detector_section">检测器</string>
     <string name="detector_rtdetr_desc">块级+气泡检测，速度快，11MB</string>
     <string name="detector_mlkit_desc">Google ML Kit 检测+识别，约10MB，速度快适合字幕翻译</string>
@@ -983,7 +1007,24 @@
     <string name="reader_translate_summary">共 %1$d 页 · 已译 %2$d · 翻译中 %3$d · 失败 %4$d</string>
     <string name="reader_translate_ocr_model">OCR模型：%1$s</string>
     <string name="reader_translate_translator_model">翻译模型：%1$s</string>
-    
+    <!-- 超分模型行（阅读器翻译面板，2026-10） -->
+    <string name="reader_sr_model_row">超分模型：%1$s</string>
+    <string name="reader_sr_none">未选择</string>
+    <string name="reader_sr_not_downloaded">%1$s（未下载）</string>
+    <string name="reader_sr_hint">点这一行去下载/切换超分模型。开启上面的开关后，翻页会先放大再识别（低分辨率图源更准）。与 Anime4K 互不冲突，可同时生效。</string>
+    <string name="reader_sr_switch_on">阅读器超分已开启，翻页会先超分再识别</string>
+    <string name="reader_sr_switch_off">阅读器超分已关闭</string>
+    <!-- Anime4K 基础层（阅读器调色面板，2026-10） -->
+    <string name="reader_anime4k_label">Anime4K 线条增强</string>
+    <string name="reader_anime4k_hint">对画面做线条描深与去噪，分辨率不变、体积为零。**可以和超分叠加**：先放大、再描线，画质最好；也可以单独使用（不下载任何模型也能开）。点这一行选档位。</string>
+    <string name="reader_anime4k_off">已关闭</string>
+    <string name="reader_anime4k_mode_a">A · 强恢复</string>
+    <string name="reader_anime4k_mode_b">B · 均衡</string>
+    <string name="reader_anime4k_mode_c">C · 线条修复</string>
+    <string name="reader_anime4k_mode_aa">AA · 强恢复＋</string>
+    <string name="reader_anime4k_mode_bb">BB · 均衡＋</string>
+    <string name="reader_anime4k_mode_ca">CA · 线条修复＋</string>
+    <string name="reader_anime4k_switched">Anime4K 已切到 %1$s</string>    
     <string name="reader_translate_source_lang_label">源语言</string>
     <string name="reader_translate_target_lang_label">目标语言</string>
     <string name="reader_translate_filter_all">全部</string>
@@ -1059,7 +1100,7 @@
     <string name="chapter_translate_notify_resume">继续</string>
     <string name="chapter_translate_notify_summary_title">章节翻译</string>
     <string name="chapter_translate_notify_summary">%1$d 个章节正在后台翻译</string>
-    <string name="reader_translate_chapter_clear">清空译文</string>
+    <string name="reader_translate_chapter_clear">清空</string>
     <string name="reader_translate_chapter_running">正在翻译本章 %1$d/%2$d</string>
     <!-- 章节批量翻译的并发度（漫画：OCR 串行，调高主要加快翻译请求） -->
     <string name="reader_translate_concurrency">翻译模型最大同时请求数</string>
@@ -1487,7 +1528,7 @@
     <string name="novel_translate_hint_running">正在翻译第 %1$d 章，双击暂停</string>
     <string name="novel_translate_window_done">已向后翻完 %1$d 批 · 翻页继续</string>
     <string name="novel_translate_pending_batches">翻译本章</string>
-    <string name="novel_translate_clear_chapter">清空译文</string>
+    <string name="novel_translate_clear_chapter">清空</string>
     <string name="novel_translate_clear_chapter_confirm">只清空这一章的译文，其它章不受影响。确定？</string>
     <string name="novel_translate_clear_ok">确定清空</string>
     <string name="novel_translate_cleared_chapter">已清空本章译文</string>
@@ -1602,4 +1643,32 @@
     <string name="import_option_dir_manga_single">导入文件夹（单部漫画）</string>
     <string name="import_option_dir_novel_single">导入文件夹（单部小说）</string>
 
+    <string name="reader_clear_page_desc">清除本页译文</string>
+    <string name="reader_clear_page_confirm_title">清除本页译文？</string>
+    <string name="reader_clear_page_confirm_msg">将删除第 %1$d 页的译文（原文与气泡数据一并删除），该页回到原图显示。此操作不可撤销。</string>
+    <string name="reader_clear_page_confirm_ok">清除</string>
+    <string name="reader_clear_row_confirm_msg">将删除第 %1$d 页的译文记录，该页回到原图显示。此操作不可撤销。</string>
+
+    <!-- waifu2x 模型族（2026-10，deepghs/waifu2x_onnx 的官方 ONNX 版） -->
+    <string name="sr_group_waifu2x_cunet">waifu2x cunet（2x，ONNX）</string>
+    <string name="sr_group_waifu2x_cunet_desc">waifu2x 官方模型集的 cunet 架构。四个等级是**降噪强度**：n0 不降噪（最忠实原图，只做线条修复与放大）、n3 强力降噪（适合扫描噪点/JPEG 块效应很重的图源）。实测这一族质量最高。</string>
+    <string name="sr_group_waifu2x_swin">waifu2x swin_unet（2x，ONNX）</string>
+    <string name="sr_group_waifu2x_swin_desc">waifu2x 的 SwinIR 架构，质量最高但体积大（16.8MB/档）、速度更慢。适合追求画质、不介意等待的彩页与封面。</string>
+    <string name="sr_model_w2x_cunet_n0">cunet · 不降噪（n0）</string>
+    <string name="sr_model_w2x_cunet_n1">cunet · 轻度降噪（n1）</string>
+    <string name="sr_model_w2x_cunet_n2">cunet · 中度降噪（n2）</string>
+    <string name="sr_model_w2x_cunet_n3">cunet · 强力降噪（n3）</string>
+    <string name="sr_model_w2x_swin_n0">swin_unet · 不降噪（n0）</string>
+    <string name="sr_model_w2x_swin_n1">swin_unet · 轻度降噪（n1）</string>
+
+    <!-- 画质增强（调色面板，2026-10） -->
+    <string name="reader_sr_switch_label">超分放大</string>
+    <string name="reader_anime4k_desc_off">关闭 — 不做线条增强</string>
+    <string name="reader_anime4k_desc_c">线条修复 — 最轻，只去噪描线，几乎不改动画面（最忠实原画）</string>
+    <string name="reader_anime4k_desc_ca">线条修复＋ — 比线条修复描得更重一些</string>
+    <string name="reader_anime4k_desc_b">均衡 — 修复与放大的均衡组合，改动中等</string>
+    <string name="reader_anime4k_desc_bb">均衡＋ — 均衡档的加强版</string>
+    <string name="reader_anime4k_desc_a">强恢复 — 线条最锐，但对原画改动最大</string>
+    <string name="reader_anime4k_desc_aa">强恢复＋ — 最强的一档，耗时也最长</string>
+    <string name="reader_chapter_badge_waiting">等待 %1$d 页</string>
 </resources>

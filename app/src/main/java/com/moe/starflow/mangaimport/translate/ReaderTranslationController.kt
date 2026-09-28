@@ -90,6 +90,9 @@ sealed interface TranslateClick {
  * 队列每轮都**重新读取当前页**并重算窗口，因此翻页不需要重启队列；正在翻译的那页不会被重复挑中，
  * 也不会被打断（翻完当前页才进下一轮）。
  */
+/** 阅读器上屏译图的超采样倍率 */
+private const val READER_RENDER_SCALE = 2f
+
 class ReaderTranslationController(
     private val context: Context,
     private val manga: ImportedManga,
@@ -226,7 +229,9 @@ class ReaderTranslationController(
 
     // ========== 宿主注入（避免控制器反向依赖 Activity / ReaderPageSource） ==========
 
-    private var loadFull: (Int) -> Bitmap? = { null }
+    // ⚠️ 默认就走**自持数据源**（而不是 { null }）：后台任务/通知栏进来时 Activity 没 bind，
+    // 用 { null } 的话每一页都会"原图加载失败"（静默 → 全页标失败 → 队列跳过 → 看着像没反应）
+    private var loadFull: (Int) -> Bitmap? = { ownSource.loadFull(it) }
     private var loadWebtoon: ((Int) -> Bitmap?)? = null
     private var originalWidthOf: ((Int) -> Int)? = null
     private var currentPageProvider: () -> Int = { -1 }
@@ -240,6 +245,19 @@ class ReaderTranslationController(
      */
     @Volatile
     var uiAttached: Boolean = false
+        private set
+
+    /**
+     * 是否**曾经**被阅读器挂上过。
+     *
+     * ⚠️ 用途：`ReaderTranslationHub` 的收集协程订阅 `chapterJobs` 时会**立刻收到一次当前值**，
+     * 而那一刻 Activity 还在 `bind()` 之前（`uiAttached` 仍是 false）→ 会把**刚创建**的控制器
+     * 当场 `releaseIfIdle` 回收掉，Activity 手上留下一个已经 `shutdownAll()` 的实例，
+     * 下次再进阅读器又新建一个（日志里能看到"创建→回收→再创建"）。
+     * 所以回收必须等它至少被挂过一次。
+     */
+    @Volatile
+    var everAttached: Boolean = false
         private set
 
     /**
@@ -261,6 +279,7 @@ class ReaderTranslationController(
         this.currentPageProvider = currentPage
         this.pageCount = pageCount
         this.uiAttached = true
+        this.everAttached = true
     }
 
     /**
@@ -820,7 +839,12 @@ class ReaderTranslationController(
         if (isDouble) return TranslateClick.Ignored
         // 引擎被占用（截屏翻译在翻 / 上一次取消的任务仍卡在 native OCR 中，PP-OCR 要 1~3s 才退出）：
         // 直接反馈，否则这一击被静默吞掉、按钮看起来像坏了。
-        if (OcrLock.isRunning) return TranslateClick.Busy
+        if (OcrLock.isRunning) {
+            // ⚠️ "点了没反应"排查关键：这条说明锁被别的翻译占着（截屏翻译在跑 / 上一次取消的任务
+            // 还卡在 native OCR 里）。频繁出现 = 有地方没释放锁，别当成用户没点。
+            LogCollector.w(TAG, "翻译按钮：OcrLock 被占用 → 提示忙（page=$currentPageProvider()）")
+            return TranslateClick.Busy
+        }
         val page = currentPageProvider()
         manualJob = scope.launch(Dispatchers.IO) { runTranslate(page, fromQueue = false) }
         return TranslateClick.StartedManual
@@ -1556,7 +1580,11 @@ class ReaderTranslationController(
         mergeOverlap = cfg.mergeOverlap,
         // 用户译文替换表（渲染时套用 → 改完规则返回阅读器即生效，见 refreshIfRulesChanged）
         replacementRules = cfg.replacementRules,
-        density = context.resources.displayMetrics.density
+        density = context.resources.displayMetrics.density,
+        // 超采样渲染（2026-10）：阅读器上屏的译图按 2 倍栅格化，让**文字**在低分辨率页上也清晰。
+        // 底图不变（该多糊还多糊，那是图源决定的）；只有文字从"插值放大的像素"变成"按最终分辨率栅格化"。
+        // ⚠️ 只在这一处传 >1：导出/查看器/历史都传默认 1f（它们不吃屏幕分辨率，且结果进 BitmapLruCache）。
+        renderScale = READER_RENDER_SCALE
     )
 
     /** 渲染并预热译文图缓存，同时切到该态。最终结果写入后**丢弃半成品**，避免残留旧图。 */
@@ -1734,6 +1762,9 @@ class ReaderTranslationController(
     }
 
     private suspend fun fail(pageIndex: Int, code: String, message: String) {
+        // ⚠️ **每次失败都记日志**：以前 fail() 只写库不记日志 —— 页被标失败后队列会**跳过**它
+        // （队列只翻 IDLE），表现就是"自动/增量都没反应、日志里什么都没有"（cbz 那个问题）。
+        LogCollector.w(TAG, "页失败 page=$pageIndex code=$code msg=$message")
         val old = rows.value[pageIndex]
         val row = ImportedPageTranslation(
             mangaId = manga.id, pageIndex = pageIndex, state = ImportedPageTranslation.STATE_FAILED,

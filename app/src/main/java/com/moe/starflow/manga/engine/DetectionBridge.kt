@@ -505,6 +505,10 @@ object DetectionBridge {
             LogCollector.d(TAG, "RT-DETR-V2 + MangaOcr 完成，共 ${results.size} 个文字块")
             return results
 
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // 取消不是失败（用户开面板/退出阅读器/被别的翻译打断）：别打 E 级污染日志
+            LogCollector.d(TAG, "RT-DETR-V2 检测被取消（不是失败）")
+            throw e
         } catch (e: Exception) {
             LogCollector.e(TAG, "RT-DETR-V2 检测失败", e)
             throw e
@@ -1074,6 +1078,12 @@ object DetectionBridge {
             LogCollector.d(TAG, "PP-OCRv5 独立完成，共 ${textBlocks.size} 个文本区域")
             return textBlocks
 
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // ⚠️ **取消不是失败**：用户开面板 / 退出阅读器 / 另一次翻译打断时协程被取消，
+            // 以前这里会打一条 E 级「PP-OCRv5 检测失败」+ 一长串堆栈 —— 日志里全是误导性失败
+            // （用户报"无法翻译"、排查时真凶被这些噪音埋掉）。取消只记 D 级并原样抛出。
+            LogCollector.d(TAG, "PP-OCRv5 检测被取消（不是失败）")
+            throw e
         } catch (e: Exception) {
             LogCollector.e(TAG, "PP-OCRv5 检测失败", e)
             throw e
@@ -1189,6 +1199,10 @@ object DetectionBridge {
             LogCollector.d(TAG, "PP-OCRv6 独立完成，共 ${textBlocks.size} 个文本区域")
             return textBlocks
 
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // 取消不是失败（用户开面板/退出阅读器/被别的翻译打断）：别打 E 级污染日志
+            LogCollector.d(TAG, "PP-OCRv6 检测被取消（不是失败）")
+            throw e
         } catch (e: Exception) {
             LogCollector.e(TAG, "PP-OCRv6 检测失败", e)
             throw e

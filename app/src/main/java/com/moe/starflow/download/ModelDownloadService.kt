@@ -230,6 +230,17 @@ class ModelDownloadService : LifecycleService() {
         ModelKey.PP_OCR_V5_REC_RU -> "PP-OCRv5 REC RU"
         ModelKey.PP_OCR_V6_MEDIUM_DET -> "PP-OCRv6 DET (medium)"
         ModelKey.PP_OCR_V6_MEDIUM_REC -> "PP-OCRv6 REC (medium)"
+        ModelKey.SR_ANIMEJANAI_HD_BALANCED -> "AnimeJaNai HD Balanced"
+        ModelKey.SR_ANIMEJANAI_HD_PERFORMANCE -> "AnimeJaNai HD Performance"
+        ModelKey.SR_ANIMEJANAI_HD_SHARP1_BALANCED -> "AnimeJaNai HD Sharp1 Balanced"
+        ModelKey.SR_ANIMEJANAI_HD_SHARP1_PERFORMANCE -> "AnimeJaNai HD Sharp1 Performance"
+        ModelKey.SR_ANIMEJANAI_SD_COMPACT -> "AnimeJaNai SD Compact"
+        ModelKey.SR_WAIFU2X_CUNET_N0 -> "waifu2x cunet n0"
+        ModelKey.SR_WAIFU2X_CUNET_N1 -> "waifu2x cunet n1"
+        ModelKey.SR_WAIFU2X_CUNET_N2 -> "waifu2x cunet n2"
+        ModelKey.SR_WAIFU2X_CUNET_N3 -> "waifu2x cunet n3"
+        ModelKey.SR_WAIFU2X_SWIN_N0 -> "waifu2x swin_unet n0"
+        ModelKey.SR_WAIFU2X_SWIN_N1 -> "waifu2x swin_unet n1"
     }
 
     private fun formatBytes(bytes: Long): String {
@@ -478,6 +489,12 @@ class ModelDownloadService : LifecycleService() {
         ModelKey.PP_OCR_V5_DET, ModelKey.PP_OCR_V5_REC_ZH,
         ModelKey.PP_OCR_V5_REC_EN, ModelKey.PP_OCR_V5_REC_KO,
         ModelKey.PP_OCR_V5_REC_RU -> File(applicationContext.getExternalFilesDir(null), "ppocrv5")
+        ModelKey.SR_ANIMEJANAI_HD_BALANCED, ModelKey.SR_ANIMEJANAI_HD_PERFORMANCE,
+        ModelKey.SR_ANIMEJANAI_HD_SHARP1_BALANCED, ModelKey.SR_ANIMEJANAI_HD_SHARP1_PERFORMANCE,
+        ModelKey.SR_ANIMEJANAI_SD_COMPACT -> File(applicationContext.getExternalFilesDir(null), "sr")
+        ModelKey.SR_WAIFU2X_CUNET_N0, ModelKey.SR_WAIFU2X_CUNET_N1,
+        ModelKey.SR_WAIFU2X_CUNET_N2, ModelKey.SR_WAIFU2X_CUNET_N3,
+        ModelKey.SR_WAIFU2X_SWIN_N0, ModelKey.SR_WAIFU2X_SWIN_N1 -> File(applicationContext.getExternalFilesDir(null), "sr")
     }
 
     companion object {

@@ -42,6 +42,18 @@ class TranslationStatusOverlay private constructor(private val context: Context)
         @Volatile
         private var instance: TranslationStatusOverlay? = null
 
+        /**
+         * 现在**能不能真的画出来**（缺「显示在其他应用上层」权限时画不出来）。
+         *
+         * ⚠️ 调用方必须用它兜底成 Toast：权限没给时浮层**静默失败**（既不显示也不报错），
+         * 用户看到的就是"点了翻译/暂停，**毫无提示**"（用户报"什么提示都没有"的根因之一）。
+         * ⚠️ 必须是 **companion 成员**：本类是 class + 伴生单例，实例方法不能用类名调用。
+         */
+        fun canDraw(context: Context): Boolean = try {
+            android.provider.Settings.canDrawOverlays(context)
+        } catch (e: Exception) {
+            false
+        }
         fun getInstance(context: Context): TranslationStatusOverlay =
             instance ?: synchronized(this) {
                 instance ?: TranslationStatusOverlay(context.applicationContext).also { instance = it }
@@ -71,6 +83,7 @@ class TranslationStatusOverlay private constructor(private val context: Context)
      * 超过 3 条排队，前面的消失后补位。
      * 用于：初始化信息、启停提示等用户需要看到每一条的消息。
      */
+
     fun show(message: String) {
         if (!isEnabled()) return
         LogCollector.d(TAG, message)

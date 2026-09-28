@@ -38,6 +38,7 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import com.moe.starflow.utils.LogCollector
+import com.moe.starflow.sr.SrPageEnhancer
 import com.moe.starflow.utils.MangaFontSize
 import com.moe.starflow.utils.MangaFontSizeDialog
 import com.moe.starflow.utils.OcrEngineManager
@@ -1551,7 +1552,21 @@ class MangaFloatingService : LifecycleService() {
                             } else {
                                 LogCollector.w(TAG, "裁剪区域无效，按全屏翻译")
                             }
-                            cropped
+                            // 超分（漫画模式）：**只增强裁剪图**。
+                            // ⚠️ 绝不能改 fullBitmap —— pHash（图片缓存的键，256-bit 扩展 hash）全部算在
+                            //    fullBitmap 上（collector 里 compute/computeExtended 的入参就是它）。
+                            //    在那一层增强 = 缓存键整体变化 → 用户已存的图片缓存与历史记录**全部静默失配**。
+                            // 裁剪图是唯一的 OCR 输入（ocrBitmap = data.croppedBitmap ?: fullBitmap），
+                            // 增强它既提高识别率、又完全不碰缓存键与渲染路径。
+                            // 返回图**与原图同尺寸**（SrPageEnhancer 保证）→ bubbleRects 坐标空间不变。
+                            cropped?.let { src ->
+                                val enhanced = SrPageEnhancer.enhanceForCapture(src, forGame = false)
+                                if (enhanced != null && enhanced !== src) {
+                                    // 替换后裁剪图已无引用者（ScreenshotData 只收下面的返回值）
+                                    src.recycle()
+                                    enhanced
+                                } else src
+                            }
                         } else null
                         ScreenshotManager.emitScreenshot(ScreenshotData(fullBitmap, croppedBitmap))
                     } else {

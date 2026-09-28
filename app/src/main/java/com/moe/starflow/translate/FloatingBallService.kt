@@ -42,6 +42,7 @@ import androidx.core.app.NotificationCompat
 import com.moe.starflow.data.CacheEntry
 import com.moe.starflow.data.TranslationCacheManager
 import com.moe.starflow.utils.LogCollector
+import com.moe.starflow.sr.SrPageEnhancer
 import com.moe.starflow.utils.OcrEngineManager
 import com.moe.starflow.utils.TextSimilarity
 import com.moe.starflow.utils.ThemeManager
@@ -327,7 +328,15 @@ class FloatingBallService : LifecycleService() {
                     val cropped = ScreenshotManager.cropBitmap(full, cropRect, offset)
                     if (cropped != null) {
                         LogCollector.d(TAG, "Cropped screenshot: ${cropped.width}x${cropped.height}")
-                        cropped
+                        // 超分（游戏模式）：**只增强裁剪图**（它是唯一的 OCR 输入，
+                        // 下游 ocrBitmap = data.croppedBitmap ?: data.fullBitmap）。
+                        // 与本服务一致地不碰 full —— full 是几何判据与「全屏原图」语义的载体。
+                        // 返回图与原图**同尺寸**（SrPageEnhancer 保证）→ 框选坐标空间不变。
+                        val enhanced = SrPageEnhancer.enhanceForCapture(cropped, forGame = true)
+                        if (enhanced != null && enhanced !== cropped) {
+                            cropped.recycle()
+                            enhanced
+                        } else cropped
                     } else {
                         LogCollector.w(TAG, "裁剪区域无效，按全屏处理")
                         null

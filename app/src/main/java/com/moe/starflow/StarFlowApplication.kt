@@ -23,6 +23,11 @@ class StarFlowApplication : Application() {
         LogCollector.init(this)
         com.moe.starflow.manga.TranslateUtils.init(this)
 
+        // 超分/增强的运行期上下文（阅读器「先超分再翻译」用）。
+        // 只持有 applicationContext；放在这里是为了不必给 ReaderPageSource 的两个构造点
+        // （阅读器 Activity 与翻译控制器）加 Context 参数。
+        com.moe.starflow.sr.SrPageEnhancer.init(this)
+
         // 全局主题（跟随系统/浅色/暗色）：必须在任何 Activity 创建前应用
         ThemeManager.apply(applicationContext)
 

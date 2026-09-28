@@ -59,6 +59,10 @@ object ReaderTranslationHub : ChapterJobSource {
         collectors[manga.id] = scope.launch {
             controller.chapterJobs.collect {
                 TranslationJobRegistry.notifyChanged()
+                // ⚠️ `collect` 会**立刻收到一次当前值**，而那一刻阅读器还在 `bind()` 之前
+                //（`uiAttached` 仍 false）→ 不加 `everAttached` 判断就会把刚建好的控制器当场回收，
+                // Activity 手上留个已 shutdown 的实例、下次进来又新建（日志里的"创建→回收→再创建"）。
+                if (!controller.everAttached) return@collect
                 if (!controller.uiAttached && !controller.isChapterBatchRunning()) releaseIfIdle(manga.id)
             }
         }

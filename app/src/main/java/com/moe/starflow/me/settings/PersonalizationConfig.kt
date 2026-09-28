@@ -40,6 +40,7 @@ import com.jaredrummler.android.colorpicker.ColorPreferenceCompat
 import com.moe.starflow.R
 import com.moe.starflow.data.TranslationCacheManager
 import com.moe.starflow.manga.config.TranslationTextRules
+import com.moe.starflow.sr.SrModelManager
 import com.moe.starflow.translate.screenshot.AccessibilityServiceManager
 import com.moe.starflow.translate.CustomLocale
 import com.moe.starflow.translate.widget.Dialogs
@@ -168,6 +169,20 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
 
         // 译文替换表（二级面板，见 TranslationReplacementFragment）：摘要显示规则条数
         findPreference<Preference>("manga_translation_replacements")?.let { updateReplacementSummary(it) }
+
+        // 超分模型管理入口（2026-10）：直接落到模型管理页的「超分」Tab，
+        // 不让用户进去后再自己点一次 Tab（个性化里点「超分模型管理」的意图已经很明确）
+        findPreference<Preference>("sr_model_manage")?.let { p ->
+            p.setOnPreferenceClickListener {
+                startActivity(Intent(requireContext(), SettingPageActivity::class.java).apply {
+                    putExtra(SettingPageActivity.EXTRA_FRAGMENT_TYPE,
+                        SettingPageActivity.TYPE_FRAGMENT_MODEL_MANAGEMENT)
+                    putExtra(SettingPageActivity.EXTRA_MODEL_SHOW_SR, true)
+                })
+                true
+            }
+            updateSrModelSummary(p)
+        }
 
         // UI 同步字体：切换后需重启应用生效，弹窗提示
         findPreference<SwitchPreference>("ui_apply_custom_font")?.setOnPreferenceChangeListener { _, _ ->
@@ -702,6 +717,24 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
     }
 
     /**
+     * 超分模型摘要 = 当前选中的模型名。
+     *
+     * 三种状态都**显式赋值**（未选 / 选了但没下载 / 正常），不能只写"正常"那一支 ——
+     * 否则用户删掉模型后这里还显示着名字，以为它还能用。
+     * ⚠️ 与 `ModelManagementFragment` 共用 [SrModelManager.nameResOf]，不要各写一份模型名映射。
+     */
+    private fun updateSrModelSummary(pref: Preference) {
+        val sp = prefs.getSharedPreferences()
+        val key = SrModelManager.getActiveKey(sp)
+        pref.summary = when {
+            key == null -> getString(R.string.sr_no_model_selected)
+            !SrModelManager.isDownloaded(requireContext(), key) ->
+                getString(R.string.sr_model_missing_format, getString(SrModelManager.nameResOf(key)))
+            else -> getString(SrModelManager.nameResOf(key))
+        }
+    }
+
+    /**
      * 译文替换表摘要 = 当前规则条数。
      *
      * ⚠️ 必须在 `onResume` 里再刷一次：用户从二级面板返回时本页只是 resume（不重建），
@@ -719,6 +752,8 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
     override fun onResume() {
         super.onResume()
         findPreference<Preference>("manga_translation_replacements")?.let { updateReplacementSummary(it) }
+        // 超分模型摘要也要在返回时重刷：用户可能在模型管理页删掉/换了模型
+        findPreference<Preference>("sr_model_manage")?.let { updateSrModelSummary(it) }
     }
 
     private fun handleDefaultIcon(prefKey: String) {

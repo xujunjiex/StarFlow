@@ -139,6 +139,10 @@ object ComicBubbleDetector {
             // 后处理：NMS 去重（不过滤类别，由调用方决定保留哪些）
             postprocessAllClasses(labels, boxes, scores, confThreshold)
 
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // 取消不是失败（用户开面板/退出阅读器/被别的翻译打断）：别打 E 级污染日志
+            LogCollector.d(TAG, "检测被取消（不是失败）")
+            throw e
         } catch (e: Exception) {
             LogCollector.e(TAG, "检测失败", e)
             throw e
@@ -194,6 +198,10 @@ object ComicBubbleDetector {
                     confidence = score
                 )
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // 取消不是失败（同主检测路径）：别打 E 级污染日志
+            LogCollector.d(TAG, "调试检测被取消（不是失败）")
+            throw e
         } catch (e: Exception) {
             LogCollector.e(TAG, "调试检测失败", e)
             throw e
