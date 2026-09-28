@@ -7,6 +7,9 @@ import androidx.preference.PreferenceManager
 import com.moe.starflow.manga.OcrLock
 import com.moe.starflow.utils.LogCollector
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 
@@ -67,9 +70,27 @@ object SrProcessor {
         }
         var out: Bitmap? = null
         return@withContext try {
-            // 与 OCR 串行（同一把锁）。⚠️ 超分模型是几百 MB + 纯 CPU 卷积，
-            // 和 OCR 并行只会两边都慢，且内存峰值翻倍。
-            out = OcrLock.use { SuperResolutionEngines.upscaleForReader(app, prefs, src) }
+            // ⚠️ 与 OCR 串行 —— 但**不能用 `OcrLock.use`**！
+            // `use {}` 的实现是"抢不到就 `throw RejectedExecutionException`"，而且 `OcrLock` 的
+            // 类注释明确写着：**挂起函数里要走「先 while(isRunning) delay() 等锁 → tryAcquire →
+            // try/finally 释放」**，不能用 `use`（协程在恢复点被取消时锁已拿到、finally 还没进 → 漏放）。
+            //
+            // 而且这里**必然**会撞锁：章节批量翻译是「OCR 串行 + 翻译并发」，
+            // 本页 translatePhase 跑超分时，完全可能另一页正在 OCR。
+            // 用 `use` 的话超分会直接抛异常失败 —— 表现为"自动超分时灵时不灵"。
+            while (OcrLock.isRunning) {
+                if (!currentCoroutineContext().isActive) return@withContext false
+                delay(LOCK_POLL_MS)
+            }
+            if (!OcrLock.tryAcquire()) {
+                LogCollector.d(TAG, "超分等锁失败（OCR 正忙），本次跳过: $k")
+                return@withContext false
+            }
+            try {
+                out = SuperResolutionEngines.upscaleForReader(app, prefs, src)
+            } finally {
+                OcrLock.release()
+            }
             if (out == null) {
                 LogCollector.d(TAG, "超分未产出（未开启/没模型/失败/超像素上限）: $k")
                 false
@@ -89,6 +110,9 @@ object SrProcessor {
             inFlight.remove(k)
         }
     }
+
+    /** 等 OCR 锁的轮询间隔 */
+    private const val LOCK_POLL_MS = 50L
 
     /** 缓存上限（MB）；用户没设过 → [SrStore.DEFAULT_LIMIT_MB] */
     private fun cacheLimitMb(prefs: SharedPreferences): Int =
