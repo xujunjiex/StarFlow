@@ -16,6 +16,7 @@ import com.moe.starflow.R
 import com.moe.starflow.mangaimport.reader.MangaReaderActivity
 import com.moe.starflow.novel.reader.NovelReaderActivity
 import com.moe.starflow.utils.LogCollector
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -46,6 +47,14 @@ class TranslationJobService : LifecycleService() {
 
         const val CHANNEL_ID = "chapter_translation"
         const val NOTIFICATION_ID_SERVICE = 9998
+
+        /**
+         * 「任务开始时先把服务拉起来、registry 还没来得及重算」的宽限期。
+         *
+         * 服务起来时 registry 还是空表（宿主的重算在 IO 线程上），不能当场 `stopSelf()`
+         * ——否则整段任务都没有通知栏进度。给宿主 [REGISTRY_SYNC_GRACE_MS] 毫秒把状态推上来。
+         */
+        const val REGISTRY_SYNC_GRACE_MS = 3_000L
 
         /** 启动（或唤醒）前台服务：任务已经在跑，这里只是把通知栏挂上去。 */
         fun start(context: Context) {
@@ -104,12 +113,21 @@ class TranslationJobService : LifecycleService() {
 
     private var observing = false
 
+    /** 是否**见过**活动任务。用于避开"服务先于 submit 被拉起 → 见到空快照就自杀"的竞态。 */
+    private var sawActiveJob = false
+
     /** 镜像 registry 的任务快照 → 每章一条通知；没有活动任务了就停服务。 */
     // 通知权限已在 `canPostNotifications()` 里查过（lint 不会跟进 helper，所以显式声明已处理）
     @SuppressLint("MissingPermission")
     private fun observeJobs() {
         if (observing) return
         observing = true
+        // ⚠️ **先同步一次 registry**：`startChapterBatch()` 是「先 submit、再 start 服务」，
+        // 而 registry 的重算挂在宿主的 collect（IO 线程）上 —— 服务可能在它之前就 `onStartCommand`，
+        // 那时 `activeJobs` 还是空表 → 老代码直接 `stopSelf()`，通知栏进度**整段任务都不会出现**
+        // （2026-09-28 日志实证：服务在任务开始 4 秒后就"已停止（任务仍在后台跑）"）。
+        // `notifyChanged()` 是同步重算，读的就是各宿主此刻的真实状态，这里补一刀就同步上了。
+        runCatching { TranslationJobRegistry.notifyChanged() }
         lifecycleScope.launch {
             TranslationJobRegistry.activeJobs.collect { jobs ->
                 // ⚠️ 只给**还在跑**的章发通知：`jobs` 里会长期保留 DONE/CANCELLED 的章
@@ -120,10 +138,23 @@ class TranslationJobService : LifecycleService() {
                         it.state == ChapterJobState.PAUSED
                 }
                 if (active.isEmpty()) {
+                    // ⚠️ **没见过活动任务就别自杀**：上面那个竞态只剩这一层兜底 —— 给宿主一点时间
+                    // 把状态推上来（grace 期内再来一次活动快照就照常发通知）。
+                    if (!sawActiveJob) {
+                        delay(REGISTRY_SYNC_GRACE_MS)
+                        runCatching { TranslationJobRegistry.notifyChanged() }
+                        val stillIdle = TranslationJobRegistry.activeJobs.value.none {
+                            it.state == ChapterJobState.RUNNING || it.state == ChapterJobState.QUEUED ||
+                                it.state == ChapterJobState.PAUSED
+                        }
+                        if (!stillIdle) return@collect
+                    }
+                    LogCollector.d(TAG, "没有活动任务 → 停止前台服务")
                     clearAll()
                     stopSelf()
                     return@collect
                 }
+                sawActiveJob = true
                 active.forEach { job -> notify(job) }
                 // 已经不在活动列表里的通知要撤掉（跑完/取消的章）
                 val alive = active.map { it.notificationId }.toSet()

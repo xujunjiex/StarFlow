@@ -239,19 +239,23 @@
 
                 <!-- 字体大小：**与文本阅读器同一个样式**（标签在左、值贴右，进度条另起一行；用户口径）。
                      仍走 utils/MangaFontSize（与个性化设置页、悬浮窗菜单同一份设置，三处一致）；
-                     「自动」是漫画独有的（按气泡尺寸自适应），做成右侧小胶囊，点一下切换。 -->
+                     「自动」是漫画独有的（按气泡尺寸自适应），做成小胶囊。
+                     ⚠️ 用户口径（2026-09-28）：「自动」必须**紧跟标题**（字体大小 自动 …… 12sp），
+                     不能夹在数值左边 —— 它是这个设置的开关，跟标题是一组。 -->
                 <LinearLayout android:id="@+id/row_font_size" android:layout_width="match_parent"
                     android:layout_height="wrap_content" android:orientation="vertical" android:layout_marginTop="8dp">
                     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
                         android:orientation="horizontal" android:gravity="center_vertical">
-                        <TextView android:id="@+id/tv_font_size_row" android:layout_width="0dp"
-                            android:layout_height="wrap_content" android:layout_weight="1"
+                        <TextView android:id="@+id/tv_font_size_row" android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
                             android:text="@string/reader_translate_font_size_label" android:textSize="14sp" android:textColor="#333333"/>
                         <TextView android:id="@+id/btn_font_auto" android:layout_width="wrap_content"
-                            android:layout_height="wrap_content" android:layout_marginEnd="8dp"
+                            android:layout_height="wrap_content" android:layout_marginStart="6dp"
                             android:paddingStart="9dp" android:paddingEnd="9dp" android:paddingTop="3dp" android:paddingBottom="3dp"
                             android:clickable="true" android:focusable="true"
                             android:text="@string/manga_font_size_auto" android:textSize="12sp"/>
+                        <!-- 弹性占位：把数值顶到最右（标题与「自动」贴在一起） -->
+                        <View android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1"/>
                         <TextView android:id="@+id/tv_font_size_value" android:layout_width="wrap_content"
                             android:layout_height="wrap_content" android:minWidth="40dp" android:gravity="end"
                             android:textSize="12sp" android:textColor="#55AEEA"/>

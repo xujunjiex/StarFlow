@@ -1036,6 +1036,10 @@
     <string name="reader_translate_retranslate_current">重新翻译当前页</string>
     <string name="reader_translate_state_idle">未翻译</string>
     <string name="reader_translate_state_translating">翻译中</string>
+    <!-- 「识别中」= OCR 阶段（恒串行，屏幕上最多 1 页）；它与「翻译中」（并发请求）是两个不同的进行中状态 -->
+    <string name="reader_translate_state_ocr">识别中</string>
+    <!-- 状态浮层里的一段：%1$s=阶段名（识别中/翻译中），%2$s=页码列表（P3, P4） -->
+    <string name="reader_translate_stage_entry">%1$s %2$s</string>
     <string name="reader_translate_state_success">✓ 已完成</string>
     <string name="reader_translate_state_failed">失败</string>
     <string name="reader_translate_row_detail">详情</string>
@@ -1104,7 +1108,7 @@
     <string name="reader_translate_chapter_running">正在翻译本章 %1$d/%2$d</string>
     <!-- 章节批量翻译的并发度（漫画：OCR 串行，调高主要加快翻译请求） -->
     <string name="reader_translate_concurrency">翻译模型最大同时请求数</string>
-    <string name="reader_translate_concurrency_hint">只对整章翻译生效，不含本地模型（本地固定串行）。每页 OCR 一结束就发出它的翻译请求、不等上一个返回；同时最多 N 个在跑，多的排队。</string>
+    <string name="reader_translate_concurrency_hint">整章/增量翻译同时发出的请求上限；本地模型固定为 1。OCR 始终逐页串行。</string>
     <string name="reader_translate_state_waiting">等待</string>
     <string name="reader_translate_chapter_hint">正在翻译本章 %1$d/%2$d，双击暂停</string>
     <string name="reader_translate_chapter_finished">本章完成 %1$d/%2$d</string>
@@ -1123,10 +1127,10 @@
     <string name="reader_translate_filter_ongoing">进行中</string>
     <string name="reader_translate_all_cached">翻译完成（%1$d 条全部命中缓存）</string>
     <string name="reader_translate_partial_cached">翻译完成（%1$d/%2$d 命中缓存，%3$d 条调用 API）</string>
-    <string name="reader_translate_paused_to_manual">翻译已暂停，回退到手动翻译</string>
-    <string name="reader_translate_cancelled">已停止，退回手动翻译</string>
+    <string name="reader_translate_force_stopped">翻译进程已强制退出</string>
+    <string name="reader_translate_force_stopped_to_manual">翻译进程已强制退出，回退到手动模式</string>
     <string name="reader_translate_debounce">启动延迟</string>
-    <string name="reader_translate_debounce_hint">翻页后停留这么久才开始翻（防抖），自动与增量共用；调小更跟手，但连翻几页时会白翻。</string>
+    <string name="reader_translate_debounce_hint">翻页停止后延迟该时长开始翻译（自动/增量共用）。值越小响应越快，翻页途中的无效翻译越多。</string>
     <string name="reader_translate_ahead_pages">向后翻译页数</string>
     <string name="reader_translate_failed_badge">本页翻译失败</string>
     <string name="reader_translate_disabled_mode">连续滚动模式下暂不支持翻译</string>
@@ -1561,7 +1565,7 @@
     <string name="novel_translate_ahead">启动增量翻译向后</string>
     <string name="novel_translate_batch_group">批次处理</string>
     <string name="reader_translate_font_size_label">字体大小</string>
-    <string name="reader_translate_font_size_hint">拖动滑块 = 固定字号；点「自动」= 按气泡大小自适应</string>
+    <string name="reader_translate_font_size_hint">滑块 = 固定字号；「自动」按气泡尺寸自适应。</string>
     <string name="novel_chapter_label">第 %1$d 章</string>
     <string name="novel_chapter_unread">未翻译</string>
     <string name="novel_chapter_partial">%1$d/%2$d</string>
@@ -1671,4 +1675,5 @@
     <string name="reader_anime4k_desc_a">强恢复 — 线条最锐，但对原画改动最大</string>
     <string name="reader_anime4k_desc_aa">强恢复＋ — 最强的一档，耗时也最长</string>
     <string name="reader_chapter_badge_waiting">等待 %1$d 页</string>
+    <string name="reader_translate_ocr_busy">OCR 引擎被占用太久（可能有其它翻译在跑），本页跳过。请稍后重试或清除后重翻。</string>
 </resources>

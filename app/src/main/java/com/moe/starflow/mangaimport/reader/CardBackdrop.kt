@@ -32,6 +32,14 @@ object CardBackdrop {
         /** **正在提交 / 等待返回**（翻译中）：琥珀高亮。 */
         ACTIVE,
 
+        /**
+         * **识别中**（OCR 阶段，恒只有 1 页）：蓝色高亮。
+         *
+         * ⚠️ 用户口径（2026-09-28）：「进行中的状态只包含两个：识别中（OCR）和翻译中」——
+         * 两者必须一眼区分（并发数只作用于翻译段，所以屏幕上通常 1 页蓝 + N 页琥珀）。
+         */
+        OCR,
+
         /** 排队中（还没开始翻，「等待」）。 */
         WAITING,
 
@@ -51,6 +59,7 @@ object CardBackdrop {
         // 深色下才是深灰块 + 亮描边。行与卡片同色但**不描边**（靠缩进表达从属）。
         Tone.CARD, Tone.PLAIN -> if (dark) 0xFF23282E.toInt() else 0xFFFFFFFF.toInt()
         Tone.ACTIVE -> if (dark) 0xFF3A3020.toInt() else 0xFFFFF4E0.toInt()
+        Tone.OCR -> if (dark) 0xFF1B2A3A.toInt() else 0xFFE8F1FB.toInt()
         Tone.WAITING -> if (dark) 0xFF26262A.toInt() else 0xFFF2F2F4.toInt()
         Tone.FAILED -> if (dark) 0xFF3A2426.toInt() else 0xFFFDEDED.toInt()
         Tone.DETAIL -> if (dark) 0xFF181C20.toInt() else 0xFFEDEFF3.toInt()
@@ -126,6 +135,7 @@ object CardBackdrop {
     /** 嵌套行左边那条竖线的颜色（普通行=淡灰，特殊态=对应强调色）。 */
     private fun stripeColor(tone: Tone, dark: Boolean): Int = when (tone) {
         Tone.ACTIVE -> 0xFFFF9F0A.toInt()
+        Tone.OCR -> 0xFF55AEEA.toInt()
         Tone.WAITING -> if (dark) 0xFF6E6E73.toInt() else 0xFFC7C7CC.toInt()
         Tone.FAILED -> 0xFFCC5555.toInt()
         else -> if (dark) 0xFF3A4046.toInt() else 0xFFD8DCE3.toInt()

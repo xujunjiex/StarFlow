@@ -263,7 +263,9 @@ class NovelChapterJobHost(
     /** 该章**还没开始翻**的批，按序号排。纯内存：任务结束/取消后自然为空。 */
     fun waitingBatches(chapterIndex: Int): List<NovelWaitingBatch> {
         val ids = synchronized(unitLock) { chapterUnits[chapterIndex] } ?: return emptyList()
-        val waiting = runner.waitingPages.value
+        // 「等待」= 队列里还没取的 + **已进流水线但还没轮到准备的**（`QUEUED`，见 ChapterTaskStage）
+        // —— 后者以前被算成"在飞"，面板会把它显示成「翻译中」，与"还没开始"直接矛盾
+        val waiting = runner.waitingPages.value + runner.queuedPages()
         return ids.filter { it in waiting }
             .mapNotNull { id -> synchronized(unitLock) { units[id] } }
     }
@@ -276,15 +278,19 @@ class NovelChapterJobHost(
     }
 
     /**
-     * 该章**正在提交/等待服务端返回**的批（已 OCR 完成、正在发请求或等响应）。
+     * 该章**正在提交/等待服务端返回**的批（请求已发出或正等响应）。
      *
      * 用户口径（2026-09-27）：「正在提交等待返回的批次片段**背景要高亮处理**」——
      * 这些批既不在「等待」里（队列已经取走）、也还没写库（没有译文），
      * 只靠章卡片上的进度数字看不出"现在轮到哪几批"，所以单独暴露给面板。
+     *
+     * ⚠️ 判据是 **`translatingPages()`（翻译段）**，不是 `inFlightPages()`（含"已预取还没开始"）：
+     * 小说没有 OCR，准备阶段是个空操作，真正该高亮的只有**已经进翻译段**的那几批
+     * （与漫画面板「识别中 / 翻译中」分开显示同一口径，2026-09-28）。
      */
     fun activeBatches(chapterIndex: Int): List<NovelWaitingBatch> {
         val ids = synchronized(unitLock) { chapterUnits[chapterIndex] } ?: return emptyList()
-        val inflight = runner.inFlightPages()
+        val inflight = runner.translatingPages()
         return ids.filter { it in inflight }
             .mapNotNull { id -> synchronized(unitLock) { units[id] } }
     }

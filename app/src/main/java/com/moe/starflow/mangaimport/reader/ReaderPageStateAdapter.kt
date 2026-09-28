@@ -16,6 +16,7 @@ import com.moe.starflow.data.ImportedPageTranslation
 import com.moe.starflow.data.TranslationCacheUtils
 import com.moe.starflow.mangaimport.data.MangaChapter
 import com.moe.starflow.translate.batch.ChapterJobState
+import com.moe.starflow.translate.batch.ChapterTaskStage
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -39,6 +40,14 @@ sealed interface TranslateRow {
         val chapterIndex: Int,
         /** 排队中（还没开始翻）：显示「等待」而不是状态徽章。 */
         val waiting: Boolean,
+        /**
+         * 在途页**此刻在哪一段**（识别中 / 翻译中）；null = 这不是在途页（真记录行）。
+         *
+         * ⚠️ 用户口径（2026-09-28）：「进行中的状态只包含两个：识别中（OCR）和翻译中」——
+         * 并发数只作用于翻译那一段，所以同一时刻最多 1 页识别中 + N 页翻译中。
+         * 两者必须**分开显示**，不能都写成「翻译中」（用户看到"一次冒出三个一样的卡片"会懵）。
+         */
+        val stage: ChapterTaskStage? = null,
     ) : TranslateRow
 }
 
@@ -87,6 +96,12 @@ class ReaderPageStateAdapter(
     private var jobs: Map<Int, ChapterJobState> = emptyMap()
     private var jobDone: Map<Int, Int> = emptyMap()
     private var waitingPages: Set<Int> = emptySet()
+
+    /** 在途页：**识别中**（OCR 阶段）的页号集合。 */
+    private var ocrPages: Set<Int> = emptySet()
+
+    /** 在途页：**翻译中**（请求已发出 / 本地推理）的页号集合。 */
+    private var translatingPages: Set<Int> = emptySet()
     private var selectedChapter = 0
     private var filter = FILTER_ALL
 
@@ -111,6 +126,12 @@ class ReaderPageStateAdapter(
         jobs: Map<Int, ChapterJobState> = emptyMap(),
         jobDone: Map<Int, Int> = emptyMap(),
         waitingPages: Set<Int> = emptySet(),
+        /**
+         * 在途页（章节任务正在 OCR/翻译）：必须补成「识别中 / 翻译中」行，
+         * 否则卡片会在开始时消失。**两个阶段分开传**（用户口径：进行中只有这两个状态）。
+         */
+        ocrPages: Set<Int> = emptySet(),
+        translatingPages: Set<Int> = emptySet(),
     ) {
         // ⚠️ 判据是「**章表变了**」而不是「这是第一次提交」：宿主会先往面板字段里存一份章表
         // 再调这里，用「this.chapters.isEmpty()」判首次会被那一步提前破坏，
@@ -122,6 +143,8 @@ class ReaderPageStateAdapter(
         this.jobs = jobs
         this.jobDone = jobDone
         this.waitingPages = waitingPages
+        this.ocrPages = ocrPages
+        this.translatingPages = translatingPages
         if (chaptersChanged) expanded += selectedChapter
         rebuild()
     }
@@ -205,21 +228,47 @@ class ReaderPageStateAdapter(
     /** 页号所属章的下标 = 它在列表里的位置（列表项就是每章一个）。 */
     private fun notifyPositionOfPage(page: Int): Int = chapterIndexFor(page).coerceAtLeast(0)
 
-    /** 某章展开后要显示的页行（已有记录的页 + 排队中的页），按筛选过滤。 */
+    /** 某章展开后要显示的页行（已有记录的页 + 在途页 + 排队中的页），按筛选过滤。 */
     private fun childRowsOf(chapterIndex: Int): List<TranslateRow.Page> {
         val chapter = chapters.getOrNull(chapterIndex) ?: return emptyList()
+        // ⚠️ 宿主传进来的 `waitingPages` 里**也包含预取中的在途页**（`QUEUED`：已进流水线、
+        // 还没轮到识别）。它们必须先按「等待」渲染 —— 减掉它们，否则会走下面的在途分支被标成
+        // 「识别中/翻译中」（用户报的"一启动同时出现 3 个识别中"就是这么来的）。
+        val inFlight = (ocrPages + translatingPages) - waitingPages
         val recorded = records
             .filter { chapterIndexFor(it.pageIndex) == chapterIndex }
             .filter { it.state != ImportedPageTranslation.STATE_IDLE }
+            // ⚠️ **在途页一律走阶段行**（见 ①），哪怕它带着上一次的记录：重翻时库里还是
+            // SUCCESS/FAILED，照记录渲染会出现「明明在识别中，卡片写着已完成」。
+            .filter { it.pageIndex !in inFlight }
             .filter { filter == FILTER_ALL || matchesFilter(it) }
             .sortedBy { it.pageIndex }
-        val out = ArrayList<TranslateRow.Page>(recorded.size + 4)
-        recorded.forEach { out += TranslateRow.Page(it, chapterIndex, waiting = false) }
-        // 「等待」的页不在 records 里（纯内存态），单独补在后面
+        val out = ArrayList<TranslateRow.Page>(recorded.size + 6)
+        // ① **在途页**：库状态可能还是 IDLE（OCR 阶段不写库），而面板不显示 IDLE 行
+        //    → 不补这些页，用户就会看到「正在翻译的页卡片突然消失」（2026-09-28 用户报的）。
+        //    ⚠️ **两个阶段分别标注**：识别中（OCR，恒只有 1 页）/ 翻译中（并发 N 页）。
+        //    用户口径就是"进行中只包含这两个状态"，两个都写成「翻译中」会被当成 bug。
         if (filter == FILTER_ALL || filter == FILTER_ONGOING) {
-            val recordedPages = recorded.map { it.pageIndex }.toSet()
             (chapter.startPage..chapter.endPage)
-                .filter { it in waitingPages && it !in recordedPages }
+                .filter { it in inFlight }
+                .sorted()
+                .forEach { page ->
+                    out += TranslateRow.Page(
+                        ImportedPageTranslation(
+                            mangaId = -1, pageIndex = page,
+                            state = ImportedPageTranslation.STATE_TRANSLATING,
+                        ),
+                        chapterIndex, waiting = false,
+                        stage = if (page in ocrPages) ChapterTaskStage.OCR else ChapterTaskStage.TRANSLATE,
+                    )
+                }
+        }
+        recorded.forEach { out += TranslateRow.Page(it, chapterIndex, waiting = false) }
+        // ② 「等待」的页不在 records 里（纯内存态），单独补在后面
+        if (filter == FILTER_ALL || filter == FILTER_ONGOING) {
+            val shown = recorded.map { it.pageIndex }.toSet() + out.map { it.row.pageIndex }
+            (chapter.startPage..chapter.endPage)
+                .filter { it in waitingPages && it !in shown }
                 .sorted()
                 .forEach { page ->
                     out += TranslateRow.Page(
@@ -388,10 +437,12 @@ class ReaderPageStateAdapter(
         if (itemDensity == 1f) itemDensity = item.resources.displayMetrics.density
 
         // 子行**在卡片的框里**：普通行不画底（白卡片直接透出来），只有状态需要区分时才染色
-        // —— 排队中=中性、**正在提交/等待返回=琥珀高亮**、失败=淡红（用户口径）
+        // —— 排队中=中性、「识别中」=蓝色、**正在提交/等待返回=琥珀高亮**、失败=淡红（用户口径）
         val tone = when {
             row.waiting -> CardBackdrop.Tone.WAITING
-            page.state == ImportedPageTranslation.STATE_TRANSLATING -> CardBackdrop.Tone.ACTIVE
+            row.stage == ChapterTaskStage.OCR -> CardBackdrop.Tone.OCR
+            row.stage == ChapterTaskStage.TRANSLATE ||
+                page.state == ImportedPageTranslation.STATE_TRANSLATING -> CardBackdrop.Tone.ACTIVE
             page.state == ImportedPageTranslation.STATE_FAILED -> CardBackdrop.Tone.FAILED
             else -> null
         }
@@ -406,6 +457,13 @@ class ReaderPageStateAdapter(
             // 排队中：纯内存态（不写库），显示「等待」
             badge.setText(R.string.reader_translate_state_waiting)
             badge.setBackgroundResource(R.drawable.bg_state_idle)
+        } else if (row.stage == ChapterTaskStage.OCR) {
+            // 识别中（OCR 串行阶段）—— 与「翻译中」必须区分开
+            badge.setText(R.string.reader_translate_state_ocr)
+            badge.setBackgroundResource(R.drawable.bg_state_ocr)
+        } else if (row.stage == ChapterTaskStage.TRANSLATE) {
+            badge.setText(R.string.reader_translate_state_translating)
+            badge.setBackgroundResource(R.drawable.bg_state_translating)
         } else {
             badge.setText(contextString(item.context, when (page.state) {
                 ImportedPageTranslation.STATE_TRANSLATING -> R.string.reader_translate_state_translating
@@ -465,7 +523,7 @@ class ReaderPageStateAdapter(
         CardBackdrop.apply(detail, CardBackdrop.Tone.DETAIL, dark)
 
         // 正在提交/等待返回的那一行：淡入一下，让"轮到它了"看得见
-        if (!row.waiting && page.state == ImportedPageTranslation.STATE_TRANSLATING) {
+        if (!row.waiting && (row.stage != null || page.state == ImportedPageTranslation.STATE_TRANSLATING)) {
             item.alpha = 0.55f
             item.animate().alpha(1f).setDuration(ACTIVE_FADE_MS).start()
         } else {

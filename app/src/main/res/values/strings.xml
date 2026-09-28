@@ -1101,6 +1101,10 @@
     <string name="reader_translate_retranslate_current">Re-translate this page</string>
     <string name="reader_translate_state_idle">Not translated</string>
     <string name="reader_translate_state_translating">Translating</string>
+    <!-- "Recognizing" = the OCR stage (always serial, at most 1 page). It is a different in-progress state from "Translating". -->
+    <string name="reader_translate_state_ocr">Recognizing</string>
+    <!-- One entry of the status chip: %1$s = stage name, %2$s = page list (P3, P4) -->
+    <string name="reader_translate_stage_entry">%1$s %2$s</string>
     <string name="reader_translate_state_success">✓ Done</string>
     <string name="reader_translate_state_failed">Failed</string>
     <string name="reader_translate_row_detail">Details</string>
@@ -1171,7 +1175,7 @@
     <string name="reader_translate_chapter_running">Translating chapter %1$d/%2$d</string>
     <!-- 章节批量翻译的并发度（漫画：OCR 串行，调高主要加快翻译请求） -->
     <string name="reader_translate_concurrency">Max concurrent translation requests</string>
-    <string name="reader_translate_concurrency_hint">Whole-chapter translation only, and NOT for local models (they stay serial). Each page sends its translation request as soon as its OCR finishes, without waiting for earlier ones; up to N run at once, the rest queue.</string>
+    <string name="reader_translate_concurrency_hint">Max concurrent requests for whole-chapter and incremental translation; local models stay at 1. OCR itself is always serial.</string>
     <string name="reader_translate_state_waiting">Waiting</string>
     <string name="reader_translate_chapter_hint">Translating chapter %1$d/%2$d. Double-tap to pause.</string>
     <string name="reader_translate_chapter_finished">Chapter finished: %1$d/%2$d translated</string>
@@ -1194,10 +1198,10 @@
          全部命中时不说 API 数（0 条），partial 时同时给出两个口径的分母。 -->
     <string name="reader_translate_all_cached">Translated (%1$d, all from cache)</string>
     <string name="reader_translate_partial_cached">Translated (%1$d/%2$d cached, %3$d via API)</string>
-    <string name="reader_translate_paused_to_manual">Translation paused, switched to manual mode.</string>
-    <string name="reader_translate_cancelled">Stopped. Switched to manual mode.</string>
+    <string name="reader_translate_force_stopped">Translation was force-stopped.</string>
+    <string name="reader_translate_force_stopped_to_manual">Translation was force-stopped, switched to manual mode.</string>
     <string name="reader_translate_debounce">Start delay</string>
-    <string name="reader_translate_debounce_hint">How long to wait after a page turn before translating (debounce), shared by auto and incremental. Smaller feels snappier but wastes pages while you keep turning.</string>
+    <string name="reader_translate_debounce_hint">Delay before translating after a page turn (auto/incremental). Smaller responds faster; more wasted translations while turning.</string>
     <string name="reader_translate_ahead_pages">Pages ahead</string>
     <string name="reader_translate_failed_badge">Translation failed</string>
     <string name="reader_translate_disabled_mode">Translation is not available in Webtoon mode</string>
@@ -1673,4 +1677,5 @@
     <string name="reader_anime4k_desc_a">Strong restore — sharpest lines, largest change to the art</string>
     <string name="reader_anime4k_desc_aa">Strong restore+ — the heaviest and slowest</string>
     <string name="reader_chapter_badge_waiting">%1$d pages waiting</string>
+    <string name="reader_translate_ocr_busy">The OCR engine stayed busy too long (another translation is running). This page was skipped - retry later.</string>
 </resources>

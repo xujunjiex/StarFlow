@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  「识别中」（OCR 阶段）徽章底：蓝色。
+  ⚠️ 必须与 bg_state_translating（琥珀）区分：用户口径「进行中只包含识别中与翻译中两个状态」，
+  两类在途页同屏出现，只靠文案区分太弱（2026-09-28）。
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="#1976D2"/>
+    <corners android:radius="10dp"/>
+</shape>

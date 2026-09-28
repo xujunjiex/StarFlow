@@ -56,7 +56,7 @@
             android:layout_height="wrap_content"
             android:paddingStart="8dp"
             android:paddingEnd="4dp"
-            android:textSize="13sp"/>
+            android:textSize="18sp"/>
     </LinearLayout>
 
     <!-- 第二行：进度 + 字数（估费用）/ 失败原因 / 「等待 N 批」 -->

@@ -66,6 +66,9 @@ class ReaderMenuState(
     val chapterJobDone: Map<Int, Int> = emptyMap(),
     /** 排队中（还没开始翻）的页 —— 面板把它们标成「等待」。 */
     val waitingPages: Set<Int> = emptySet(),
+    /** 在途页：**识别中**（OCR 串行阶段）/ **翻译中**（并发请求）—— 见 [ChapterPanelState]。 */
+    val ocrPages: Set<Int> = emptySet(),
+    val translatingPages: Set<Int> = emptySet(),
     /** 漫画的「同时请求数」（2-5）。 */
     val concurrency: Int = 3,
 )
@@ -142,6 +145,18 @@ class ChapterPanelState(
     val jobs: Map<Int, ChapterJobState> = emptyMap(),
     val jobDone: Map<Int, Int> = emptyMap(),
     val waitingPages: Set<Int> = emptySet(),
+    /**
+     * 在途页（章节任务正在 OCR/翻译）。
+     *
+     * ⚠️ 必须有：在途页的库状态在"OCR 中"这段仍是 IDLE，而面板**不显示 IDLE 行** ——
+     * 不补这些页，用户就会看到「正在翻译的页卡片突然消失」（2026-09-28 报的）。
+     *
+     * ⚠️ **两个阶段必须分开传**（用户口径 2026-09-28：「进行中的状态只包含两个：识别中（OCR）
+     * 和翻译中，提示系统和历史记录要分清楚这两个状态」）：`ocrPages` 恒 ≤1 页（OCR 串行），
+     * `translatingPages` 最多 = 并发设置页（并发只作用于翻译请求）。合在一起显示会被当成 bug。
+     */
+    val ocrPages: Set<Int> = emptySet(),
+    val translatingPages: Set<Int> = emptySet(),
 )
 
 
@@ -229,6 +244,10 @@ class ReaderMenuSheet(
     private var jobs: Map<Int, ChapterJobState> = emptyMap()
     private var jobDone: Map<Int, Int> = emptyMap()
     private var waitingPages: Set<Int> = emptySet()
+
+    /** 在途页（章节任务正在处理的页）：按**阶段**分开记，面板据此显示「识别中 / 翻译中」。 */
+    private var ocrPages: Set<Int> = emptySet()
+    private var translatingPages: Set<Int> = emptySet()
     private var currentFilterKey = 0
 
     /** 系统是否深色（独立于 app 强制主题）：读 Resources.getSystem()，避免全局主题切换影响面板默认深浅。 */
@@ -259,6 +278,8 @@ class ReaderMenuSheet(
             jobs = st.jobs
             jobDone = st.jobDone
             waitingPages = st.waitingPages
+            ocrPages = st.ocrPages
+            translatingPages = st.translatingPages
             view?.let { pushToAdapter() }
         }
         // 面板容器背景初始跟随当前深浅（此后由 applyPanelTheme 实时维护）
@@ -451,6 +472,8 @@ class ReaderMenuSheet(
         jobs = state.chapterJobs
         jobDone = state.chapterJobDone
         waitingPages = state.waitingPages
+        ocrPages = state.ocrPages
+        translatingPages = state.translatingPages
         val rvPages = view.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rv_translate_pages)
         rvPages.layoutManager = LinearLayoutManager(requireContext())
         rvPages.adapter = pageAdapter
@@ -1058,6 +1081,8 @@ class ReaderMenuSheet(
             jobs = jobs,
             jobDone = jobDone,
             waitingPages = waitingPages,
+            ocrPages = ocrPages,
+            translatingPages = translatingPages,
         )
     }
 
@@ -1089,6 +1114,12 @@ class ReaderMenuSheet(
         jobs: Map<Int, ChapterJobState>,
         jobDone: Map<Int, Int>,
         waitingPages: Set<Int>,
+        /**
+         * 正在被章节任务处理的页，**按阶段分开**：识别中（OCR，恒 ≤1 页）/ 翻译中（并发 N 页）。
+         * 不补这些页，卡片会在开始翻译时"消失"；不分开，用户会看到"一次冒出三个一样的卡片"。
+         */
+        ocrPages: Set<Int> = emptySet(),
+        translatingPages: Set<Int> = emptySet(),
     ) {
         currentRecords = records
         this.chapters = chapters
@@ -1096,6 +1127,8 @@ class ReaderMenuSheet(
         this.jobs = jobs
         this.jobDone = jobDone
         this.waitingPages = waitingPages
+        this.ocrPages = ocrPages
+        this.translatingPages = translatingPages
         pushToAdapter()
     }
 

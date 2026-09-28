@@ -1761,7 +1761,7 @@ class NovelReaderActivity : AppCompatActivity() {
                 )
                 return
             }
-            pauseToManual(getString(R.string.reader_translate_cancelled))
+            pauseToManual(getString(R.string.reader_translate_force_stopped_to_manual))
             return
         }
         if (isDouble) return
@@ -1911,7 +1911,7 @@ class NovelReaderActivity : AppCompatActivity() {
     private fun onChapterSecondaryClicked(index: Int) {
         val host = chapterHost ?: return
         host.cancel(index)
-        showOverlayToast(getString(R.string.reader_translate_cancelled), error = false)
+        showOverlayToast(getString(R.string.reader_translate_force_stopped), error = false)
         book?.let { NovelTranslationHub.releaseIfIdle(it.id) }
         pushPanelState()
     }
@@ -2309,7 +2309,7 @@ class NovelReaderActivity : AppCompatActivity() {
                     exitSelection()
                     refreshChapterStats()
                     if (NovelPanelStyle.translateMode(prefs) != NovelTranslateMode.MANUAL) {
-                        pauseToManual(getString(R.string.reader_translate_paused_to_manual))
+                        pauseToManual(getString(R.string.reader_translate_force_stopped_to_manual))
                     }
                 },
                 onPanelClosed = {
