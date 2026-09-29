@@ -512,27 +512,45 @@ class ReaderTranslationController(
     }
 
     /**
-     * 「翻译时自动超分」在**非批量路径**（手动 / 自动 / 增量）的落点。
+     * 「翻译时自动超分」的**启动判断 + 提交**（两个调用点共用，只是时机不同）。
      *
-     * ## 为什么在 `runTranslate` 的 `finally` 里（v2 的取舍，别再往前提）
-     * 用户口径是「拿原图 OCR **之后**再启动超分，不要与 OCR 同时」，而
-     * `runTranslate` 目前是**从 OCR 一直持 `OcrLock` 到翻译结束**的一整段
-     * （`SrProcessor` 也会抢同一把锁）—— 往前提只会让超分卡在等锁上，一点没提前。
-     * 真正要让超分与翻译请求重叠，得先把 `runTranslate` 拆成两阶段（见计划 R6.5）。
+     * @return 已提交的超分任务；null = 本次不超分（开关关着 / 不是当前页 / 已经是当前模型超的）
      *
-     * ⚠️ **只对"用户正在看的那页"触发**：自动/增量模式会预翻后面 5~10 页，
-     * 每页都顺手超分 = 每翻一页多跑 5~10 次推理，队列会爬不动。
-     * 整章批量翻译那条路径不受此限（用户显式点了「翻译本章」，见 [translatePhase]）。
+     * ## 两个调用点（用户口径 2026-10）
+     * ```
+     * 点翻译 → ① 原图 OCR（持 OcrLock）→ ② 【这里】启动超分 ∥ 翻译请求 → ③ 渲染
+     * ```
+     * - **`onOcrDone`**：非分批路线的**首选**落点 —— 就在 `OcrLock` 刚放掉的瞬间，
+     *   于是「超分 ∥ API 请求」成立（用户要的并行）。
+     * - **[maybeStartSrAfterTranslate]**：**兜底** —— 分批路线（识别与两批翻译交错在管线里，
+     *   拿不到 OCR 结束点）与各种中途返回的路线，只能在收尾后启动（退化成串行）。
+     *   两者**互斥**：前者拿到任务就不会再走后者（`runTranslate` 里用 `srStarted` 记着）。
+     *
+     * ## 两条硬约束（都是用户口径）
+     * 1. **必须排在 OCR 之后**：超分与 OCR 共用 `OcrLock`，且「不要超分和 OCR 同时启动」
+     *    （都是本地重计算，抢核只会两边都慢）。上面两个落点都满足。
+     * 2. **只对"当前页"**：自动/增量模式会预翻后面 5~10 页，每页都顺手超分 = 每翻一页多跑
+     *    5~10 次推理，队列会爬不动。整章批量翻译不受此限（用户显式点了「翻译本章」）。
      */
-    private fun maybeStartSrAfterTranslate(page: Int) {
-        if (!SrSettings.isAutoEnabledForReader(appPrefs)) return
-        if (page != currentPageProvider()) return
-        if (srModelByPage[page] == SrModelManager.getActiveKey(appPrefs)?.name) return
-        scope.launch(Dispatchers.IO) {
+    private fun startAutoSr(page: Int): Job? {
+        if (!SrSettings.isAutoEnabledForReader(appPrefs)) return null
+        if (page != currentPageProvider()) return null
+        // 该页已经是"当前模型超的" → 没什么可做（换过模型 / 手动点过都会走到这）
+        if (srModelByPage[page] == SrModelManager.getActiveKey(appPrefs)?.name) return null
+        return scope.launch(Dispatchers.IO) {
             val ok = enhancePage(page)
-            LogCollector.d(TAG, "翻译后自动超分 page=$page ok=$ok")
+            LogCollector.d(TAG, "翻译时自动超分 page=$page ok=$ok")
             if (ok) onBaseChanged(page)
         }
+    }
+
+    /**
+     * **兜底**启动点：翻译收尾（锁已释放）后启动。
+     *
+     * 只有"没能在 OCR 结束点启动"的路线会走到这里（分批路线 / OCR 为空 / 模型缺失等中途返回）。
+     */
+    private fun maybeStartSrAfterTranslate(page: Int) {
+        startAutoSr(page)
     }
 
     // ========== 宿主注入（避免控制器反向依赖 Activity / ReaderPageSource） ==========
@@ -620,10 +638,17 @@ class ReaderTranslationController(
 
     // ========== 队列引擎 ==========
 
+    /** 队列引擎是否在跑（用于状态浮层/按钮文案）。 */
     private var queueJob: Job? = null
 
-    /** 用户取消标志：翻译与队列都读它。 */
-    private val cancelFlag = AtomicBoolean(false)
+    /**
+     * 阅读器前台路径（手动 / 自动 / 增量）在途任务的取消信号集合。
+     *
+     * ⚠️ **章节批量任务刻意不用它**，各自持一个"永远不会被 [cancelAll] 触碰"的标志 ——
+     * 共用一份会出两个方向的错，详见 [ReaderCancelSignals] 的类注释（其中一个是
+     * "翻译本章一页都翻不出来"这种静默重故障）。
+     */
+    private val readerCancel = ReaderCancelSignals()
 
     /** 翻译面板是否打开：打开时暂停队列（用户在调设置，不该后台继续翻），关闭时恢复。 */
     private var panelOpen = false
@@ -983,8 +1008,6 @@ class ReaderTranslationController(
             }
             upsertState(page, ImportedPageTranslation.STATE_TRANSLATING)
             renderLru.remove(partialKey(page, baseSig(page)))
-            cacheCandidates = 0
-            cacheHits = 0
 
             val translator: TranslationTextAPI? =
                 TranslatorFactory.create(context, customPrefs, TranslatorFactory.Mode.MANGA)
@@ -1013,7 +1036,12 @@ class ReaderTranslationController(
                 rtTextDirection = RtTextDirection.load(appPrefs),
             )
             // 阶段回调全部静默：连翻几十页时浮层由宿主按任务进度统一显示
-            val host = ReaderBatchHost(prep.bitmap, translator, { _, _ -> }, page)
+            //
+            // ⚠️ 取消信号：**每页一个、永不注销的 false 常量**。
+            // 章节批量任务的取消走 `ChapterJobRunner` 的按章取消（用户口径：取消只丢还没
+            // 开始翻的页，**在途页照旧跑完**）；绝不能让它读阅读器前台那套标志 ——
+            // 那正是"点翻译本章前一停队列，整章就被打成已取消"的根因（见 ReaderCancelSignals）。
+            val host = ReaderBatchHost(prep.bitmap, translator, { _, _ -> }, page, prep.det, prep.ocr) { false }
             val pipeline = IncrementalBatchPipeline(host, scope, cfg)
             // 上下文：**用户开了上下文功能就带**（用户口径「api 调用属于同一个上下文，前提是开启了
             // 设置的上下文功能」）—— 整章一批批翻下来，前几页的译文要能帮到后面的页面。
@@ -1021,15 +1049,18 @@ class ReaderTranslationController(
             // 超预算自动丢最旧的轮；开关关着时 forceContext=false，与原来完全一致。
             val contextEnabled = appPrefs.getBoolean("game_context_enabled", false)
             val translated = pipeline.translateWithCache(prep.bubbles, forceContext = contextEnabled)
-            cacheCandidates += pipeline.cacheStats.candidates
-            cacheHits += pipeline.cacheStats.hits
+            // ⚠️ 这里**不**再累加缓存统计：本章批量路径从不显示「命中 x/y」那条完成提示，
+            //    写进实例字段只会污染前台手动翻译那一路的数字（跨页串号）。
             if (translated.isEmpty()) {
                 fail(page, "TRANSLATE_EMPTY", context.getString(R.string.reader_translate_empty))
                 return false
             }
             // 只有"用户正在看的那一页"才渲染上屏（后台页只写库）
             if (uiAttached && page == currentPageProvider()) {
-                renderInto(page, translated, TranslationCacheManager.OverlayMode.TRANSLATED, prep.bitmap, overlayConfig)
+                renderInto(
+                    page, translated, TranslationCacheManager.OverlayMode.TRANSLATED,
+                    prep.bitmap, overlayConfig, prep.det,
+                )
             }
             renderLru.remove(partialKey(page, baseSig(page)))
             val row = ImportedPageTranslation(
@@ -1258,7 +1289,10 @@ class ReaderTranslationController(
      * 只有显式 [cancelChapterJob] / [cancelAllChapterJobs] 才停。
      */
     private fun cancelEverything() {
-        cancelFlag.set(true)
+        // 只取消**阅读器前台**在途任务（手动/自动/增量）。章节批量任务有各自的标志，不受影响 ——
+        // 以前这里是唯一把"共用取消标志"置 true 的地方，而章节页读的是同一个标志，
+        // 于是"启动章节任务前先停队列"这一步会把整章打成"已取消"（见 ReaderCancelSignals）。
+        readerCancel.cancelAll()
         queueJob?.cancel()
         queueJob = null
         manualJob?.cancel()
@@ -1369,7 +1403,14 @@ class ReaderTranslationController(
             LogCollector.d(TAG, "runTranslate: OcrLock 被占用，跳过 page=$page")
             return
         }
-        cancelFlag.set(false)
+        // ⚠️ 取消标志**按页新建**（不是共用一个标志、每页开头把它置回 false）：
+        // 共用一份时后一页的 `set(false)` 会**抹掉**前一页刚收到的取消，
+        // 而 `finally` 的注销又必须与登记配对（见 ReaderCancelSignals）。
+        val cancel = readerCancel.newFlag()
+        // ⚠️ 两个"锁还在不在我手上 / 超分是不是已经启动过"的标志必须声明在 try 之外：
+        // `onOcrDone` 回调会把锁提前放掉（[translatePlain] 的放锁点），`finally` 里不能再放第二次。
+        var lockHeld = true
+        var srStarted = false
 
         // ⚠️ 必须在 try 之外定义：catch 分支也要用它上报失败阶段
         val shouldRender = { page == currentPageProvider() }
@@ -1397,18 +1438,18 @@ class ReaderTranslationController(
             }
             phase(ReaderTranslatePhase.FAILED, msg)
             OcrLock.release()
+            readerCancel.retire(cancel)
             return
         }
-        runDet = det
-        runOcr = ocr
+        // ⚠️ 这两个只作为**兜底**（渲染历史行时 `visualBitmap` 拿不到本次引擎，见 [lastDet] 注释）；
+        // 真正的渲染路径一律把 det/ocr **当参数**往下传，不再读实例字段。
+        lastDet = det
+        lastOcr = ocr
 
         try {
             upsertState(page, ImportedPageTranslation.STATE_TRANSLATING)
             // 清掉上一轮可能残留的半成品：否则重翻时 cachedDisplayBitmap 会先把旧半成品显示出来
             renderLru.remove(partialKey(page, baseSig(page)))
-            // 本次翻译的统计从零起（管线是每次 runTranslate 新建的，这里跟着重置）
-            cacheCandidates = 0
-            cacheHits = 0
 
             phase(ReaderTranslatePhase.DETECTING, null)
 
@@ -1436,14 +1477,17 @@ class ReaderTranslationController(
             // 增量模式禁用分批与流式：翻的是用户没在看的页面，"先出一部分"没有观众
             val batchingOn = translateMode.value != MODE_AHEAD
             // 逐气泡日志（位置 / 原文 / 译文 / 来源）——阅读器排查时唯一能看清"这一页到底翻了什么"
-            // 的地方，与截屏翻译的 `RT-DETR-V2(MangaOcr) [i]: rect=..., text='...'` 对齐
+            // 的地方，与截屏翻译的 `RT-DETR-V2(MangaOcr) [i]: rect=..., text=...` 对齐
             LogCollector.d(
                 TAG,
                 "translate page=$page 开始: 引擎=$det/$ocr, ${srcLang}->${tgtLang}, " +
                     "分批=$batchingOn, 位图=${bitmap.width}x${bitmap.height}, mode=${translateMode.value}"
             )
 
-            val translated: List<TranslatedBubble> =
+            // ⚠️ OCR 结束回调：**只在"OCR 与翻译分得开"的两条路线会触发**（见 translatePlain）。
+            //    分批路线拿不到 OCR 结束点，锁整段持有 —— `onOcrDone` 一次都不会跑，
+            //    于是下面的 finally 兜底在收尾后启动超分（退化成串行，与 R6 行为一致）。
+            val outcome: TranslateOutcome =
                 translateWithPipelineOn(
                     enabled = batchingOn,
                     bitmap = bitmap, det = det, ocr = ocr,
@@ -1451,7 +1495,39 @@ class ReaderTranslationController(
                     translator = translator,
                     phase = phase,
                     page = page,
+                    cancelled = { cancel.get() },
+                    onOcrDone = ocrDone@{ t ->
+                        // ⚠️ **只有手动路径（`!fromQueue`）提前放锁**，两条理由：
+                        //
+                        // ① **队列路径本来就没有跨页重叠**（拆锁前逐页串行，拆锁后也不该引入）：
+                        //    自动/增量模式会连续翻很多页，一旦放锁就变成「上一页在发请求、这一页在
+                        //    OCR」—— 而两页共享的 AI 上下文历史 `readerContextHistory` 是
+                        //    **LinkedList（非线程安全）**，分批路线（`forceContext=true`）会
+                        //    `size`/`addLast`/`trimInPlace`/回滚并发踩踏。那是既存隐患
+                        //    （章节路径 `incrementalEnabled=false` 走不到分批流程，所以现在没暴露），
+                        //    **不该借着这次拆锁把它扩大到阅读器队列**。
+                        // ② 手动路径同一时刻只有一个任务（`manualJob` 串行 + 队列只在非手动模式跑），
+                        //    提前放锁**不引入任何跨页并发** —— 用户口径「点了翻译之后超分与翻译请求
+                        //    并行」说的正是这一条路径。
+                        if (fromQueue) return@ocrDone   // 队列：什么都不做，交给 finally 兜底
+
+                        // ① 放锁：往下只剩翻译请求，不碰 OCR 引擎单例
+                        if (lockHeld) {
+                            OcrLock.release()
+                            lockHeld = false
+                        }
+                        // ② 启动超分（可与下面的翻译请求并行）
+                        val job = startAutoSr(page)
+                        srStarted = job != null
+                        // ③ 本地引擎必须串行：LlamaCpp/NLLB 翻译本身也是 CPU 重活，
+                        //    与超分同时跑只会互相抢核（用户口径「本地不行」）。
+                        //    ⚠️ join 的是**本次调用自己的** Job，不是实例字段 ——
+                        //    实例字段会被别的页覆盖（那样 join 的就成了别人的任务）。
+                        //    ⚠️ 这一步**必须**在放锁之后：否则超分在等锁、我们在等超分 = 死锁。
+                        if (job != null && t.isLocalHeavyEngine()) job.join()
+                    },
                 ) ?: return   // 已写失败记录
+            val translated = outcome.bubbles
 
             if (translated.isEmpty()) {
                 val msg = context.getString(R.string.reader_translate_empty)
@@ -1462,10 +1538,10 @@ class ReaderTranslationController(
 
             // 渲染：仅"正在看的那页"才预热译文图
             if (shouldRender()) {
-                renderInto(page, translated, TranslationCacheManager.OverlayMode.TRANSLATED, bitmap, overlayConfig)
+                renderInto(page, translated, TranslationCacheManager.OverlayMode.TRANSLATED, bitmap, overlayConfig, det)
             }
             // 逐气泡明细（rect / 原文 / 译文 / 来源）：阅读器排查时唯一能看清"这页到底翻了什么"的地方
-            logBubbles(page, translated)
+            logBubbles(page, translated, det, ocr)
             // 半成品不论是否上屏都要清：用户翻走后整页渲染不执行，那个 PARTIAL 会永久占着
             // 100MB 渲染缓存（只能靠 LRU 淘汰），且同页重翻时会先闪出旧半成品
             renderLru.remove(partialKey(page, baseSig(page)))
@@ -1487,7 +1563,7 @@ class ReaderTranslationController(
             dao.upsert(row)
             version.value += 1
             onVisual()
-            phase(ReaderTranslatePhase.SUCCESS, cacheNotice(page, translated.size))
+            phase(ReaderTranslatePhase.SUCCESS, cacheNotice(page, translated.size, outcome.cache))
             LogCollector.d(TAG, "translated page=$page bubbles=${translated.size} fromQueue=$fromQueue")
         } catch (e: TranslationCancelledException) {
             // 用户主动停止：**不能**保持 TRANSLATING（会永久卡死该页），退回未翻译
@@ -1510,16 +1586,24 @@ class ReaderTranslationController(
             fail(page, "PROCESS_EXCEPTION", msg)
             phase(ReaderTranslatePhase.FAILED, msg)
         } finally {
-            OcrLock.release()
-            // 「翻译时自动超分」在本路径的落点（见 [maybeStartSrAfterTranslate] 的时机说明）：
-            // **必须在 release 之后** —— 超分自己也抢同一把锁，放在锁内只会白等。
-            maybeStartSrAfterTranslate(page)
+            // ⚠️ **注销与登记必须配对**：不注销的话 `readerCancel` 集合会一直涨
+            //    （每页一个永不回收的 AtomicBoolean，一本 200 页的书翻一遍就多 200 个）。
+            readerCancel.retire(cancel)
+            // ⚠️ **条件释放**：`onOcrDone` 可能已经把锁提前放掉了（非分批路线），
+            //    无条件 release 会变成"放两把"→ 别的任务以为锁空着就冲进来，与 native OCR 并发。
+            if (lockHeld) OcrLock.release()
+            // 「翻译时自动超分」的**兜底**落点：只在刚才那条路线没能提前启动超分时才跑
+            // （分批路线拆不开锁；或者 OCR 为空/模型缺失等中途返回）。
+            // 此刻锁已确定不在手上 —— 超分自己也抢同一把锁，放在锁内只会白等。
+            // ⚠️ **取消过的这一页不再超分**：用户刚掐掉的任务不该在收尾后又去跑一遍本地重计算。
+            if (!srStarted && !cancel.get()) maybeStartSrAfterTranslate(page)
         }
     }
 
     /**
      * 走分批管线（可在半途上屏）或普通一次性路径。
-     * 返回 null 表示失败记录已写好，调用方直接结束。
+     *
+     * @return null = 失败记录已写好，调用方直接结束
      */
     private suspend fun translateWithPipelineOn(
         enabled: Boolean,
@@ -1531,7 +1615,16 @@ class ReaderTranslationController(
         translator: TranslationTextAPI,
         phase: (ReaderTranslatePhase, String?) -> Unit,
         page: Int,
-    ): List<TranslatedBubble>? {
+        /** 本次调用自己的取消信号（**按页**，见 [ReaderCancelSignals]）。 */
+        cancelled: () -> Boolean,
+        /**
+         * **OCR 阶段结束**的回调 —— 只有"OCR 与翻译能分开"的两条路线会触发（见 [translatePlain]）。
+         *
+         * 分批路线（[BatchOutcome.Handled]）把识别与两批翻译交错在管线里，拿不到"OCR 结束点"，
+         * 所以**不回调**：那条路线整段持 `OcrLock`，超分只能等它收尾。
+         */
+        onOcrDone: suspend (TranslationTextAPI) -> Unit = {},
+    ): TranslateOutcome? {
         val cfg = BatchPipelineConfig(
             detEngine = det,
             ocrEngine = ocr,
@@ -1546,7 +1639,7 @@ class ReaderTranslationController(
             // RT-DETR + manga-ocr 的渲染方向（两态，默认竖排右→左；该路径不判横竖）
             rtTextDirection = RtTextDirection.load(appPrefs),
         )
-        val host = ReaderBatchHost(bitmap, translator, phase, page)
+        val host = ReaderBatchHost(bitmap, translator, phase, page, det, ocr, cancelled)
         val pipeline = IncrementalBatchPipeline(host, scope, cfg)
 
         val outcome = try {
@@ -1562,9 +1655,10 @@ class ReaderTranslationController(
             null
         }
 
-        // 管线每次 run 新建，缓存统计按「两条路线相加」取回
-        cacheCandidates += pipeline.cacheStats.candidates
-        cacheHits += pipeline.cacheStats.hits
+        // 管线每次 run 新建，缓存统计按「两条路线相加」取回。
+        // ⚠️ **取成局部量**：以前 += 到实例字段上，两页（或一页普通翻译与一章批量翻译）
+        //    并发时数字会互串 —— 提示里说的"命中了 3 条"根本不是这一页的。
+        val stats = CacheOutcome(pipeline.cacheStats.candidates, pipeline.cacheStats.hits)
 
         when (outcome) {
             null -> {
@@ -1576,7 +1670,9 @@ class ReaderTranslationController(
                 phase(ReaderTranslatePhase.FAILED, msg)
                 return null
             }
-            is BatchOutcome.Handled -> return outcome.translated
+            // 分批路线（Handled）：识别与两批翻译在管线里交错，**OCR 结束点拿不到**
+            // → 不回调 [onOcrDone]，锁整段持有（超分只能等这次翻译收尾）。
+            is BatchOutcome.Handled -> return TranslateOutcome(outcome.translated, stats)
             // 分批路径处理了但没结果（未检测到文字）：翻失败，落 OCR_EMPTY
             is BatchOutcome.HandledEmpty -> {
                 val msg = context.getString(R.string.reader_translate_ocr_empty)
@@ -1587,19 +1683,22 @@ class ReaderTranslationController(
             is BatchOutcome.DetectedNotBatched -> {
                 // 分批**已经跑完检测**，只是气泡太少不值得分批：复用它的裁剪结果，只补跑识别，
                 // 省掉普通路径的第二次整页 RT 检测（气泡少的页面恒定走这条，开销省一半）
-                return translatePlain(
+                // translatePlain 返回 null = 失败记录已写好（OCR 为空等），调用方直接结束
+                val list = translatePlain(
                     bitmap, det, ocr, srcLang, tgtLang, translator, phase, page,
-                    cfg.keepTextFree, outcome.bubbles, cfg.rtTextDirection
-                )
+                    cfg.keepTextFree, outcome.bubbles, cfg.rtTextDirection, cancelled, onOcrDone
+                ) ?: return null
+                return TranslateOutcome(list, stats)
             }
             is BatchOutcome.NotApplicable -> {
                 // 普通路径（增量模式 / 引擎组合不支持分批 / 中途出错回退）。
                 // ⚠️ keepTextFree 必须**显式**带过去：这条路径会重新检测一次，漏传就会丢掉自由文字，
                 // 而同一次翻译的分批路径是保留的 —— 表现为「同一页有时有旁白、有时没有」
-                return translatePlain(
+                val list = translatePlain(
                     bitmap, det, ocr, srcLang, tgtLang, translator, phase, page, cfg.keepTextFree, null,
-                    cfg.rtTextDirection
-                )
+                    cfg.rtTextDirection, cancelled, onOcrDone
+                ) ?: return null
+                return TranslateOutcome(list, stats)
             }
         }
     }
@@ -1626,6 +1725,19 @@ class ReaderTranslationController(
          * RT 路径不判横竖，方向完全由它决定。
          */
         rtTextDirection: TextDirection = TextDirection.VERTICAL_RL,
+        /** 本次调用自己的取消信号（见 [ReaderCancelSignals]）。 */
+        cancelled: () -> Boolean = { false },
+        /**
+         * **OCR 阶段结束**（检测 + 识别都做完）的回调。
+         *
+         * ⚠️ **调用点必须在"识别完成、翻译请求发出之前"**，这是 v2 超分能与 API 请求并行的唯一落点：
+         * ```
+         * 持 OcrLock：检测 + 识别  →  ← 这里放锁
+         * 不持锁：  超分 ∥ 翻译请求 → 渲染
+         * ```
+         * 放在更后面（比如翻译完）就等于回到"超分只能等翻译"，用户要的并行没了。
+         */
+        onOcrDone: suspend (TranslationTextAPI) -> Unit = {},
     ): List<TranslatedBubble>? {
         val blocks: List<TextBlockInfo> = if (preDetected != null) {
             LogCollector.d(TAG, "translatePlain: 复用分批检测的 ${preDetected.size} 个气泡，只跑识别")
@@ -1658,23 +1770,38 @@ class ReaderTranslationController(
             return null
         }
 
+        // ⚠️ **放锁点**：检测 + 识别都做完了，往下只剩翻译请求（不碰 OCR 引擎单例）。
+        //    回调里会 `OcrLock.release()` 并启动超分 —— 于是"超分 ∥ 翻译请求"才成立；
+        //    本地引擎（LlamaCpp/NLLB）由回调自己 `join`，退化成串行（用户口径：本地不行）。
+        onOcrDone(translator)
+
         phase(ReaderTranslatePhase.TRANSLATING, null)
         val streamingOn = translateMode.value != MODE_AHEAD &&
             appPrefs.getBoolean("Incremental_Render", true)
         return TranslateUtils.translateBubbles(
             translator, bubbleRegions, srcLang, tgtLang, customPrefs,
-            isCancelled = { cancelFlag.get() },
+            isCancelled = cancelled,
             // 流式局部结果：仅非增量模式 + 开关打开时上屏
-            onPartialBubbles = { partial -> if (streamingOn) showPartial(page, partial, bitmap) },
+            onPartialBubbles = { partial -> if (streamingOn) showPartial(page, partial, bitmap, det) },
         )
     }
 
-    /** 分批管线的宿主钩子：进度落状态浮层、首批结果落页面（仅当前页）。 */
+    /**
+     * 分批管线的宿主钩子：进度落状态浮层、首批结果落页面（仅当前页）。
+     *
+     * ⚠️ `det`/`ocr`/`cancelled` **都由构造点显式传进来**（不再读控制器的实例字段）：
+     * 实例字段在并发下会被别的页覆盖 —— 表现是「同一页有时竖排有时横排」、
+     * 「取消 A 页连带取消 B 页」这类**不崩不报错的静默错误**。
+     */
     private inner class ReaderBatchHost(
         private val pageBitmap: Bitmap,
         override val translator: TranslationTextAPI,
         private val phase: (ReaderTranslatePhase, String?) -> Unit,
         private val page: Int,
+        /** 产出这一页的识别引擎（渲染方向要用它，见 [renderBubbles] 的 `det` 参数）。 */
+        private val det: DetEngine,
+        private val ocr: OcrEngine,
+        private val cancelled: () -> Boolean,
     ) : BatchPipelineHost {
 
         override val context: Context get() = this@ReaderTranslationController.context
@@ -1712,7 +1839,7 @@ class ReaderTranslationController(
             // 阅读器已关（后台任务）或这不是用户正在看的那一页 → 不渲染半成品：
             // 渲染一张全页图要几十 MB 渲染缓存，后台任务没人看，纯烧内存
             if (!uiAttached || page != currentPageProvider()) return
-            showPartial(page, bubbles, pageBitmap)
+            showPartial(page, bubbles, pageBitmap, det)
         }
 
         override suspend fun onBatchResult(bubbles: List<TranslatedBubble>) {
@@ -1722,14 +1849,14 @@ class ReaderTranslationController(
             if (bubbles.isEmpty()) return
             if (page != currentPageProvider()) return   // 后台队列页不渲染
             val cfg = cacheManager.getOverlayConfig(appPrefs)
-            val out = renderPage(page, pageBitmap, bubbles, TranslationCacheManager.OverlayMode.TRANSLATED, cfg)
+            val out = renderPage(page, pageBitmap, bubbles, TranslationCacheManager.OverlayMode.TRANSLATED, cfg, det)
             renderLru.put(partialKey(page, baseSig(page)), out)
             // 首批已出 → 后续进度就是第二批（管线回调不带批次，只能这样推）
             batchIndex = 2
             withContext(Dispatchers.Main) { onVisual() }
         }
 
-        override fun isCancelled(): Boolean = cancelFlag.get()
+        override fun isCancelled(): Boolean = cancelled()
 
         override fun contextHistory(): LinkedList<Pair<String, String>> = readerContextHistory
 
@@ -1740,13 +1867,21 @@ class ReaderTranslationController(
     private val readerContextHistory = LinkedList<Pair<String, String>>()
     private val readerTextCache = RegionCacheManager()
 
-    /** 本次 [runTranslate] 的文本缓存候选/命中数（两条路线相加）。见 [reportCacheOutcome]。 */
-    private var cacheCandidates = 0
-    private var cacheHits = 0
+    /**
+     * 一次翻译（管线路线 + 普通路线）的产物：气泡 + 缓存统计。
+     * 调用方拿到 null 表示"失败记录已写好"，直接结束。
+     */
+    private class TranslateOutcome(val bubbles: List<TranslatedBubble>, val cache: CacheOutcome)
 
-    /** 本次 [runTranslate] 的识别引擎，用于逐气泡日志里的「来源」字段。 */
-    private var runDet: DetEngine = DetEngine.PP_OCR_V6
-    private var runOcr: OcrEngine = OcrEngine.PPOcrV6
+    /**
+     * 最近一次真正跑过的识别引擎 —— **只作兜底**。
+     *
+     * ⚠️ `visualBitmap`（渲染历史行：进阅读器看上一轮的译文、三态切回原文）手上没有"这一页
+     * 是哪个引擎跑的"，只能拿最近一次的值。**渲染路径本身一律把 det/ocr 当参数传**
+     * （见 `renderPage`/`ReaderBatchHost`），否则并发下同一页会"有时竖排有时横排"。
+     */
+    @Volatile private var lastDet: DetEngine = DetEngine.PP_OCR_V6
+    @Volatile private var lastOcr: OcrEngine = OcrEngine.PPOcrV6
 
     // ========== 渲染 ==========
 
@@ -1809,14 +1944,14 @@ class ReaderTranslationController(
      * ⚠️ 同时做**合并**：已有渲染在途就直接丢弃本次回调（最终整页结果走 [renderInto]，不会丢）。
      * 否则并发的全页渲染会把内存顶爆（截屏翻译路径复用同一张截图 bitmap，无此问题）。
      */
-    private fun showPartial(page: Int, bubbles: List<TranslatedBubble>, bitmap: Bitmap) {
+    private fun showPartial(page: Int, bubbles: List<TranslatedBubble>, bitmap: Bitmap, det: DetEngine) {
         if (bubbles.isEmpty()) return
         if (page != currentPageProvider()) return
         if (partialJob?.isActive == true) return
         partialJob = scope.launch(Dispatchers.IO) {
             val gen = renderGeneration
             val cfg = cacheManager.getOverlayConfig(appPrefs)
-            val out = renderPage(page, bitmap, bubbles, TranslationCacheManager.OverlayMode.TRANSLATED, cfg)
+            val out = renderPage(page, bitmap, bubbles, TranslationCacheManager.OverlayMode.TRANSLATED, cfg, det)
             // 代次变了 = 期间替换表被改过，这张半成品是旧规则的 → 丢弃（最终整页结果会覆盖）
             if (gen != renderGeneration) {
                 LogCollector.d(TAG, "showPartial: 替换表已变，丢弃旧规则的半成品 page=$page")
@@ -1884,6 +2019,7 @@ class ReaderTranslationController(
             renderBubbles(
                 original = orig, bubbles = bubbles,
                 mode = TranslationCacheManager.OverlayMode.TRANSLATED, cfg = config, base = null,
+                det = lastDet,
             )
         } finally {
             // renderOverlay 开头就 copy() 出独立副本 → 源图渲染完即可回收（导出逐页进行，别攒内存）
@@ -1917,9 +2053,9 @@ class ReaderTranslationController(
      * 两边对照。来源按「本次有没有真的调过 API」判定，不用渲染时的 `fromCache` —— 那个标志还被
      * 「缓存命中标记」设置控制，不能当作事实来源。
      */
-    private fun logBubbles(page: Int, bubbles: List<TranslatedBubble>) {
+    private fun logBubbles(page: Int, bubbles: List<TranslatedBubble>, det: DetEngine, ocr: OcrEngine) {
         if (bubbles.isEmpty()) return
-        LogCollector.d(TAG, "page=$page 气泡明细（共 ${bubbles.size} 个，引擎=$runDet/$runOcr）：")
+        LogCollector.d(TAG, "page=$page 气泡明细（共 ${bubbles.size} 个，引擎=$det/$ocr）：")
         bubbles.forEachIndexed { i, b ->
             val origin = originOf(b)
             val vertical = b.direction != TextDirection.HORIZONTAL
@@ -1951,16 +2087,16 @@ class ReaderTranslationController(
      *
      * 用户要求：提示「12 条里面命中 3 条」这个口径，而不是笼统说一句"有缓存"。
      */
-    private fun cacheNotice(page: Int, total: Int): String? {
-        if (cacheHits <= 0) return null
-        val fromApi = (cacheCandidates - cacheHits).coerceIn(0, total)
+    internal fun cacheNotice(page: Int, total: Int, cache: CacheOutcome): String? {
+        if (cache.hits <= 0) return null
+        val fromApi = (cache.candidates - cache.hits).coerceIn(0, total)
         LogCollector.d(
             TAG,
-            "page=$page 缓存命中 $cacheHits/$cacheCandidates（译文 $fromApi 条来自 API，共 $total 条）"
+            "page=$page 缓存命中 ${cache.hits}/${cache.candidates}（译文 $fromApi 条来自 API，共 $total 条）"
         )
         return when {
             fromApi <= 0 -> context.getString(R.string.reader_translate_all_cached, total)
-            else -> context.getString(R.string.reader_translate_partial_cached, cacheHits, cacheCandidates, fromApi)
+            else -> context.getString(R.string.reader_translate_partial_cached, cache.hits, cache.candidates, fromApi)
         }
     }
 
@@ -1969,6 +2105,9 @@ class ReaderTranslationController(
      * 底图由调用方先经 [srBaseFor] 解析好传进来（那是唯一要读磁盘的一步）。
      *
      * @param base 显示底图；null = 用 [original] 本身（原图，baseScale = 1）
+     * @param det 产出这页气泡的**识别引擎**（决定竖排方向是取 RT 设置还是竖排方向设置）。
+     *   ⚠️ **必须是参数**，不能在函数里读控制器字段：并发下会被别的页改写，
+     *   表现就是那类最难查的「同一页有时竖排有时横排」。
      *
      * ⚠️ **气泡坐标永远是"原图空间"**（v2 不做 OCR 前超分），超分底图只是**更密的像素**：
      * `base.scale = 底图宽 / 坐标空间宽` 交给 `OverlayRenderer` 反算坐标空间，这里不手动乘任何坐标。
@@ -1979,6 +2118,7 @@ class ReaderTranslationController(
         mode: TranslationCacheManager.OverlayMode,
         cfg: TranslationCacheManager.OverlayConfig,
         base: SrBase?,
+        det: DetEngine,
     ): Bitmap = OverlayRenderer.renderOverlay(
         original = base?.bitmap ?: original,
         regions = bubbles,
@@ -1990,7 +2130,7 @@ class ReaderTranslationController(
         // 渲染时的竖排方向覆盖：RT-DETR + manga-ocr 用「RT-DETR 渲染方向」（不看竖排方向设置，
         // 日文竖排恒右→左）；PP/ML Kit 用竖排方向设置
         verticalDirection = RtTextDirection.resolve(
-            runDet, RtTextDirection.load(appPrefs), cfg.textDirection
+            det, RtTextDirection.load(appPrefs), cfg.textDirection
         ),
         // 阅读器译图渲染也要用自定义结果字体（Custom_Result_Font），否则恒为系统字体
         fontTypeface = OverlayRenderer.loadResultTypeface(context, customPrefs),
@@ -2017,21 +2157,29 @@ class ReaderTranslationController(
         bubbles: List<TranslatedBubble>,
         mode: TranslationCacheManager.OverlayMode,
         cfg: TranslationCacheManager.OverlayConfig,
+        /** 该页的识别引擎；缺省取"最近一次跑过的"（渲染历史行时手上没有，见 [lastDet]）。 */
+        det: DetEngine = lastDet,
     ): Bitmap = renderBubbles(
         original = original, bubbles = bubbles, mode = mode, cfg = cfg,
         base = srBaseFor(pageIndex, original, original.width),
+        det = det,
     )
 
-    /** 渲染并预热译文图缓存，同时切到该态。最终结果写入后**丢弃半成品**，避免残留旧图。 */
+    /**
+     * 渲染并预热译文图缓存，同时切到该态。最终结果写入后**丢弃半成品**，避免残留旧图。
+     *
+     * @param det 产出这页气泡的识别引擎（必须由调用方传，见 [renderBubbles] 的 `det` 说明）
+     */
     private suspend fun renderInto(
         pageIndex: Int,
         bubbles: List<TranslatedBubble>,
         mode: TranslationCacheManager.OverlayMode,
         original: Bitmap,
         cfg: TranslationCacheManager.OverlayConfig,
+        det: DetEngine = lastDet,
     ) {
         val sig = baseSig(pageIndex)
-        renderLru.put(renderKey(pageIndex, mode, sig), renderPage(pageIndex, original, bubbles, mode, cfg))
+        renderLru.put(renderKey(pageIndex, mode, sig), renderPage(pageIndex, original, bubbles, mode, cfg, det))
         renderLru.remove(partialKey(pageIndex, sig))
         currentVisualByPage[pageIndex] = mode
     }
@@ -2155,6 +2303,7 @@ class ReaderTranslationController(
                 val out = renderBubbles(
                     original = src, bubbles = scaled,
                     mode = TranslationCacheManager.OverlayMode.TRANSLATED, cfg = cfg, base = null,
+                    det = lastDet,
                 )
                 // 代次变了 = 渲染期间替换表被改过 → 这张是旧规则的，写进去会被预热的
                 // 「webtoonLru.get(p) == null」过滤永久跳过（规则再也生效不了）

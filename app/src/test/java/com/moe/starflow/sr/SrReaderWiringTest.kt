@@ -51,7 +51,7 @@ class SrReaderWiringTest {
     fun everyOverlayRenderGoesThroughTheBaseResolvingEntry() {
         val src = controller()
         assertTrue("分批首屏结果要走 renderPage", src.contains("renderPage(page, pageBitmap, bubbles"))
-        assertTrue("最终整页结果要走 renderPage", src.contains("renderPage(pageIndex, original, bubbles, mode, cfg)"))
+        assertTrue("最终整页结果要走 renderPage", src.contains("renderPage(pageIndex, original, bubbles, mode, cfg"))
         assertTrue("三态取图要走 renderPage", src.contains("renderPage(pageIndex, orig, bubbles, mode, config)"))
         // ⚠️ 导出/Webtoon **刻意不用**超分底图：导出不该因为"这台机器开过超分"而翻体积；
         //    Webtoon 页是按屏宽采样解码的，底图倍率对不上（见各自调用点注释）
@@ -69,8 +69,10 @@ class SrReaderWiringTest {
         )
         // 手动/自动/增量（runTranslate）：在 OcrLock **释放之后**启动
         assertTrue(
-            "runTranslate 的 finally 里必须在 release 之后启动超分",
-            src.contains("OcrLock.release()\n            // 「翻译时自动超分」"),
+            "runTranslate 的 finally 必须「条件放锁 → 兜底启动超分」（放锁只能放一次，" +
+                "而兜底只在没能提前启动时才跑）",
+            src.contains("if (lockHeld) OcrLock.release()") &&
+                src.contains("if (!srStarted && !cancel.get()) maybeStartSrAfterTranslate(page)"),
         )
     }
 
