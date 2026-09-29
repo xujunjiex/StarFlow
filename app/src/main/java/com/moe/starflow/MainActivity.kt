@@ -34,20 +34,7 @@ class MainActivity : BaseActivity() {
     ) { /* 无论用户是否授权都继续 */ }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        // ── 开发者工具：超分真机性能基准（只在 debug 包、且显式带 extra 时触发）──
-        // 用法：adb shell am start -n com.moe.starflow/.MainActivity --es sr_bench 1
-        // 正常启动（没有这个 extra）完全不受影响；报告写到 files/sr_benchmark.txt
-        if (BuildConfig.DEBUG && intent?.hasExtra("sr_bench") == true) {
-            // 参数：--es sr_bench_model <名字片段>  --ei sr_bench_threads <线程数，默认 4 给前台留核>
-            com.moe.starflow.sr.SrBenchmark.run(
-                applicationContext,
-                intent?.getStringExtra("sr_bench_model"),
-                intent?.getIntExtra("sr_bench_threads", com.moe.starflow.sr.srThreads()) ?: com.moe.starflow.sr.srThreads(),
-            )
-            // ⚠️ **一次性**：不清掉 extra 的话，App 从最近任务重开会把同一 intent 再送进来 → 基准重跑一遍
-            intent?.removeExtra("sr_bench")
-        }
+        super.onCreate(savedInstanceState)
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT) //锁定竖屏
 
         setContentView(R.layout.activity_main)
@@ -91,20 +78,10 @@ class MainActivity : BaseActivity() {
             notificationPermissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
 
-        // 本地 GGUF 模型后台预热：把模型加载挪到用户翻译前，避免首次翻译才等模型就绪。
-        // 只在用户当前选的确实是 LlamaCpp 引擎时才预加载（否则纯属浪费几百 MB ~ 几 GB 内存）。
-        val prefs = com.moe.starflow.utils.CustomPreference.getInstance(this)
-        if (prefs.getInt("Text_API", com.moe.starflow.utils.Constants.TextApi.BING.id) ==
-            com.moe.starflow.utils.Constants.TextApi.AI.id &&
-            prefs.getInt("Text_AI", com.moe.starflow.utils.Constants.TextAI.NLLB.id) ==
-            com.moe.starflow.utils.Constants.TextAI.HYMT2.id
-        ) {
-            com.moe.starflow.llamacpp.LlamaCppModelStore.init(applicationContext)
-            com.moe.starflow.llamacpp.LlamaCppSharedHolder.warmUp(
-                applicationContext,
-                com.moe.starflow.llamacpp.LlamaCppModelStore.active(),
-            )
-        }
+        // 本地 GGUF 模型**不在启动时预热**（用户口径 2026-10-01）：
+        // 用户选了本地翻译引擎时，启动就预热等于「只是开 app 看漫画/超分」也在后台常驻几百 MB 的大模型
+        // （实测 461MB 的 Hy-MT2 一加载就抢 6 个核 + 把可用内存压到 171MB）。
+        // 现在**只有真正发起翻译时**才加载（TranslatorFactory.create → 按需 get）。
     }
 
 }

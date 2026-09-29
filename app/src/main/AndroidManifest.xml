@@ -127,6 +127,14 @@
             android:exported="false"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
+        <!-- 超分基准的调试触发器：只创建 Application、不起 Activity → 不会触发本地大模型预热 -->
+        <receiver
+            android:name=".sr.SrBenchReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.moe.starflow.SR_BENCH" />
+            </intent-filter>
+        </receiver>
     </application>
 
 </manifest>

@@ -61,12 +61,13 @@ object SrBenchmark {
             val sb = StringBuilder()
             try {
                 val srDir = File(app.getExternalFilesDir(null), "sr")
+                SrBenchInput.load(app)
                 val models = (srDir.listFiles { f -> f.name.endsWith(".onnx") } ?: emptyArray())
                     .filter { modelFilter == null || it.name.contains(modelFilter, ignoreCase = true) }
                     .sortedBy { it.length() }
                 emit(out, sb, "===== 运行 ${java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())} =====")
                 emit(out, sb, "设备=${android.os.Build.MODEL}  核数=${Runtime.getRuntime().availableProcessors()}")
-                emit(out, sb, "输入=${IN_W}x$IN_H (对齐补边后 ${align16(IN_W + PAD * 2)}x${align16(IN_H + PAD * 2)})  预热1+计时2，取最小")
+                emit(out, sb, "测试图=${SrBenchInput.sourceLabel}  补边对齐后 ${align16(SrBenchInput.width + PAD * 2)}x${align16(SrBenchInput.height + PAD * 2)}  预热1 + 计时3(取最小/中位)")
                 emit(out, sb, "线程=$threads  过滤=${modelFilter ?: "全部"}  模型数=${models.size}  当前负载=${runCatching { java.io.File("/proc/loadavg").readText().trim() }.getOrDefault("?")}")
                 for (m in models) {
                     val type = runCatching { inputTypeName(m) }.getOrElse { "?(${it.javaClass.simpleName})" }
@@ -127,6 +128,7 @@ object SrBenchmark {
         val bytesPer = if (isFp16) 2 else 4
         // 全 0 输入：fp16 的 0.0 = 0x0000、fp32 的 0.0 = 0f —— 都不需要做数值转换
         val buf: ByteBuffer = ByteBuffer.allocateDirect(iw * ih * 3 * bytesPer).order(ByteOrder.nativeOrder())
+        SrBenchInput.fill(buf, iw, ih, isFp16)   // 真实 1K 漫画页
         buf.rewind()
         val shape = longArrayOf(1, 3, ih.toLong(), iw.toLong())
         val tensor = if (isFp16) OnnxTensor.createTensor(env, buf, shape, OnnxJavaType.FLOAT16)
@@ -137,7 +139,7 @@ object SrBenchmark {
         var min = Long.MAX_VALUE
         val times = mutableListOf<Long>()
         try {
-            for (i in 0..1) {   // 0 = 预热，1 = 计时（只跑两遍：慢模型一遍就几十秒）
+            for (i in 0..3) {   // 0 = 预热，1/2/3 = 计时（用户口径：每个模型连测 3 次）
                 val s0 = SystemClock.elapsedRealtime()
                 val r = session.run(mapOf(name to tensor))
                 val e0 = SystemClock.elapsedRealtime() - s0
