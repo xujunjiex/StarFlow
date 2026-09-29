@@ -342,6 +342,37 @@ class SrReaderWiringTest {
         assertTrue("notify 必须排在预热之后", act.indexOf("pageAdapter?.notifyItemChanged(pageIndex)", j) > j)
     }
     @Test
+    fun panelRefreshesSrRowsWhenComingBackFromModelPage() {
+        // 真机反馈：「切换超分模型返回后颜色面板没有刷新更新」。
+        // 面板是打开那一刻的快照（模型行文案在 onCreateView 里读一次），从模型管理页回来必须重读。
+        val sheet = menuSheet()
+        assertTrue("面板要有 notifySrChanged 入口", sheet.contains("fun notifySrChanged()"))
+        assertTrue("它要调 onCreateView 里赋的刷新闭包", sheet.contains("refreshSrRows?.invoke()"))
+        assertTrue("闭包里要重读模型行文案", sheet.contains("getString(R.string.reader_sr_model_row, srModelLabel(p2))"))
+        assertTrue("闭包里要重算整组显隐/开关/Anime4K", sheet.contains("refreshSrGroup()"))
+        val act = activity()
+        assertTrue(
+            "宿主回到前台必须推一次",
+            act.contains("?.notifySrChanged()"),
+        )
+    }
+
+    @Test
+    fun colorPanelPreviewShowsTheUpscaledResult() {
+        // 用户口径：「在调色面板启用超分或者切换超分模型，面板的预览应该要实时更新超分的结果」。
+        val sheet = menuSheet()
+        val act = activity()
+        val ctl = controller()
+        assertTrue("预览格要优先用超分预览", sheet.contains("= state.srPreviewBitmap"))
+        assertTrue("state 要有这一格", sheet.contains("val srPreviewBitmap: Bitmap? = null"))
+        assertTrue("宿主必须准备它", act.contains("translationController?.srPreviewFor(currentPage, bmp.width)"))
+        assertTrue("要传给面板", act.contains("srPreviewBitmap = srPreview,"))
+        assertTrue("控制器提供按目标宽度缩放的入口", ctl.contains("suspend fun srPreviewFor(pageIndex: Int, targetWidth: Int): Bitmap?"))
+        // ⚠️ 必须在 IO 侧做（预览格是主线程渲染的）
+        assertTrue("缩放必须在 IO 线程", ctl.contains("= withContext(Dispatchers.IO) {"))
+        assertFalse("不许在面板里读盘/缩放", sheet.contains("SrStore"))
+    }
+    @Test
     fun perPageSrButtonHasThreeSemanticsAndHidesWhenOff() {
         val act = activity()
         val layout = read("src/main/res/layout/activity_manga_reader.xml")

@@ -50,6 +50,12 @@ class ReaderMenuState(
     val downloadLabel: String = "",
     val isDarkPanel: Boolean = false,
     val previewBitmap: Bitmap? = null,
+    /**
+     * 「处理后」预览格要用的**超分结果**（已由宿主缩放到与 [previewBitmap] 同宽）。
+     * null = 这一页没有超分结果 / 正显示原图 → 预览回落 [previewBitmap]。
+     * ⚠️ 必须由宿主在 **IO 线程**准备好：预览格是主线程渲染的，不能在面板里读盘/跑推理。
+     */
+    val srPreviewBitmap: Bitmap? = null,
     /** Webtoon（连续滑动）的显示态：false=原图，true=译文（默认）。决定模式图标上是否带「译」角标。 */
     val webtoonTranslated: Boolean = true,
     val translateMode: Int = 0,                 // 0 手动 1 自动 2 增量
@@ -700,6 +706,14 @@ class ReaderMenuSheet(
             if (!checked) SuperResolutionEngines.releaseSrModel()
             refreshEnhancedPreview()
             refreshSrGroup()
+        // 宿主从「超分模型管理」/ 设置返回时靠它重读（面板是打开那一刻的快照）
+        refreshSrRows = {
+            val p2 = CustomPreference.getInstance(requireContext()).getSharedPreferences()
+            view.findViewById<TextView>(R.id.tv_sr_model_row).text =
+                getString(R.string.reader_sr_model_row, srModelLabel(p2))
+            refreshSrGroup()
+            refreshEnhancedPreview()
+        }
             cb.onReaderSrChanged(checked)
         }
         // 「翻译时自动超分」：只管"点翻译要不要顺手超分"（超分本身总开关仍是上面那个）
@@ -709,6 +723,14 @@ class ReaderMenuSheet(
             cb.onReaderSrAutoChanged(checked)
         }
         refreshSrGroup()
+        // 宿主从「超分模型管理」/ 设置返回时靠它重读（面板是打开那一刻的快照）
+        refreshSrRows = {
+            val p2 = CustomPreference.getInstance(requireContext()).getSharedPreferences()
+            view.findViewById<TextView>(R.id.tv_sr_model_row).text =
+                getString(R.string.reader_sr_model_row, srModelLabel(p2))
+            refreshSrGroup()
+            refreshEnhancedPreview()
+        }
 
         fun refreshProc() {
             ivProc.colorFilter = cur().toColorFilter()
@@ -785,7 +807,7 @@ class ReaderMenuSheet(
      * ⚠️ 预览格是**主线程**渲染的（`state.previewBitmap` 就在面板构建里用），
      * 所以这里绝不能同步跑 ONNX —— 那正是"一开调色面板就卡死"的原因之一。
      */
-    private fun enhancedPreview(src: android.graphics.Bitmap): android.graphics.Bitmap? = null
+    private fun enhancedPreview(src: android.graphics.Bitmap): android.graphics.Bitmap? = state.srPreviewBitmap
 
     /**
      * 面板主题的**标题色**控件（浅色 `#333333` / 深色 `#E2E2E4`）。
@@ -1131,6 +1153,20 @@ class ReaderMenuSheet(
             cb.onConcurrency(n)
         })
     }
+
+    /**
+     * 宿主回到前台 / 从「超分模型管理」返回 → **超分相关的行全部重读**。
+     *
+     * ⚠️ 面板是**打开那一刻的快照**：不重读的话，用户在模型管理页换了模型、回来还是旧名字
+     * （真机反馈「切换超分模型返回后颜色面板没有刷新更新」）。
+     * 与 [notifyTranslateChanged] 同一条约定：新增宿主可改的字段必须一起加进这里。
+     */
+    fun notifySrChanged() {
+        refreshSrRows?.invoke()
+    }
+
+    /** 由 `onCreateView` 赋值的刷新闭包（Kotlin 局部函数没法从成员函数里调）。 */
+    private var refreshSrRows: (() -> Unit)? = null
 
     /**
      * 外部刷新入口（翻译任务开始/完成/失败、切章、批量任务进度都走这里）。

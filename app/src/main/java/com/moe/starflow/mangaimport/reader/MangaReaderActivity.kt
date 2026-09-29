@@ -317,7 +317,12 @@ class MangaReaderActivity : AppCompatActivity() {
                 }
             }
         }
+        // ⚠️ 从「超分模型管理」等外部页面回来时，面板与右下角都是**打开那一刻的快照** ——
+        // 用户在那边换了模型，这里必须重读（真机反馈「切换超分模型返回后颜色面板没有刷新更新」）。
+        refreshTranslationChrome()
+        (supportFragmentManager.findFragmentByTag(ReaderMenuSheet.TAG) as? ReaderMenuSheet)?.notifySrChanged()
         translationController?.resumeFromBackground()
+
     }
 
     override fun onStop() {
@@ -1664,6 +1669,14 @@ class MangaReaderActivity : AppCompatActivity() {
         // 调色对比图：异步加载当前页
         lifecycleScope.launch {
             val previewBmp = withContext(Dispatchers.IO) { source.loadFull(currentPage) }
+            // 「处理后」预览格要能看到**超分结果**（用户口径）：必须在 IO 侧准备好，
+            // 面板是主线程构建的，绝不能在里面读盘/缩放（那正是"开面板卡死"的老毛病）。
+            val srPreview = previewBmp?.let { bmp ->
+                withContext(Dispatchers.IO) {
+                    translationController?.srPreviewFor(currentPage, bmp.width)
+                }
+            }
+
             // ⚠️ **顺序敏感**：面板一打开，控制器就会回退到手动模式（setPanelOpen → pauseToManual），
             // 所以必须在这里、回退发生**之前**记下模式：
             //   · 提示用 —— 从自动/增量退下来要告知用户，否则用户以为设置被清掉了
@@ -1684,6 +1697,7 @@ class MangaReaderActivity : AppCompatActivity() {
                     downloadLabel = getString(R.string.reader_download_original),
                     isDarkPanel = dark,
                     previewBitmap = previewBmp,
+                    srPreviewBitmap = srPreview,
                     webtoonTranslated = webtoonTranslated,
                     translateMode = modeBeforeOpen,
                     debounceMs = translationController?.debounceMs?.value ?: 500,

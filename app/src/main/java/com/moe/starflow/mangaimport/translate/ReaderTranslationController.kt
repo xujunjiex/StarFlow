@@ -444,6 +444,32 @@ class ReaderTranslationController(
         }
     }
 
+    /**
+     * 给调色面板「处理后」预览格准备的**超分底图**（缩放到与 `targetWidth` 同宽）。
+     *
+     * 用户口径（2026-10）：「在调色面板启用超分或者切换超分模型，面板的预览应该要实时更新
+     * 超分或者其他调整之后的结果」。
+     *
+     * ⚠️ **必须在 IO 线程调用**：预览格是主线程渲染的，读盘 + 缩放都不能在面板里做
+     * （那正是"一开调色面板就卡死"的老毛病）。
+     * @return null = 这一页没有超分结果 / 用户把这一页切回原图（预览用原图即可）
+     */
+    suspend fun srPreviewFor(pageIndex: Int, targetWidth: Int): Bitmap? = withContext(Dispatchers.IO) {
+        if (targetWidth <= 0 || !isSrVisualOn(pageIndex)) return@withContext null
+        if (SrStore.storedModelOrNull(context, manga.id, pageIndex) == null) return@withContext null
+        // 已经预热过就直接缩它（省一次解码）
+        val cached = srBaseLru.get(pageIndex)?.bitmap
+        val full = cached ?: SrStore.load(context, manga.id, pageIndex) ?: return@withContext null
+        try {
+            if (full.width <= targetWidth) return@withContext full
+            val h = (full.height.toLong() * targetWidth / full.width).toInt().coerceAtLeast(1)
+            Bitmap.createScaledBitmap(full, targetWidth, h, true)
+        } finally {
+            // 只有"本次现解码的"才回收（缓存里那份归缓存）
+            if (cached == null && !full.isRecycled) full.recycle()
+        }
+    }
+
     /** 底图变了（超分完成 / 二态切换 / 换模型）：作废该页渲染缓存并刷新上屏。 */
     private suspend fun onBaseChanged(pageIndex: Int) {
         srBaseLru.remove(pageIndex)
