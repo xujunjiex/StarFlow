@@ -67,7 +67,7 @@ object SrBenchmark {
                 emit(out, sb, "===== 运行 ${java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())} =====")
                 emit(out, sb, "设备=${android.os.Build.MODEL}  核数=${Runtime.getRuntime().availableProcessors()}")
                 emit(out, sb, "输入=${IN_W}x$IN_H (对齐补边后 ${align16(IN_W + PAD * 2)}x${align16(IN_H + PAD * 2)})  预热1+计时2，取最小")
-                emit(out, sb, "线程=$threads  过滤=${modelFilter ?: "全部"}  模型数=${models.size}  当前负载=${java.io.File("/proc/loadavg").readText().trim()}")
+                emit(out, sb, "线程=$threads  过滤=${modelFilter ?: "全部"}  模型数=${models.size}  当前负载=${runCatching { java.io.File("/proc/loadavg").readText().trim() }.getOrDefault("?")}")
                 for (m in models) {
                     val type = runCatching { inputTypeName(m) }.getOrElse { "?(${it.javaClass.simpleName})" }
                     emit(out, sb, "")
