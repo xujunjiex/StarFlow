@@ -71,7 +71,12 @@ class AnimeJaNaiEngineTensorTypeTest {
         val s = src()
         assertTrue("必须用 ALL_OPT（比 BASIC_OPT 快 26%）", s.contains("OptLevel.ALL_OPT"))
         assertFalse("不许退回 BASIC_OPT", s.contains("OptLevel.BASIC_OPT"))
-        assertTrue("线程上限要放开到 8", s.contains("coerceIn(1, 8)"))
+        // 线程数改为**按核数自动决定**（用户口径：8 核就用 6 核）→ 策略收在 SrThreads.kt，
+        // 引擎与基准工具共用同一个函数，避免两处漂移。
+        assertTrue("引擎要用共用的 srThreads()", s.contains("srThreads()"))
+        val policy = java.io.File("src/main/java/com/moe/starflow/sr/SrThreads.kt").readText()
+        assertTrue("策略必须是 核数 - 2", policy.contains("availableProcessors() - 2"))
+        assertTrue("要钳在 2..8（4 核机器上写死 8 只会抢核）", policy.contains("coerceIn(2, 8)"))
         assertFalse("不许引入 NNAPI（实测无收益，还有模型慢 3.5 倍）", s.contains("addNnapi"))
     }
     @Test
