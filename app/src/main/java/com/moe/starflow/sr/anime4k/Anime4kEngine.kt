@@ -60,6 +60,17 @@ class Anime4kEngine(
     /** 每个 pass 之后还会被用到的纹理名（用于及早删除不再需要的纹理） */
     private lateinit var laterUses: Array<Set<String>>
 
+    /** 输入像素上限（见 companion 里的说明）。暴露给上层，好给出"带数字"的提示。 */
+    override val maxInputPixels: Long get() = MAX_INPUT_PIXELS
+
+    /**
+     * 上一次 [upscale] 失败的技术细节（短 ASCII 句，见接口注释）。
+     * ⚠️ 所有 GL 调用都在同一个单线程 executor 上（见类注释），这里只是普通字段。
+     */
+    private var failDetail: String? = null
+
+    override fun lastFailDetail(): String? = failDetail
+
     companion object {
         private const val TAG = "Anime4kEngine"
 
@@ -126,12 +137,20 @@ void main() {
     }) ?: false
 
     override fun upscale(src: Bitmap): Bitmap? = runOnGl {
-        if (!isInitialized) return@runOnGl null
+        failDetail = null
+        if (!isInitialized) {
+            failDetail = "engine not initialized"
+            return@runOnGl null
+        }
         val w = src.width
         val h = src.height
-        if (w <= 0 || h <= 0) return@runOnGl null
+        if (w <= 0 || h <= 0) {
+            failDetail = "empty source ${w}x$h"
+            return@runOnGl null
+        }
         if (w.toLong() * h.toLong() > MAX_INPUT_PIXELS) {
             LogCollector.d(TAG, "跳过 Anime4K：输入 ${w}x$h 超过 ${MAX_INPUT_PIXELS / 1000}K 像素上限")
+            failDetail = "source ${w}x$h > $MAX_INPUT_PIXELS px"
             return@runOnGl null
         }
 
@@ -243,6 +262,7 @@ void main() {
         } catch (e: Throwable) {
             // 与超分引擎同一约定：失败一律返回 null，调用方用原图
             LogCollector.e(TAG, "Anime4K 处理失败 (${mode.id})", e)
+            failDetail = "gl pipeline threw ${e.javaClass.simpleName}: ${e.message}"
             null
         } finally {
             runCatching {

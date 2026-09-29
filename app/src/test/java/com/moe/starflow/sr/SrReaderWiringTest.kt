@@ -190,6 +190,27 @@ class SrReaderWiringTest {
     }
 
     @Test
+    fun srNoticesGoThroughTheInAppOverlayNotToast() {
+        val act = activity()
+        // 用户口径：「超分的提示信息应该也用 app 系统提示，不要用手机底部 Toast」
+        assertTrue("必须有一个统一的超分提示出口", act.contains("private fun showSrNotice(text: String, isError: Boolean)"))
+        assertTrue("进行中的提示要常驻（autoDismiss=false），直到被结果替换", act.contains("private fun showSrProgress(text: String)"))
+        assertTrue("失败要用红色可复制的 chip", act.contains("overlay.showError(text)"))
+        assertTrue(
+            "拿不到悬浮窗权限 / 浮层被关掉时必须退回 Toast（否则点了毫无反馈）",
+            act.contains("UiUtils.showToast(this, text)"),
+        )
+        // 控制器侧：失败原因必须经宿主回调送出去（控制器不直接碰 UI）
+        val ctl = controller()
+        assertTrue("控制器要有 onSrNotice 回调", ctl.contains("var onSrNotice: (text: String, isError: Boolean) -> Unit"))
+        assertTrue("自动超分失败要报具体原因", ctl.contains("withContext(Dispatchers.Main) { onSrNotice(msg, true) }"))
+        assertTrue("断开 UI 绑定时要清掉回调", ctl.contains("onSrNotice = { _, _ -> }"))
+        // 旧的模糊文案不许再被引用
+        assertFalse("不许再用那句糊在一起的 reader_sr_failed", act.contains("R.string.reader_sr_failed"))
+        assertFalse("不许再用旧的 reader_sr_enhancing", act.contains("R.string.reader_sr_enhancing"))
+    }
+
+    @Test
     fun perPageSrButtonHasThreeSemanticsAndHidesWhenOff() {
         val act = activity()
         val layout = read("src/main/res/layout/activity_manga_reader.xml")

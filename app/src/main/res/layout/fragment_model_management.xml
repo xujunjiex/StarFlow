@@ -600,12 +600,13 @@
                         android:gravity="center_vertical">
 
                         <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="@string/sr_model_animejanai_balanced"
-                            android:textSize="14sp"
-                            android:textStyle="bold"/>
+                            android:id="@+id/sr_aji_balanced_title"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="@string/sr_model_animejanai_balanced"
+                                android:textSize="14sp"
+                                android:textStyle="bold"/>
 
                         <RadioButton
                             android:id="@+id/sr_aji_balanced_radio"
@@ -646,12 +647,13 @@
                         android:gravity="center_vertical">
 
                         <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="@string/sr_model_animejanai_performance"
-                            android:textSize="14sp"
-                            android:textStyle="bold"/>
+                            android:id="@+id/sr_aji_perf_title"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="@string/sr_model_animejanai_performance"
+                                android:textSize="14sp"
+                                android:textStyle="bold"/>
 
                         <RadioButton
                             android:id="@+id/sr_aji_perf_radio"
@@ -692,12 +694,13 @@
                         android:gravity="center_vertical">
 
                         <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="@string/sr_model_animejanai_sharp1_balanced"
-                            android:textSize="14sp"
-                            android:textStyle="bold"/>
+                            android:id="@+id/sr_aji_sharp1_balanced_title"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="@string/sr_model_animejanai_sharp1_balanced"
+                                android:textSize="14sp"
+                                android:textStyle="bold"/>
 
                         <RadioButton
                             android:id="@+id/sr_aji_sharp1_balanced_radio"
@@ -738,12 +741,13 @@
                         android:gravity="center_vertical">
 
                         <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="@string/sr_model_animejanai_sharp1_performance"
-                            android:textSize="14sp"
-                            android:textStyle="bold"/>
+                            android:id="@+id/sr_aji_sharp1_perf_title"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="@string/sr_model_animejanai_sharp1_performance"
+                                android:textSize="14sp"
+                                android:textStyle="bold"/>
 
                         <RadioButton
                             android:id="@+id/sr_aji_sharp1_perf_radio"
@@ -784,12 +788,13 @@
                         android:gravity="center_vertical">
 
                         <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="@string/sr_model_animejanai_sd_compact"
-                            android:textSize="14sp"
-                            android:textStyle="bold"/>
+                            android:id="@+id/sr_aji_sd_title"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="@string/sr_model_animejanai_sd_compact"
+                                android:textSize="14sp"
+                                android:textStyle="bold"/>
 
                         <RadioButton
                             android:id="@+id/sr_aji_sd_radio"
@@ -860,12 +865,13 @@
                         android:gravity="center_vertical">
 
                         <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="@string/sr_model_w2x_cunet_n0"
-                            android:textSize="14sp"
-                            android:textStyle="bold"/>
+                            android:id="@+id/sr_w2xc_n0_title"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="@string/sr_model_w2x_cunet_n0"
+                                android:textSize="14sp"
+                                android:textStyle="bold"/>
 
                         <RadioButton
                             android:id="@+id/sr_w2xc_n0_radio"
@@ -906,12 +912,13 @@
                         android:gravity="center_vertical">
 
                         <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="@string/sr_model_w2x_cunet_n1"
-                            android:textSize="14sp"
-                            android:textStyle="bold"/>
+                            android:id="@+id/sr_w2xc_n1_title"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="@string/sr_model_w2x_cunet_n1"
+                                android:textSize="14sp"
+                                android:textStyle="bold"/>
 
                         <RadioButton
                             android:id="@+id/sr_w2xc_n1_radio"
@@ -952,12 +959,13 @@
                         android:gravity="center_vertical">
 
                         <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="@string/sr_model_w2x_cunet_n2"
-                            android:textSize="14sp"
-                            android:textStyle="bold"/>
+                            android:id="@+id/sr_w2xc_n2_title"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="@string/sr_model_w2x_cunet_n2"
+                                android:textSize="14sp"
+                                android:textStyle="bold"/>
 
                         <RadioButton
                             android:id="@+id/sr_w2xc_n2_radio"
@@ -998,12 +1006,13 @@
                         android:gravity="center_vertical">
 
                         <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="@string/sr_model_w2x_cunet_n3"
-                            android:textSize="14sp"
-                            android:textStyle="bold"/>
+                            android:id="@+id/sr_w2xc_n3_title"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="@string/sr_model_w2x_cunet_n3"
+                                android:textSize="14sp"
+                                android:textStyle="bold"/>
 
                         <RadioButton
                             android:id="@+id/sr_w2xc_n3_radio"
@@ -1074,12 +1083,13 @@
                         android:gravity="center_vertical">
 
                         <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="@string/sr_model_w2x_swin_n0"
-                            android:textSize="14sp"
-                            android:textStyle="bold"/>
+                            android:id="@+id/sr_w2xs_n0_title"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="@string/sr_model_w2x_swin_n0"
+                                android:textSize="14sp"
+                                android:textStyle="bold"/>
 
                         <RadioButton
                             android:id="@+id/sr_w2xs_n0_radio"
@@ -1120,12 +1130,13 @@
                         android:gravity="center_vertical">
 
                         <TextView
-                            android:layout_width="0dp"
-                            android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="@string/sr_model_w2x_swin_n1"
-                            android:textSize="14sp"
-                            android:textStyle="bold"/>
+                            android:id="@+id/sr_w2xs_n1_title"
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="@string/sr_model_w2x_swin_n1"
+                                android:textSize="14sp"
+                                android:textStyle="bold"/>
 
                         <RadioButton
                             android:id="@+id/sr_w2xs_n1_radio"

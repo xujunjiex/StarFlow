@@ -3,6 +3,7 @@ package com.moe.starflow.sr
 import android.content.Context
 import android.content.SharedPreferences
 import android.graphics.Bitmap
+import com.moe.starflow.download.ModelDownloadRepository
 import com.moe.starflow.download.ModelKey
 import com.moe.starflow.sr.anime4k.Anime4kEngine
 import com.moe.starflow.sr.anime4k.Anime4kMode
@@ -28,12 +29,33 @@ interface SuperResolutionEngine {
     val scale: Int
 
     /**
+     * 输入像素上限（超过就直接跳过）。
+     *
+     * ⚠️ 暴露出来是为了让上层能给出**带数字**的提示 —— 用户口径：
+     * 「不要搞这么模糊的提示信息，到底是什么原因无法超分写清楚」。
+     * 只说"尺寸太大"用户没法判断该不该换模型；说"本页 1800×2600 = 4.7MP，
+     * 超过 Anime4K 的 1.5MP 上限"他立刻知道要改用超分模型。
+     */
+    val maxInputPixels: Long
+
+    /**
      * 处理一张图。
      *
      * @return 处理后的新 Bitmap；**失败一律返回 null**（不抛异常）——
      *   超分/增强是"锦上添花"的一步，失败必须让调用方无痛回退到原图。
      */
     fun upscale(src: Bitmap): Bitmap?
+
+    /**
+     * **[upscale] 上一次返回 null 的技术细节**（成功时为 null）。
+     *
+     * 例如 `output 100x100, expected 120x120`、`model halo 72 px exceeds padding 48 px`。
+     * 刻意用**短 ASCII 句**：它要原样进日志、也可能被用户"点一下复制"发出来，不做本地化最好定位。
+     *
+     * ⚠️ **只在"同一线程、期间没有别的调用"时有效**。这个约束在当前架构下成立：
+     * 超分与 OCR 共用 `OcrLock`，同一时刻全项目只有一次超分在跑。
+     */
+    fun lastFailDetail(): String?
 
     fun release()
 }
@@ -109,21 +131,42 @@ object SuperResolutionEngines {
         if (!sr && anime4kEnabled) add(SrStep.ANIME4K)
     }
 
-    /** 按当前选择取超分模型引擎（同一模型复用，切模型重建）。未选/未下载/失败 → null */
-    @Synchronized
-    fun obtain(context: Context, prefs: SharedPreferences): SuperResolutionEngine? {
-        val key = SrModelManager.getActiveKey(prefs) ?: return null
-        val file = SrModelManager.modelFile(context, key)
-            ?.takeIf { it.isFile && it.length() > 0L } ?: return null
+    /**
+     * 取超分模型引擎的结果：拿到引擎，或者**为什么没拿到**。
+     *
+     * ⚠️ 刻意不返回 `SuperResolutionEngine?` —— 那样上层只能给出"没模型/没下载/加载失败"
+     * 三合一的糊话，而用户明确要求「到底是什么原因写清楚」。
+     */
+    class EnginePick(
+        val engine: SuperResolutionEngine?,
+        val reason: SrFailReason? = null,
+        val detail: String? = null,
+    )
 
-        cachedEngine?.let { if (cachedKey == key) return it }
+    /** 按当前选择取超分模型引擎（同一模型复用，切模型重建）。 */
+    @Synchronized
+    fun obtain(context: Context, prefs: SharedPreferences): EnginePick {
+        val key = SrModelManager.getActiveKey(prefs)
+            ?: return EnginePick(null, SrFailReason.NO_MODEL_SELECTED)
+        val info = ModelDownloadRepository.getInstance(context).getModelInfo(key)
+        val name = info?.files?.firstOrNull()?.fileName
+        val file = SrModelManager.modelFile(context, key)
+        if (file == null || !file.isFile || file.length() <= 0L) {
+            return EnginePick(
+                null, SrFailReason.MODEL_FILE_MISSING,
+                detail = (name ?: key.name) + " @ " + (SrModelManager.modelDir(context)?.absolutePath ?: "?"),
+            )
+        }
+
+        cachedEngine?.let { if (cachedKey == key) return EnginePick(it) }
         releaseSrModel()
 
-        val engine = createEngine(key, file) ?: return null
+        val engine = createEngine(key, file)
+            ?: return EnginePick(null, SrFailReason.ENGINE_INIT_FAILED, detail = "${key.name} (${file.name})")
         cachedKey = key
         cachedEngine = engine
         LogCollector.i(TAG, "超分引擎就绪: $key (${file.name}, ${file.length() / 1024}KB)")
-        return engine
+        return EnginePick(engine)
     }
 
     private fun createEngine(key: ModelKey, file: File): SuperResolutionEngine? = try {
@@ -151,28 +194,28 @@ object SuperResolutionEngines {
         null
     }
 
-    /** 按当前档位取 Anime4K 引擎（换档位重建）。初始化失败 → null */
+    /** 按当前档位取 Anime4K 引擎（换档位重建）。 */
     @Synchronized
-    fun obtainAnime4k(context: Context, prefs: SharedPreferences): SuperResolutionEngine? {
+    fun obtainAnime4k(context: Context, prefs: SharedPreferences): EnginePick {
         val mode = Anime4kMode.fromPrefs(prefs)
-        cachedAnime4k?.let { if (cachedAnime4kMode == mode) return it }
+        cachedAnime4k?.let { if (cachedAnime4kMode == mode) return EnginePick(it) }
         releaseAnime4k()
 
         val engine = try {
             Anime4kEngine(context.applicationContext, mode).also {
                 if (!it.initialize()) {
                     LogCollector.e(TAG, "Anime4K 初始化失败: ${mode.id}")
-                    return null
+                    return EnginePick(null, SrFailReason.ANIME4K_INIT_FAILED, detail = mode.id)
                 }
             }
         } catch (e: Throwable) {
             LogCollector.e(TAG, "Anime4K 创建异常: ${mode.id}", e)
-            return null
+            return EnginePick(null, SrFailReason.ANIME4K_INIT_FAILED, detail = "${mode.id}: ${e.message}")
         }
         cachedAnime4kMode = mode
         cachedAnime4k = engine
         LogCollector.i(TAG, "Anime4K 就绪: ${mode.id}")
-        return engine
+        return EnginePick(engine)
     }
 
     /**
@@ -184,16 +227,11 @@ object SuperResolutionEngines {
      *
      * ⚠️ **超分只服务阅读器**（2026-10 用户口径）：截图/录屏链路不再超分，
      * 原来的 `upscaleIfEnabled(forGame)` 已删除。
+     *
+     * @return 成功给图；失败**必给具体原因**（[SrOutcome.reason]）
      */
-    fun upscaleForReader(context: Context, prefs: SharedPreferences, src: Bitmap): Bitmap? {
-        val steps = resolveSteps(
-            srEnabled = SrSettings.isEnabledForReader(prefs),
-            srModelUsable = isSrModelUsable(context, prefs),
-            anime4kEnabled = Anime4kMode.isEnabled(prefs)
-        )
-        if (steps.isEmpty()) return null
-        return applySteps(context, prefs, src, steps)
-    }
+    fun upscaleForReader(context: Context, prefs: SharedPreferences, src: Bitmap): SrOutcome =
+        applySteps(context, prefs, src)
 
     /**
      * 依次执行工序。**产物尺寸各自保留**（不再缩回原尺寸）。
@@ -206,34 +244,102 @@ object SuperResolutionEngines {
      *   所以"输出尺寸 != 输入尺寸"完全正常：`SR_MODEL` 出 2x、`ANIME4K` 出 1x
      *
      * 调用方拿到的倍率 = `out.width / src.width`（渲染时作为 `baseScale`）。
+     *
+     * ## 失败原因的判断顺序（**每一步都对上一条具体文案**）
+     * 1. 什么工序都没有 → [SrFailReason.NOTHING_ENABLED]（超分关着 且 Anime4K 没开）
+     * 2. 引擎取不到 → 原因由 [obtain]/[obtainAnime4k] 给（没选模型 / 文件不在 / 加载失败）
+     * 3. 源图超上限 → 带上**实际像素数与上限**（[SuperResolutionEngine.maxInputPixels]）
+     * 4. 引擎返回 null → [SrFailReason.INFERENCE_FAILED] + [SuperResolutionEngine.lastFailDetail]
      */
-    private fun applySteps(
-        context: Context,
-        prefs: SharedPreferences,
-        src: Bitmap,
-        steps: List<SrStep>
-    ): Bitmap? {
-        var last: Bitmap? = null
+    private fun applySteps(context: Context, prefs: SharedPreferences, src: Bitmap): SrOutcome {
+        if (src.width <= 0 || src.height <= 0) {
+            return SrOutcome.fail(SrFailReason.PAGE_LOAD_FAILED, "bitmap ${src.width}x${src.height}")
+        }
+        val steps = resolveSteps(
+            srEnabled = SrSettings.isEnabledForReader(prefs),
+            srModelUsable = isSrModelUsable(context, prefs),
+            anime4kEnabled = Anime4kMode.isEnabled(prefs),
+        )
+        if (steps.isEmpty()) {
+            // 细分：是"没选模型"还是"选了但文件不在"还是"压根什么都没开"——
+            // 这三种用户要做的事完全不同（去选 / 去下载 / 去开开关）
+            val reason = when {
+                SrSettings.isEnabledForReader(prefs) && SrModelManager.getActiveKey(prefs) == null ->
+                    SrFailReason.NO_MODEL_SELECTED
+                SrSettings.isEnabledForReader(prefs) && !isSrModelUsable(context, prefs) ->
+                    SrFailReason.MODEL_FILE_MISSING
+                else -> SrFailReason.NOTHING_ENABLED
+            }
+            return SrOutcome.fail(reason)
+        }
+
         for (step in steps) {
-            val input = last ?: src
-            val out = try {
-                when (step) {
-                    SrStep.SR_MODEL -> obtain(context, prefs)?.upscale(input)
-                    SrStep.ANIME4K -> obtainAnime4k(context, prefs)?.upscale(input)
+            val pick = when (step) {
+                SrStep.SR_MODEL -> obtain(context, prefs)
+                SrStep.ANIME4K -> obtainAnime4k(context, prefs)
+            }
+            val engine = pick.engine
+                ?: return SrOutcome.fail(pick.reason ?: SrFailReason.EXCEPTION, pick.detail)
+
+            val pixels = src.width.toLong() * src.height.toLong()
+            if (pixels > engine.maxInputPixels) {
+                val reason = if (step == SrStep.ANIME4K) {
+                    SrFailReason.ANIME4K_SOURCE_TOO_LARGE
+                } else {
+                    SrFailReason.SOURCE_TOO_LARGE
                 }
+                return SrOutcome.fail(
+                    reason,
+                    detail = "${src.width}x${src.height} = %.1fMP > %.1fMP"
+                        .format(pixels / 1_000_000.0, engine.maxInputPixels / 1_000_000.0),
+                )
+            }
+
+            val out = try {
+                engine.upscale(src)
             } catch (e: Throwable) {
                 LogCollector.e(TAG, "工序 $step 异常", e)
                 null
             }
             if (out == null) {
-                LogCollector.d(TAG, "工序 $step 未产出，跳过")
-                continue
+                LogCollector.d(TAG, "工序 $step 未产出: ${engine.lastFailDetail()}")
+                return SrOutcome.fail(
+                    SrFailReason.INFERENCE_FAILED,
+                    detail = engine.lastFailDetail(),
+                )
             }
-            // 释放上一道的中间产物（不是原始 src）
-            if (last != null && last !== out) last.recycle()
-            last = out
+            return SrOutcome.ok(out)
         }
-        return last
+        return SrOutcome.fail(SrFailReason.EXCEPTION)
+    }
+
+    /**
+     * **只做 Anime4K** 的显示增强（阅读器的底图路径用）。
+     *
+     * 为什么单独开一个：阅读器的超分模型底图是**从磁盘读**的（`SrStore.load`），
+     * 不走引擎；而 Anime4K 没有落盘产物、只能实时跑。所以这条路径只用 Anime4K，
+     * 且失败**只记日志**（底图是锦上添花，不该因为增强失败弹提示打扰用户）。
+     */
+    fun enhanceWithAnime4k(context: Context, prefs: SharedPreferences, src: Bitmap): SrOutcome {
+        val pick = obtainAnime4k(context, prefs)
+        val engine = pick.engine
+            ?: return SrOutcome.fail(pick.reason ?: SrFailReason.ANIME4K_INIT_FAILED, pick.detail)
+        val pixels = src.width.toLong() * src.height.toLong()
+        if (pixels > engine.maxInputPixels) {
+            return SrOutcome.fail(
+                SrFailReason.ANIME4K_SOURCE_TOO_LARGE,
+                detail = "${src.width}x${src.height} = %.1fMP > %.1fMP"
+                    .format(pixels / 1_000_000.0, engine.maxInputPixels / 1_000_000.0),
+            )
+        }
+        val out = try {
+            engine.upscale(src)
+        } catch (e: Throwable) {
+            LogCollector.e(TAG, "Anime4K 工序异常", e)
+            null
+        }
+        return out?.let { SrOutcome.ok(it) }
+            ?: SrOutcome.fail(SrFailReason.INFERENCE_FAILED, engine.lastFailDetail())
     }
 
     /**

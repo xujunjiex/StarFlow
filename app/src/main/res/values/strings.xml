@@ -1079,10 +1079,25 @@
     <string name="reader_sr_auto_off">Translation no longer upscales; use the bottom-right button instead</string>
     <string name="reader_sr_button_desc">Upscale this page / show original</string>
     <string name="reader_translate_busy_sr">Still upscaling this page — try translating again in a moment</string>
-    <string name="reader_sr_enhancing">Upscaling the current page…</string>
-    <string name="reader_sr_failed">No upscaled result: make sure a super-resolution model is selected and downloaded, or the page is within the size limit</string>
-    <string name="reader_sr_showing_original">Showing the original page again (upscaled file kept)</string>
-    <string name="reader_sr_showing_sr">Showing the upscaled page again</string>
+    <!-- ═══ Super-resolution notices (2026-10: NEVER a vague message — every reason must be spelled out; shown in the in-app status chip, not a Toast) ═══ -->
+    <string name="sr_fail_disabled">Super resolution is off: turn on "Super resolution" in the reader\'s Colour panel first</string>
+    <string name="sr_fail_nothing_enabled">Nothing to enhance with: no super-resolution model is selected and Anime4K is off</string>
+    <string name="sr_fail_no_model">No super-resolution model selected: open "Super-resolution models → Super resolution" and tap a model name to select it (downloading alone does nothing)</string>
+    <string name="sr_fail_model_missing">Model file is missing: %1$s\nThe download may be incomplete, or the file was deleted — please download it again from the model page</string>
+    <string name="sr_fail_engine_init">Failed to load the model: %1$s\nThe file may be corrupt, or this model is not supported by ONNX Runtime on this device</string>
+    <string name="sr_fail_source_too_large">This page is too large, super resolution was skipped: %1$d×%2$d (%3$.1f MP) exceeds the model\'s %4$.1f MP limit\nPick a lighter model, or use super resolution on lower-resolution sources</string>
+    <string name="sr_fail_anime4k_init">Anime4K failed to initialise (GLES3 unavailable, or shader compilation failed)</string>
+    <string name="sr_fail_anime4k_too_large">This page is too large, Anime4K was skipped: %1$d×%2$d (%3$.1f MP) exceeds the %4$.1f MP limit\nUse a super-resolution model to actually enlarge pages like this (Anime4K only restores lines at the same resolution)</string>
+    <string name="sr_fail_inference">Super-resolution inference failed (model incompatible with this image, or out of memory)</string>
+    <string name="sr_fail_save">Could not write the upscaled image: storage full, or the sr_cache folder is not writable</string>
+    <string name="sr_fail_page_load">Could not read the original page (file missing or failed to decode)</string>
+    <string name="sr_fail_busy">This page is already being upscaled — please wait</string>
+    <string name="sr_select_need_download">This model is not downloaded yet — tap "Download" on its right first, then select it:\n%1$s</string>
+    <string name="sr_fail_exception">Something went wrong during super resolution</string>
+    <string name="sr_enhancing_page">Upscaling page %1$d…</string>
+    <string name="sr_done_page">Page %1$d upscaled</string>
+    <string name="sr_show_original_page">Page %1$d is showing the original again (upscaled file kept)</string>
+    <string name="sr_show_sr_page">Page %1$d is showing the upscaled base again</string>
     <!-- Anime4K baseline (reader colour panel, 2026-10) -->
     <string name="reader_anime4k_label">Anime4K line enhance</string>
     <string name="reader_anime4k_hint">Sharpens and denoises line art without changing resolution and without any model download. Unavailable while super resolution is on (super resolution wins). Tap to cycle levels.</string>

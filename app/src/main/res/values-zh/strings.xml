@@ -1014,10 +1014,24 @@
     <string name="reader_sr_auto_off">翻译不再自动超分，可用右下角按钮手动超分</string>
     <string name="reader_sr_button_desc">本页超分 / 显示原图</string>
     <string name="reader_translate_busy_sr">正在超分当前页，请稍候再翻译</string>
-    <string name="reader_sr_enhancing">正在超分当前页…</string>
-    <string name="reader_sr_failed">超分未产出：请确认已选择并下载超分模型，或该页分辨率超出上限</string>
-    <string name="reader_sr_showing_original">本页已切回原图显示（超分文件保留）</string>
-    <string name="reader_sr_showing_sr">本页已切回超分底图</string>
+    <!-- ═══ 超分提示（用户口径 2026-10：**不许写模糊提示**，每条都要说清是哪一种原因；走 app 状态浮层，不用 Toast） ═══ -->
+    <string name="sr_fail_disabled">超分功能没开启：请到阅读器「调色」面板打开「超分放大」</string>
+    <string name="sr_fail_nothing_enabled">没有可用的增强方式：既没有选超分模型，Anime4K 也没开</string>
+    <string name="sr_fail_no_model">还没选超分模型：到「超分模型管理 → 超分」里点一下模型名选中它（只下载、不选中是不会生效的）</string>
+    <string name="sr_fail_model_missing">模型文件不存在：%1$s\n可能没下载完、或者文件已被删掉 —— 请回模型管理页重新下载</string>
+    <string name="sr_fail_engine_init">模型加载失败：%1$s\n文件可能损坏，或这个模型在当前设备上不被 ONNX Runtime 支持</string>
+    <string name="sr_fail_source_too_large">本页分辨率太大，超分跳过了：本页 %1$d×%2$d（%3$.1f 百万像素）超过该模型的 %4$.1f 百万像素上限\n请换一个更小的模型，或对分辨率更低的图源使用超分</string>
+    <string name="sr_fail_anime4k_init">Anime4K 初始化失败（当前设备不支持 GLES3，或着色器编译失败）</string>
+    <string name="sr_fail_anime4k_too_large">本页分辨率太大，Anime4K 跳过了：本页 %1$d×%2$d（%3$.1f 百万像素）超过 %4$.1f 百万像素上限\n想放大这种页面请改用「超分模型」（Anime4K 只做同分辨率线条修复）</string>
+    <string name="sr_fail_inference">超分推理失败（模型与这张图不兼容，或内存不足）</string>
+    <string name="sr_fail_save">超分图写盘失败：存储空间不足，或 sr_cache 目录不可写</string>
+    <string name="sr_fail_page_load">读不到这一页的原图（文件丢失或解码失败）</string>
+    <string name="sr_fail_busy">这一页正在超分中，请稍候</string>
+    <string name="sr_select_need_download">这个模型还没下载，先点它右边的「下载」，下好之后再选它：\n%1$s</string>
+    <string name="sr_enhancing_page">正在超分第 %1$d 页…</string>
+    <string name="sr_done_page">第 %1$d 页超分完成</string>
+    <string name="sr_show_original_page">第 %1$d 页已切回原图显示（超分文件保留）</string>
+    <string name="sr_show_sr_page">第 %1$d 页已切回超分底图</string>
     <!-- Anime4K 基础层（阅读器调色面板，2026-10） -->
     <string name="reader_anime4k_label">Anime4K 线条增强</string>
     <string name="reader_anime4k_hint">对画面做线条描深与去噪，分辨率不变、不下载任何模型。开启超分时本项不可用（超分优先）。点这一行循环切档。</string>

@@ -6,6 +6,7 @@ import android.widget.RadioButton
 import android.widget.TextView
 import com.moe.starflow.R
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -235,6 +236,41 @@ class ModelManagementLayoutTest {
             assertNotNull("$radioName 不是 RadioButton", radio)
             // 不可点：点**行**即选中（与 LlamaCpp 模型页同做法），RadioButton 只当显示标记
             assertTrue("$radioName 必须不可点（点行本身即选中）", !radio.isClickable)
+        }
+    }
+
+    /**
+     * **未下载的模型不能被选中**（用户口径 2026-10：「未下载的不能切换过去！！」）。
+     *
+     * 与 OCR 模型页的规则严格一致（`refreshOcrGroupSelection`：没下载 → 置灰 + 点它弹说明）。
+     * ⚠️ 上一版允许选中未下载的模型 → 超分只会失败（模型文件不存在），
+     * 而用户以为自己"已经开了超分"，看起来就像功能坏了。
+     */
+    @Test
+    fun undownloadedSrModelRefusesSelection() {
+        val fragment = java.io.File("src/main/java/com/moe/starflow/me/model/ModelManagementFragment.kt")
+        if (!fragment.isFile) return
+        val src = fragment.readText()
+        assertTrue("选中前必须先判「已下载」", src.contains("if (isSrDownloaded(row.modelKey)) selectSrModel(row.modelKey)"))
+        assertTrue("未下载时要弹说明（照 OCR 页同一套）", src.contains("showSrNeedDownload(listOf(row.modelKey))"))
+        assertTrue(
+            "组标题选中要跳过未下载的档（推荐档没下载就取第一个已下载的）",
+            src.contains("family.rows.firstOrNull { isSrDownloaded(it.modelKey) }"),
+        )
+        assertTrue("唯一门槛要落在一个函数里（与 OCR 的 available 同义）", src.contains("private fun isSrDownloaded(key: ModelKey): Boolean"))
+        assertTrue("未下载的行要置灰（标题 + 选中圈）", src.contains("alpha = if (downloaded) 1f else 0.4f"))
+        assertFalse(
+            "置灰不能作用在整行上 —— 行里还有「下载」按钮，整行变淡会让它看着也是禁用的",
+            src.contains("findViewById<View>(row.rowRootId).alpha"),
+        )
+        // 每一行都要有 title id（置灰要用），缺一个那行就不置灰
+        val layout = java.io.File("src/main/res/layout/fragment_model_management.xml").readText()
+        for (base in listOf(
+            "sr_aji_balanced", "sr_aji_perf", "sr_aji_sharp1_balanced", "sr_aji_sharp1_perf",
+            "sr_aji_sd", "sr_w2xc_n0", "sr_w2xc_n1", "sr_w2xc_n2", "sr_w2xc_n3",
+            "sr_w2xs_n0", "sr_w2xs_n1",
+        )) {
+            assertTrue("$base 缺标题 id（置灰要用）", layout.contains("android:id=\"@+id/${base}_title\""))
         }
     }
 

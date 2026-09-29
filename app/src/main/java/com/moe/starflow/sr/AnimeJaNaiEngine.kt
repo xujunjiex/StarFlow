@@ -74,7 +74,18 @@ class AnimeJaNaiEngine(private val modelFile: File) : SuperResolutionEngine {
     private var haloOutPx: Int = 0
 
     /** 输入像素上限（2x 后是 4 倍）：2.5MP ≈ 1500×1667，输出 10MP / 40MB bitmap */
-    private val maxInputPixels: Long = 2_500_000L
+    override val maxInputPixels: Long = 2_500_000L
+
+    /**
+     * 上一次 [upscale] 失败的技术细节（成功时置回 null）。
+     *
+     * ⚠️ 用**短 ASCII 句**：它要原样进日志、也可能被用户"点一下复制"发出来，不做本地化最好定位。
+     * ⚠️ 只在"同一线程、期间没有别的调用"时有效 —— 超分与 OCR 共用 `OcrLock`，
+     *    同一时刻全项目只有一次超分在跑，所以这个约束成立。
+     */
+    private var failDetail: String? = null
+
+    override fun lastFailDetail(): String? = failDetail
 
     fun initialize(): Boolean {
         return try {
@@ -153,16 +164,21 @@ class AnimeJaNaiEngine(private val modelFile: File) : SuperResolutionEngine {
     }
 
     override fun upscale(src: Bitmap): Bitmap? {
-        val e = env ?: return null
-        val s = session ?: return null
+        failDetail = null
+        val e = env ?: run { failDetail = "engine not initialized (env=null)"; return null }
+        val s = session ?: run { failDetail = "engine not initialized (session=null)"; return null }
 
         val w = src.width
         val h = src.height
-        if (w <= 0 || h <= 0) return null
+        if (w <= 0 || h <= 0) {
+            failDetail = "empty source ${w}x$h"
+            return null
+        }
 
-        // 上限守卫：宁可原图，也不要把手机打 OOM
+        // 上限守卫：宁可原图，也不要把手机打 OOM（调用方已按 maxInputPixels 前置判过，这里兜底）
         if (w.toLong() * h.toLong() > maxInputPixels) {
             LogCollector.d(TAG, "跳过超分：输入 ${w}x$h 超过 ${maxInputPixels / 1000}K 像素上限")
+            failDetail = "source ${w}x$h > $maxInputPixels px"
             return null
         }
 
@@ -176,6 +192,7 @@ class AnimeJaNaiEngine(private val modelFile: File) : SuperResolutionEngine {
         val padTop = PAD
         if (padLeft <= haloPerSideSrc || padTop <= haloPerSideSrc) {
             LogCollector.e(TAG, "补边不足（pad=$PAD, halo/边=$haloPerSideSrc）: ${modelFile.name}")
+            failDetail = "model halo ${haloPerSideSrc}px/side exceeds padding ${PAD}px"
             return null
         }
         // 目标窗口在【补边后输出】里的起点：输出列 0 ↔ 补边后源列 haloPerSideSrc
@@ -194,6 +211,7 @@ class AnimeJaNaiEngine(private val modelFile: File) : SuperResolutionEngine {
                 result = s.run(mapOf(inputName to tensor))
                 val out = result[0] as? OnnxTensor ?: run {
                     LogCollector.e(TAG, "输出不是张量: ${result[0]?.javaClass?.simpleName}")
+                    failDetail = "unexpected output type: ${result[0]?.javaClass?.simpleName}"
                     return null
                 }
                 val shape = out.info.shape
@@ -206,12 +224,14 @@ class AnimeJaNaiEngine(private val modelFile: File) : SuperResolutionEngine {
                 if (ow != expectW || oh != expectH) {
                     LogCollector.e(TAG, "输出尺寸不符: 实际 ${ow}x$oh，期望 ${expectW}x$expectH " +
                             "(iw=$iw ih=$ih halo=$haloOutPx) —— 拒绝产出（保不住精确 ${scale}x 契约）")
+                    failDetail = "output ${ow}x$oh, expected ${expectW}x$expectH (iw=$iw ih=$ih halo=$haloOutPx)"
                     return null
                 }
                 val owOut = w * scale
                 val ohOut = h * scale
                 if (startX < 0 || startY < 0 || startX + owOut > ow || startY + ohOut > oh) {
                     LogCollector.e(TAG, "裁剪窗口越界: start=($startX,$startY) 目标=${owOut}x$ohOut 输出=${ow}x$oh")
+                    failDetail = "crop out of range: start=($startX,$startY) target=${owOut}x$ohOut out=${ow}x$oh"
                     return null
                 }
 
@@ -238,6 +258,7 @@ class AnimeJaNaiEngine(private val modelFile: File) : SuperResolutionEngine {
         } catch (t: Throwable) {
             // 超分失败必须静默降级：调用方拿 null 用原图，绝不因为它翻不了页
             LogCollector.e(TAG, "推理失败 (${w}x$h, fp16=$fp16, ${modelFile.name})", t)
+            failDetail = "inference threw ${t.javaClass.simpleName}: ${t.message}"
             return null
         }
     }

@@ -58,24 +58,26 @@ object SrProcessor {
      * @param src 该页的**原图**（`ReaderPageSource.loadFull` 的结果）。
      *   ⚠️ **绝不能传"已渲染的译图"** —— 那会把画好的字当像素放大，坐标就真的无解了。
      *   （译文是**数据**不是像素：超分底图之后重新渲染 overlay 即可，译文会一起变清晰。）
-     * @return 落盘成功（false = 未开启/没模型/失败/已有同页任务在跑）
+     * @return 成功带图；失败**带具体原因**（用户口径：不许再写"可能没模型也可能图太大"这种糊话）
      */
     suspend fun enhanceAndStore(
         context: Context,
         mangaId: Long,
         page: Int,
         src: Bitmap
-    ): Boolean = withContext(Dispatchers.IO) {
+    ): SrOutcome = withContext(Dispatchers.IO) {
         val app = context.applicationContext
         val prefs = PreferenceManager.getDefaultSharedPreferences(app)
 
-        if (!SrSettings.isEnabledForReader(prefs)) return@withContext false
-        if (src.width <= 0 || src.height <= 0) return@withContext false
+        if (!SrSettings.isEnabledForReader(prefs)) return@withContext SrOutcome.fail(SrFailReason.DISABLED)
+        if (src.width <= 0 || src.height <= 0) {
+            return@withContext SrOutcome.fail(SrFailReason.PAGE_LOAD_FAILED, "bitmap ${src.width}x${src.height}")
+        }
 
         val k = keyOf(mangaId, page)
         if (inFlight.putIfAbsent(k, true) != null) {
             LogCollector.d(TAG, "该页已有超分任务在跑，跳过重复触发: $k")
-            return@withContext false
+            return@withContext SrOutcome.fail(SrFailReason.BUSY)
         }
         var out: Bitmap? = null
         return@withContext try {
@@ -88,33 +90,41 @@ object SrProcessor {
             // 本页 translatePhase 跑超分时，完全可能另一页正在 OCR。
             // 用 `use` 的话超分会直接抛异常失败 —— 表现为"自动超分时灵时不灵"。
             while (OcrLock.isRunning) {
-                if (!currentCoroutineContext().isActive) return@withContext false
+                if (!currentCoroutineContext().isActive) return@withContext SrOutcome.fail(SrFailReason.EXCEPTION, "cancelled while waiting for OcrLock")
                 delay(LOCK_POLL_MS)
             }
             if (!OcrLock.tryAcquire()) {
                 LogCollector.d(TAG, "超分等锁失败（OCR 正忙），本次跳过: $k")
-                return@withContext false
+                return@withContext SrOutcome.fail(SrFailReason.BUSY, "OcrLock busy")
             }
+            val attempt: SrOutcome
             try {
-                out = SuperResolutionEngines.upscaleForReader(app, prefs, src)
+                attempt = SuperResolutionEngines.upscaleForReader(app, prefs, src)
             } finally {
                 OcrLock.release()
             }
-            if (out == null) {
-                LogCollector.d(TAG, "超分未产出（未开启/没模型/失败/超像素上限）: $k")
-                false
+            if (!attempt.ok) {
+                LogCollector.d(TAG, "超分未产出: ${attempt.reason} ${attempt.detail ?: ""} ($k)")
+                return@withContext attempt
+            }
+            out = attempt.bitmap
+            val model = SrModelManager.getActiveKey(prefs)?.name ?: "-"
+            val saved = out != null && SrStore.save(app, mangaId, page, out!!, model, cacheLimitMb(prefs))
+            if (!saved) {
+                LogCollector.e(TAG, "超分落盘失败: $k")
+                SrOutcome.fail(SrFailReason.SAVE_FAILED)
             } else {
-                val model = SrModelManager.getActiveKey(prefs)?.name ?: "-"
-                val ok = SrStore.save(app, mangaId, page, out, model, cacheLimitMb(prefs))
-                if (!ok) LogCollector.e(TAG, "超分落盘失败: $k")
-                ok
+                // 产物已写盘 → 把图交回给调用方（下面 finally 不再回收它）
+                val produced = out!!
+                out = null
+                SrOutcome.ok(produced)
             }
         } catch (e: Throwable) {
             // 超分失败必须静默降级：用户看到的还是原图，绝不因为它翻不了页
             LogCollector.e(TAG, "超分异常（回退原图）: $k", e)
-            false
+            SrOutcome.fail(SrFailReason.EXCEPTION, "${e.javaClass.simpleName}: ${e.message}")
         } finally {
-            // 产物已写盘/已无用 —— 这里回收（注意 src 是调用方的，不动）
+            // 没交出去/写盘失败的产物在这里回收（注意 src 是调用方的，不动）
             out?.let { if (!it.isRecycled && it !== src) it.recycle() }
             inFlight.remove(k)
         }

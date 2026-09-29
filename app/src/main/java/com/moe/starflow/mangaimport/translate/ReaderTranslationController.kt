@@ -35,7 +35,9 @@ import com.moe.starflow.translate.TranslationTextAPI
 import com.moe.starflow.translate.isLocalHeavyEngine
 import com.moe.starflow.sr.SrBaseKind
 import com.moe.starflow.sr.SrDisplayBase
+import com.moe.starflow.sr.SrFailReason
 import com.moe.starflow.sr.SrModelManager
+import com.moe.starflow.sr.SrOutcome
 import com.moe.starflow.sr.SrProcessor
 import com.moe.starflow.sr.SrSettings
 import com.moe.starflow.sr.SrStore
@@ -393,10 +395,12 @@ class ReaderTranslationController(
         }
 
         // Anime4K：同分辨率增强，输出尺寸 == 输入尺寸 → baseScale 恒 1
+        // ⚠️ 失败**只记日志、不弹提示**：这是被动显示增强（用户没点任何东西），
+        //    在翻页过程中弹提示纯属打扰；真要报也是等用户主动点超分时那条路径去报。
         val enhanced = withContext(Dispatchers.IO) {
-            runCatching {
-                SuperResolutionEngines.obtainAnime4k(context, appPrefs)?.upscale(space)
-            }.onFailure { LogCollector.w(TAG, "Anime4K 增强失败 page=$pageIndex: ${it.message}") }.getOrNull()
+            val r = SuperResolutionEngines.enhanceWithAnime4k(context, appPrefs, space)
+            if (!r.ok) LogCollector.d(TAG, "Anime4K 增强未产出 page=$pageIndex: ${r.reason} ${r.detail ?: ""}")
+            r.bitmap
         } ?: return null
         return SrBase(enhanced, 1f, sig).also { srBaseLru.put(pageIndex, it) }
     }
@@ -465,26 +469,39 @@ class ReaderTranslationController(
     }
 
     /**
+     * 点击右下角超分按钮的结果。
+     *
+     * ⚠️ 刻意不是一个 `SrAction`：超分**失败时要带出具体原因**（用户口径：不许写模糊提示），
+     * 而 `SrAction` 只描述"按钮该长什么样"。
+     */
+    sealed interface SrClickResult {
+        /** 动作成功：切了显示态，或超分产出并已切到超分底图 */
+        data class Done(val action: SrAction) : SrClickResult
+
+        /** 超分没成功 —— [message] 已经是**可直接展示的完整原因**（本地化 + 带参数） */
+        data class Failed(val message: String) : SrClickResult
+    }
+
+    /**
      * 点击右下角超分按钮。
      *
      * - [SrAction.ENHANCE] → 对**原图**超分并落盘（`SrProcessor`，与 OCR 共用 `OcrLock` 串行）
      * - [SrAction.SHOW_ORIGINAL] / [SrAction.SHOW_SR] → **二态切换**（只改显示，不动文件）
-     *
-     * @return 动作执行后的新状态（UI 据此提示；`SHOW_SR` = 刚刚切成原图、`SHOW_ORIGINAL` = 刚切成超分图）
      */
-    suspend fun onSrButtonClicked(pageIndex: Int): SrAction {
+    suspend fun onSrButtonClicked(pageIndex: Int): SrClickResult {
         val action = srActionOf(pageIndex)
         when (action) {
-            SrAction.HIDDEN, SrAction.BUSY -> return action
+            SrAction.HIDDEN -> return SrClickResult.Failed(context.getString(R.string.sr_fail_disabled))
+            SrAction.BUSY -> return SrClickResult.Failed(context.getString(R.string.sr_fail_busy))
             SrAction.ENHANCE -> {
-                val ok = enhancePage(pageIndex)
-                if (!ok) return srActionOf(pageIndex)
+                val outcome = enhancePage(pageIndex)
+                if (!outcome.ok) return SrClickResult.Failed(outcome.message(context))
             }
             SrAction.SHOW_ORIGINAL -> srVisualByPage[pageIndex] = false
             SrAction.SHOW_SR -> srVisualByPage[pageIndex] = true
         }
         onBaseChanged(pageIndex)
-        return srActionOf(pageIndex)
+        return SrClickResult.Done(srActionOf(pageIndex))
     }
 
     /**
@@ -492,23 +509,25 @@ class ReaderTranslationController(
      *
      * ⚠️ **输入永远是 `loadFull` 出来的原图** —— 绝不能拿渲染后的译图去超分
      * （那会把画好的字当像素放大）。译文是**数据**，超分底图之后重新渲染即可。
+     *
+     * @return 失败时 [SrOutcome.reason] 说明**具体**是哪里不行（没模型 / 文件不在 / 加载失败 / 图太大 / 推理失败…）
      */
-    private suspend fun enhancePage(pageIndex: Int): Boolean {
-        if (!SrSettings.isEnabledForReader(appPrefs)) return false
-        if (SrModelManager.getActiveKey(appPrefs) == null) return false
-        val src = withContext(Dispatchers.IO) { loadFull(pageIndex) } ?: return false
-        val ok = try {
+    private suspend fun enhancePage(pageIndex: Int): SrOutcome {
+        if (!SrSettings.isEnabledForReader(appPrefs)) return SrOutcome.fail(SrFailReason.DISABLED)
+        val src = withContext(Dispatchers.IO) { loadFull(pageIndex) }
+            ?: return SrOutcome.fail(SrFailReason.PAGE_LOAD_FAILED, context.getString(R.string.sr_fail_page_load))
+        val outcome = try {
             SrProcessor.enhanceAndStore(context, manga.id, pageIndex, src)
         } finally {
             // 原图是本次现解码的（`loadFull` 纯解码）→ 用完必须回收
             if (!src.isRecycled) src.recycle()
         }
-        if (ok) {
+        if (outcome.ok) {
             // 超分完成后默认显示在超分底图上（用户口径）
             srVisualByPage[pageIndex] = true
             srModelByPage[pageIndex] = SrModelManager.getActiveKey(appPrefs)?.name.orEmpty()
         }
-        return ok
+        return outcome
     }
 
     /**
@@ -538,9 +557,17 @@ class ReaderTranslationController(
         // 该页已经是"当前模型超的" → 没什么可做（换过模型 / 手动点过都会走到这）
         if (srModelByPage[page] == SrModelManager.getActiveKey(appPrefs)?.name) return null
         return scope.launch(Dispatchers.IO) {
-            val ok = enhancePage(page)
-            LogCollector.d(TAG, "翻译时自动超分 page=$page ok=$ok")
-            if (ok) onBaseChanged(page)
+            val outcome = enhancePage(page)
+            if (outcome.ok) {
+                LogCollector.d(TAG, "翻译时自动超分完成 page=$page")
+                onBaseChanged(page)
+            } else {
+                // ⚠️ 自动超分失败**必须告诉用户原因**（只记日志 = 用户看到"开了超分却没效果"，
+                //    只能自己猜是没选模型还是图太大）；呈现方式由宿主决定（状态浮层/Toast）。
+                val msg = outcome.message(context)
+                LogCollector.d(TAG, "翻译时自动超分未产出 page=$page: $msg")
+                withContext(Dispatchers.Main) { onSrNotice(msg, true) }
+            }
         }
     }
 
@@ -623,6 +650,7 @@ class ReaderTranslationController(
         pageCount = { ownSource.size }
         onVisual = {}
         onPhase = { _, _ -> }
+        onSrNotice = { _, _ -> }
     }
 
     /**
@@ -1127,13 +1155,12 @@ class ReaderTranslationController(
     ): Job? {
         if (!SrSettings.isAutoEnabledForReader(appPrefs)) return null
         if (!SrSettings.isEnabledForReader(appPrefs)) return null
-        if (!SrModelManager.isDownloaded(context, SrModelManager.getActiveKey(appPrefs) ?: return null)) {
-            return null
-        }
         if (prep.bitmap.isRecycled) return null
+        // ⚠️ 这里**不再自己预判**"模型下没下载/选没选"：判断集中在 `SuperResolutionEngines`，
+        //    它才能给出**具体原因**。预判成 return null 的话用户什么都看不到。
         return scope.launch(Dispatchers.IO) {
-            val ok = SrProcessor.enhanceAndStore(context, manga.id, page, prep.bitmap)
-            if (ok) {
+            val outcome = SrProcessor.enhanceAndStore(context, manga.id, page, prep.bitmap)
+            if (outcome.ok) {
                 // 超分完成后默认显示在超分底图上（用户口径）
                 srVisualByPage[page] = true
                 srModelByPage[page] = SrModelManager.getActiveKey(appPrefs)?.name.orEmpty()
@@ -1141,8 +1168,10 @@ class ReaderTranslationController(
                 onBaseChanged(page)
                 LogCollector.d(TAG, "翻译时自动超分完成 page=$page")
             } else {
-                // 自动超分失败不打扰用户（可能是没选模型/超像素上限/未开启）
-                LogCollector.d(TAG, "翻译时自动超分未产出 page=$page")
+                // ⚠️ 必须把**具体原因**告诉用户（以前只记日志，用户只看到"开了超分却没效果"）
+                val msg = outcome.message(context)
+                LogCollector.d(TAG, "翻译时自动超分未产出 page=$page: $msg")
+                withContext(Dispatchers.Main) { onSrNotice(msg, true) }
             }
         }
     }
@@ -2331,6 +2360,19 @@ class ReaderTranslationController(
 
     /** 翻译阶段变化（检测中/翻译中/完成/失败/队列耗尽）。 */
     var onPhase: (ReaderTranslatePhase, String?) -> Unit = { _, _ -> }
+
+    /**
+     * **超分提示**（失败原因 / 进度 / 完成）：宿主负责呈现。
+     *
+     * ⚠️ 用户口径：「超分的提示信息应该也用 app 系统提示，不要用手机底部 Toast」——
+     * 阅读器宿主把它接到 `TranslationStatusOverlay`（app 内的状态浮层），
+     * 拿不到悬浮窗权限 / 浮层被关时才退回 Toast。
+     * ⚠️ 控制器**不直接碰 UI**（与 `onPhase`/`onVisual` 同一约定），否则后台章节任务
+     * 会往已销毁的 Activity 上贴东西。
+     *
+     * @param isError true = 失败原因（浮层用红色、可点复制，方便用户把原文发出来）
+     */
+    var onSrNotice: (text: String, isError: Boolean) -> Unit = { _, _ -> }
 
     // ========== 私有：写记录 ==========
 

@@ -258,6 +258,11 @@ class MangaReaderActivity : AppCompatActivity() {
             )
             c.onVisual = { runOnUiThread { applyPageVisual(currentPage) } }
             c.onPhase = ::onTranslatePhase
+            // 超分提示（失败原因 / 其它）统一走 app 状态浮层。⚠️ 必须在主线程调：
+            // 控制器可能从 IO 协程发过来（它内部只在自动超分那条路径 `withContext(Main)`）。
+            c.onSrNotice = { text, isError ->
+                runOnUiThread { if (!isFinishing) showSrNotice(text, isError) }
+            }
             // Webtoon 显示态（原图/译文）落在控制器上：applyPager()/预热都按它决定渲不渲染
             c.setWebtoonTranslated(webtoonTranslated)
         }
@@ -947,30 +952,36 @@ class MangaReaderActivity : AppCompatActivity() {
         binding.btnFailTranslate.setOnClickListener { showFailBubble() }
         // 本页超分：**三重语义**（超分 / 切回原图 / 切回超分底图），由控制器判当前该做哪一件。
         // ⚠️ 超分功能关闭时按钮不显示（`refreshTranslationChrome` 置 GONE），点不到。
+        // ⚠️ 提示一律走 **app 状态浮层**（用户口径："应该也用 app 系统提示，不要用手机底部 Toast"），
+        //    拿不到悬浮窗权限 / 浮层被关掉时才退回 Toast（与翻译按钮同一条约定）。
         binding.btnSrPage.setOnClickListener {
             val before = controller.srActionOf(currentPage)
-            when (before) {
-                ReaderTranslationController.SrAction.HIDDEN,
-                ReaderTranslationController.SrAction.BUSY -> {
-                    UiUtils.showToast(this, getString(R.string.reader_sr_enhancing))
-                }
-                else -> {
-                    // 超分是本地重计算（秒级）→ 先禁用给反馈，跑完再刷新语义
-                    binding.btnSrPage.isEnabled = false
-                    UiUtils.showToast(this, getString(R.string.reader_sr_enhancing))
-                    lifecycleScope.launch {
-                        val after = controller.onSrButtonClicked(currentPage)
-                        binding.btnSrPage.isEnabled = true
-                        refreshTranslationChrome()
-                        val msg = when (after) {
-                            // 点完变成 SHOW_SR = 刚切成原图；SHOW_ORIGINAL = 刚切成超分底图
-                            ReaderTranslationController.SrAction.SHOW_SR -> R.string.reader_sr_showing_original
-                            ReaderTranslationController.SrAction.SHOW_ORIGINAL -> R.string.reader_sr_showing_sr
-                            // 仍是 ENHANCE = 没超出来（没选模型 / 没下载 / 超像素上限 / 推理失败）
-                            ReaderTranslationController.SrAction.ENHANCE -> R.string.reader_sr_failed
-                            else -> 0
+            if (before == ReaderTranslationController.SrAction.BUSY) {
+                showSrNotice(getString(R.string.sr_fail_busy), isError = false)
+                return@setOnClickListener
+            }
+            // 超分是本地重计算（秒级）→ 先禁用给反馈，并挂一条"进行中"的常驻提示
+            binding.btnSrPage.isEnabled = false
+            showSrProgress(getString(R.string.sr_enhancing_page, currentPage + 1))
+            lifecycleScope.launch {
+                val result = controller.onSrButtonClicked(currentPage)
+                binding.btnSrPage.isEnabled = true
+                refreshTranslationChrome()
+                when (result) {
+                    // 失败：把**具体原因**原样交给浮层（红色、可点复制），不再写"请检查模型和尺寸"这种糊话
+                    is ReaderTranslationController.SrClickResult.Failed ->
+                        showSrNotice(result.message, isError = true)
+                    is ReaderTranslationController.SrClickResult.Done -> {
+                        val msg = when (result.action) {
+                            // 点完变成 SHOW_SR = 刚切成原图；SHOW_ORIGINAL = 刚切成超分底图；
+                            // 其余（ENHANCE 说明没超成）不会走到这里
+                            ReaderTranslationController.SrAction.SHOW_SR ->
+                                getString(R.string.sr_show_original_page, currentPage + 1)
+                            ReaderTranslationController.SrAction.SHOW_ORIGINAL ->
+                                getString(R.string.sr_show_sr_page, currentPage + 1)
+                            else -> getString(R.string.sr_done_page, currentPage + 1)
                         }
-                        if (msg != 0) UiUtils.showToast(this@MangaReaderActivity, getString(msg))
+                        showSrNotice(msg, isError = false)
                     }
                 }
             }
@@ -1356,6 +1367,36 @@ class MangaReaderActivity : AppCompatActivity() {
         PreferenceManager.getDefaultSharedPreferences(this)
             .getBoolean("status_overlay_enabled", true)
 
+    /**
+     * **超分提示统一出口**（用户口径：超分也要用 app 的「系统提示」，不要用手机底部 Toast）。
+     *
+     * 与翻译按钮的同一条约定：状态浮层受 `status_overlay_enabled` 开关控制、
+     * **没有悬浮窗权限时同样画不出来**（且不报错）→ 两种情况都必须退回系统 Toast，
+     * 否则用户点了超分"毫无反馈"。
+     *
+     * @param isError 失败原因 → 红色 chip（可点复制，方便用户把原文发出来）；普通提示 → 黑底 chip
+     */
+    private fun showSrNotice(text: String, isError: Boolean) {
+        if (statusOverlayEnabled() && TranslationStatusOverlay.canDraw(this)) {
+            val overlay = TranslationStatusOverlay.getInstance(this)
+            if (isError) overlay.showError(text) else overlay.show(text)
+        } else {
+            UiUtils.showToast(this, text)
+        }
+    }
+
+    /**
+     * 超分「进行中」的常驻提示：`autoDismiss = false` → 一直挂着，直到被结果 / 失败替换
+     * （与翻译的"检测中…/翻译中…"同一套用法）。
+     */
+    private fun showSrProgress(text: String) {
+        if (statusOverlayEnabled() && TranslationStatusOverlay.canDraw(this)) {
+            TranslationStatusOverlay.getInstance(this).showImmediate(text, autoDismiss = false)
+        } else {
+            UiUtils.showToast(this, text)
+        }
+    }
+
     /** 注入「页图提供者」：适配器绑定页时优先取译文/原文渲染图（无则原图），
      *  避免 RecyclerView 重绑/复用把已显示的译图覆盖回原图。 */
     private fun applyPageImageSource() {
@@ -1706,11 +1747,10 @@ class MangaReaderActivity : AppCompatActivity() {
                 // ⚠️ 不在这里预热引擎：2x 模型加载要 1s+，开关一拨就卡一下体感很差；
                 //   首次真正翻页时自然建立，失败也会按约定静默降级回原图。
                 onReaderSrChanged = { enabled ->
-                    // ⚠️ 必须写限定名 this@MangaReaderActivity：这段回调是在协程作用域里构建的，
-                    // 裸 `this` 会解析成 CoroutineScope（编译期就报类型不匹配）
-                    UiUtils.showToast(
-                        this@MangaReaderActivity,
-                        getString(if (enabled) R.string.reader_sr_switch_on else R.string.reader_sr_switch_off)
+                    // 用户口径：超分的提示也走 app 状态浮层，不用手机底部 Toast
+                    showSrNotice(
+                        getString(if (enabled) R.string.reader_sr_switch_on else R.string.reader_sr_switch_off),
+                        isError = false,
                     )
                     // 开关改的是**显示的底图**（超分底图 ⇄ 原图）→ 与字号/Anime4K 同一条链路：
                     // 作废渲染缓存 + 重渲染当前页。不作废的话关掉开关画面上还是超分图。
@@ -1718,11 +1758,9 @@ class MangaReaderActivity : AppCompatActivity() {
                     refreshTranslationChrome()
                 },
                 onReaderSrAutoChanged = { enabled ->
-                    UiUtils.showToast(
-                        this@MangaReaderActivity,
-                        getString(
-                            if (enabled) R.string.reader_sr_auto_on else R.string.reader_sr_auto_off
-                        )
+                    showSrNotice(
+                        getString(if (enabled) R.string.reader_sr_auto_on else R.string.reader_sr_auto_off),
+                        isError = false,
                     )
                 },
                 // ===== 章节卡片：主按钮（翻译本章/暂停/继续）+ 次按钮（清除本章译文/取消）=====

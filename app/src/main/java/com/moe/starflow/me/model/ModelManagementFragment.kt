@@ -141,8 +141,11 @@ class ModelManagementFragment : Fragment() {
      * @param radioId 行内那个**不可点**的 RadioButton（只用来显示"这一档是当前使用"）。
      *   ⚠️ 为什么必须有它：组的「当前使用」只标到**族**上，同一个族的四个等级看起来一模一样 ——
      *   用户选完 cunet n2 之后，界面上没有任何地方能看出"到底哪一档生效了"。
+     *
+     * @param titleId 模型名那个 TextView —— **未下载时只把它与选中圈置灰**，
+     *   绝不调整整行 alpha：行里还有「下载」按钮，整行变淡会让它看起来也是禁用的。
      */
-    private data class SrRow(val modelKey: ModelKey, val rowRootId: Int, val radioId: Int)
+    private data class SrRow(val modelKey: ModelKey, val rowRootId: Int, val radioId: Int, val titleId: Int)
 
     /** 一族 = XML 里一个分组（组标题 / 「当前使用」标记 / 若干行） */
     private data class SrFamily(val titleId: Int, val selectedId: Int, val rows: List<SrRow>)
@@ -153,21 +156,21 @@ class ModelManagementFragment : Fragment() {
      */
     private val srFamilies: List<SrFamily> = listOf(
         SrFamily(R.id.sr_aji_group_title, R.id.sr_aji_group_selected, listOf(
-            SrRow(ModelKey.SR_ANIMEJANAI_HD_BALANCED, R.id.sr_aji_balanced_row, R.id.sr_aji_balanced_radio),
-            SrRow(ModelKey.SR_ANIMEJANAI_HD_PERFORMANCE, R.id.sr_aji_perf_row, R.id.sr_aji_perf_radio),
-            SrRow(ModelKey.SR_ANIMEJANAI_HD_SHARP1_BALANCED, R.id.sr_aji_sharp1_balanced_row, R.id.sr_aji_sharp1_balanced_radio),
-            SrRow(ModelKey.SR_ANIMEJANAI_HD_SHARP1_PERFORMANCE, R.id.sr_aji_sharp1_perf_row, R.id.sr_aji_sharp1_perf_radio),
-            SrRow(ModelKey.SR_ANIMEJANAI_SD_COMPACT, R.id.sr_aji_sd_row, R.id.sr_aji_sd_radio),
+            SrRow(ModelKey.SR_ANIMEJANAI_HD_BALANCED, R.id.sr_aji_balanced_row, R.id.sr_aji_balanced_radio, R.id.sr_aji_balanced_title),
+            SrRow(ModelKey.SR_ANIMEJANAI_HD_PERFORMANCE, R.id.sr_aji_perf_row, R.id.sr_aji_perf_radio, R.id.sr_aji_perf_title),
+            SrRow(ModelKey.SR_ANIMEJANAI_HD_SHARP1_BALANCED, R.id.sr_aji_sharp1_balanced_row, R.id.sr_aji_sharp1_balanced_radio, R.id.sr_aji_sharp1_balanced_title),
+            SrRow(ModelKey.SR_ANIMEJANAI_HD_SHARP1_PERFORMANCE, R.id.sr_aji_sharp1_perf_row, R.id.sr_aji_sharp1_perf_radio, R.id.sr_aji_sharp1_perf_title),
+            SrRow(ModelKey.SR_ANIMEJANAI_SD_COMPACT, R.id.sr_aji_sd_row, R.id.sr_aji_sd_radio, R.id.sr_aji_sd_title),
         )),
         SrFamily(R.id.sr_w2xc_group_title, R.id.sr_w2xc_group_selected, listOf(
-            SrRow(ModelKey.SR_WAIFU2X_CUNET_N0, R.id.sr_w2xc_n0_row, R.id.sr_w2xc_n0_radio),
-            SrRow(ModelKey.SR_WAIFU2X_CUNET_N1, R.id.sr_w2xc_n1_row, R.id.sr_w2xc_n1_radio),
-            SrRow(ModelKey.SR_WAIFU2X_CUNET_N2, R.id.sr_w2xc_n2_row, R.id.sr_w2xc_n2_radio),
-            SrRow(ModelKey.SR_WAIFU2X_CUNET_N3, R.id.sr_w2xc_n3_row, R.id.sr_w2xc_n3_radio),
+            SrRow(ModelKey.SR_WAIFU2X_CUNET_N0, R.id.sr_w2xc_n0_row, R.id.sr_w2xc_n0_radio, R.id.sr_w2xc_n0_title),
+            SrRow(ModelKey.SR_WAIFU2X_CUNET_N1, R.id.sr_w2xc_n1_row, R.id.sr_w2xc_n1_radio, R.id.sr_w2xc_n1_title),
+            SrRow(ModelKey.SR_WAIFU2X_CUNET_N2, R.id.sr_w2xc_n2_row, R.id.sr_w2xc_n2_radio, R.id.sr_w2xc_n2_title),
+            SrRow(ModelKey.SR_WAIFU2X_CUNET_N3, R.id.sr_w2xc_n3_row, R.id.sr_w2xc_n3_radio, R.id.sr_w2xc_n3_title),
         )),
         SrFamily(R.id.sr_w2xs_group_title, R.id.sr_w2xs_group_selected, listOf(
-            SrRow(ModelKey.SR_WAIFU2X_SWIN_N0, R.id.sr_w2xs_n0_row, R.id.sr_w2xs_n0_radio),
-            SrRow(ModelKey.SR_WAIFU2X_SWIN_N1, R.id.sr_w2xs_n1_row, R.id.sr_w2xs_n1_radio),
+            SrRow(ModelKey.SR_WAIFU2X_SWIN_N0, R.id.sr_w2xs_n0_row, R.id.sr_w2xs_n0_radio, R.id.sr_w2xs_n0_title),
+            SrRow(ModelKey.SR_WAIFU2X_SWIN_N1, R.id.sr_w2xs_n1_row, R.id.sr_w2xs_n1_radio, R.id.sr_w2xs_n1_title),
         ))
     )
 
@@ -557,22 +560,53 @@ class ModelManagementFragment : Fragment() {
     /**
      * 绑定超分组的事件（行本身来自 XML，与 OCR 页同一套 include）。
      *
-     * - 点**组标题** = 选中该族**推荐档**（各族第一行）；与 OCR「点组标题选引擎」同义
-     * - 点**行** = 选中该行模型
-     * - 行内「🔗 浏览器」按钮的接线由 `setupBrowserDownloadButtons()` 统一处理（同 OCR）
+     * ## 选择规则**与 OCR 模型页严格一致**（用户口径 2026-10）
+     * OCR 页（`refreshOcrGroupSelection`）是：**没下载 → 置灰 + 点它弹说明；已下载 → 选中 + 提示名字**。
+     * SR 侧照抄这一套，只不过 SR 的"可选单位"是**每一档**（每档就是一个独立模型），
+     * 而不是 OCR 的整个引擎组：
+     * - 点**行**（模型名 / 选中圈 / 下载行）= 选中该档，**前提是这一档已下载**
+     * - 点**组标题** = 选中该族里**第一个已下载**的档（全族都没下载 → 弹说明）
+     * - 行内「🔗 浏览器 / 下载 / 删除 / 取消」按钮各有自己的监听器，不受影响
+     *
+     * ⚠️ **未下载的绝不允许切换过去**：选了它超分只会失败（模型文件不存在），
+     * 而用户以为自己"已经开了超分"—— 那是上一版最容易被当成 bug 的行为。
      */
     private fun bindSrGroups() {
         for (family in srFamilies) {
             rootView.findViewById<View>(family.titleId).setOnClickListener {
-                family.rows.firstOrNull()?.let { selectSrModel(it.modelKey) }
+                // 组标题 = 该族的推荐档；推荐档没下载就退而求其次找第一个已下载的
+                val target = family.rows.firstOrNull { isSrDownloaded(it.modelKey) }
+                if (target != null) selectSrModel(target.modelKey)
+                else showSrNeedDownload(family.rows.map { it.modelKey })
             }
             for (row in family.rows) {
-                rootView.findViewById<View>(row.rowRootId).setOnClickListener {
-                    selectSrModel(row.modelKey)
+                val root = rootView.findViewById<View>(row.rowRootId)
+                root.setOnClickListener {
+                    if (isSrDownloaded(row.modelKey)) selectSrModel(row.modelKey)
+                    else showSrNeedDownload(listOf(row.modelKey))
                 }
             }
         }
         refreshSrSelection()
+    }
+
+    /** 该超分模型是否已下载（文件在且非空）—— 选择的**唯一门槛**，与 OCR 页的 `available` 同义。 */
+    private fun isSrDownloaded(key: ModelKey): Boolean =
+        SrModelManager.isDownloaded(requireContext(), key)
+
+    /**
+     * 未下载的模型被点击 → 说清"要先下载哪些"（照 OCR 页的 `AlertDialog` 写法）。
+     * ⚠️ 用 `ReaderDialogs`… 不适用（这是设置页不是阅读器），与 OCR 页一致用原生 `AlertDialog`
+     * + `dialog_background`。
+     */
+    private fun showSrNeedDownload(keys: List<ModelKey>) {
+        val names = keys.joinToString("\n") { "· " + getString(SrModelManager.nameResOf(it)) }
+        AlertDialog.Builder(requireContext())
+            .setMessage(getString(R.string.sr_select_need_download, names))
+            .setPositiveButton(R.string.user_known, null)
+            .create()
+            .also { it.window?.setBackgroundDrawableResource(R.drawable.dialog_background) }
+            .show()
     }
 
     /** 选中某个超分模型（写 prefs + 刷新「当前使用」+ 提示） */
@@ -589,15 +623,19 @@ class ModelManagementFragment : Fragment() {
     }
 
     /**
-     * 刷新各族的「当前使用」标记 **+ 每一行的等级选中圈**（与 OCR 页 `*_group_selected` 同一套）。
+     * 刷新各族的「当前使用」标记 **+ 每一行的等级选中圈 + 可选中状态**
+     * （与 OCR 页 `*_group_selected` / `isEnabled` / `alpha` 同一套）。
      *
-     * ⚠️ **每个族 / 每一行都要显式赋值 VISIBLE/GONE / isChecked** —— 只写"命中的那个"会把上一轮的
-     * 状态留在屏幕上（配置页那批开关踩过同一个坑；模型页在这种"部分更新"下的症状是
+     * ⚠️ **每个族 / 每一行都要显式赋值 VISIBLE/GONE / isChecked / alpha** —— 只写"命中的那个"
+     * 会把上一轮的状态留在屏幕上（配置页那批开关踩过同一个坑；模型页在这种"部分更新"下的症状是
      * 「勾看着还在旧档上」，而它又不崩不报错，极难归因）。
      *
      * 两级标记分工（用户口径：组内要能看出选了哪一档）：
      * - 族标题上的「当前使用」= 当前模型属于**这一族**
      * - 行内 RadioButton = 当前模型就是**这一档**
+     *
+     * ⚠️ 置灰只作用于**标题与选中圈**，不能把整行 alpha 调低 —— 行里还有「下载」按钮，
+     * 整行变淡会让它看起来也是禁用的（用户正要靠它下载）。
      */
     private fun refreshSrSelection() {
         val prefs = CustomPreference.getInstance(requireContext()).getSharedPreferences()
@@ -607,7 +645,12 @@ class ModelManagementFragment : Fragment() {
             rootView.findViewById<View>(family.selectedId).visibility =
                 if (owned) View.VISIBLE else View.GONE
             for (row in family.rows) {
-                rootView.findViewById<RadioButton>(row.radioId).isChecked = row.modelKey == active
+                val downloaded = isSrDownloaded(row.modelKey)
+                rootView.findViewById<RadioButton>(row.radioId).apply {
+                    isChecked = row.modelKey == active
+                    alpha = if (downloaded) 1f else 0.4f
+                }
+                rootView.findViewById<TextView>(row.titleId).alpha = if (downloaded) 1f else 0.4f
             }
         }
     }
