@@ -56,6 +56,8 @@ object ReaderChapterDialog {
         val paused: Boolean = false,
         /** 任务里已完成（结算）的页数。 */
         val jobDone: Int = 0,
+        /** 任务自己的总页数（默认「只翻未完成」时 ≠ [total]，徽章分母要用它）。 */
+        val jobTotal: Int = 0,
         /** 队列里还在等的页数（面板上的「等待」）。 */
         val waiting: Int = 0,
     ) {
@@ -177,8 +179,17 @@ object ReaderChapterDialog {
             val st = statusOf(position)
             // 状态优先：正在跑/暂停时显示**任务进度**（比"已译页数"更能说明"现在在干什么"）
             val base = when {
-                st.running -> ctx.getString(R.string.reader_translate_chapter_running, st.jobDone, st.total)
-                st.paused -> ctx.getString(R.string.chapter_translate_notify_paused, st.jobDone, st.total)
+                // ⚠️ 分母用任务自己的 total（只翻未完成时 ≠ 章页数），否则进度会「倒退」
+                st.running -> ctx.getString(
+                    R.string.reader_translate_chapter_running,
+                    st.jobDone,
+                    if (st.jobTotal > 0) st.jobTotal else st.total,
+                )
+                st.paused -> ctx.getString(
+                    R.string.chapter_translate_notify_paused,
+                    st.jobDone,
+                    if (st.jobTotal > 0) st.jobTotal else st.total,
+                )
                 st.allDone -> ctx.getString(R.string.reader_translate_chapter_done)
                 else -> ctx.getString(R.string.reader_chapter_badge, st.success, st.total)
             }

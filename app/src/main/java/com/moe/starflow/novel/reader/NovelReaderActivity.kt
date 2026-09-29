@@ -1349,6 +1349,9 @@ class NovelReaderActivity : AppCompatActivity() {
                 repository.paragraphsOf(book2, ch).filter { it.isTranslatable() }.map { it.index }
             },
             translatedIndexes = { book2, ch -> translations.keys.toSet() },
+            // ⚠️ 排除「翻译本章」任务已占住的段：那些段在翻完前库里还是 IDLE，
+            // 不排除会让自动/增量队列与章任务**同时**对同一段发请求（白烧额度）。
+            excludedParas = { ch -> chapterHost?.inFlightAndWaitingParas(ch) ?: emptySet() },
             // **并发**：远端 API 由「同时 API 请求数」决定（默认 5），**本地引擎恒 1**（判据在
             // TranslationConcurrency 里）→ 本地引擎天然串行，不需要额外分支。
             // 每轮现读 prefs：滑块改完立刻对下一批生效（在飞的那几批不受影响）。
@@ -1942,7 +1945,7 @@ class NovelReaderActivity : AppCompatActivity() {
      */
     private fun showPausedNotice(textRes: Int) {
         val text = getString(textRes)
-        if (statusOverlayEnabled()) {
+        if (canUseOverlay()) {
             TranslationStatusOverlay.getInstance(this).show(text)
         } else {
             UiUtils.showToast(this, text)
@@ -2104,13 +2107,23 @@ class NovelReaderActivity : AppCompatActivity() {
         return getString(R.string.novel_queue_translating_para, (para ?: 0) + 1)
     }
 
+    /**
+     * 现在能不能真的把状态浮层画出来：**开关打开 + 有悬浮窗权限**。
+     *
+     * ⚠️ 只判开关是不够的：没有「显示在其他应用上层」权限时浮层**静默失败**
+     * （既不显示也不报错），用户看到的就是"点了翻译/取消，什么提示都没有"。
+     * 与漫画 `MangaReaderActivity.showForceStoppedNotice` 同一套判断。
+     */
+    private fun canUseOverlay(): Boolean =
+        statusOverlayEnabled() && TranslationStatusOverlay.canDraw(this)
+
     private fun statusOverlayEnabled(): Boolean =
         androidx.preference.PreferenceManager.getDefaultSharedPreferences(this)
             .getBoolean("status_overlay_enabled", true)
 
     /** 状态浮层显示（`text == null` = 收起）。⚠️ 开关关闭时退回系统 Toast，否则用户毫无反馈。 */
     private fun showOverlay(text: String?, autoDismiss: Boolean = true) {
-        if (!statusOverlayEnabled()) {
+        if (!canUseOverlay()) {
             if (text != null) UiUtils.showToast(this, text)
             return
         }
@@ -2119,7 +2132,7 @@ class NovelReaderActivity : AppCompatActivity() {
     }
 
     private fun showOverlayToast(text: String, error: Boolean) {
-        if (!statusOverlayEnabled()) {
+        if (!canUseOverlay()) {
             UiUtils.showToast(this, text)
             return
         }

@@ -61,9 +61,16 @@ class ChapterTranslationCancelGuardTest {
     @Test
     fun startChapterJob_resetsCancelFlagBeforeSubmitting() {
         val text = controllerSource()
+        // ⚠️ 按**函数边界**截取，不要用魔法窗口（start + 2000）：
+        // 函数一变长/被重排，submitAt 会变成 -1 → 断言以"复位必须在 submit 之前"假红。
         val start = text.indexOf("fun startChapterJob(")
         assertTrue("找不到 startChapterJob", start >= 0)
-        val body = text.substring(start, (start + 2_000).coerceAtMost(text.length))
+        val end = text.indexOf("fun pauseChapterJob(", start).let { if (it > start) it else text.length }
+        val body = text.substring(start, end)
+        assertTrue(
+            "startChapterJob 里不许再读 cancelFlag（那正是事故写法）",
+            !body.contains("cancelFlag.get()")
+        )
         assertTrue(
             "startChapterJob 必须先 cancelFlag.set(false)：cancelEverything() 会把它置 true，" +
                 "不复位的话本章每一页都会在管线第一句被判「已取消」",

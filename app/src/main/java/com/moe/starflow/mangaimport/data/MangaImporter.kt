@@ -84,9 +84,11 @@ object MangaImporter {
         id: Long = nextId(context),
         onProgress: (ImportProgress) -> Unit = {}
     ): ImportedManga = withContext(Dispatchers.IO) {
-        val name = DocumentFile.fromSingleUri(context, contentUri)?.name
-            ?: contentUri.lastPathSegment
-            ?: context.getString(R.string.default_manga_title, id.toString())
+        val name = safeSegment(
+            DocumentFile.fromSingleUri(context, contentUri)?.name
+                ?: contentUri.lastPathSegment
+                ?: ""
+        ) ?: context.getString(R.string.default_manga_title, id.toString())
         val title = name.substringBeforeLast('.', name)
 
         val manga = importArchiveToFile(context, contentUri, id, name, title, onProgress)
@@ -105,7 +107,8 @@ object MangaImporter {
     ): ImportedManga? {
         val destDir = localDir(context, id).apply { mkdirs() }
         try {
-            val archiveFile = File(destDir, name)
+            // ⚠️ 文件名同样不可信（SAF 显示名可能带 `../`/分隔符）→ 只取最后一段
+            val archiveFile = File(destDir, safeSegment(name) ?: "archive")
             // 源文件大小（可能查不到 → 0 → 进度条转不确定态）
             val totalBytes = DocumentFile.fromSingleUri(context, contentUri)?.length() ?: 0L
             onProgress(ImportProgress(ImportPhase.COPYING, totalBytes = totalBytes))
@@ -284,6 +287,12 @@ object MangaImporter {
             ordered.forEach { (doc, rel) ->
                 coroutineContext.ensureActive()
                 val target = File(destDir, rel)
+                // ⚠️ 纵深防御：哪怕上游漏了消毒，也**绝不允许**写到这本书自己的目录之外
+                // （越界会覆盖 models/、covers/、别人书的页图）。
+                if (!target.canonicalPath.startsWith(destDir.canonicalPath + File.separator)) {
+                    LogCollector.w(TAG, "跳过越界目标: $rel")
+                    return@forEach
+                }
                 target.parentFile?.mkdirs()
                 context.contentResolver.openInputStream(doc.uri)?.use { input ->
                     // 单文件内部也可取消：大页图不至于让「取消」等满一整页
@@ -341,13 +350,27 @@ object MangaImporter {
         doc.listFiles().forEach { child ->
             coroutineContext.ensureActive()
             if (child.isDirectory) {
-                val dirName = child.name ?: return@forEach
+                val dirName = safeSegment(child.name ?: return@forEach) ?: return@forEach
                 collectImageDocs(child, "$prefix$dirName/", out)
             } else if (child.isFile && ArchivedMangaReader.isImageFile(child.name ?: "")) {
-                val name = child.name ?: return@forEach
+                val name = safeSegment(child.name ?: return@forEach) ?: return@forEach
                 out.add(child to "$prefix$name")
             }
         }
+    }
+
+    /**
+     * SAF（DocumentsProvider）给的**显示名是不可信输入**：恶意/故障的 provider 可以返回
+     * `../../models/x.gguf` 这类名字，直接拼成相对路径就会写到 `manga_import/<id>/` **之外**
+     * （覆盖 models/、covers/、别人书的页图）。只保留最后一段文件名，并挡掉 `.`/`..`/空白/控制字符。
+     *
+     * @return 安全的路径片段；名字完全不可用时返回 null（调用方跳过这一项）
+     */
+    private fun safeSegment(raw: String): String? {
+        val last = raw.replace('\\', '/').substringAfterLast('/').trim()
+        if (last.isEmpty() || last == "." || last == "..") return null
+        val cleaned = last.filter { it.code >= 0x20 }
+        return cleaned.ifEmpty { null }
     }
 
     /**

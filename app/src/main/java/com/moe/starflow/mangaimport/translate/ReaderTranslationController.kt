@@ -242,11 +242,14 @@ class ReaderTranslationController(
 
     // ⚠️ 默认就走**自持数据源**（而不是 { null }）：后台任务/通知栏进来时 Activity 没 bind，
     // 用 { null } 的话每一页都会"原图加载失败"（静默 → 全页标失败 → 队列跳过 → 看着像没反应）
-    private var loadFull: (Int) -> Bitmap? = { ownSource.loadFull(it) }
-    private var loadWebtoon: ((Int) -> Bitmap?)? = null
-    private var originalWidthOf: ((Int) -> Int)? = null
-    private var currentPageProvider: () -> Int = { -1 }
-    private var pageCount: () -> Int = { 0 }
+    // ⚠️ 这几个 lambda 都是**主线程写（bind/unbindUi）、应用级后台任务读**，
+    // 必须 @Volatile：否则（JMM 无 happens-before）unbindUi() 之后后台仍可能看到旧 lambda
+    // → 继续调用已销毁 Activity 的页图加载器/浮层回调（正是这段注释声称要避免的泄漏）。
+    @Volatile private var loadFull: (Int) -> Bitmap? = { ownSource.loadFull(it) }
+    @Volatile private var loadWebtoon: ((Int) -> Bitmap?)? = null
+    @Volatile private var originalWidthOf: ((Int) -> Int)? = null
+    @Volatile private var currentPageProvider: () -> Int = { -1 }
+    @Volatile private var pageCount: () -> Int = { 0 }
 
     /**
      * 阅读器 UI 是否还挂着。
@@ -269,6 +272,17 @@ class ReaderTranslationController(
      */
     @Volatile
     var everAttached: Boolean = false
+        private set
+
+    /**
+     * 是否已被 [shutdownAll] 关掉（hub 回收后就**不能再 bind**）。
+     *
+     * ⚠️ 竞态：`controllerFor()` 与 Activity 的 `bind()` 之间，hub 的收集协程可能判定
+     * 「无 UI 且无任务」把它回收（那一刻 `uiAttached` 还是 false）→ Activity 手上留一个已关实例，
+     * 之后「翻译本章」全都不动。阅读器 bind 后自检这个标志并换一个新实例即可闭合窗口。
+     */
+    @Volatile
+    var closed: Boolean = false
         private set
 
     /**
@@ -403,6 +417,7 @@ class ReaderTranslationController(
 
     /** 彻底停掉（连章节批量任务一起）—— 换书 / 控制器被回收时用。 */
     fun shutdownAll() {
+        closed = true
         cancelEverything()
         chapterRunner.shutdown()
         translateMode.value = MODE_MANUAL
@@ -529,8 +544,12 @@ class ReaderTranslationController(
      * **只有「未翻译(IDLE)」才翻**：`SUCCESS` 显然跳过；`FAILED` 也跳过 ——
      * 否则内容性失败（如空白页 OCR 为空）会被窗口反复重挑，**无限重试**。
      */
-    private fun isTranslatable(page: Int): Boolean =
-        stateOf(page) == ImportedPageTranslation.STATE_IDLE
+    private fun isTranslatable(page: Int): Boolean {
+        // ⚠️ 还要排除**章节任务已经拿走的页**：它们在库里的状态可能仍是 IDLE（识别中/预取中不写库），
+        // 只看库状态会让增量窗口与整章任务翻同一页 → OCR 两遍 + API 请求两份（白烧额度）。
+        if (page in chapterRunner.runningOwnedPages()) return false
+        return stateOf(page) == ImportedPageTranslation.STATE_IDLE
+    }
 
     /**
      * **增量模式的一个窗口**：OCR 逐页串行 + 翻译请求**并发 N**（`manga_concurrent_requests`）。
@@ -610,7 +629,7 @@ class ReaderTranslationController(
      * 章节批量翻译的流水线：OCR 串行 + 翻译并发 + 按章暂停/取消（见 [ChapterJobRunner]）。
      *
      * ⚠️ **这是应用级后台任务**（用户口径）：控制器由 `ReaderTranslationHub` 持有、跑在应用级 scope 上，
-     * 阅读器关掉也继续翻，进度在前台服务的通知栏里（`ChapterTranslationService`）。
+     * 阅读器关掉也继续翻，进度在前台服务的通知栏里（`TranslationJobService`）。
      * 所以章节任务**不走** `lifecycleScope`，`cancelEverything()` 也不再取消它。
      */
     private val chapterRunner = ChapterJobRunner(
@@ -653,13 +672,15 @@ class ReaderTranslationController(
 
     /** 这本书的 id / 标题（通知栏与本控制器对外汇总用）。 */
     val mangaId: Long get() = manga.id
+
+    /** 身份指纹（= `manga.addedAt`）：宿主用它判断"同一个 id 是否已经换了一本书"。 */
+    fun translationKeyOf(): String = mangaKey
     val mangaTitle: String get() = manga.title
 
     fun isChapterBatchRunning(): Boolean = chapterRunner.isBusy()
 
     fun chapterJob(chapterIndex: Int): ChapterJob? = chapterRunner.jobOf(chapterIndex)
 
-    fun isWaiting(page: Int): Boolean = page in chapterRunner.waitingPages.value
 
     /**
      * **正在被章节任务处理的页**（OCR 中 / 翻译中）。
@@ -752,18 +773,18 @@ class ReaderTranslationController(
      * ⚠️ 超时**必须**由调用方如实记账（记失败 + 日志）：静默跳过会让"进度在涨但什么都没翻"
      * 且完全没有线索（见 [ocrPhase] 的注释）。
      */
-    private suspend fun acquireOcrLockWithWait(page: Int): Boolean {
-        if (OcrLock.tryAcquire()) return true
+    private suspend fun acquireOcrLockWithWait(page: Int): Long {
+        OcrLock.acquire().let { if (it != 0L) return it }
         var waited = 0L
         while (waited < OCR_LOCK_WAIT_TIMEOUT_MS) {
             delay(OCR_LOCK_POLL_MS)
             waited += OCR_LOCK_POLL_MS
-            if (OcrLock.tryAcquire()) return true
+            OcrLock.acquire().let { if (it != 0L) return it }
             if (waited % 5_000L < OCR_LOCK_POLL_MS) {
                 LogCollector.d(TAG, "OCR 阶段：等待引擎锁 ${waited}ms（page=$page，持有 ${OcrLock.heldMs()}ms）")
             }
         }
-        return false
+        return 0L
     }
     private suspend fun ocrPhase(page: Int): PreparedPage? {
         // ⚠️ **等锁必须有超时，且超时要如实记账**（2026-09-28 用户报的"进度在涨、什么都没翻、
@@ -771,7 +792,8 @@ class ReaderTranslationController(
         // 以前 `while (isRunning) delay()` 之后 `tryAcquire()` 一旦被别人抢先就**静默返回 null** ——
         // 这一页于是既不翻、也不记失败、连日志都没有，而流水线照样把它算作"已结算"（done+1）
         // → 面板上那一行消失、进度在涨、取消后"什么都没留下"。
-        if (!acquireOcrLockWithWait(page)) {
+        val ocrToken = acquireOcrLockWithWait(page)
+        if (ocrToken == 0L) {
             val msg = context.getString(R.string.reader_translate_ocr_busy)
             LogCollector.w(TAG, "OCR 阶段：等待引擎锁超时 page=$page（别的翻译一直占着）→ 本页记为失败")
             withContext(kotlinx.coroutines.NonCancellable) { runCatching { fail(page, "PROCESS_EXCEPTION", msg) } }
@@ -779,7 +801,10 @@ class ReaderTranslationController(
         }
         try {
             val (det, ocr) = try {
-                TranslationEngineInit.ensureReady(context)
+                // ⚠️ 持锁期间**必须打心跳**：OcrLock 有 30s 无心跳就判定"持有者已死"并强制释放，
+                // 而引擎就绪（模型加载）可能很久 —— 误放会让两个线程同时用单例 ONNX 引擎。
+                OcrLock.heartbeat(ocrToken)
+                TranslationEngineInit.ensureReady(context).also { OcrLock.heartbeat(ocrToken) }
             } catch (e: Exception) {
                 LogCollector.e(TAG, "engine init failed page=$page", e)
                 val msg = context.getString(R.string.reader_translate_model_missing, e.message.orEmpty())
@@ -823,7 +848,7 @@ class ReaderTranslationController(
                 null
             }
         } finally {
-            OcrLock.release()
+            OcrLock.release(ocrToken)
         }
     }
 
@@ -1192,11 +1217,21 @@ class ReaderTranslationController(
      * 后台预翻的页面渲染出来没人看，纯烧 CPU 和 100MB 渲染缓存。
      */
     private suspend fun runTranslate(page: Int, fromQueue: Boolean) {
-        if (!OcrLock.tryAcquire()) {
+        val ocrToken = OcrLock.acquire()
+        if (ocrToken == 0L) {
             LogCollector.d(TAG, "runTranslate: OcrLock 被占用，跳过 page=$page")
             return
         }
         cancelFlag.set(false)
+        // ⚠️ 本方法**从 OCR 一直持锁到翻译结束**（自动模式要页内分批+流式），一次最长可达分钟级，
+        // 而 OcrLock 的 30s 无心跳自愈会把仍活着的持有者误判成死锁 → 强制释放 → 单例引擎被并发调用。
+        // 这里整段持锁期间后台打心跳（5s 一次），把这个误判的窗口堵死。
+        val heartbeatJob = scope.launch(Dispatchers.IO) {
+            while (isActive) {
+                OcrLock.heartbeat(ocrToken)
+                delay(OCR_LOCK_POLL_MS * 100)
+            }
+        }
 
         // ⚠️ 必须在 try 之外定义：catch 分支也要用它上报失败阶段
         val shouldRender = { page == currentPageProvider() }
@@ -1220,7 +1255,11 @@ class ReaderTranslationController(
                 runCatching { fail(page, "OCR_MODEL_MISSING", msg) }
             }
             phase(ReaderTranslatePhase.FAILED, msg)
-            OcrLock.release()
+            // ⚠️ 这条提前 return **在下面那个 try/finally 之外**：不在这里停掉心跳，
+            // ticker 会以 5s 一次永远活在应用级 scope 上（`OcrLock.heartbeat()` 一直有人打
+            // → 30s 自愈永远不触发，漏放锁的路径再也没人兜底）。
+            heartbeatJob.cancel()
+            OcrLock.release(ocrToken)
             return
         }
         runDet = det
@@ -1334,7 +1373,8 @@ class ReaderTranslationController(
             fail(page, "PROCESS_EXCEPTION", msg)
             phase(ReaderTranslatePhase.FAILED, msg)
         } finally {
-            OcrLock.release()
+            heartbeatJob.cancel()
+            OcrLock.release(ocrToken)
         }
     }
 
@@ -1676,6 +1716,9 @@ class ReaderTranslationController(
      * 一路把 LRU 冲干净，把用户正在看的那页译图也挤掉，退回阅读器还得重渲。
      *
      * ⚠️ **必须在 IO 线程调用**（全尺寸解码 + 全页渲染）；调用方负责 `recycle()` 返回值。
+     *
+     * ⚠️ 渲染倍率固定 **1f**（导出不上屏、不吃屏幕分辨率）：按 2f 栅格化会把导出图放大 4 倍像素
+     * （内存/时间白花，见 manga/CLAUDE.md 的「低分辨率漫画译文模糊」一节里"导出/查看器一律传 1f"）。
      */
     fun renderForExport(pageIndex: Int): Bitmap? {
         val row = rows.value[pageIndex] ?: return null
@@ -1684,7 +1727,9 @@ class ReaderTranslationController(
         val bubbles = PageTranslationCodec.fromRow(row, config.fontSize, config.bgColor) ?: return null
         val orig = loadFull(pageIndex) ?: return null
         return try {
-            renderBubbles(orig, bubbles, TranslationCacheManager.OverlayMode.TRANSLATED, config)
+            renderBubbles(
+                orig, bubbles, TranslationCacheManager.OverlayMode.TRANSLATED, config, renderScale = 1f
+            )
         } finally {
             // renderOverlay 开头就 copy() 出独立副本 → 源图渲染完即可回收（导出逐页进行，别攒内存）
             orig.recycle()
@@ -1770,6 +1815,8 @@ class ReaderTranslationController(
         bubbles: List<TranslatedBubble>,
         mode: TranslationCacheManager.OverlayMode,
         cfg: TranslationCacheManager.OverlayConfig,
+        /** 栅格化倍率：分页上屏/导出用默认 2 倍；Webtoon 预热传 1f（源图已采样到位）。 */
+        renderScale: Float = READER_RENDER_SCALE,
     ): Bitmap = OverlayRenderer.renderOverlay(
         original = original,
         regions = bubbles,
@@ -1795,7 +1842,7 @@ class ReaderTranslationController(
         // 超采样渲染（2026-10）：阅读器上屏的译图按 2 倍栅格化，让**文字**在低分辨率页上也清晰。
         // 底图不变（该多糊还多糊，那是图源决定的）；只有文字从"插值放大的像素"变成"按最终分辨率栅格化"。
         // ⚠️ 只在这一处传 >1：导出/查看器/历史都传默认 1f（它们不吃屏幕分辨率，且结果进 BitmapLruCache）。
-        renderScale = READER_RENDER_SCALE
+        renderScale = renderScale
     )
 
     /** 渲染并预热译文图缓存，同时切到该态。最终结果写入后**丢弃半成品**，避免残留旧图。 */
@@ -1922,7 +1969,12 @@ class ReaderTranslationController(
                 val scaled = if (scale != 1f && scale > 0f) bubbles.map { it.scaledBy(scale) } else bubbles
                 // Webtoon 只有「原图」与「译文」两态：原图不经渲染（适配器直出采样图），
                 // 所以这里恒按译文渲染
-                val out = renderBubbles(src, scaled, TranslationCacheManager.OverlayMode.TRANSLATED, cfg)
+                // ⚠️ Webtoon 的源图**已经按屏宽采样**（见 loadWebtoon/computeSample），再按 2 倍栅格化
+                // 只是把像素翻 4 倍：800x9000 的一页会变成 1600x18000 ≈ 115MB，远超 64MB 的 webtoonLru 预算
+                // （OOM 直接崩进程）。这里传 1f：文字清晰度由采样比例决定，不需要额外超采样。
+                val out = renderBubbles(
+                    src, scaled, TranslationCacheManager.OverlayMode.TRANSLATED, cfg, renderScale = 1f
+                )
                 // 代次变了 = 渲染期间替换表被改过 → 这张是旧规则的，写进去会被预热的
                 // 「webtoonLru.get(p) == null」过滤永久跳过（规则再也生效不了）
                 if (gen != renderGeneration) {
@@ -1944,11 +1996,11 @@ class ReaderTranslationController(
 
     // ========== UI 回调（由 Activity 注入） ==========
 
-    /** 页面显示需要刷新（三态切换 / 翻译完成）。 */
-    var onVisual: () -> Unit = {}
+    /** 页面显示需要刷新（三态切换 / 翻译完成）。主线程写、应用级任务读 → @Volatile。 */
+    @Volatile var onVisual: () -> Unit = {}
 
-    /** 翻译阶段变化（检测中/翻译中/完成/失败/队列耗尽）。 */
-    var onPhase: (ReaderTranslatePhase, String?) -> Unit = { _, _ -> }
+    /** 翻译阶段变化（检测中/翻译中/完成/失败/队列耗尽）。同上。 */
+    @Volatile var onPhase: (ReaderTranslatePhase, String?) -> Unit = { _, _ -> }
 
     // ========== 私有：写记录 ==========
 

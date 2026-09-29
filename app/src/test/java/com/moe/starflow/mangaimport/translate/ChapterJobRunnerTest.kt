@@ -477,15 +477,12 @@ class ChapterJobRunnerTest {
             runner.submit(0, (1..4).toList())
             withTimeout(4_000) { while (runner.translatingPages().isEmpty()) delay(10) }
 
-            val t0 = System.currentTimeMillis()
             runner.cancel(0)
+            // ⚠️ 用**同步性**断言"不等待"，不要用墙钟阈值（满负载/CI 上会假红）：
+            // cancel() 是同步派发收尾事件的，返回时事件必须已经在手上。
             assertTrue("取消必须立刻收尾（用户口径：不等待）", finishes.isNotEmpty())
             assertTrue("取消要如实上报 cancelled=true", finishes.single().third)
             assertEquals(ChapterJobState.CANCELLED, runner.stateOf(0))
-            assertTrue(
-                "收尾不该等在途项：耗时 ${System.currentTimeMillis() - t0}ms",
-                System.currentTimeMillis() - t0 < 1_500
-            )
 
             // 放掉被卡的翻译（现实里 = HTTP 请求返回）→ 被掐掉的那一项自行结算
             gate.countDown()
@@ -493,6 +490,150 @@ class ChapterJobRunnerTest {
             assertEquals("收尾事件只该派发一次（在途项稍后结算不得再派发）", 1, finishes.size)
             assertEquals("被强制结束的页不算成功", 0, finishes.single().second)
             assertTrue("收尾后在途必须清空", runner.inFlightPages().isEmpty())
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    /**
+     * ⚠️ 审查回归：`runningOwnedPages()` 只算**正在跑**那一章占住的页。
+     *
+     * 宿主的增量窗口用它去重（别重复翻同一页），用 `waitingPages`（含 PAUSED 章）的话，
+     * 一个被暂停的章会把它的整条队列一直扣住 → 增量/自动模式永远挑不到那些页（直接判「队列耗尽」）。
+     */
+    @Test
+    fun runningOwnedPages_excludesPausedChapterQueue() = runBlocking {
+        val scope = newScope()
+        try {
+            val gate = java.util.concurrent.CountDownLatch(1)
+            val runner = ChapterJobRunner(
+                scope = scope,
+                concurrency = { 1 },
+                ocr = { page -> delay(5); page },
+                translate = { page, _ ->
+                    if (page == 1) withContext(Dispatchers.IO) { gate.await() }
+                    true
+                },
+            )
+            // 6 页（并发 1）：流水线最多吃掉 4 页（1 翻译中 + 1 卡在交班 + 1 在 OCR 通道 + 1 卡在 send），
+            // 队列里必然还剩 ≥2 页 —— 这样"暂停后队列仍在"才是确定性的
+            runner.submit(0, listOf(1, 2, 3, 4, 5, 6))
+            withTimeout(4_000) { while (runner.waitingPages.value.isEmpty()) delay(10) }
+            withTimeout(4_000) { while (runner.translatingPages().isEmpty()) delay(10) }
+            runner.pause(0)
+            val held = runner.waitingPages.value
+            assertTrue("暂停后队列仍在（面板「等待」）", held.isNotEmpty())
+            val owned = runner.runningOwnedPages()
+            assertTrue(
+                "暂停章的队列页不许算作「正在跑占住」：owned=$owned waiting=$held",
+                owned.none { it in held },
+            )
+            gate.countDown()
+            // 先取消：暂停的章队列还在 → isBusy() 一直为 true（暂停=队列留着，面板仍显示「等待」）
+            runner.cancel(0)
+            awaitIdle(runner)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    // ===== 12. 审查回归：shutdown 后再提交 / 取消后立刻重提交 / 识别中被取消 =====
+
+    /**
+     * ⚠️ 审查回归（CRITICAL）：`shutdown()` 关了通道却**没置 `channelsClosed = true`**，
+     * 于是之后任何 `submit()` 都会复用已关闭的通道 —— 泵 `send` 抛 `ClosedSendChannelException`，
+     * 异常抛在应用级 scope 的协程里（无异常处理器）= **崩进程 / 任务永久卡在进行中**。
+     */
+    @Test
+    fun canSubmitAgain_afterShutdown() = runBlocking {
+        val scope = newScope()
+        try {
+            val runner = ChapterJobRunner(
+                scope = scope,
+                concurrency = { 1 },
+                ocr = { page -> delay(5); page },
+                translate = { _, _ -> delay(30); true },
+            )
+            runner.submit(0, listOf(1, 2, 3))
+            withTimeout(4_000) { while (runner.translatingPages().isEmpty()) delay(10) }
+            runner.shutdown()
+
+            runner.submit(1, listOf(4, 5))
+            withTimeout(6_000) { while (runner.isBusy()) delay(10) }
+            assertEquals("shutdown 之后再提交必须照旧跑完", 2, runner.jobOf(1)?.done)
+            assertEquals(ChapterJobState.DONE, runner.stateOf(1))
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    /**
+     * ⚠️ 审查回归：取消后**立刻重新提交同一章**会换一份新 Runtime，而老的在途项稍后才结算 ——
+     * 按 chapterIndex 现查会把 done/ok 加到新任务头上（面板/通知出现 "23/20"、成功数虚高）。
+     */
+    @Test
+    fun resubmitAfterCancel_oldInFlightDoesNotInflateNewJob() = runBlocking {
+        val scope = newScope()
+        try {
+            val gate = java.util.concurrent.CountDownLatch(1)
+            val runner = ChapterJobRunner(
+                scope = scope,
+                concurrency = { 1 },
+                ocr = { page -> delay(5); page },
+                translate = { page, _ ->
+                    if (page == 1) withContext(Dispatchers.IO) { gate.await() }
+                    true
+                },
+            )
+            runner.submit(0, listOf(1))
+            withTimeout(4_000) { while (runner.translatingPages().isEmpty()) delay(10) }
+            runner.cancel(0)
+            // 立刻重提交同一章（卡片上就是这么点的：取消后马上又点「翻译本章」）
+            runner.submit(0, listOf(7))
+
+            gate.countDown()   // 老的 in-flight 现在才结算
+            awaitIdle(runner)
+            val job = runner.jobOf(0)!!
+            assertEquals("新任务只该结算自己那一页", 1, job.done)
+            assertTrue("done 不许超过 total（老在途项不得记到新任务头上）：${job.done}/${job.total}", job.done <= job.total)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    /**
+     * ⚠️ 审查回归：取消发生在 **OCR 阶段**（不是翻译阶段）这条路径以前没有测试。
+     * 要求：立刻收尾且如实 cancelled、被取消的页不计成功、**别的章照旧跑完**。
+     */
+    @Test
+    fun cancelDuringOcr_finishesImmediately_andOtherChapterKeepsGoing() = runBlocking {
+        val scope = newScope()
+        try {
+            val ocrGate = java.util.concurrent.CountDownLatch(1)
+            val finishes = Collections.synchronizedList(mutableListOf<Triple<Int, Int, Boolean>>())
+            val runner = ChapterJobRunner(
+                scope = scope,
+                concurrency = { 1 },
+                ocr = { page ->
+                    if (page in 1..3) withContext(Dispatchers.IO) { ocrGate.await() }
+                    page
+                },
+                translate = { _, _ -> true },
+                onJobFinished = { ch, ok, _, cancelled -> finishes += Triple(ch, ok, cancelled) },
+            )
+            runner.submit(0, listOf(1, 2, 3))
+            runner.submit(1, listOf(9))
+            withTimeout(4_000) { while (runner.ocrPages().isEmpty()) delay(10) }
+
+            runner.cancel(0)
+            assertTrue("识别中被取消也要立刻收尾", finishes.any { it.first == 0 })
+            assertTrue(finishes.first { it.first == 0 }.third)
+            assertEquals(ChapterJobState.CANCELLED, runner.stateOf(0))
+
+            ocrGate.countDown()
+            awaitIdle(runner)
+            assertEquals("被取消的章不许计成功", 0, finishes.first { it.first == 0 }.second)
+            assertEquals("别的章必须照旧跑完", ChapterJobState.DONE, runner.stateOf(1))
         } finally {
             scope.cancel()
         }

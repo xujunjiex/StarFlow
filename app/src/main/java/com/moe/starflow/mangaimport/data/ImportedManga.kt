@@ -37,7 +37,13 @@ data class ImportedManga(
     val importing: Boolean = false,
     val importPhase: ImportPhase? = null,
     val importPercent: Int = -1,
-    val chapters: List<MangaChapter> = emptyList()
+    val chapters: List<MangaChapter> = emptyList(),
+    /**
+     * 页序版本（见 [MangaPageOrder]）：小于 [MangaPageOrder.CURRENT_VERSION] 表示这本书的译文行
+     * 可能还是**旧页序**（章节系统之前）存下的 → 阅读器打开时做一次性重排。
+     * 默认 0；老清单没有这个字段，反序列化后即 0。
+     */
+    val pageOrderVersion: Int = 0,
 ) {
     /** 章数（至少 1：单章漫画也算一章）。 */
     val chapterCount: Int get() = chapters.size.coerceAtLeast(1)

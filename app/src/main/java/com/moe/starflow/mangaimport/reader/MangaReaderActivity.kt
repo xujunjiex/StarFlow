@@ -35,6 +35,7 @@ import com.moe.starflow.data.ImportedPageTranslation
 import com.moe.starflow.data.TranslationCacheManager
 import com.moe.starflow.mangaimport.data.ImportedManga
 import com.moe.starflow.mangaimport.data.ImportedMangaStore
+import com.moe.starflow.mangaimport.data.MangaPageOrderMigrator
 import com.moe.starflow.mangaimport.data.MangaChapter
 import com.moe.starflow.mangaimport.data.chapterIndexOf
 import com.moe.starflow.mangaimport.data.mangaChapterLabel
@@ -73,6 +74,8 @@ import java.util.zip.ZipOutputStream
 class MangaReaderActivity : AppCompatActivity() {
 
     companion object {
+        /** 面板推送最小间隔：状态每页要变 4 次（QUEUED/OCR/TRANSLATE/结算），不节流会持续重排整表。 */
+        private const val PANEL_PUSH_MIN_MS = 300L
         const val EXTRA_MANGA_ID = "manga_id"
 
         /** 通知栏点进来时带的目标页（该章第一页）；不传 = 按断点续读。 */
@@ -244,7 +247,8 @@ class MangaReaderActivity : AppCompatActivity() {
         // ⚠️ 控制器从 **ReaderTranslationHub** 取（应用级 scope + 按书缓存）：章节批量任务是
         // 后台任务，控制器不能在 Activity 销毁时一起消失；重进阅读器要拿回同一个实例
         // （任务、页记录、渲染缓存都还在）。
-        translationController = ReaderTranslationHub.controllerFor(applicationContext, manga).also { c ->
+        // 把绑定抽成局部函数：bind 之后要自检一次「是不是刚被 hub 回收了」并重绑（见下）
+        fun bindController(c: ReaderTranslationController) {
             c.bind(
                 loadFull = { source.loadFull(it) },
                 currentPage = { currentPage },
@@ -264,6 +268,16 @@ class MangaReaderActivity : AppCompatActivity() {
             // Webtoon 显示态（原图/译文）落在控制器上：applyPager()/预热都按它决定渲不渲染
             c.setWebtoonTranslated(webtoonTranslated)
         }
+        var controller = ReaderTranslationHub.controllerFor(applicationContext, manga)
+        bindController(controller)
+        // ⚠️ `controllerFor()` 与 `bind()` 之间，hub 的收集协程可能已判定「无 UI 且无任务」把它回收
+        //（那一刻 `uiAttached` 还是 false）→ 手上这个实例已 shut down，之后「翻译本章」全都不动。
+        // 发现已关闭就换一个新实例重绑一次（hub 里那份也已被移除，controllerFor 会新建）。
+        if (controller.closed) {
+            controller = ReaderTranslationHub.controllerFor(applicationContext, manga)
+            bindController(controller)
+        }
+        translationController = controller
         // ⚠️ 只有**确实是从设置页返回触发的重建**才恢复翻译模式（`>= 0` 就是那个判据）。
         // 绝不能只看"模式 != 手动"：控制器是刚新建的，translateMode 恒为手动，
         // 而 `restoredTranslateMode` 在全新进入阅读器时是 **-1**，
@@ -272,6 +286,11 @@ class MangaReaderActivity : AppCompatActivity() {
             translationController?.setMode(restoredTranslateMode)
         }
         lifecycleScope.launch {
+            // ⚠️ **页序迁移必须在 load() 之前**：load() 一读就是按 `pageIndex` 取行，而章节系统
+            // 改变了权威页序（最外层散图排到第 0 章最前）→ 对「根散图 + 子目录混放」的老书，
+            // 同一个下标指向的是另一张图，不迁移就会把译文/气泡挂到错页上（详见 `MangaPageOrder`）。
+            runCatching { MangaPageOrderMigrator.migrateIfNeeded(applicationContext, manga, source) }
+                .onFailure { LogCollector.w("MangaReader", "页序迁移失败（不影响阅读）", it) }
             translationController?.load()
             refreshTranslationChrome()
             refreshProgressTranslation()
@@ -531,6 +550,10 @@ class MangaReaderActivity : AppCompatActivity() {
             // ⚠️ 只停前台队列 + 解除 UI 绑定，**保留章节后台任务**（用户要求关掉阅读器也继续翻）
             c.onReaderClosed()
         }
+        // ⚠️ 关闭后再问一次 hub 能不能回收：任务跑完就再也没有 `chapterJobs` 发射了，
+        // 只靠那个收集协程等不到这次机会 → 控制器（renderLru 预算 100MB）+ 页图数据源常驻到进程结束。
+        // 有任务在跑时 `releaseIfIdle` 会自己判断并拒绝。
+        if (::manga.isInitialized) ReaderTranslationHub.onReaderClosed(manga.id)
         // ⚠️ 必须清掉状态浮层：它是**进程级单例 + TYPE_APPLICATION_OVERLAY 系统窗口**，
         // 退出阅读器后「检测中…／翻译中…」会挂在桌面/其它页面上，且没有任何入口能消掉
         // （直到下一次翻译成功或失败）。翻译在途时退出阅读器就会触发。
@@ -1097,6 +1120,7 @@ class MangaReaderActivity : AppCompatActivity() {
             running = job?.state == ChapterJobState.RUNNING || job?.state == ChapterJobState.QUEUED,
             paused = job?.state == ChapterJobState.PAUSED,
             jobDone = job?.done ?: 0,
+            jobTotal = job?.total ?: 0,
             waiting = waiting,
         )
     }
@@ -1116,6 +1140,7 @@ class MangaReaderActivity : AppCompatActivity() {
             records = c?.records() ?: emptyList(),
             jobs = jobs.associate { it.chapterIndex to it.state },
             jobDone = jobs.associate { it.chapterIndex to it.done },
+            jobTotal = jobs.associate { it.chapterIndex to it.total },
             waitingPages = c?.panelWaitingPages() ?: emptySet(),
             ocrPages = c?.ocrPages() ?: emptySet(),
             translatingPages = c?.translatingPages() ?: emptySet(),
@@ -1352,7 +1377,7 @@ class MangaReaderActivity : AppCompatActivity() {
      */
     private fun confirmClearPage(page: Int) {
         if (translationController == null) return
-        // ⚠️ 走 showReaderDialog（= 跟随**阅读背景**深浅）：裸 AlertDialog 跟系统主题走，
+        // ⚠️ 走 ReaderDialogs.show（= 跟随**阅读背景**深浅）：裸 AlertDialog 跟系统主题走，
         // 深色阅读背景 + 浅色系统下就是一块突兀的白底（用户报的"弹窗没适配主题配色"）
         ReaderDialogs.show(this, isDarkBackground()) {
             setTitle(R.string.reader_clear_page_confirm_title)
@@ -1494,20 +1519,20 @@ class MangaReaderActivity : AppCompatActivity() {
         // 顺带把打开着的面板一起刷新：面板是打开那一刻的快照，宿主不推它就停在旧状态
         // （`ReaderMenuSheet.notifyTranslateChanged` 以前从来没有调用方 —— 面板开着时
         // 译文在涨、每页列表与汇总却一直不动）
-        (supportFragmentManager.findFragmentByTag(ReaderMenuSheet.TAG) as? ReaderMenuSheet)
-            ?.notifyTranslateChanged(
-                records = translationController?.records() ?: emptyList(),
-                chapters = chapters,
-                selectedChapter = currentChapterIndex(),
-                jobs = translationController?.chapterJobs?.value.orEmpty()
-                    .associate { it.chapterIndex to it.state },
-                jobDone = translationController?.chapterJobs?.value.orEmpty()
-                    .associate { it.chapterIndex to it.done },
-                waitingPages = translationController?.panelWaitingPages() ?: emptySet(),
-                ocrPages = translationController?.ocrPages() ?: emptySet(),
-                translatingPages = translationController?.translatingPages() ?: emptySet(),
-            )
+        //
+        // ⚠️ **必须节流**：本方法在每页的每个阶段变化（QUEUED/OCR/TRANSLATE/结算 ≈ 4 次/页）都会被调，
+        // 而面板推送要排序全部页记录 + 整表重建（`notifyDataSetChanged` + childRowsOf 扫描）——
+        // 章节任务跑起来就是主线程持续掉帧。300ms 合并一次，肉眼无差别。
+        val sheet = supportFragmentManager.findFragmentByTag(ReaderMenuSheet.TAG) as? ReaderMenuSheet ?: return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (now - lastPanelPushMs < PANEL_PUSH_MIN_MS) return
+        lastPanelPushMs = now
+        // 状态由面板自己从 `cb.currentChapterState()` 回读（唯一状态源），宿主只负责"叫它刷新"
+        sheet.notifyTranslateChanged()
     }
+
+    /** 上一次把状态推给面板的时刻（节流用，见 [refreshProgressTranslation]）。 */
+    private var lastPanelPushMs = 0L
 
     /** 把指定页显示切到 controller 的当前态（译文/原文/原图）。
      *  不直接写 visibleImage（它可能是邻页，写错视图 = 错图）；而是把该页当前态渲染图预热进缓存后
@@ -1583,6 +1608,8 @@ class MangaReaderActivity : AppCompatActivity() {
                         .associate { it.chapterIndex to it.state },
                     chapterJobDone = translationController?.chapterJobs?.value.orEmpty()
                         .associate { it.chapterIndex to it.done },
+                    chapterJobTotal = translationController?.chapterJobs?.value.orEmpty()
+                        .associate { it.chapterIndex to it.total },
                     waitingPages = translationController?.panelWaitingPages() ?: emptySet(),
                     ocrPages = translationController?.ocrPages() ?: emptySet(),
                     translatingPages = translationController?.translatingPages() ?: emptySet(),

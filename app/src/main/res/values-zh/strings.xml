@@ -1016,7 +1016,8 @@
     <string name="reader_sr_switch_off">阅读器超分已关闭</string>
     <!-- Anime4K 基础层（阅读器调色面板，2026-10） -->
     <string name="reader_anime4k_label">Anime4K 线条增强</string>
-    <string name="reader_anime4k_hint">对画面做线条描深与去噪，分辨率不变、体积为零。**可以和超分叠加**：先放大、再描线，画质最好；也可以单独使用（不下载任何模型也能开）。点这一行选档位。</string>
+        <string name="reader_translate_source_lang_label">源语言</string>
+<string name="reader_anime4k_hint">线条描深 + 去噪，分辨率不变；可与超分叠加（先放大再描线）。点这一行选档位。</string>
     <string name="reader_anime4k_off">已关闭</string>
     <string name="reader_anime4k_mode_a">A · 强恢复</string>
     <string name="reader_anime4k_mode_b">B · 均衡</string>
@@ -1024,8 +1025,6 @@
     <string name="reader_anime4k_mode_aa">AA · 强恢复＋</string>
     <string name="reader_anime4k_mode_bb">BB · 均衡＋</string>
     <string name="reader_anime4k_mode_ca">CA · 线条修复＋</string>
-    <string name="reader_anime4k_switched">Anime4K 已切到 %1$s</string>    
-    <string name="reader_translate_source_lang_label">源语言</string>
     <string name="reader_translate_target_lang_label">目标语言</string>
     <string name="reader_translate_filter_all">全部</string>
     <string name="reader_translate_filter_failed">失败</string>
@@ -1074,8 +1073,6 @@
     <string name="reader_chapter_toc">章节目录</string>
     <string name="reader_chapter_count">共 %1$d 章</string>
     <string name="reader_page_indicator_chapter">%1$s · %2$d/%3$d</string>
-    <string name="reader_chapter_prev">上一章</string>
-    <string name="reader_chapter_next">下一章</string>
     <string name="reader_chapter_first">当前已是第一章</string>
     <string name="reader_chapter_last">当前已是最后一章</string>
     <string name="reader_chapter_badge">已译 %1$d/%2$d</string>
@@ -1100,8 +1097,6 @@
     <string name="chapter_translate_notify_title">%1$s · %2$s</string>
     <string name="chapter_translate_notify_progress">正在翻译 %1$d/%2$d 页</string>
     <string name="chapter_translate_notify_paused">已暂停 · %1$d/%2$d 页</string>
-    <string name="chapter_translate_notify_cancelled">已取消</string>
-    <string name="chapter_translate_notify_resume">继续</string>
     <string name="chapter_translate_notify_summary_title">章节翻译</string>
     <string name="chapter_translate_notify_summary">%1$d 个章节正在后台翻译</string>
     <string name="reader_translate_chapter_clear">清空</string>
@@ -1113,7 +1108,6 @@
     <string name="reader_translate_chapter_hint">正在翻译本章 %1$d/%2$d，双击暂停</string>
     <string name="reader_translate_chapter_finished">本章完成 %1$d/%2$d</string>
     <string name="reader_translate_chapter_nothing">本章没有待翻译的页面</string>
-    <string name="reader_translate_chapter_summary">%1$s · 已译 %2$d/%3$d · 翻译中 %4$d · 失败 %5$d</string>
     <string name="reader_translate_chapter_confirm_title">翻译本章</string>
     <string name="reader_translate_chapter_confirm_msg">本章共 %1$d 页：未翻译 %2$d 页、失败 %3$d 页、已成功 %4$d 页。</string>
     <string name="reader_translate_chapter_only_pending">只翻未完成</string>
@@ -1591,7 +1585,7 @@
     <string name="novel_translate_oversize_skipped">已跳过这一批（内容超长）</string>
     <!-- ===== 同时 API 请求数（文本翻译；本地引擎固定 1） ===== -->
     <string name="novel_translate_concurrency">翻译模型最大同时请求数</string>
-    <string name="novel_translate_concurrency_hint">只对增量与整章翻译生效，不含本地模型（本地固定串行）。按文章顺序连续提交、不等上一批返回；同时最多 N 个在跑，多的排队。调高更快，也更费额度。</string>
+    <string name="novel_translate_concurrency_hint">整章/增量翻译同时发出的请求上限；本地模型固定为 1。超出的按阅读顺序排队。</string>
     <!-- ===== 章卡片：后台章节任务的进度（单位是**批**，不是页） ===== -->
     <string name="novel_chapter_running_batches">翻译中 %1$d/%2$d 批</string>
     <string name="novel_chapter_paused_batches">已暂停 %1$d/%2$d 批</string>
@@ -1651,11 +1645,10 @@
     <string name="reader_clear_page_confirm_title">清除本页译文？</string>
     <string name="reader_clear_page_confirm_msg">将删除第 %1$d 页的译文（原文与气泡数据一并删除），该页回到原图显示。此操作不可撤销。</string>
     <string name="reader_clear_page_confirm_ok">清除</string>
-    <string name="reader_clear_row_confirm_msg">将删除第 %1$d 页的译文记录，该页回到原图显示。此操作不可撤销。</string>
 
     <!-- waifu2x 模型族（2026-10，deepghs/waifu2x_onnx 的官方 ONNX 版） -->
     <string name="sr_group_waifu2x_cunet">waifu2x cunet（2x，ONNX）</string>
-    <string name="sr_group_waifu2x_cunet_desc">waifu2x 官方模型集的 cunet 架构。四个等级是**降噪强度**：n0 不降噪（最忠实原图，只做线条修复与放大）、n3 强力降噪（适合扫描噪点/JPEG 块效应很重的图源）。实测这一族质量最高。</string>
+    <string name="sr_group_waifu2x_cunet_desc">waifu2x 官方模型集的 cunet 架构。四个等级是降噪强度：n0 不降噪（最忠实原图，只做线条修复与放大）、n3 强力降噪（适合扫描噪点/JPEG 块效应很重的图源）。实测这一族质量最高。</string>
     <string name="sr_group_waifu2x_swin">waifu2x swin_unet（2x，ONNX）</string>
     <string name="sr_group_waifu2x_swin_desc">waifu2x 的 SwinIR 架构，质量最高但体积大（16.8MB/档）、速度更慢。适合追求画质、不介意等待的彩页与封面。</string>
     <string name="sr_model_w2x_cunet_n0">cunet · 不降噪（n0）</string>

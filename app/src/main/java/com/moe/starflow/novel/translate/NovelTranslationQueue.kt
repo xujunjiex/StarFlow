@@ -85,6 +85,11 @@ class NovelTranslationQueue(
     private val paragraphsOf: suspend (ImportedNovel, Int) -> List<NovelParagraph>,
     private val sourceLang: () -> String,
     private val targetLang: () -> String,
+    /**
+     * 该章**已被「翻译本章」任务占住**的段（宿主提供；默认空）。
+     * 它们要计进 `done`，否则自动/增量队列会把同一段再发一次请求。
+     */
+    private val excludedParas: (chapterIndex: Int) -> Set<Int> = { emptySet() },
     private val translatorName: () -> String,
     private val batchSize: () -> Int,
     private val debounceMs: () -> Int,
@@ -233,6 +238,7 @@ class NovelTranslationQueue(
                 // ⚠️ 在飞的批也算"已完成"：不然同一个锚点会被反复挑中
                 //（并发下就是同一时间发出 N 个一模一样的请求，白烧额度）
                 val done = skipSetFor(translatedIndexes(book, chapter)) +
+                    runCatching { excludedParas(chapter) }.getOrDefault(emptySet()) +
                     synchronized(lock) { inflightParas.toList() }
                 val page = currentPageParaIndexes()
                 val size = batchSize()
@@ -336,15 +342,15 @@ class NovelTranslationQueue(
         serial: Boolean,
         settled: suspend (NovelBatchResult) -> Unit,
     ) {
-        var held = false
+        var lockToken = 0L
         try {
             if (serial) {
                 _state.value = NovelQueueState(NovelQueuePhase.WAITING_LOCK, chapterIndex, batch)
-                if (!acquireLockWithWait()) {
+                lockToken = acquireLockWithWait()
+                if (lockToken == 0L) {
                     settled(NovelBatchResult(emptyMap(), "翻译引擎被占用（别的翻译正在跑）"))
                     return
                 }
-                held = true
                 _state.value = NovelQueueState(NovelQueuePhase.TRANSLATING, chapterIndex, batch)
             }
             settled(
@@ -366,7 +372,7 @@ class NovelTranslationQueue(
                 NovelBatchResult(emptyMap(), "${e.javaClass.simpleName}: ${e.message.orEmpty()}"),
             )
         } finally {
-            if (held) OcrLock.release()
+            if (lockToken != 0L) OcrLock.release(lockToken)
         }
     }
 
@@ -464,7 +470,8 @@ class NovelTranslationQueue(
         batch: List<Int>,
     ): NovelBatchResult {
         _state.value = NovelQueueState(NovelQueuePhase.WAITING_LOCK, chapterIndex, batch)
-        if (!acquireLockWithWait()) return NovelBatchResult(emptyMap(), "翻译引擎被占用（别的翻译正在跑）")
+        val lockToken = acquireLockWithWait()
+        if (lockToken == 0L) return NovelBatchResult(emptyMap(), "翻译引擎被占用（别的翻译正在跑）")
         try {
             _state.value = NovelQueueState(NovelQueuePhase.TRANSLATING, chapterIndex, batch)
             return translator.translateBatch(
@@ -477,20 +484,20 @@ class NovelTranslationQueue(
                 translatorName = translatorName(),
             )
         } finally {
-            OcrLock.release()
+            OcrLock.release(lockToken)
             _state.value = NovelQueueState()
         }
     }
 
     /** 轮询等锁：拿到 true；超时 false。 */
-    private suspend fun acquireLockWithWait(): Boolean {
+    private suspend fun acquireLockWithWait(): Long {
         var waited = 0L
-        while (!OcrLock.tryAcquire()) {
-            if (waited >= LOCK_WAIT_TIMEOUT_MS) return false
+        while (true) {
+            OcrLock.acquire().let { if (it != 0L) return it }
+            if (waited >= LOCK_WAIT_TIMEOUT_MS) return 0L
             delay(LOCK_POLL_MS)
             waited += LOCK_POLL_MS
         }
-        return true
     }
 
     fun stop() {

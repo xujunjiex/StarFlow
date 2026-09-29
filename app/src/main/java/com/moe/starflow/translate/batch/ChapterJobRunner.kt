@@ -72,8 +72,6 @@ data class ChapterJob(
     /** 该章第一页（点通知回到这一章时直接跳过去）。 */
     val startPage: Int = 0,
 ) {
-    /** 还排在队里没开始翻的页数（面板上的「等待」）。 */
-    val waiting: Int get() = (total - done).coerceAtLeast(0)
 
     val isActive: Boolean
         get() = state == ChapterJobState.RUNNING || state == ChapterJobState.PAUSED ||
@@ -91,7 +89,7 @@ data class ChapterJob(
  * - 「可以同时启动多个章节」→ 每章一个 [Runtime]（各自队列），调度器**按提交顺序**取页；
  *   某一章暂停时它的队列原样留着（＝面板上的「等待」），调度器直接跳到下一章继续。
  * - 「暂停等待的页面不会清除 / 取消等待的页全部删除、保留已下载的」→ 暂停只停取页、
- *   取消只丢队列；**在途的那一页照旧跑完**（已经付过 API 费用，丢掉纯属浪费）。
+ *   取消丢队列 + **强制结束在途项**（各自协程被 cancel、产物丢弃不入库、立刻派发收尾事件）。
  *
  * 本类刻意不依赖 Android（只依赖协程），阶段行为由构造参数注入 → 可纯 JVM 单测
  * （`ChapterJobRunnerTest`）。
@@ -157,7 +155,18 @@ class ChapterJobRunner<T>(
      *
      * [cancelled] = 这一项被 `cancel(本章)` **强制结束**（用户口径：在途页不强等、不入库）。
      */
-    private class Task(val id: Int, val chapterIndex: Int, val page: Int) {
+    private class Task(
+        val id: Int,
+        val chapterIndex: Int,
+        val page: Int,
+        /**
+         * 这一项**属于哪一份 Runtime**（不是按 chapterIndex 现查）。
+         *
+         * ⚠️ 取消后立刻重新提交同一章会**换一份新 Runtime**，而老的在途项稍后才结算 ——
+         * 按 chapterIndex 现查会把 done/ok 加到新任务头上（面板/通知显示 23/20、成功数虚高）。
+         */
+        val runtime: Runtime,
+    ) {
         var stage: ChapterTaskStage = ChapterTaskStage.QUEUED
 
         @Volatile
@@ -332,8 +341,17 @@ class ChapterJobRunner<T>(
         inFlight.values.filter { it.stage == ChapterTaskStage.TRANSLATE }.map { it.page }.toSet()
     }
 
-    /** 在途项快照（含阶段），供面板/浮层区分「识别中」与「翻译中」。 */
-    fun inFlightTasksNow(): List<InFlightTask> = _inFlightTasks.value
+    /**
+     * **真正被"正在跑"的章占住**的页：在途项 + RUNNING 章的队列。
+     *
+     * ⚠️ 与 `waitingPages`（含 PAUSED/QUEUED 章）不同：暂停的章不该把页扣住 ——
+     * 宿主要用它去重"增量窗口别翻同一页"，用 `waitingPages` 会让暂停章的页在增量/自动模式下
+     * 永远挑不到（窗口里全是它们 → 直接判"队列耗尽"）。
+     */
+    fun runningOwnedPages(): Set<Int> = synchronized(lock) {
+        val queued = runtimes.filter { it.state == ChapterJobState.RUNNING }.flatMap { it.queue }
+        (inFlight.values.map { it.page } + queued).toSet()
+    }
 
     fun isBusy(): Boolean = synchronized(lock) {
         inFlight.isNotEmpty() || runtimes.any { it.isActive && (it.queue.isNotEmpty() || it.done < it.total) }
@@ -349,6 +367,10 @@ class ChapterJobRunner<T>(
             inFlight.values.forEach { it.cancelled = true }
             val jobs = taskJobs.values.toList()
             inFlight.clear()
+            // ⚠️ 关通道的同时**必须**置 channelsClosed：`ensureStarted` 只认这个标志来决定
+            // "要不要换一对新通道"。漏了它 → 之后再 submit 会复用**已关闭**的通道，
+            // 泵 send 抛 ClosedSendChannelException（抛在 scope.launch 上 = 崩进程 / 任务永久卡住）。
+            channelsClosed = true
             publish()
             active to jobs
         }
@@ -435,10 +457,22 @@ class ChapterJobRunner<T>(
                 // 或者泵正卡在 send 上等 OCR 工人腾出手。用户视角这就是「等待」（见 ChapterTaskStage）
                 task.stage = ChapterTaskStage.QUEUED
                 inFlight[task.id] = task
+                // ⚠️ `publish()` 必须**在锁里**（它要遍历 runtimes / 各 runtime.queue / inFlight，
+                // 而别的线程正在锁里改这三样）→ 放外面会 CME/IOOBE，而它跑在应用级 scope 的协程里
+                // （没有异常处理器）= 直接崩进程（2026-09-28 审查抓到）。
+                publish()
             }
-            publish()
             LogCollector.d(TAG, "第 ${task.chapterIndex} 章 page=${task.page} 进入流水线（等待识别）")
-            ocrChannel.send(task)
+            try {
+                ocrChannel.send(task)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                onPageSettled(task, ok = false)
+                throw e
+            } catch (e: Exception) {
+                // 通道已关（收尾/换书竞态）：结算掉这一项，绝不让异常冒到 scope（= 崩进程）
+                LogCollector.w(TAG, "调度失败 page=${task.page}（通道已关？）→ 记为未成功", e)
+                onPageSettled(task, ok = false)
+            }
         }
         finishIfIdle()
     }
@@ -446,7 +480,7 @@ class ChapterJobRunner<T>(
     private fun nextTask(): Task? = synchronized(lock) {
         val rt = runtimes.firstOrNull { it.state == ChapterJobState.RUNNING && it.queue.isNotEmpty() }
             ?: return null
-        Task(nextTaskId++, rt.chapterIndex, rt.queue.removeFirst())
+        Task(nextTaskId++, rt.chapterIndex, rt.queue.removeFirst(), rt)
     }
 
     /** 没有任何可调度/在途的页了。 */
@@ -537,6 +571,12 @@ class ChapterJobRunner<T>(
                 discardProduct(task, product)
                 onPageSettled(task, ok = false)
                 throw e
+            } catch (e: Exception) {
+                // ⚠️ 通道已被 shutdown()/收尾关掉时 send 抛的是 IllegalStateException（不是取消）。
+                // 这里不接住的话，异常会从应用级 scope 的根协程逃出去（无异常处理器）= 崩进程。
+                LogCollector.w(TAG, "交接失败 page=${task.page}（通道已关？）→ 记为未成功", e)
+                discardProduct(task, product)
+                onPageSettled(task, ok = false)
             }
         }
     }
@@ -623,17 +663,19 @@ class ChapterJobRunner<T>(
     private fun onPageSettled(task: Task, ok: Boolean) {
         val finished = synchronized(lock) {
             inFlight.remove(task.id)
-            val rt = runtimes.firstOrNull { it.chapterIndex == task.chapterIndex }
-            if (rt != null) {
+            // ⚠️ 只结算**这一项自己那一份** Runtime，且它必须还挂在册上：
+            // 取消→立刻重提交会换新 Runtime，老在途项结算到新任务上就是"进度超过总数"。
+            val rt = task.runtime
+            val registered = rt in runtimes
+            if (registered) {
                 rt.done += 1
                 if (ok) rt.ok += 1
             }
             publish()
             // ⚠️ 取消的章**永远到不了 total**（队列已被丢掉）→ 必须在最后一项结算时也收尾，
             // 否则 `onJobFinished(cancelled=true)` 可能一直不派发（宿主清不了「翻译中」残留状态）。
-            val shouldFinish = rt != null &&
-                (rt.done >= rt.total || rt.state == ChapterJobState.CANCELLED)
-            if (shouldFinish) rt!!.chapterIndex else null
+            val shouldFinish = registered && (rt.done >= rt.total || rt.state == ChapterJobState.CANCELLED)
+            if (shouldFinish) rt.chapterIndex else null
         }
         if (finished != null) maybeFinish(finished)
     }
@@ -681,13 +723,16 @@ class ChapterJobRunner<T>(
 
     /** 全部任务收尾 → 关通道、清工人（下次提交会重新拉起并换新通道）。 */
     private fun finishIfIdle() {
-        val idle = synchronized(lock) {
-            inFlight.isEmpty() && runtimes.none { it.isActive && (it.queue.isNotEmpty() || it.done < it.total) }
-        }
-        if (!idle) return
-        synchronized(lock) {
+        // ⚠️ **判定与关闭必须在同一个锁里**：分成两段的话 `submit()`（会走 ensureStarted）
+        // 能在中间插进来 —— 结果要么新任务被关掉的通道卡住（永不推进），
+        // 要么泵对已关通道 send 抛 ClosedSendChannelException（应用级 scope 无异常处理器 = 崩进程）。
+        val closed = synchronized(lock) {
+            val idle = inFlight.isEmpty() &&
+                runtimes.none { it.isActive && (it.queue.isNotEmpty() || it.done < it.total) }
+            if (!idle) return
             ocrChannel.close()
             preparedChannel.close()
+            // ⚠️ 这一句不能漏：`ensureStarted` 靠它决定"要不要换一对新通道"（见 shutdown 的同款修复）
             channelsClosed = true
             pumpJob = null
             ocrJob = null
@@ -696,8 +741,9 @@ class ChapterJobRunner<T>(
             // 就不再是一眼能看清的事。这里取消掉，语义变成"这一轮流水线的人全部下岗"。
             workerJobs.forEach { it.cancel() }
             workerJobs = emptyList()
+            true
         }
-        LogCollector.d(TAG, "章节批量翻译流水线已收尾")
+        if (closed) LogCollector.d(TAG, "章节批量翻译流水线已收尾")
     }
 
     private fun publish() {

@@ -33,6 +33,8 @@ sealed interface TranslateRow {
         /** 该章的后台任务状态（null = 没任务）。按钮文案与「进行中」都按它显示。 */
         val jobState: ChapterJobState?,
         val jobDone: Int,
+        /** 本页所属章**任务自己的**总页数（只翻未完成时 ≠ 章页数）。 */
+        val jobTotal: Int,
     ) : TranslateRow
 
     data class Page(
@@ -95,6 +97,7 @@ class ReaderPageStateAdapter(
     private var records: List<ImportedPageTranslation> = emptyList()
     private var jobs: Map<Int, ChapterJobState> = emptyMap()
     private var jobDone: Map<Int, Int> = emptyMap()
+    private var jobTotal: Map<Int, Int> = emptyMap()
     private var waitingPages: Set<Int> = emptySet()
 
     /** 在途页：**识别中**（OCR 阶段）的页号集合。 */
@@ -125,6 +128,7 @@ class ReaderPageStateAdapter(
         selectedChapter: Int,
         jobs: Map<Int, ChapterJobState> = emptyMap(),
         jobDone: Map<Int, Int> = emptyMap(),
+        jobTotal: Map<Int, Int> = emptyMap(),
         waitingPages: Set<Int> = emptySet(),
         /**
          * 在途页（章节任务正在 OCR/翻译）：必须补成「识别中 / 翻译中」行，
@@ -142,6 +146,7 @@ class ReaderPageStateAdapter(
         this.selectedChapter = selectedChapter
         this.jobs = jobs
         this.jobDone = jobDone
+        this.jobTotal = jobTotal
         this.waitingPages = waitingPages
         this.ocrPages = ocrPages
         this.translatingPages = translatingPages
@@ -167,8 +172,10 @@ class ReaderPageStateAdapter(
     }
 
     private fun rebuild() {
-        // 详情的展开态按页号记，整表重建后不会指错行
-        expandedPage = null
+        // ⚠️ **展开态必须保住**：宿主每翻完一页/每次阶段变化都 push（整表重建），
+        // 以前这里 `expandedPage = null` → 一边翻译一边看详情时，下一帧详情就被收起
+        // （注释还写着"不会指错行"，与代码正好相反）。
+        // 行是"按页号"记的，重建后不会指错行；页不在列表里时下面 bindChild 自然不显示。
         rows = buildRows()
         notifyDataSetChanged()
     }
@@ -221,6 +228,7 @@ class ReaderPageStateAdapter(
                 selected = index == selectedChapter,
                 jobState = jobs[index],
                 jobDone = jobDone[index] ?: 0,
+                jobTotal = jobTotal[index] ?: 0,
             )
         }
     }
@@ -334,8 +342,18 @@ class ReaderPageStateAdapter(
         val allDone = row.pageCount > 0 && row.success >= row.pageCount
         item.findViewById<TextView>(R.id.tv_chapter_badge).apply {
             text = when {
-                running -> ctx.getString(R.string.reader_translate_chapter_running, row.jobDone, row.pageCount)
-                paused -> ctx.getString(R.string.chapter_translate_notify_paused, row.jobDone, row.pageCount)
+                // ⚠️ 分母用**任务自己的 total**：默认「只翻未完成」时任务 total 只是待翻页数，
+                // 用章页数会出现「已译 12/22」→「翻译中 0/22」→ 停在 10/22 的倒退（小说侧一直是 done/total）。
+                running -> ctx.getString(
+                    R.string.reader_translate_chapter_running,
+                    row.jobDone,
+                    if (row.jobTotal > 0) row.jobTotal else row.pageCount,
+                )
+                paused -> ctx.getString(
+                    R.string.chapter_translate_notify_paused,
+                    row.jobDone,
+                    if (row.jobTotal > 0) row.jobTotal else row.pageCount,
+                )
                 allDone -> ctx.getString(R.string.reader_translate_chapter_done)
                 else -> ctx.getString(R.string.reader_chapter_badge, row.success, row.pageCount)
             }
@@ -446,7 +464,12 @@ class ReaderPageStateAdapter(
             page.state == ImportedPageTranslation.STATE_FAILED -> CardBackdrop.Tone.FAILED
             else -> null
         }
-        if (tone != null) CardBackdrop.apply(item, tone, dark) else CardBackdrop.applyFlat(item, dark)
+        // ⚠️ 子行必须走 `applyNested`（方角 + 左侧 3dp 竖线 + 上下零间距）：
+        // 用普通 `apply` 是 8dp 圆角独立色块 → 看着像"另起一张卡"（用户 2026-09-27 反馈过两次，
+        // 这个函数就是为它写的，之前一直没人调用）。
+        // 普通行也走 applyNested（`Tone.PLAIN` 就是为它准备的）：全用它才能保证"所有展开行
+        // 都是方角 + 左侧竖线"，不会出现带状态的方角行与无状态的透明行混排。
+        CardBackdrop.applyNested(item, tone ?: CardBackdrop.Tone.PLAIN, dark)
 
         item.findViewById<TextView>(R.id.tv_page_label).apply {
             text = "P${page.pageIndex + 1}"

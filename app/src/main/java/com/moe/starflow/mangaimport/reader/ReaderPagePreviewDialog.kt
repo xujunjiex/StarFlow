@@ -24,7 +24,7 @@ class ReaderPagePreviewDialog(
     private val context: Context,
     private val source: ReaderPageSource,
     currentPage: Int,
-    /** 阅读背景是否深色（弹窗底色/文字跟它走，见 `MangaDialogs`）。 */
+    /** 阅读背景是否深色（弹窗底色/文字跟它走，见 `utils/ReaderDialogs`）。 */
     private val dark: Boolean = false,
     private val onSelect: (Int) -> Unit
 ) {

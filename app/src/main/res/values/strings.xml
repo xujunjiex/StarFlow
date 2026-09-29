@@ -1081,7 +1081,8 @@
     <string name="reader_sr_switch_off">Reader super resolution off</string>
     <!-- Anime4K baseline (reader colour panel, 2026-10) -->
     <string name="reader_anime4k_label">Anime4K line enhance</string>
-    <string name="reader_anime4k_hint">Sharpens and denoises line art without changing resolution. **Stacks with super resolution**: upscale first, then sharpen, for the best result — or use it on its own with no model downloaded. Tap to pick a level.</string>
+        <string name="reader_translate_source_lang_label">Source</string>
+<string name="reader_anime4k_hint">Sharpens and denoises line art without changing resolution. Stacks with super resolution: upscale first, then sharpen, for the best result — or use it on its own with no model downloaded. Tap to pick a level.</string>
     <string name="reader_anime4k_off">Off</string>
     <string name="reader_anime4k_mode_a">A · Strong restore</string>
     <string name="reader_anime4k_mode_b">B · Balanced</string>
@@ -1089,8 +1090,6 @@
     <string name="reader_anime4k_mode_aa">AA · Strong restore+</string>
     <string name="reader_anime4k_mode_bb">BB · Balanced+</string>
     <string name="reader_anime4k_mode_ca">CA · Line restore+</string>
-    <string name="reader_anime4k_switched">Anime4K switched to %1$s</string>    
-    <string name="reader_translate_source_lang_label">Source</string>
     <string name="reader_translate_target_lang_label">Target</string>
     <string name="reader_translate_filter_all">All</string>
     <string name="reader_translate_filter_failed">Failed</string>
@@ -1140,8 +1139,6 @@
     <string name="reader_chapter_count">%1$d chapters</string>
     <!-- 顶部页码胶囊：章标题 · 章内第几页 / 本章共几页 -->
     <string name="reader_page_indicator_chapter">%1$s · %2$d/%3$d</string>
-    <string name="reader_chapter_prev">Previous chapter</string>
-    <string name="reader_chapter_next">Next chapter</string>
     <string name="reader_chapter_first">Already at the first chapter</string>
     <string name="reader_chapter_last">Already at the last chapter</string>
     <string name="reader_chapter_badge">%1$d/%2$d translated</string>
@@ -1167,8 +1164,6 @@
     <string name="chapter_translate_notify_title">%1$s · %2$s</string>
     <string name="chapter_translate_notify_progress">Translating %1$d/%2$d pages</string>
     <string name="chapter_translate_notify_paused">Paused · %1$d/%2$d pages</string>
-    <string name="chapter_translate_notify_cancelled">Cancelled</string>
-    <string name="chapter_translate_notify_resume">Resume</string>
     <string name="chapter_translate_notify_summary_title">Chapter translation</string>
     <string name="chapter_translate_notify_summary">%1$d chapter(s) translating in background</string>
     <string name="reader_translate_chapter_clear">Clear</string>
@@ -1180,7 +1175,6 @@
     <string name="reader_translate_chapter_hint">Translating chapter %1$d/%2$d. Double-tap to pause.</string>
     <string name="reader_translate_chapter_finished">Chapter finished: %1$d/%2$d translated</string>
     <string name="reader_translate_chapter_nothing">Nothing to translate in this chapter</string>
-    <string name="reader_translate_chapter_summary">%1$s · %2$d/%3$d done · %4$d ongoing · %5$d failed</string>
     <!-- 一键翻译整章的确认弹窗：默认「只翻未完成」，可强行「全部重翻」（覆盖已成功的页） -->
     <string name="reader_translate_chapter_confirm_title">Translate this chapter</string>
     <string name="reader_translate_chapter_confirm_msg">This chapter has %1$d pages: %2$d untranslated, %3$d failed, %4$d done.</string>
@@ -1590,7 +1584,7 @@
     <string name="novel_translate_oversize_skipped">Skipped the over-long batch</string>
     <!-- ===== 同时 API 请求数（文本翻译；本地引擎固定 1） ===== -->
     <string name="novel_translate_concurrency">Max concurrent translation requests</string>
-    <string name="novel_translate_concurrency_hint">Incremental and whole-chapter translation only, and NOT for local models (they stay serial). Batches are sent in reading order without waiting for earlier ones; up to N run at once, the rest queue. Higher is faster and costs more quota.</string>
+    <string name="novel_translate_concurrency_hint">Max concurrent requests for whole-chapter and incremental translation; local models stay at 1. The rest queue in reading order.</string>
     <!-- ===== 章卡片：后台章节任务的进度（单位是**批**，不是页） ===== -->
     <string name="novel_chapter_running_batches">Translating %1$d/%2$d batches</string>
     <string name="novel_chapter_paused_batches">Paused · %1$d/%2$d batches</string>
@@ -1653,7 +1647,6 @@
     <string name="reader_clear_page_confirm_title">Clear this page\'s translation?</string>
     <string name="reader_clear_page_confirm_msg">This deletes the translation of page %1$d (source text and bubble data included) and shows the original image again. This cannot be undone.</string>
     <string name="reader_clear_page_confirm_ok">Clear</string>
-    <string name="reader_clear_row_confirm_msg">This deletes the translation record of page %1$d and shows the original image again. This cannot be undone.</string>
 
     <!-- waifu2x family (2026-10, official ONNX build from deepghs/waifu2x_onnx) -->
     <string name="sr_group_waifu2x_cunet">waifu2x cunet (2x, ONNX)</string>

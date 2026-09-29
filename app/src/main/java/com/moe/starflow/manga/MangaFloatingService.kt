@@ -2325,7 +2325,8 @@ class MangaFloatingService : LifecycleService() {
             }
 
             // OcrLock: 保护 ONNX 模型的多线程访问（PP-OCRv5/manga-ocr 等单例引擎）
-            if (!com.moe.starflow.manga.OcrLock.tryAcquire()) {
+            val ocrToken = com.moe.starflow.manga.OcrLock.acquire()
+        if (ocrToken == 0L) {
                 autoTranslateEngine.scheduleNextDetection(MangaAutoTranslateEngine.DETECT_INTERVAL_MS)
                 isProcessing = false
                 return
@@ -2396,7 +2397,7 @@ class MangaFloatingService : LifecycleService() {
                 }
                 LogCollector.d(TAG, "processMangaScreenshot: Step 1 - OCR done, found ${ocrTextBlocks.size} text blocks")
             } finally {
-                com.moe.starflow.manga.OcrLock.release()
+                com.moe.starflow.manga.OcrLock.release(ocrToken)
             }
 
             // No text handling — outside OcrLock (early return if empty)

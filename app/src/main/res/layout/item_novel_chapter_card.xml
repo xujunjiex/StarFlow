@@ -92,11 +92,12 @@
 
         <TextView
             android:id="@+id/btn_chapter_secondary"
-            android:layout_width="wrap_content"
+            android:layout_width="0dp"
+            android:layout_weight="1"
             android:layout_height="wrap_content"
             android:layout_marginStart="8dp"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
             android:gravity="center"
             android:paddingTop="5dp"
             android:paddingBottom="5dp"

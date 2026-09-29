@@ -227,11 +227,12 @@ class MangaViewerActivity : AppCompatActivity() {
                 com.moe.starflow.utils.UiUtils.showToast(this, getString(R.string.toast_crop_unavailable))
                 return@setOnClickListener
             }
-            if (!com.moe.starflow.manga.OcrLock.tryAcquire()) {
+            val ocrToken = com.moe.starflow.manga.OcrLock.acquire()
+            if (ocrToken == 0L) {
                 com.moe.starflow.utils.UiUtils.showToast(this, getString(R.string.toast_translating_wait))
                 return@setOnClickListener
             }
-            performRetranslate(entry, pageCache, originalPath)
+            performRetranslate(entry, pageCache, originalPath, ocrToken)
         }
 
         // 非管理视图隐藏重新翻译按钮
@@ -743,7 +744,9 @@ class MangaViewerActivity : AppCompatActivity() {
     private fun performRetranslate(
         entry: HistoryEntry,
         pageCache: PageCacheEntity,
-        originalPath: String
+        originalPath: String,
+        /** `OcrLock` 的持有者令牌（在点击处拿的锁，必须由同一次调用放掉 —— 见 `OcrLock.acquire`）。 */
+        ocrToken: Long,
     ) {
         binding.btnRetranslate.isEnabled = false
         com.moe.starflow.utils.UiUtils.showToast(this, getString(R.string.toast_translating_now))
@@ -847,7 +850,7 @@ class MangaViewerActivity : AppCompatActivity() {
                 com.moe.starflow.utils.UiUtils.showToast(this@MangaViewerActivity, e.message ?: getString(R.string.toast_retranslate_failed))
             } finally {
                 binding.btnRetranslate.isEnabled = true
-                com.moe.starflow.manga.OcrLock.release()
+                com.moe.starflow.manga.OcrLock.release(ocrToken)
             }
         }
     }

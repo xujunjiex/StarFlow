@@ -41,7 +41,10 @@ class ReaderPageSource(
      * 与「章内自然排序」，两边算出来不一样的话章区间就会错位（点第3章跳到别人的页）。
      * 清单里那份只给书架显示章数用，阅读器这份才是权威 —— 两者不一致时以这份为准并回写清单。
      */
-    private val split: MangaChapterSplitter.Result = MangaChapterSplitter.split(resolveRawPages())
+    /** 原始页 key（**未排序**）：分章/排序的输入，页序迁移也要用它算旧顺序。 */
+    private val rawKeys: List<String> = resolveRawPages()
+
+    private val split: MangaChapterSplitter.Result = MangaChapterSplitter.split(rawKeys)
 
     private val pageKeys: List<String> = split.keys
 
@@ -79,6 +82,29 @@ class ReaderPageSource(
      * 任何一环不满足（没开开关 / 没选模型也没开 Anime4K / 增强失败）都**返回原图** ——
      * 增强是锦上添花，绝不能因为它翻不了页或翻不了译。
      */
+    /**
+     * 超分缓存**快路径**：命中就返回一份独立副本，调用方**不必再解码整页**
+     * （`loadFull` 每次适配器绑定都会被调，白解一张 ~9MB 的全尺寸图很亏）。
+     *
+     * @return null = 没开超分 / 签名已变 / 未命中 / 副本分配失败（都当未命中，走完整流程）
+     */
+    private fun enhanceCachedOrNull(position: Int): Bitmap? {
+        val sig = com.moe.starflow.sr.SrPageEnhancer.signature() ?: return null
+        if (sig != enhanceSignature) return null
+        val cached = enhanceCache.get(position) ?: return null
+        if (cached.isRecycled) {
+            enhanceCache.remove(position)
+            return null
+        }
+        // ⚠️ 必须给**独立副本**：翻译/导出路径会 recycle 它们拿到的位图（见下面 enhanceForReader 的说明）
+        return runCatching { cached.copy(cached.config ?: Bitmap.Config.ARGB_8888, true) }.getOrNull()
+            ?: run {
+                // copy 失败（OOM 时正是它失败）绝不能退回 cached 本身 → 当未命中
+                enhanceCache.remove(position)
+                null
+            }
+    }
+
     private fun enhanceForReader(position: Int, src: Bitmap): Bitmap {
         val sig = com.moe.starflow.sr.SrPageEnhancer.signature() ?: return src
         if (sig != enhanceSignature) {
@@ -86,9 +112,26 @@ class ReaderPageSource(
             enhanceCache.evictAll()
             enhanceSignature = sig
         }
-        enhanceCache.get(position)?.let { return it }
+        // ⚠️ **所有权**：翻译/导出路径会 `recycle()` 它们从 `loadFull` 拿到的位图
+        // （`translatePhase` 的 finally、`renderForExport` 的 orig.recycle()）。
+        // 直接把手伸进缓存的那一份交出去 = 缓存里留下一个已 recycle 的位图 →
+        // 下次命中返回它 → 空白页 / "Canvas: trying to use a recycled bitmap" 崩溃。
+        // 所以：缓存永远留自己的一份副本，**交给调用方的永远是独立实例**。
+        enhanceCache.get(position)?.let { cached ->
+            val copy = if (cached.isRecycled) null else runCatching {
+                cached.copy(cached.config ?: Bitmap.Config.ARGB_8888, true)
+            }.getOrNull()
+            // ⚠️ copy 失败（OOM 时正是它失败）**绝不能退回 cached 本身**：那又是一份"调用方会 recycle"
+            // 的共享实例 —— 等于把刚修掉的 use-after-recycle 崩溃请回来。失败就当缓存未命中，重做一次。
+            if (copy != null) return copy
+            enhanceCache.remove(position)
+        }
         val out = com.moe.starflow.sr.SrPageEnhancer.enhanceForReader(src) ?: return src
-        if (out !== src) enhanceCache.put(position, out)
+        if (out !== src) {
+            // mutable=true 保证 copy 一定是**新分配**（immutable 源 + copy(false)/createBitmap 会返回原实例）
+            runCatching { out.copy(out.config ?: Bitmap.Config.ARGB_8888, true) }
+                .getOrNull()?.let { enhanceCache.put(position, it) }
+        }
         return out
     }
 
@@ -120,6 +163,8 @@ class ReaderPageSource(
             LogCollector.w(TAG, "loadFull: 页号越界 position=$position（size=${pageKeys.size}）")
             return null
         }
+        // ⚠️ 先查超分缓存：命中直接给副本 —— 不解码、不走下面的解码/增强流程
+        enhanceCachedOrNull(position)?.let { return it }
         return try {
             val bmp = if (isArchive) {
                 // 复用缓存的 ZipFile（与 openEntry 同一条路径）：每次新开都要重读中央目录，
@@ -136,7 +181,11 @@ class ReaderPageSource(
             }
             if (bmp == null) LogCollector.w(TAG, "loadFull: 解码失败（返回 null）key=$key")
             // 「先超分再翻译」：增强结果与原图同尺寸，坐标空间不变（见 enhanceForReader 注释）
-            bmp?.let { enhanceForReader(position, it) }
+            val enhanced = bmp?.let { enhanceForReader(position, it) }
+            // ⚠️ 增强产出的是**新位图**时，把刚解码的源图还回去（缓存里已存独立副本，
+            // 源图此刻只被这里引用）—— 否则每页多留一张全尺寸位图等 GC。
+            if (bmp != null && enhanced != null && enhanced !== bmp) bmp.recycle()
+            enhanced
         } catch (e: Exception) {
             // ⚠️ **不能再静默吞掉**：解不出来必须留下可供排查的原因（条目缺失/流被关/解码异常）。
             // 这条 W 日志是"cbz 无法翻译"这类问题的第一现场证据。
@@ -237,6 +286,12 @@ class ReaderPageSource(
         ensureOriginalSize(position)
         return originalWidths[position] ?: 0
     }
+
+    /** 原始页 key（未排序）—— 只给页序迁移用（[com.moe.starflow.mangaimport.data.MangaPageOrder]）。 */
+    fun rawPageKeys(): List<String> = rawKeys
+
+    /** 当前权威页序（分章后的阅读顺序）。 */
+    fun orderedPageKeys(): List<String> = pageKeys
 
     /** 该页**原图**高度。用途：适配器按原始宽高比把行高**钉死**，见 [WebtoonAdapter] 的绑定注释。 */
     fun originalHeight(position: Int): Int {

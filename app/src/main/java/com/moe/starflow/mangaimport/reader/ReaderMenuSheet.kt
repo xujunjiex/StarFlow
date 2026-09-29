@@ -64,6 +64,8 @@ class ReaderMenuState(
     val chapterJobs: Map<Int, ChapterJobState> = emptyMap(),
     /** 各章任务已完成的页数。 */
     val chapterJobDone: Map<Int, Int> = emptyMap(),
+    /** 各章**任务自己的**总页数（徽章分母，见 ReaderPageStateAdapter）。 */
+    val chapterJobTotal: Map<Int, Int> = emptyMap(),
     /** 排队中（还没开始翻）的页 —— 面板把它们标成「等待」。 */
     val waitingPages: Set<Int> = emptySet(),
     /** 在途页：**识别中**（OCR 串行阶段）/ **翻译中**（并发请求）—— 见 [ChapterPanelState]。 */
@@ -144,6 +146,7 @@ class ChapterPanelState(
     /** 各章任务状态 / 已完成页数 / 排队页（章卡片按钮与「等待」标签都靠它们）。 */
     val jobs: Map<Int, ChapterJobState> = emptyMap(),
     val jobDone: Map<Int, Int> = emptyMap(),
+    val jobTotal: Map<Int, Int> = emptyMap(),
     val waitingPages: Set<Int> = emptySet(),
     /**
      * 在途页（章节任务正在 OCR/翻译）。
@@ -243,6 +246,7 @@ class ReaderMenuSheet(
     private var selectedChapter = 0
     private var jobs: Map<Int, ChapterJobState> = emptyMap()
     private var jobDone: Map<Int, Int> = emptyMap()
+    private var jobTotal: Map<Int, Int> = emptyMap()
     private var waitingPages: Set<Int> = emptySet()
 
     /** 在途页（章节任务正在处理的页）：按**阶段**分开记，面板据此显示「识别中 / 翻译中」。 */
@@ -270,18 +274,9 @@ class ReaderMenuSheet(
         setTranslateMode(cb.currentTranslateMode())
         // 章节状态同样回读：面板的 onCreateView 是异步的，这中间宿主完全可能已经翻页换章，
         // 不覆盖的话章标题行会停在上一次打开时的章号
-        run {
-            val st = cb.currentChapterState()
-            chapters = st.chapters
-            selectedChapter = st.currentChapter
-            currentRecords = st.records
-            jobs = st.jobs
-            jobDone = st.jobDone
-            waitingPages = st.waitingPages
-            ocrPages = st.ocrPages
-            translatingPages = st.translatingPages
-            view?.let { pushToAdapter() }
-        }
+        // 章节/翻译状态回读（唯一实现见 refreshChapterState —— 以前这里与 notifyTranslateChanged
+        // 各写一份赋值，两条路迟早分叉）
+        refreshChapterState()
         // 面板容器背景初始跟随当前深浅（此后由 applyPanelTheme 实时维护）
         reapplySheetContainerBg()
         // 模型/语言 prefs 变化（跳设置页返回等）→ 即时刷新模型名；无需关面板
@@ -466,11 +461,13 @@ class ReaderMenuSheet(
         view.findViewById<TextView>(R.id.tv_download_value).text = state.downloadLabel
 
         // 翻译面板：模式骨架 + 同时请求数 + 过滤 + 章节卡片/页记录列表
+        // （首帧状态也从宿主回读：onStart 会再刷一次，这里保证 onCreateView 之后立刻有值）
         currentRecords = state.pageTranslations
         chapters = state.chapters
         selectedChapter = state.currentChapter
         jobs = state.chapterJobs
         jobDone = state.chapterJobDone
+        jobTotal = state.chapterJobTotal
         waitingPages = state.waitingPages
         ocrPages = state.ocrPages
         translatingPages = state.translatingPages
@@ -1080,6 +1077,7 @@ class ReaderMenuSheet(
             selectedChapter = selectedChapter,
             jobs = jobs,
             jobDone = jobDone,
+            jobTotal = jobTotal,
             waitingPages = waitingPages,
             ocrPages = ocrPages,
             translatingPages = translatingPages,
@@ -1105,31 +1103,30 @@ class ReaderMenuSheet(
      * 外部刷新入口（翻译任务开始/完成/失败、切章、批量任务进度都走这里）。
      *
      * ⚠️ 这是**唯一**的宿主 → 面板推送入口（与小说面板的 `notifyHostState` 同一约定）：
-     * 新增宿主可改的字段必须一起加进来，否则那处 UI 永远停在打开那一刻。
+     * 新增宿主可改的字段不用改这里的签名 —— 状态统一从 `cb.currentChapterState()` **回读**
+     * （见 [refreshChapterState]）。
+     *
+     * ⚠️ 以前宿主得把 8 个章节/翻译字段**逐个当参数传进来**，而 `onStart` 又会把同一批字段回读覆盖
+     * → 两条路最终只有回读那条生效（审查发现：第三条路 `ReaderMenuState` 的初值在首帧前就被盖掉）。
+     * 现在只留「回读」一条，参数入口退化成"请刷新"，不会再出现两个状态源悄悄分叉。
      */
-    fun notifyTranslateChanged(
-        records: List<ImportedPageTranslation>,
-        chapters: List<MangaChapter>,
-        selectedChapter: Int,
-        jobs: Map<Int, ChapterJobState>,
-        jobDone: Map<Int, Int>,
-        waitingPages: Set<Int>,
-        /**
-         * 正在被章节任务处理的页，**按阶段分开**：识别中（OCR，恒 ≤1 页）/ 翻译中（并发 N 页）。
-         * 不补这些页，卡片会在开始翻译时"消失"；不分开，用户会看到"一次冒出三个一样的卡片"。
-         */
-        ocrPages: Set<Int> = emptySet(),
-        translatingPages: Set<Int> = emptySet(),
-    ) {
-        currentRecords = records
-        this.chapters = chapters
-        this.selectedChapter = selectedChapter
-        this.jobs = jobs
-        this.jobDone = jobDone
-        this.waitingPages = waitingPages
-        this.ocrPages = ocrPages
-        this.translatingPages = translatingPages
-        pushToAdapter()
+    fun notifyTranslateChanged() {
+        refreshChapterState()
+    }
+
+    /** 从宿主回读章节/翻译状态并重绑列表（**唯一**的状态来源）。 */
+    private fun refreshChapterState() {
+        val st = cb.currentChapterState()
+        currentRecords = st.records
+        chapters = st.chapters
+        selectedChapter = st.currentChapter
+        jobs = st.jobs
+        jobDone = st.jobDone
+        jobTotal = st.jobTotal
+        waitingPages = st.waitingPages
+        ocrPages = st.ocrPages
+        translatingPages = st.translatingPages
+        if (view != null) pushToAdapter()
     }
 
     /**
