@@ -63,6 +63,18 @@ class AnimeJaNaiEngineTensorTypeTest {
         )
     }
     @Test
+    fun ortsessionUsesTheMeasuredFastestConfig() {
+        // 真机实测（SrBenchmark，2026-10，Redmi 2407FRK8EC / 8 核）同一模型同一尺寸：
+        //   threads=4 ALL_OPT 2237ms | threads=6 1981ms | threads=8 1758ms
+        //   threads=8 BASIC_OPT 2215ms（慢 26%）| threads=8 +NNAPI 1772ms（另一模型 6087ms，慢 3.5 倍）
+        // ⇒ ALL_OPT + 8 线程；NNAPI 一律不要。
+        val s = src()
+        assertTrue("必须用 ALL_OPT（比 BASIC_OPT 快 26%）", s.contains("OptLevel.ALL_OPT"))
+        assertFalse("不许退回 BASIC_OPT", s.contains("OptLevel.BASIC_OPT"))
+        assertTrue("线程上限要放开到 8", s.contains("coerceIn(1, 8)"))
+        assertFalse("不许引入 NNAPI（实测无收益，还有模型慢 3.5 倍）", s.contains("addNnapi"))
+    }
+    @Test
     fun inputBufferIsRewoundBeforeTensorCreation() {
         // ORT 从 ByteBuffer 的当前 position 开始读；不归零就会读到上一轮的尾巴
         assertTrue("建张量前必须 rewind", src().contains("buf.rewind()"))

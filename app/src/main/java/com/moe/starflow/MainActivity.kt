@@ -34,7 +34,13 @@ class MainActivity : BaseActivity() {
     ) { /* 无论用户是否授权都继续 */ }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
+        super.onCreate(savedInstanceState)
+        // ── 开发者工具：超分真机性能基准（只在 debug 包、且显式带 extra 时触发）──
+        // 用法：adb shell am start -n com.moe.starflow/.MainActivity --es sr_bench 1
+        // 正常启动（没有这个 extra）完全不受影响；报告写到 files/sr_benchmark.txt
+        if (BuildConfig.DEBUG && intent?.hasExtra("sr_bench") == true) {
+            com.moe.starflow.sr.SrBenchmark.run(applicationContext)
+        }
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT) //锁定竖屏
 
         setContentView(R.layout.activity_main)

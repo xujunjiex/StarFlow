@@ -1680,7 +1680,7 @@
 
     <!-- waifu2x family (2026-10, official ONNX build from deepghs/waifu2x_onnx) -->
     <string name="sr_group_waifu2x_cunet">waifu2x cunet (2x, ONNX)</string>
-    <string name="sr_group_waifu2x_cunet_desc">The cunet architecture from the official waifu2x model set. The four levels are denoise strengths: n0 leaves the source alone (most faithful, line restore + upscale only), n3 aggressively removes scan noise and JPEG artefacts. Highest measured quality of all families.</string>
+    <string name="sr_group_waifu2x_cunet_desc">The cunet architecture from the official waifu2x model set. The four levels are denoise strengths: n0 leaves the source alone (most faithful, line restore + upscale only), n3 aggressively removes scan noise and JPEG artefacts. ⚠️ Highest measured quality, but **very slow on phones**: about **35s per page** (640×960 → 2x), 20x slower than AnimeJaNai. Prefer AnimeJaNai unless you are happy waiting half a minute per page.</string>
     <string name="sr_group_waifu2x_swin">waifu2x swin_unet (2x, ONNX)</string>
     <string name="sr_group_waifu2x_swin_desc">the SwinIR architecture from the waifu2x model set (16.8MB per level). ⚠️ **Measured as very slow on phones** (Transformer running on CPU) and 3x the size of cunet — prefer cunet unless you have confirmed it looks clearly better on your sources.</string>
     <string name="sr_model_w2x_cunet_n0">cunet · No denoise (n0)</string>

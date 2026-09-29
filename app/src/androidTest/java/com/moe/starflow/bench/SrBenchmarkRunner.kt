@@ -39,7 +39,7 @@ class SrBenchmarkRunner : Instrumentation() {
     private fun align16(v: Int) = ((v + 15) / 16) * 16
 
     override fun onStart() {
-        val report = StringBuilder()
+        com.moe.starflow.sr.SrBenchmark.run(targetContext)
         val sb = StringBuilder()
         try {
             val ctx = targetContext
@@ -81,7 +81,9 @@ class SrBenchmarkRunner : Instrumentation() {
         runCatching {
             com.moe.starflow.utils.LogCollector.i(tag, "===== 超分基准开始 =====\n$report")
         }
-        finish(0, Bundle().apply { putString("report", report.toString()) })
+        // 基准是异步的，这里等它把报告写完（instrumentation 进程退出会杀掉它）
+        runCatching { Thread.sleep(1000) }
+        finish(0, Bundle())
     }
 
     private data class Cfg(val threads: Int, val opt: OrtSession.SessionOptions.OptLevel, val nnapi: Boolean) {

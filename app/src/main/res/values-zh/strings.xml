@@ -1677,7 +1677,7 @@
 
     <!-- waifu2x 模型族（2026-10，deepghs/waifu2x_onnx 的官方 ONNX 版） -->
     <string name="sr_group_waifu2x_cunet">waifu2x cunet（2x，ONNX）</string>
-    <string name="sr_group_waifu2x_cunet_desc">waifu2x 官方模型集的 cunet 架构。四个等级是**降噪强度**：n0 不降噪（最忠实原图，只做线条修复与放大）、n3 强力降噪（适合扫描噪点/JPEG 块效应很重的图源）。实测这一族质量最高。</string>
+    <string name="sr_group_waifu2x_cunet_desc">waifu2x 官方模型集的 cunet 架构。四个等级是**降噪强度**：n0 不降噪（最忠实原图，只做线条修复与放大）、n3 强力降噪（适合扫描噪点/JPEG 块效应很重的图源）。⚠️ 实测这一族质量最高，但**手机上非常慢**：一页(640×960→2x)要 **35 秒**左右，是 AnimeJaNai 的 20 倍。除非你愿意每页等半分钟，否则优先用 AnimeJaNai。</string>
     <string name="sr_group_waifu2x_swin">waifu2x swin_unet（2x，ONNX）</string>
     <string name="sr_group_waifu2x_swin_desc">waifu2x 的 SwinIR 架构（16.8MB/档）。⚠️ **实测在手机上非常慢**（Transformer 结构跑 CPU），而且体积是 cunet 的 3 倍 —— 除非你确定它对你的图源画质明显更好，否则优先用 cunet。</string>
     <string name="sr_model_w2x_cunet_n0">cunet · 不降噪（n0）</string>
