@@ -94,9 +94,12 @@ class AnimeJaNaiEngine(private val modelFile: File) : SuperResolutionEngine {
                 setMemoryPatternOptimization(true)
                 setCPUArenaAllocator(true)
                 setOptimizationLevel(OrtSession.SessionOptions.OptLevel.BASIC_OPT)
-                // 超分是纯卷积，线程给足；但别吃满所有核（前台还有 UI 与 OCR 要跑）
+                // 超分是纯卷积/注意力，线程越多越快；但别吃满所有核（前台还有 UI 与 OCR 要跑）。
+                // ⚠️ 2026-10 从 4 提到 6：真机反馈 swin_unet 慢到不可用，而 8 核机器上只给 4 线程
+                //    等于先砍掉一半算力。超分与 OCR 有 `OcrLock` 串行，不会和识别抢核；
+                //    最坏情况是超分那几秒 UI 略卡，而用户本来就在等它出图。
                 setIntraOpNumThreads(
-                    Runtime.getRuntime().availableProcessors().coerceIn(1, 4)
+                    Runtime.getRuntime().availableProcessors().coerceIn(1, 6)
                 )
             }
             val s = e.createSession(modelFile.absolutePath, options)
@@ -112,7 +115,7 @@ class AnimeJaNaiEngine(private val modelFile: File) : SuperResolutionEngine {
                 return false
             }
             LogCollector.d(TAG, "初始化完成: ${modelFile.name}, input=$inputName, fp16=$fp16, " +
-                    "halo=${haloOutPx}px(${haloOutPx / 4}/边), threads=${Runtime.getRuntime().availableProcessors().coerceIn(1, 4)}")
+                    "halo=${haloOutPx}px(${haloOutPx / 4}/边), threads=${Runtime.getRuntime().availableProcessors().coerceIn(1, 6)}")
             true
         } catch (e: Throwable) {
             LogCollector.e(TAG, "初始化失败: ${modelFile.name}", e)

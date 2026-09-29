@@ -1682,7 +1682,7 @@
     <string name="sr_group_waifu2x_cunet">waifu2x cunet (2x, ONNX)</string>
     <string name="sr_group_waifu2x_cunet_desc">The cunet architecture from the official waifu2x model set. The four levels are denoise strengths: n0 leaves the source alone (most faithful, line restore + upscale only), n3 aggressively removes scan noise and JPEG artefacts. Highest measured quality of all families.</string>
     <string name="sr_group_waifu2x_swin">waifu2x swin_unet (2x, ONNX)</string>
-    <string name="sr_group_waifu2x_swin_desc">the SwinIR architecture from the waifu2x model set — best quality but large (16.8MB per level) and slower. For colour pages and covers where quality matters more than waiting.</string>
+    <string name="sr_group_waifu2x_swin_desc">the SwinIR architecture from the waifu2x model set (16.8MB per level). ⚠️ **Measured as very slow on phones** (Transformer running on CPU) and 3x the size of cunet — prefer cunet unless you have confirmed it looks clearly better on your sources.</string>
     <string name="sr_model_w2x_cunet_n0">cunet · No denoise (n0)</string>
     <string name="sr_model_w2x_cunet_n1">cunet · Light denoise (n1)</string>
     <string name="sr_model_w2x_cunet_n2">cunet · Medium denoise (n2)</string>
