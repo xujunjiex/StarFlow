@@ -39,7 +39,14 @@ class MainActivity : BaseActivity() {
         // 用法：adb shell am start -n com.moe.starflow/.MainActivity --es sr_bench 1
         // 正常启动（没有这个 extra）完全不受影响；报告写到 files/sr_benchmark.txt
         if (BuildConfig.DEBUG && intent?.hasExtra("sr_bench") == true) {
-            com.moe.starflow.sr.SrBenchmark.run(applicationContext)
+            // 参数：--es sr_bench_model <名字片段>  --ei sr_bench_threads <线程数，默认 4 给前台留核>
+            com.moe.starflow.sr.SrBenchmark.run(
+                applicationContext,
+                intent?.getStringExtra("sr_bench_model"),
+                intent?.getIntExtra("sr_bench_threads", 4) ?: 4,
+            )
+            // ⚠️ **一次性**：不清掉 extra 的话，App 从最近任务重开会把同一 intent 再送进来 → 基准重跑一遍
+            intent?.removeExtra("sr_bench")
         }
         setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT) //锁定竖屏
 

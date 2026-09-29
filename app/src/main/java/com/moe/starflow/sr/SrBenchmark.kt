@@ -52,27 +52,30 @@ object SrBenchmark {
     }
 
     /** 后台线程跑完整轮，立即返回（调用方不会被阻塞）。 */
-    fun run(context: Context) {
+    fun run(context: Context, modelFilter: String? = null, threads: Int = 4) {
         val app = context.applicationContext
         Thread {
             val out = File(app.getExternalFilesDir(null), "sr_benchmark.txt")
-            runCatching { out.writeText("") }
+            // ⚠️ **不截断**：App 从最近任务重开时 intent 还带着 extra → 基准会重跑一遍，
+            //    截断就把上一次的结果全丢了（踩过）。改成追加 + 打分隔线，多次运行可对比取最优。
             val sb = StringBuilder()
             try {
                 val srDir = File(app.getExternalFilesDir(null), "sr")
                 val models = (srDir.listFiles { f -> f.name.endsWith(".onnx") } ?: emptyArray())
+                    .filter { modelFilter == null || it.name.contains(modelFilter, ignoreCase = true) }
                     .sortedBy { it.length() }
+                emit(out, sb, "===== 运行 ${java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())} =====")
                 emit(out, sb, "设备=${android.os.Build.MODEL}  核数=${Runtime.getRuntime().availableProcessors()}")
                 emit(out, sb, "输入=${IN_W}x$IN_H (对齐补边后 ${align16(IN_W + PAD * 2)}x${align16(IN_H + PAD * 2)})  预热1+计时2，取最小")
-                emit(out, sb, "模型数=${models.size}")
+                emit(out, sb, "线程=$threads  过滤=${modelFilter ?: "全部"}  模型数=${models.size}  当前负载=${java.io.File("/proc/loadavg").readText().trim()}")
                 for (m in models) {
                     val type = runCatching { inputTypeName(m) }.getOrElse { "?(${it.javaClass.simpleName})" }
                     emit(out, sb, "")
                     emit(out, sb, "── ${m.name}  ${m.length() / 1024}KB  输入=$type")
-                    val configs = mutableListOf<Cfg>()
-                    for (t in intArrayOf(4, 6, 8)) configs += Cfg(t, OrtSession.SessionOptions.OptLevel.ALL_OPT, false)
-                    configs += Cfg(8, OrtSession.SessionOptions.OptLevel.BASIC_OPT, false)
-                    configs += Cfg(8, OrtSession.SessionOptions.OptLevel.ALL_OPT, true)
+                    // 只跑**实测最优**那一档（ALL_OPT）：
+                    // 慢模型（cunet/swin）一页几十秒，档位多了根本跑不完。
+                    // 线程数由调用方给（默认 4）：**别占满 8 核**，否则测试期间手机没法用。
+                    val configs = listOf(Cfg(threads, OrtSession.SessionOptions.OptLevel.ALL_OPT, false))
                     for (c in configs) {
                         val r = try {
                             measure(m, c)
@@ -134,7 +137,7 @@ object SrBenchmark {
         var min = Long.MAX_VALUE
         val times = mutableListOf<Long>()
         try {
-            for (i in 0..2) {   // 0 = 预热，1/2 = 计时
+            for (i in 0..1) {   // 0 = 预热，1 = 计时（只跑两遍：慢模型一遍就几十秒）
                 val s0 = SystemClock.elapsedRealtime()
                 val r = session.run(mapOf(name to tensor))
                 val e0 = SystemClock.elapsedRealtime() - s0
@@ -152,6 +155,8 @@ object SrBenchmark {
             runCatching { session.close() }
             runCatching { opts.close() }
         }
-        return "min=${min}ms  (${times.joinToString("/")})  输出=${outW}x$outH  装载=${initMs}ms"
+        val mp = outW.toDouble() * outH / 1_000_000.0
+        val perMp = if (mp > 0) "%.0f ms/MP".format(min / mp) else "?"
+        return "min=${min}ms  (${times.joinToString("/")})  输出=${outW}x$outH  $perMp  装载=${initMs}ms"
     }
 }
