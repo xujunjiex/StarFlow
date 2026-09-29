@@ -23,6 +23,59 @@ private const val MAX_RENDER_SCALE = 2f
 
 private val FILTER_PAINT = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG)
 
+/**
+ * 叠加层画布的几何 —— **纯函数**，`OverlayCanvasGeometryTest` 钉死。
+ *
+ * 抽出来是因为这里有一类**只能靠构造保证、又极易写错**的东西：
+ * Robolectric 的 Canvas **既不兑现 `canvas.scale()`，也不兑现 `drawBitmap(src, srcRect, dstRect, paint)`
+ * 的目标矩形**（见 `manga/CLAUDE.md`）→ "叠加层会不会被放在正确的位置/大小"在单测里**看不到**。
+ * 所以把"要不要铺底图 / 叠加层放大多少"变成可断言的数据。
+ *
+ * 三个量的关系（全部由 `bubbleRects` 的坐标空间推出）：
+ * ```
+ * 底图宽 bitmapW = 坐标空间宽 spaceW × baseScale        （超分底图：baseScale = 2）
+ * 输出宽 outW    = spaceW × renderScale                （阅读器上屏：renderScale = 2）
+ * ```
+ *
+ * @property fillBase 底图要不要按目标矩形铺满输出。
+ *   ⚠️ `false` **不等于**"不用缩放叠加层" —— 超分底图那一路
+ *   （`baseScale == renderScale`）`outW` 恰好等于底图宽，走的是"直接 copy 底图"分支，
+ *   但叠加层**仍然**必须按 [scale] 放大。把这两件事混为一谈，译文就会缩在左上角 1/4 里。
+ */
+internal data class OverlayCanvasGeometry(
+    val spaceW: Int,
+    val spaceH: Int,
+    val outW: Int,
+    val outH: Int,
+    /** 叠加层的放大倍率（= 夹取后的 `renderScale`）。**恒要应用**。 */
+    val scale: Float,
+    /** true = 需要 `drawBitmap` 把底图铺满输出；false = 输出尺寸已等于底图，直接 copy。 */
+    val fillBase: Boolean,
+)
+
+internal fun solveOverlayCanvas(
+    bitmapW: Int,
+    bitmapH: Int,
+    baseScale: Float,
+    renderScale: Float,
+): OverlayCanvasGeometry {
+    val scale = renderScale.coerceIn(1f, MAX_RENDER_SCALE)
+    val base = baseScale.coerceAtLeast(0.01f)
+    // 坐标空间（= bubbleRects 的空间）尺寸。底图是 2x 超分图时它就是源图尺寸。
+    val spaceW = (bitmapW / base).toInt().coerceAtLeast(1)
+    val spaceH = (bitmapH / base).toInt().coerceAtLeast(1)
+    val outW = (spaceW * scale).toInt().coerceAtLeast(1)
+    val outH = (spaceH * scale).toInt().coerceAtLeast(1)
+    return OverlayCanvasGeometry(
+        spaceW = spaceW,
+        spaceH = spaceH,
+        outW = outW,
+        outH = outH,
+        scale = scale,
+        fillBase = outW != bitmapW || outH != bitmapH,
+    )
+}
+
 object OverlayRenderer {
 
     /**
@@ -128,33 +181,31 @@ object OverlayRenderer {
          */
         baseScale: Float = 1f
     ): Bitmap {
-        val scale = renderScale.coerceIn(1f, MAX_RENDER_SCALE)
-        val base = baseScale.coerceAtLeast(0.01f)
-        // 坐标空间（= bubbleRects 的空间）尺寸。底图是 2x 超分图时它就是源图尺寸。
-        val spaceW = (original.width / base).toInt().coerceAtLeast(1)
-        val spaceH = (original.height / base).toInt().coerceAtLeast(1)
-        val outW = (spaceW * scale).toInt().coerceAtLeast(1)
-        val outH = (spaceH * scale).toInt().coerceAtLeast(1)
+        val g = solveOverlayCanvas(original.width, original.height, baseScale, renderScale)
 
-        val result: Bitmap = if (outW == original.width && outH == original.height) {
-            // 尺寸一致 → 直接复制（今天 renderScale=1 的常规路径）
+        val result: Bitmap = if (!g.fillBase) {
+            // 输出尺寸 == 底图尺寸 → 直接复制（底图 1:1 落上去，零重采样）
             original.copy(Bitmap.Config.ARGB_8888, true)
         } else {
-            Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
+            Bitmap.createBitmap(g.outW, g.outH, Bitmap.Config.ARGB_8888)
         }
         val canvas = Canvas(result)
-        if (outW != original.width || outH != original.height) {
-            // 底图铺满输出。⚠️ baseScale == renderScale 时这里是 1:1（超分底图零重采样）；
-            // baseScale < renderScale 时是放大（底图该多糊还多糊 —— 那是图源决定的）。
+        if (g.fillBase) {
+            // 底图铺满输出。⚠️ baseScale < renderScale 时这里是放大（底图该多糊还多糊 —— 那是图源决定的）。
             canvas.drawBitmap(
                 original, null,
-                android.graphics.RectF(0f, 0f, outW.toFloat(), outH.toFloat()),
+                android.graphics.RectF(0f, 0f, g.outW.toFloat(), g.outH.toFloat()),
                 FILTER_PAINT
             )
-            // 之后所有绘制仍用**坐标空间** → 字号/字距/气泡位置全部自动跟着 scale 放大，
-            // 字形在最终分辨率上栅格化。不要在这里手动乘坐标，那会与 LayoutEngine 的计划打架。
-            canvas.scale(scale, scale)
         }
+        // ⚠️ **无条件**按 [OverlayCanvasGeometry.scale] 放大 —— 所有绘制坐标都在**坐标空间**
+        // （`bubbleRects` 所在空间），字号/字距/气泡位置靠这一层自动跟着放大。
+        //
+        // ⚠️ **绝不能把它放进上面的 `if (g.fillBase)` 里**：超分底图那一路恰好是
+        // `baseScale == renderScale`（2x 底图 + renderScale 2）→ `outW` 正好等于底图宽 →
+        // 走的是"直接 copy 底图"分支，`fillBase = false`。放进 if 里就会漏掉缩放，
+        // 叠加层缩在左上角 1/4 区域里（底图铺满整张，译文却只有一半大小、位置全错）。
+        canvas.scale(g.scale, g.scale)
 
         // 竖排方向覆盖：所有竖排气泡（RL 或 LR）统一用当前配置方向，横排保持。
         // 保证历史/缓存命中的气泡（方向可能是旧设置时存的）也按当前设置实时渲染。
@@ -251,7 +302,19 @@ object OverlayRenderer {
             }
             canvas.save()
             canvas.clipRect(item.drawRect)
-            canvas.drawBitmap(original, 0f, 0f, null)
+            // 在气泡框内重新铺一遍底图（白块是**半透明**的，底下这层原画是"透出来"的来源）。
+            //
+            // ⚠️ **必须映射到「坐标空间」的矩形，不能写 `drawBitmap(original, 0f, 0f, null)`**：
+            // 上面已经 `canvas.scale(scale, scale)`，而 `original` 的**像素尺寸**是
+            // `坐标空间 × baseScale` —— 直接按 0,0 落笔在超分底图那一路（baseScale = 2）
+            // 会画出 2 倍大的图，框内透出的是**放大的左上角裁片**（错位内容）。
+            // 映射到 `(0,0,spaceW,spaceH)` 之后，无论 baseScale 是多少都与结果位图逐像素对齐，
+            // 也就是"重新铺一层已经在那儿的底图"（baseScale = 1 时与原写法逐像素等价）。
+            canvas.drawBitmap(
+                original, null,
+                android.graphics.RectF(0f, 0f, g.spaceW.toFloat(), g.spaceH.toFloat()),
+                null
+            )
             canvas.restore()
 
             canvas.drawRect(item.drawRect, bgPaint)
