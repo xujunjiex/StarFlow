@@ -133,13 +133,31 @@ class AnimeJaNaiEngine(private val modelFile: File) : SuperResolutionEngine {
      * 用一次极小推理探测边框裁剪量：喂 `PROBE×PROBE`（16 对齐）空图，
      * `halo = 2*PROBE - 实际输出边长`。
      *
-     * 探测失败（异常/输出异常）→ 返回 0（按"模型不裁边框"处理）并记 W 日志；
-     * 后续推理若因此对不上，[upscale] 里的尺寸校验会把它拦下来。
+     * ## ⚠️ 探测尺寸必须**远大于**任何模型可能裁掉的边框（2026-10 真机踩实）
+     * cunet 的真实 halo 是 **72 输出像素**。上一版 `PROBE = 64`（探测输出只有 128）时，
+     * 72 占了 128 的 56%，被我自己的"异常"判据 `halo >= n*scale/2` 判成探测失败 → 返回 0
+     * → 真推理时尺寸校验对不上，报：
+     * ```
+     * output 1400x1944, expected 1472x2016 (iw=736 ih=1008 halo=0)   ← 差 72，正是 cunet 的 halo
+     * ```
+     * 现在：主探测 256（输出 512，72 只占 14%），判据放宽成"输出至少要有 16px"，
+     * 万一仍被判异常就换 512 再探一次 —— 两个尺寸都是"大探测"，结论才可信。
      */
     private fun probeHalo(s: OrtSession): Int {
-        val e = env ?: return 0
+        val first = probeHaloOnce(s, PROBE)
+        if (first >= 0) return first
+        LogCollector.w(TAG, "halo 探测在 $PROBE 下异常，换 $PROBE_LARGE 再探一次: ${modelFile.name}")
+        val second = probeHaloOnce(s, PROBE_LARGE)
+        if (second >= 0) return second
+        // 两次都异常 → 按"不裁边框"处理；后续 [upscale] 的尺寸硬校验会把它拦下来（并给出实际数字）
+        LogCollector.w(TAG, "halo 探测两次都异常，按 0 处理: ${modelFile.name}")
+        return 0
+    }
+
+    /** @return 探测到的 halo；**-1 表示这次探测的结论不可信**（调用方换尺寸重试）。 */
+    private fun probeHaloOnce(s: OrtSession, n: Int): Int {
+        val e = env ?: return -1
         return try {
-            val n = PROBE
             val buf = allocateInput(n, n)
             val t = createInputTensor(e, buf, n, n)
             val r = s.run(mapOf(inputName to t))
@@ -147,9 +165,12 @@ class AnimeJaNaiEngine(private val modelFile: File) : SuperResolutionEngine {
                 val out = r[0] as? OnnxTensor
                 val ow = out?.info?.shape?.getOrNull(3)?.toInt() ?: -1
                 val halo = n * scale - ow
-                if (halo < 0 || halo >= n * scale / 2) {
-                    LogCollector.w(TAG, "halo 探测异常(输出宽=$ow, 探测输入=$n)，按 0 处理: ${modelFile.name}")
-                    0
+                // 判据：输出至少要有 16px（负 halo = 输出比 2x 还大，同样不可信）。
+                // ⚠️ 不要写回 `halo >= n*scale/2` —— 那会把"halo 占探测尺寸一大半"的**正常模型**
+                //    （cunet 72/128）判成异常，等于让这个模型永远用不了。
+                if (halo < 0 || halo > n * scale - 16) {
+                    LogCollector.w(TAG, "halo 探测不可信(探测输入=$n, 输出宽=$ow)，待重试: ${modelFile.name}")
+                    -1
                 } else {
                     halo
                 }
@@ -158,8 +179,8 @@ class AnimeJaNaiEngine(private val modelFile: File) : SuperResolutionEngine {
                 runCatching { r.close() }
             }
         } catch (e2: Throwable) {
-            LogCollector.w(TAG, "halo 探测失败，按 0 处理: ${e2.message}")
-            0
+            LogCollector.w(TAG, "halo 探测失败(n=$n)，待重试: ${e2.message}")
+            -1
         }
     }
 
@@ -372,7 +393,17 @@ class AnimeJaNaiEngine(private val modelFile: File) : SuperResolutionEngine {
         /** 四边各补的源像素数。必须 > 任何模型的 halo/边（实测最大 18/边），且留足余量 */
         const val PAD = 48
 
-        const val PROBE = 64
+        /**
+         * halo 探测的输入边长（16 对齐）。
+         *
+         * ⚠️ **必须远大于任何模型可能裁掉的边框**：cunet 的 halo = 72 输出像素，
+         * 用 64 探测时输出只有 128、72 占了一大半，会被判成"探测异常"→ 整个模型用不了
+         * （真机报 `expected 1472x2016 ... halo=0`）。256 的输出是 512，72 只占 14%，稳。
+         */
+        const val PROBE = 256
+
+        /** 第一次探测被判"不可信"时的补救探测尺寸（更大 → halo 占比更小）。 */
+        const val PROBE_LARGE = 512
         const val ALPHA = 0xFF shl 24
 
         fun align16(v: Int): Int = ((v + 15) / 16) * 16

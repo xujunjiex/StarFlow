@@ -43,6 +43,26 @@ class AnimeJaNaiEngineTensorTypeTest {
     }
 
     @Test
+    fun haloProbeIsLargeEnoughForCunet() {
+        // 真机报错：`output 1400x1944, expected 1472x2016 (iw=736 ih=1008 halo=0)` —— 差的 72
+        // 正是 cunet 的 halo，也就是说 halo **没被探测出来**。
+        // 根因：探测尺寸太小（64 → 输出 128），而 cunet 的 72 占了 56%，被"异常"判据
+        // `halo >= n*scale/2`（72 >= 64）判成探测失败 → 返回 0。
+        val s = src()
+        val probe = Regex("const val PROBE = (\\d+)").find(s)!!.groupValues[1].toInt()
+        assertTrue("探测尺寸必须 >= 256（cunet 的 72px halo 才不会被判成异常），实际 $probe", probe >= 256)
+        assertTrue("要有更大的补救探测尺寸", s.contains("const val PROBE_LARGE"))
+        assertTrue("第一次不可信要换尺寸重试", s.contains("probeHaloOnce(s, PROBE_LARGE)"))
+        assertFalse(
+            "不许再用 `halo >= n*scale/2` 当异常判据（它会把 cunet 判死）",
+            s.contains("halo >= n * scale / 2"),
+        )
+        assertTrue(
+            "判据应是「输出至少 16px」",
+            s.contains("halo > n * scale - 16"),
+        )
+    }
+    @Test
     fun inputBufferIsRewoundBeforeTensorCreation() {
         // ORT 从 ByteBuffer 的当前 position 开始读；不归零就会读到上一轮的尾巴
         assertTrue("建张量前必须 rewind", src().contains("buf.rewind()"))
