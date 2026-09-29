@@ -43,7 +43,7 @@ class MainActivity : BaseActivity() {
             com.moe.starflow.sr.SrBenchmark.run(
                 applicationContext,
                 intent?.getStringExtra("sr_bench_model"),
-                intent?.getIntExtra("sr_bench_threads", 4) ?: 4,
+                intent?.getIntExtra("sr_bench_threads", com.moe.starflow.sr.srThreads()) ?: com.moe.starflow.sr.srThreads(),
             )
             // ⚠️ **一次性**：不清掉 extra 的话，App 从最近任务重开会把同一 intent 再送进来 → 基准重跑一遍
             intent?.removeExtra("sr_bench")

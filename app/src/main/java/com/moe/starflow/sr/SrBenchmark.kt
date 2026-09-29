@@ -52,7 +52,7 @@ object SrBenchmark {
     }
 
     /** 后台线程跑完整轮，立即返回（调用方不会被阻塞）。 */
-    fun run(context: Context, modelFilter: String? = null, threads: Int = 4) {
+    fun run(context: Context, modelFilter: String? = null, threads: Int = srThreads()) {
         val app = context.applicationContext
         Thread {
             val out = File(app.getExternalFilesDir(null), "sr_benchmark.txt")

@@ -100,7 +100,7 @@ class AnimeJaNaiEngine(private val modelFile: File) : SuperResolutionEngine {
                 //    等于先砍掉一半算力。超分与 OCR 有 `OcrLock` 串行，不会和识别抢核；
                 //    最坏情况是超分那几秒 UI 略卡，而用户本来就在等它出图。
                 setIntraOpNumThreads(
-                    Runtime.getRuntime().availableProcessors().coerceIn(1, 8)
+                    srThreads()
                 )
             }
             val s = e.createSession(modelFile.absolutePath, options)
@@ -116,7 +116,7 @@ class AnimeJaNaiEngine(private val modelFile: File) : SuperResolutionEngine {
                 return false
             }
             LogCollector.d(TAG, "初始化完成: ${modelFile.name}, input=$inputName, fp16=$fp16, " +
-                    "halo=${haloOutPx}px(${haloOutPx / 4}/边), threads=${Runtime.getRuntime().availableProcessors().coerceIn(1, 8)}")
+                    "halo=${haloOutPx}px(${haloOutPx / 4}/边), threads=${srThreads()}")
             true
         } catch (e: Throwable) {
             LogCollector.e(TAG, "初始化失败: ${modelFile.name}", e)
