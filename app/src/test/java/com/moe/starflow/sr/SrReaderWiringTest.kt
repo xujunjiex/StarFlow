@@ -306,7 +306,12 @@ class SrReaderWiringTest {
         val srGroup = layout.indexOf("android:id=\"@+id/sr_group\"")
         val translateGroup = layout.indexOf("android:id=\"@+id/translate_group\"")
         assertTrue("要有独立的超分组", srGroup > 0)
-        assertTrue("超分组要排在翻译组之前（= 它的正上方，同一条右侧竖列）", srGroup < translateGroup)
+        // 用户口径：「超分按钮放到左边，不是右边的上面」→ 左下角、与翻译组同一水平线
+        assertTrue("超分组的 id 要出现（顺序无关）", srGroup > 0)
+        val srBlock = layout.substring(srGroup, layout.indexOf(">", layout.indexOf("android:background", srGroup)))
+        assertTrue("超分组必须靠左（bottom|start）", srBlock.contains("android:layout_gravity=\"bottom|start\""))
+        assertTrue("左边的组用 marginStart", srBlock.contains("android:layout_marginStart="))
+        assertFalse("左边不许再用 marginEnd", srBlock.contains("android:layout_marginEnd="))
         // 三枚按钮必须在 sr_group 里，而不是 translate_group 里
         val srEnd = layout.indexOf("</LinearLayout>", srGroup)
         for (id in listOf("btn_sr_page", "btn_sr_toggle", "btn_sr_clear")) {
@@ -315,6 +320,26 @@ class SrReaderWiringTest {
         }
         // 整组显隐在 refreshTranslationChrome（每页每次刷新都走它）
         assertTrue("refreshSrButtons 要能整组 GONE", activity().contains("binding.srGroup.visibility = View.GONE"))
+    }
+    @Test
+    fun plainModeBaseWarmupIsAwaitedBeforeNotify() {
+        // 真机反馈：「当前显示原图（纯原图态）切换底图没作用」。
+        // 根因：`warmSrBase` 以前是 `scope.launch`（发射后不管）→ 宿主 `applyPageVisual` 预热还没落地
+        // 就 `notifyItemChanged` → 适配器 `cachedDisplayBitmap` 取不到底图 → 回落源图，
+        // 而预热完成后**没有任何东西再触发重绑** → 屏幕一直停在源图。
+        // 译文/原文态走 `visualBitmap`（同步 await）所以正常 —— 这也解释了"只有纯原图态没作用"。
+        val ctl = controller()
+        val i = ctl.indexOf("suspend fun warmSrBase(")
+        assertTrue("warmSrBase 必须是 suspend（调用方才能 await）", i > 0)
+        val body = ctl.substring(i, i + 900)
+        assertFalse("不许再在里面 scope.launch（那就是发射后不管）", body.contains("scope.launch"))
+        assertTrue("要就地 withContext(IO)", body.contains("withContext(Dispatchers.IO)"))
+        // 宿主侧：预热与 notify 必须在**同一个** IO 协程里顺序执行
+        val act = activity()
+        val j = act.indexOf("controller.warmSrBase(pageIndex)")
+        val around = act.substring(j - 400, j + 300)
+        assertTrue("宿主必须在 notify 之前 await 它", around.contains("controller.warmSrBase(pageIndex)"))
+        assertTrue("notify 必须排在预热之后", act.indexOf("pageAdapter?.notifyItemChanged(pageIndex)", j) > j)
     }
     @Test
     fun perPageSrButtonHasThreeSemanticsAndHidesWhenOff() {

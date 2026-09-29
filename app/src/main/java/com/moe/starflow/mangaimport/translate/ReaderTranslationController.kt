@@ -423,13 +423,19 @@ class ReaderTranslationController(
      * 只预热底图、不渲染 overlay（未翻译页 / 纯原图态走它）。
      *
      * ⚠️ 自己 `loadFull` 就自己 `recycle`（`ReaderPageSource.loadFull` 是纯解码、每次返回新位图）。
+     *
+     * ⚠️ **必须是 suspend 且由调用方 await**（原来的 `scope.launch` = 发射后不管）：
+     * 宿主 `applyPageVisual` 的模式是「先预热、再 `notifyItemChanged` 让适配器按 [cachedDisplayBitmap] 取图」。
+     * 预热还没落地就 notify → 适配器取不到底图 → 回落**源图**；而预热完成后**没有任何东西再触发重绑**，
+     * 于是屏幕一直停在源图上。表现就是真机反馈的那条：
+     * 「当前显示**纯原图**态时切换底图没作用」（译文/原文态走 `visualBitmap` 是同步 await 的，所以正常）。
      */
-    fun warmSrBase(pageIndex: Int) {
+    suspend fun warmSrBase(pageIndex: Int) {
         val sig = baseSig(pageIndex)
         srBaseLru.get(pageIndex)?.let { if (it.sig == sig) return }
         if (sig == "o") return
-        scope.launch(Dispatchers.IO) {
-            val src = loadFull(pageIndex) ?: return@launch
+        withContext(Dispatchers.IO) {
+            val src = loadFull(pageIndex) ?: return@withContext
             try {
                 srBaseFor(pageIndex, src, src.width)
             } finally {
