@@ -318,28 +318,33 @@ class ReaderTranslationController(
      * **绝不能在这里读 webp 或跑推理**（本函数会被适配器绑定路径调用）。
      */
     private fun baseSig(pageIndex: Int): String {
-        if (!isSrVisualOn(pageIndex)) return SrDisplayBase.baseSignature(SrBaseKind.ORIGINAL, null, null, false)
         val prefs = appPrefs
         val kind = SrDisplayBase.resolveBaseKind(
-            srVisualOn = true,
+            srVisualOn = isSrVisualOn(pageIndex),
             srEnabled = SrSettings.isEnabledForReader(prefs),
             srModelUsable = SuperResolutionEngines.isSrModelUsable(context, prefs),
             anime4kEnabled = Anime4kMode.isEnabled(prefs),
         )
         return when (kind) {
-            SrBaseKind.ORIGINAL -> "o"
-            SrBaseKind.SR_MODEL -> SrDisplayBase.baseSignature(
-                kind = kind,
-                srModelName = SrModelManager.getActiveKey(prefs)?.name,
-                anime4kModeId = null,
-                storedSrFile = SrStore.exists(context, manga.id, pageIndex),
-            )
+            SrBaseKind.ORIGINAL -> SrDisplayBase.baseSignature(kind, null, null, false)
             SrBaseKind.ANIME4K -> SrDisplayBase.baseSignature(
                 kind = kind,
                 srModelName = null,
                 anime4kModeId = Anime4kMode.fromPrefs(prefs).id,
                 storedSrFile = false,
             )
+            SrBaseKind.SR_MODEL -> {
+                // ⚠️ 模型名取自**标记文件**（这份超分图到底是哪个模型超的），不是"当前选中的模型"：
+                //    换模型但没重超时文件内容没变、渲染缓存仍有效；重超完成后标记换成新模型 →
+                //    签名变 → 旧渲染自动作废（不依赖任何手工 remove）。
+                val stored = SrStore.storedModelOrNull(context, manga.id, pageIndex)
+                SrDisplayBase.baseSignature(
+                    kind = kind,
+                    srModelName = stored,
+                    anime4kModeId = null,
+                    storedSrFile = stored != null,
+                )
+            }
         }
     }
 
@@ -367,7 +372,11 @@ class ReaderTranslationController(
 
         if (sig.startsWith("s:")) {
             val stored = withContext(Dispatchers.IO) { SrStore.load(context, manga.id, pageIndex) }
-            srModelByPage[pageIndex] = sig.removePrefix("s:")
+            // ⚠️ 记的是**标记文件里的模型**（不是 sig 里那个）：换模型后 `srActionOf` 要能看出
+            //    "这一页是别的模型超的 → 该重新超分"，拿 sig 当答案永远等于"已经是当前模型"。
+            srModelByPage[pageIndex] =
+                withContext(Dispatchers.IO) { SrStore.storedModelOrNull(context, manga.id, pageIndex) }
+                    ?: SrStore.UNKNOWN_MODEL
             if (stored == null) {
                 // 文件刚被系统/用户清掉（`SrStore` 以"文件存在"为真值）→ 本次回落原图
                 LogCollector.d(TAG, "超分底图读取失败，回落原图 page=$pageIndex")

@@ -135,7 +135,14 @@ class ModelManagementFragment : Fragment() {
     // ══════════════════════════════════════════════════════════════════
 
     /** 一行 = 一个超分模型：XML 里的行根 id + 对应 ModelKey */
-    private data class SrRow(val modelKey: ModelKey, val rowRootId: Int)
+    /**
+     * 一行 = 一个超分模型。
+     *
+     * @param radioId 行内那个**不可点**的 RadioButton（只用来显示"这一档是当前使用"）。
+     *   ⚠️ 为什么必须有它：组的「当前使用」只标到**族**上，同一个族的四个等级看起来一模一样 ——
+     *   用户选完 cunet n2 之后，界面上没有任何地方能看出"到底哪一档生效了"。
+     */
+    private data class SrRow(val modelKey: ModelKey, val rowRootId: Int, val radioId: Int)
 
     /** 一族 = XML 里一个分组（组标题 / 「当前使用」标记 / 若干行） */
     private data class SrFamily(val titleId: Int, val selectedId: Int, val rows: List<SrRow>)
@@ -146,21 +153,21 @@ class ModelManagementFragment : Fragment() {
      */
     private val srFamilies: List<SrFamily> = listOf(
         SrFamily(R.id.sr_aji_group_title, R.id.sr_aji_group_selected, listOf(
-            SrRow(ModelKey.SR_ANIMEJANAI_HD_BALANCED, R.id.sr_aji_balanced_row),
-            SrRow(ModelKey.SR_ANIMEJANAI_HD_PERFORMANCE, R.id.sr_aji_perf_row),
-            SrRow(ModelKey.SR_ANIMEJANAI_HD_SHARP1_BALANCED, R.id.sr_aji_sharp1_balanced_row),
-            SrRow(ModelKey.SR_ANIMEJANAI_HD_SHARP1_PERFORMANCE, R.id.sr_aji_sharp1_perf_row),
-            SrRow(ModelKey.SR_ANIMEJANAI_SD_COMPACT, R.id.sr_aji_sd_row),
+            SrRow(ModelKey.SR_ANIMEJANAI_HD_BALANCED, R.id.sr_aji_balanced_row, R.id.sr_aji_balanced_radio),
+            SrRow(ModelKey.SR_ANIMEJANAI_HD_PERFORMANCE, R.id.sr_aji_perf_row, R.id.sr_aji_perf_radio),
+            SrRow(ModelKey.SR_ANIMEJANAI_HD_SHARP1_BALANCED, R.id.sr_aji_sharp1_balanced_row, R.id.sr_aji_sharp1_balanced_radio),
+            SrRow(ModelKey.SR_ANIMEJANAI_HD_SHARP1_PERFORMANCE, R.id.sr_aji_sharp1_perf_row, R.id.sr_aji_sharp1_perf_radio),
+            SrRow(ModelKey.SR_ANIMEJANAI_SD_COMPACT, R.id.sr_aji_sd_row, R.id.sr_aji_sd_radio),
         )),
         SrFamily(R.id.sr_w2xc_group_title, R.id.sr_w2xc_group_selected, listOf(
-            SrRow(ModelKey.SR_WAIFU2X_CUNET_N0, R.id.sr_w2xc_n0_row),
-            SrRow(ModelKey.SR_WAIFU2X_CUNET_N1, R.id.sr_w2xc_n1_row),
-            SrRow(ModelKey.SR_WAIFU2X_CUNET_N2, R.id.sr_w2xc_n2_row),
-            SrRow(ModelKey.SR_WAIFU2X_CUNET_N3, R.id.sr_w2xc_n3_row),
+            SrRow(ModelKey.SR_WAIFU2X_CUNET_N0, R.id.sr_w2xc_n0_row, R.id.sr_w2xc_n0_radio),
+            SrRow(ModelKey.SR_WAIFU2X_CUNET_N1, R.id.sr_w2xc_n1_row, R.id.sr_w2xc_n1_radio),
+            SrRow(ModelKey.SR_WAIFU2X_CUNET_N2, R.id.sr_w2xc_n2_row, R.id.sr_w2xc_n2_radio),
+            SrRow(ModelKey.SR_WAIFU2X_CUNET_N3, R.id.sr_w2xc_n3_row, R.id.sr_w2xc_n3_radio),
         )),
         SrFamily(R.id.sr_w2xs_group_title, R.id.sr_w2xs_group_selected, listOf(
-            SrRow(ModelKey.SR_WAIFU2X_SWIN_N0, R.id.sr_w2xs_n0_row),
-            SrRow(ModelKey.SR_WAIFU2X_SWIN_N1, R.id.sr_w2xs_n1_row),
+            SrRow(ModelKey.SR_WAIFU2X_SWIN_N0, R.id.sr_w2xs_n0_row, R.id.sr_w2xs_n0_radio),
+            SrRow(ModelKey.SR_WAIFU2X_SWIN_N1, R.id.sr_w2xs_n1_row, R.id.sr_w2xs_n1_radio),
         ))
     )
 
@@ -582,10 +589,15 @@ class ModelManagementFragment : Fragment() {
     }
 
     /**
-     * 刷新各族的「当前使用」标记（与 OCR 页 `*_group_selected` 完全同一套）。
+     * 刷新各族的「当前使用」标记 **+ 每一行的等级选中圈**（与 OCR 页 `*_group_selected` 同一套）。
      *
-     * ⚠️ **每个族都要显式赋值 VISIBLE/GONE** —— 只写 VISIBLE 会把上一轮的状态留在屏幕上
-     * （配置页那批开关踩过同一个坑）。
+     * ⚠️ **每个族 / 每一行都要显式赋值 VISIBLE/GONE / isChecked** —— 只写"命中的那个"会把上一轮的
+     * 状态留在屏幕上（配置页那批开关踩过同一个坑；模型页在这种"部分更新"下的症状是
+     * 「勾看着还在旧档上」，而它又不崩不报错，极难归因）。
+     *
+     * 两级标记分工（用户口径：组内要能看出选了哪一档）：
+     * - 族标题上的「当前使用」= 当前模型属于**这一族**
+     * - 行内 RadioButton = 当前模型就是**这一档**
      */
     private fun refreshSrSelection() {
         val prefs = CustomPreference.getInstance(requireContext()).getSharedPreferences()
@@ -594,6 +606,22 @@ class ModelManagementFragment : Fragment() {
             val owned = family.rows.any { it.modelKey == active }
             rootView.findViewById<View>(family.selectedId).visibility =
                 if (owned) View.VISIBLE else View.GONE
+            for (row in family.rows) {
+                rootView.findViewById<RadioButton>(row.radioId).isChecked = row.modelKey == active
+            }
+        }
+    }
+
+    /** 从别处回到本页（用户在别处换了模型 / 删了模型文件）→ 选中态必须重读，不能只信 onCreateView 那次。 */
+    override fun onResume() {
+        super.onResume()
+        refreshSrSelection()
+        // 顺便按磁盘重算一次超分行的状态（`refreshFromDisk` 是 suspend，只能在协程里调）
+        val tabs = rootView.findViewById<TabLayout>(R.id.model_tabs) ?: return
+        if (tabs.selectedTabPosition != 1) return
+        viewLifecycleOwner.lifecycleScope.launch {
+            for (row in srRows) repo.refreshFromDisk(row.modelKey)
+            refreshSrSelection()
         }
     }
 

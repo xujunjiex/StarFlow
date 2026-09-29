@@ -697,6 +697,7 @@
     <string name="sr_model_animejanai_sharp1_performance">AnimeJaNai HD V3.1 · Sharp1 Performance</string>
     <string name="sr_model_animejanai_sd_compact">AnimeJaNai SD · Compact</string>
     <string name="sr_low_res_tip">💡 Super resolution can only help genuinely low-resolution sources. Pages already 1000px+ wide barely change, and heavy screentone may be re-drawn. Keep it off unless the source is small.</string>
+    <string name="sr_storage_note">📁 Models live in Android/data/com.moe.starflow/files/sr/ — deleting those files uninstalls the model (the app will show it as "not downloaded").\n🎯 Super resolution only applies to the manga reader. Screenshot/recording translation and the novel reader never upscale, and OCR always reads the original page.\n🗂 Upscaled pages are 2x images cached per page in files/sr_cache/. Switching model overwrites the same page, and deleting a manga removes them too.</string>
     <string name="sr_no_model_selected">No super-resolution model selected — download one below</string>
     <string name="sr_active_switched">Switched to %1$s</string>
     <!-- Personalization · Super resolution -->

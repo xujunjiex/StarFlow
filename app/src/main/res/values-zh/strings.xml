@@ -631,6 +631,7 @@
     <string name="sr_model_animejanai_sharp1_performance">AnimeJaNai HD V3.1 · 锐化·性能档</string>
     <string name="sr_model_animejanai_sd_compact">AnimeJaNai SD · 紧凑档</string>
     <string name="sr_low_res_tip">💡 超分只对真正低分辨率的图源有明显效果。宽度 1000px 以上的页面几乎看不出变化，网点重的页还可能被重新绘制。图源不小就别开。</string>
+    <string name="sr_storage_note">📁 模型存放位置：Android/data/com.moe.starflow/files/sr/（删掉这里的文件就等于卸载模型，设备端会显示为「未下载」）。\n🎯 超分只对「漫画阅读器」生效：截屏翻译、录屏翻译、小说阅读都不做超分，OCR 也始终识别原图。\n🗂 超分结果是 2x 图片，按页缓存在 files/sr_cache/；换模型会覆盖同一页，删除漫画时会连它一起删掉。</string>
     <string name="sr_no_model_selected">尚未选择超分模型——请在下方下载</string>
     <string name="sr_active_switched">已切换到 %1$s</string>
     <!-- 个性化设置 · 超分分类 -->

@@ -71,6 +71,26 @@ object SrStore {
     }
 
     /**
+     * 「该页**已落盘**的超分结果是哪个模型超的」—— 没有落盘结果时 null。
+     *
+     * ⚠️ 这是**显示底图签名**要的那一个（`SrDisplayBase.baseSignature` 的 `srModelName`）：
+     * 签名的语义必须是"**这份文件的实际内容**"，而不是"当前选中的模型"。
+     * 两者混用会出现：
+     * - 换了模型但还没重超 → 签名跟着变 → 白作废一次渲染缓存（内容其实没变）
+     * - 反过来更糟：重超完成、文件已换，若签名还跟着"当前选中"走就可能**不变** →
+     *   旧的渲染被别人当成新结果返回
+     *
+     * 标记缺失/损坏时返回 [UNKNOWN_MODEL]（**文件确实是超分图**，只是不知道谁超的 —— 不能当成"没超分"）。
+     */
+    fun storedModelOrNull(ctx: Context, mangaId: Long, page: Int): String? {
+        if (!exists(ctx, mangaId, page)) return null
+        return modelOf(ctx, mangaId, page) ?: UNKNOWN_MODEL
+    }
+
+    /** 超分图存在但标记丢了时的占位模型名 */
+    const val UNKNOWN_MODEL = "-"
+
+    /**
      * 写入一页的超分结果（**覆盖**已有文件 —— 用户口径"只保留一份"）。
      *
      * @param bitmaps 传进来的 2x 底图；本函数**不回收**它（归调用方）。

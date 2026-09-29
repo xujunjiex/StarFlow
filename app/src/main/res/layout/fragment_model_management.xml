@@ -582,12 +582,29 @@
                     android:textColor="#888"
                     android:layout_marginBottom="8dp"/>
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <!-- 模型标题 + 行内选中标记（不可点 RadioButton，点行本身即选中 —— 与 LlamaCpp 模型页同做法）。
+                     ⚠️ 必须逐行显式赋值：只写 isChecked=true 会让上一个模型的高亮留在屏幕上。 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/sr_model_animejanai_balanced"
-                    android:textSize="14sp"
-                    android:textStyle="bold"/>
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/sr_model_animejanai_balanced"
+                        android:textSize="14sp"
+                        android:textStyle="bold"/>
+
+                    <RadioButton
+                        android:id="@+id/sr_aji_balanced_radio"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="false"
+                        android:focusable="false"/>
+                </LinearLayout>
 
                 <include
                     layout="@layout/item_model_row_browser"
@@ -602,12 +619,29 @@
                     android:layout_marginTop="8dp"
                     android:layout_marginBottom="8dp"/>
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <!-- 模型标题 + 行内选中标记（不可点 RadioButton，点行本身即选中 —— 与 LlamaCpp 模型页同做法）。
+                     ⚠️ 必须逐行显式赋值：只写 isChecked=true 会让上一个模型的高亮留在屏幕上。 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/sr_model_animejanai_performance"
-                    android:textSize="14sp"
-                    android:textStyle="bold"/>
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/sr_model_animejanai_performance"
+                        android:textSize="14sp"
+                        android:textStyle="bold"/>
+
+                    <RadioButton
+                        android:id="@+id/sr_aji_perf_radio"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="false"
+                        android:focusable="false"/>
+                </LinearLayout>
 
                 <include
                     layout="@layout/item_model_row_browser"
@@ -622,12 +656,29 @@
                     android:layout_marginTop="8dp"
                     android:layout_marginBottom="8dp"/>
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <!-- 模型标题 + 行内选中标记（不可点 RadioButton，点行本身即选中 —— 与 LlamaCpp 模型页同做法）。
+                     ⚠️ 必须逐行显式赋值：只写 isChecked=true 会让上一个模型的高亮留在屏幕上。 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/sr_model_animejanai_sharp1_balanced"
-                    android:textSize="14sp"
-                    android:textStyle="bold"/>
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/sr_model_animejanai_sharp1_balanced"
+                        android:textSize="14sp"
+                        android:textStyle="bold"/>
+
+                    <RadioButton
+                        android:id="@+id/sr_aji_sharp1_balanced_radio"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="false"
+                        android:focusable="false"/>
+                </LinearLayout>
 
                 <include
                     layout="@layout/item_model_row_browser"
@@ -642,12 +693,29 @@
                     android:layout_marginTop="8dp"
                     android:layout_marginBottom="8dp"/>
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <!-- 模型标题 + 行内选中标记（不可点 RadioButton，点行本身即选中 —— 与 LlamaCpp 模型页同做法）。
+                     ⚠️ 必须逐行显式赋值：只写 isChecked=true 会让上一个模型的高亮留在屏幕上。 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/sr_model_animejanai_sharp1_performance"
-                    android:textSize="14sp"
-                    android:textStyle="bold"/>
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/sr_model_animejanai_sharp1_performance"
+                        android:textSize="14sp"
+                        android:textStyle="bold"/>
+
+                    <RadioButton
+                        android:id="@+id/sr_aji_sharp1_perf_radio"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="false"
+                        android:focusable="false"/>
+                </LinearLayout>
 
                 <include
                     layout="@layout/item_model_row_browser"
@@ -662,12 +730,29 @@
                     android:layout_marginTop="8dp"
                     android:layout_marginBottom="8dp"/>
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <!-- 模型标题 + 行内选中标记（不可点 RadioButton，点行本身即选中 —— 与 LlamaCpp 模型页同做法）。
+                     ⚠️ 必须逐行显式赋值：只写 isChecked=true 会让上一个模型的高亮留在屏幕上。 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/sr_model_animejanai_sd_compact"
-                    android:textSize="14sp"
-                    android:textStyle="bold"/>
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/sr_model_animejanai_sd_compact"
+                        android:textSize="14sp"
+                        android:textStyle="bold"/>
+
+                    <RadioButton
+                        android:id="@+id/sr_aji_sd_radio"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="false"
+                        android:focusable="false"/>
+                </LinearLayout>
 
                 <include
                     layout="@layout/item_model_row_browser"
@@ -712,12 +797,29 @@
                     android:textColor="#888"
                     android:layout_marginBottom="8dp"/>
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <!-- 模型标题 + 行内选中标记（不可点 RadioButton，点行本身即选中 —— 与 LlamaCpp 模型页同做法）。
+                     ⚠️ 必须逐行显式赋值：只写 isChecked=true 会让上一个模型的高亮留在屏幕上。 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/sr_model_w2x_cunet_n0"
-                    android:textSize="14sp"
-                    android:textStyle="bold"/>
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/sr_model_w2x_cunet_n0"
+                        android:textSize="14sp"
+                        android:textStyle="bold"/>
+
+                    <RadioButton
+                        android:id="@+id/sr_w2xc_n0_radio"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="false"
+                        android:focusable="false"/>
+                </LinearLayout>
 
                 <include
                     layout="@layout/item_model_row_browser"
@@ -732,12 +834,29 @@
                     android:layout_marginTop="8dp"
                     android:layout_marginBottom="8dp"/>
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <!-- 模型标题 + 行内选中标记（不可点 RadioButton，点行本身即选中 —— 与 LlamaCpp 模型页同做法）。
+                     ⚠️ 必须逐行显式赋值：只写 isChecked=true 会让上一个模型的高亮留在屏幕上。 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/sr_model_w2x_cunet_n1"
-                    android:textSize="14sp"
-                    android:textStyle="bold"/>
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/sr_model_w2x_cunet_n1"
+                        android:textSize="14sp"
+                        android:textStyle="bold"/>
+
+                    <RadioButton
+                        android:id="@+id/sr_w2xc_n1_radio"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="false"
+                        android:focusable="false"/>
+                </LinearLayout>
 
                 <include
                     layout="@layout/item_model_row_browser"
@@ -752,12 +871,29 @@
                     android:layout_marginTop="8dp"
                     android:layout_marginBottom="8dp"/>
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <!-- 模型标题 + 行内选中标记（不可点 RadioButton，点行本身即选中 —— 与 LlamaCpp 模型页同做法）。
+                     ⚠️ 必须逐行显式赋值：只写 isChecked=true 会让上一个模型的高亮留在屏幕上。 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/sr_model_w2x_cunet_n2"
-                    android:textSize="14sp"
-                    android:textStyle="bold"/>
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/sr_model_w2x_cunet_n2"
+                        android:textSize="14sp"
+                        android:textStyle="bold"/>
+
+                    <RadioButton
+                        android:id="@+id/sr_w2xc_n2_radio"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="false"
+                        android:focusable="false"/>
+                </LinearLayout>
 
                 <include
                     layout="@layout/item_model_row_browser"
@@ -772,12 +908,29 @@
                     android:layout_marginTop="8dp"
                     android:layout_marginBottom="8dp"/>
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <!-- 模型标题 + 行内选中标记（不可点 RadioButton，点行本身即选中 —— 与 LlamaCpp 模型页同做法）。
+                     ⚠️ 必须逐行显式赋值：只写 isChecked=true 会让上一个模型的高亮留在屏幕上。 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/sr_model_w2x_cunet_n3"
-                    android:textSize="14sp"
-                    android:textStyle="bold"/>
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/sr_model_w2x_cunet_n3"
+                        android:textSize="14sp"
+                        android:textStyle="bold"/>
+
+                    <RadioButton
+                        android:id="@+id/sr_w2xc_n3_radio"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="false"
+                        android:focusable="false"/>
+                </LinearLayout>
 
                 <include
                     layout="@layout/item_model_row_browser"
@@ -822,12 +975,29 @@
                     android:textColor="#888"
                     android:layout_marginBottom="8dp"/>
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <!-- 模型标题 + 行内选中标记（不可点 RadioButton，点行本身即选中 —— 与 LlamaCpp 模型页同做法）。
+                     ⚠️ 必须逐行显式赋值：只写 isChecked=true 会让上一个模型的高亮留在屏幕上。 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/sr_model_w2x_swin_n0"
-                    android:textSize="14sp"
-                    android:textStyle="bold"/>
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/sr_model_w2x_swin_n0"
+                        android:textSize="14sp"
+                        android:textStyle="bold"/>
+
+                    <RadioButton
+                        android:id="@+id/sr_w2xs_n0_radio"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="false"
+                        android:focusable="false"/>
+                </LinearLayout>
 
                 <include
                     layout="@layout/item_model_row_browser"
@@ -842,12 +1012,29 @@
                     android:layout_marginTop="8dp"
                     android:layout_marginBottom="8dp"/>
 
-                <TextView
-                    android:layout_width="wrap_content"
+                <!-- 模型标题 + 行内选中标记（不可点 RadioButton，点行本身即选中 —— 与 LlamaCpp 模型页同做法）。
+                     ⚠️ 必须逐行显式赋值：只写 isChecked=true 会让上一个模型的高亮留在屏幕上。 -->
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="@string/sr_model_w2x_swin_n1"
-                    android:textSize="14sp"
-                    android:textStyle="bold"/>
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="@string/sr_model_w2x_swin_n1"
+                        android:textSize="14sp"
+                        android:textStyle="bold"/>
+
+                    <RadioButton
+                        android:id="@+id/sr_w2xs_n1_radio"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="false"
+                        android:focusable="false"/>
+                </LinearLayout>
 
                 <include
                     layout="@layout/item_model_row_browser"
@@ -864,6 +1051,17 @@
                 android:textColor="#888"
                 android:layout_marginTop="8dp"
                 android:layout_marginBottom="4dp"/>
+
+            <!-- 存放位置 + 注意事项（用户口径：写清楚、但不要太多 → 只有三段） -->
+            <TextView
+                android:id="@+id/tv_sr_storage_note"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/sr_storage_note"
+                android:textSize="11sp"
+                android:lineSpacingExtra="2dp"
+                android:textColor="#888"
+                android:layout_marginBottom="8dp"/>
         </LinearLayout>
     </ScrollView>
 

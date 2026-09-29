@@ -213,6 +213,31 @@ class ModelManagementLayoutTest {
         assertTrue("Fragment 引用了布局里不存在的 id: $missing", missing.isEmpty())
     }
 
+    /**
+     * **每一档都有自己的选中圈**（用户口径 2026-10：组内要能看出选了哪一档）。
+     *
+     * 命名约定：行根 `sr_x_row` ↔ 同行的不可点 RadioButton `sr_x_radio`。
+     *
+     * ⚠️ 为什么必须有它：组的「当前使用」只标到**族**上，而同族几个等级长得一模一样 ——
+     * 没有行内标记的话，用户选完 cunet n2 之后界面上**没有任何地方**能看出到底哪一档生效了
+     * （不崩不报错，纯体验缺失，最容易在改版里被顺手删掉）。
+     */
+    @Test
+    fun everySrRowHasItsOwnTierRadio() {
+        val root = inflate()
+        val pkg = RuntimeEnvironment.getApplication().packageName
+        for (row in srRowIds()) {
+            val rowName = root.resources.getResourceEntryName(row)
+            val radioName = rowName.removeSuffix("_row") + "_radio"
+            val radioId = root.resources.getIdentifier(radioName, "id", pkg)
+            assertTrue("缺行内选中圈 $radioName", radioId != 0)
+            val radio = root.findViewById<RadioButton>(radioId)
+            assertNotNull("$radioName 不是 RadioButton", radio)
+            // 不可点：点**行**即选中（与 LlamaCpp 模型页同做法），RadioButton 只当显示标记
+            assertTrue("$radioName 必须不可点（点行本身即选中）", !radio.isClickable)
+        }
+    }
+
     /** 超分模型行的行根 id（顺序同 ModelManagementFragment.srFamilies） */
     private fun srRowIds() = listOf(
         R.id.sr_aji_balanced_row,
