@@ -30,6 +30,8 @@ android {
     }
 
     defaultConfig {
+        // 超分真机基准（自定义 Instrumentation，零额外依赖）见 src/androidTest/java/com/moe/starflow/bench
+        testInstrumentationRunner "com.moe.starflow.bench.SrBenchmarkRunner"
         applicationId "com.moe.starflow"
         minSdk 29
         targetSdk 35
