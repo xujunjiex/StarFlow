@@ -160,6 +160,24 @@ object SrStore {
         }
     }
 
+    /**
+     * 删掉**一页**的超分结果（图片 + 标记成对删）。
+     *
+     * 用户口径（2026-10）：「超分之后…同样可以删除超分结果」——
+     * 与「清除本页译文」对称：删完这一页回落到原图显示，其它页不受影响。
+     */
+    fun deletePage(ctx: Context, mangaId: Long, page: Int): Boolean {
+        var ok = false
+        runCatching {
+            val img = imageFile(ctx, mangaId, page)
+            if (img.isFile && img.delete()) ok = true
+            val marker = markerFile(ctx, mangaId, page)
+            if (marker.isFile) marker.delete()
+        }.onFailure { LogCollector.w(TAG, "删除单页超分失败 mangaId=$mangaId page=$page: ${it.message}") }
+        if (ok) LogCollector.d(TAG, "已删除超分结果: ${mangaId}_$page")
+        return ok
+    }
+
     /** 删掉一本书的全部超分结果（删漫画时连带调） */
     fun deleteManga(ctx: Context, mangaId: Long) {
         val prefix = "${mangaId}_"

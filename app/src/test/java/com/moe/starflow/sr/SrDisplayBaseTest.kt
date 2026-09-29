@@ -159,6 +159,44 @@ class SrDisplayBaseTest {
         assertTrue("前缀契约：s: / a: / o", sigs[1].startsWith("s:") && sigs[2].startsWith("a:"))
     }
 
+    // ---------- Q2：翻译之后再超分，坐标必须跟着走 ----------
+
+    /**
+     * **「已经翻译过再超分」的坐标安全，是靠签名换 key 达成的**（用户口径 Q2）。
+     *
+     * 为什么不需要"更新已存的坐标"：`bubbleRects` **永远存在源图空间**（v2 里 OCR 恒吃原图），
+     * 渲染时由 `OverlayRenderer` 用 `baseScale = 底图宽 / 坐标空间宽` 把它映射到底图上。
+     * 所以底图从「原图」换成「2x 超分图」时，**坐标本身不用动**；
+     * 真正必须发生的是**已渲染的那张译图作废**（否则屏幕上留着一张"原图底图 + 旧译文"的图）。
+     *
+     * 作废靠的就是下面这条：签名从 `o` 变成 `s:<模型>` → `renderKey` 变 → 旧缓存取不到 →
+     * 必然重渲染。只要这条不成立（比如签名不含模型、或超分文件出现后签名不变），
+     * 就会出现"超分完了译文还贴在糊底图上"或者"位置对不上"。
+     */
+    @Test
+    fun q2_srFileAppearingChangesTheSignatureSoStaleOverlaysAreNeverReused() {
+        val before = SrDisplayBase.baseSignature(
+            SrBaseKind.SR_MODEL, "M1", null, storedSrFile = false,
+        )
+        val after = SrDisplayBase.baseSignature(
+            SrBaseKind.SR_MODEL, "M1", null, storedSrFile = true,
+        )
+        assertEquals("还没超分时 = 原图签名", "o", before)
+        assertEquals("超分文件出现后 = 超分签名", "s:M1", after)
+        assertNotEquals(
+            "签名必须变 —— 它是 renderKey 的一部分，不变就会复用「原图底图 + 旧译文」的缓存",
+            before, after,
+        )
+    }
+
+    /** 再来一次超分（换模型覆盖）也必须让签名变 —— 否则屏幕上还是上一个模型的图。 */
+    @Test
+    fun q3_overwritingWithAnotherModelAlsoChangesSignature() {
+        val a = SrDisplayBase.baseSignature(SrBaseKind.SR_MODEL, "M1", null, storedSrFile = true)
+        val b = SrDisplayBase.baseSignature(SrBaseKind.SR_MODEL, "M2", null, storedSrFile = true)
+        assertNotEquals("换模型必须重渲染", a, b)
+    }
+
     // ---------- SrSettings.KEY_AUTO（「翻译时自动超分」子开关） ----------
 
     @Test

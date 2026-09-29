@@ -469,6 +469,48 @@ class ReaderTranslationController(
     }
 
     /**
+     * 该页是否**已有超分结果**（有 → 右下角出现「二态切换」与「删除超分」两个按钮，
+     * 且「超分」按钮变成「重新超分」，与翻译侧 [stateOf]==SUCCESS 的写法完全对称）。
+     *
+     * ⚠️ 纯内存读：`srModelByPage` 在**每次上屏**（[srBaseFor] / [warmSrBase] 的 IO 路径）里 seed，
+     * 所以正常流程下它是准的；这里不能读磁盘（本函数在 chrome 刷新里被高频调用）。
+     */
+    fun hasSrResult(pageIndex: Int): Boolean = srModelByPage.containsKey(pageIndex)
+
+    /** 该页当前显示的是不是超分底图（二态按钮用它决定图标/高亮）。 */
+    fun srBaseOn(pageIndex: Int): Boolean = isSrVisualOn(pageIndex)
+
+    /**
+     * 二态切换：原图 ⇄ 超分底图（**只改显示，不动文件**）。
+     * 没有超分结果时什么都不做（按钮那时也不该出现）。
+     */
+    suspend fun toggleSrBase(pageIndex: Int): SrAction {
+        if (!hasSrResult(pageIndex)) return srActionOf(pageIndex)
+        val nowOn = isSrVisualOn(pageIndex)
+        srVisualByPage[pageIndex] = !nowOn
+        onBaseChanged(pageIndex)
+        return srActionOf(pageIndex)
+    }
+
+    /**
+     * 删除本页超分结果（图片 + 标记），并把显示切回原图 —— 与「清除本页译文」对称。
+     *
+     * 用户口径（2026-10）：「超分之后…同样可以删除超分结果」。
+     */
+    suspend fun deleteSrResult(pageIndex: Int): Boolean {
+        val deleted = withContext(Dispatchers.IO) { SrStore.deletePage(context, manga.id, pageIndex) }
+        srBaseLru.remove(pageIndex)
+        srModelByPage.remove(pageIndex)
+        // 没有超分结果了 → 自然回落原图（留着 true 也没用，但没有结果时 baseSig 本来就是 o）
+        srVisualByPage.remove(pageIndex)
+        evictPageRenders(pageIndex)
+        clearWebtoonCache()
+        withContext(Dispatchers.Main) { if (uiAttached) onVisual() }
+        LogCollector.d(TAG, "删除超分结果 page=$pageIndex ok=$deleted")
+        return deleted
+    }
+
+    /**
      * 点击右下角超分按钮的结果。
      *
      * ⚠️ 刻意不是一个 `SrAction`：超分**失败时要带出具体原因**（用户口径：不许写模糊提示），
@@ -483,22 +525,21 @@ class ReaderTranslationController(
     }
 
     /**
-     * 点击右下角超分按钮。
+     * **「超分 / 重新超分」按钮**：无条件跑一次超分（有结果就覆盖）。
      *
-     * - [SrAction.ENHANCE] → 对**原图**超分并落盘（`SrProcessor`，与 OCR 共用 `OcrLock` 串行）
-     * - [SrAction.SHOW_ORIGINAL] / [SrAction.SHOW_SR] → **二态切换**（只改显示，不动文件）
+     * 与「二态切换」拆开是用户口径（2026-10）：「超分之后变成重新超分，然后显示两态切换按钮，
+     * 和翻译的逻辑差不多」—— 翻译侧就是「翻译/重翻」一个按钮 + 「三态」另一个按钮，
+     * 两者职责不混在一起（以前一个按钮既跑超分又切换，用户根本看不出点下去会发生什么）。
      */
     suspend fun onSrButtonClicked(pageIndex: Int): SrClickResult {
         val action = srActionOf(pageIndex)
         when (action) {
             SrAction.HIDDEN -> return SrClickResult.Failed(context.getString(R.string.sr_fail_disabled))
             SrAction.BUSY -> return SrClickResult.Failed(context.getString(R.string.sr_fail_busy))
-            SrAction.ENHANCE -> {
+            else -> {
                 val outcome = enhancePage(pageIndex)
                 if (!outcome.ok) return SrClickResult.Failed(outcome.message(context))
             }
-            SrAction.SHOW_ORIGINAL -> srVisualByPage[pageIndex] = false
-            SrAction.SHOW_SR -> srVisualByPage[pageIndex] = true
         }
         onBaseChanged(pageIndex)
         return SrClickResult.Done(srActionOf(pageIndex))

@@ -145,6 +145,67 @@
         android:padding="6dp"
         android:background="@drawable/bg_reader_translate_group">
 
+        <!-- ═══════ 超分三件套（**在翻译三件套左边**，用户口径 2026-10）═══════
+             与翻译侧完全对称，职责不混：
+               btn_sr_page   超分 / 重新超分   —— 恒显示（有结果时图标变"重翻"样式）
+               btn_sr_toggle 原图 ⇄ 超分底图    —— **有结果才出现**（同三态按钮）
+               btn_sr_clear  删除本页超分结果  —— **有结果才出现**（同清除译文，要二次确认）
+             ⚠️ 以前只有一枚按钮、既跑超分又切换：用户看不出点下去会发生什么
+               （真机反馈「切换按钮和超分按钮重复了」「超分完之后为什么没办法切换」）。
+             ⚠️ 超分功能关闭时三枚一起隐藏（由 refreshTranslationChrome 置 GONE）。 -->
+        <FrameLayout
+            android:id="@+id/btn_sr_toggle"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:gravity="center"
+            android:clickable="true"
+            android:visibility="gone"
+            android:contentDescription="@string/reader_sr_toggle_desc">
+            <ImageView
+                android:id="@+id/iv_sr_toggle"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_reader_sr"
+                app:tint="#FFFFFF"
+                android:contentDescription="@string/reader_sr_toggle_desc"/>
+        </FrameLayout>
+
+        <FrameLayout
+            android:id="@+id/btn_sr_clear"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:gravity="center"
+            android:clickable="true"
+            android:visibility="gone"
+            android:contentDescription="@string/reader_sr_clear_desc">
+            <ImageView
+                android:id="@+id/iv_sr_clear"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_action_delete"
+                app:tint="#FFFFFF"
+                android:contentDescription="@string/reader_sr_clear_desc"/>
+        </FrameLayout>
+
+        <FrameLayout
+            android:id="@+id/btn_sr_page"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:gravity="center"
+            android:clickable="true"
+            android:visibility="gone"
+            android:contentDescription="@string/reader_sr_button_desc">
+            <ImageView
+                android:id="@+id/iv_sr_page"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_reader_sr"
+                app:tint="#FFFFFF"
+                android:contentDescription="@string/reader_sr_button_desc"/>
+        </FrameLayout>
         <FrameLayout
             android:id="@+id/btn_toggle_translate"
             android:layout_width="40dp"
@@ -197,30 +258,6 @@
                 android:src="@drawable/ic_reader_translate"
                 app:tint="#FFFFFF"
                 android:contentDescription="@string/reader_tab_translate"/>
-        </FrameLayout>
-
-        <!-- 本页超分（AI 放大）按钮：**三重语义**（用户口径 2026-10）
-             ① 该页还没超分（或换了模型）→ 点击 = 用当前模型超分
-             ② 已超分、正显示超分底图   → 点击 = 切回原图（**文件保留**，只是不显示）
-             ③ 已超分、正显示原图       → 点击 = 切回超分底图
-             ⚠️ 超分功能关闭时整个按钮不显示（由 refreshTranslationChrome 置 GONE）。
-             图标 tint：正显示超分底图 = 高亮蓝，显示原图 = 白，超分中 = 半透明。 -->
-        <FrameLayout
-            android:id="@+id/btn_sr_page"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:gravity="center"
-            android:clickable="true"
-            android:visibility="gone"
-            android:contentDescription="@string/reader_sr_button_desc">
-            <ImageView
-                android:id="@+id/iv_sr_page"
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:layout_gravity="center"
-                android:src="@drawable/ic_reader_sr"
-                app:tint="#FFFFFF"
-                android:contentDescription="@string/reader_sr_button_desc"/>
         </FrameLayout>
 
         <!-- 清除本页译文（**放在最右边**，用户口径）：只在当前页有译文时出现，

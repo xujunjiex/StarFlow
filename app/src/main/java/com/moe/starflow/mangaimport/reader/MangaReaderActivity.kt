@@ -950,48 +950,20 @@ class MangaReaderActivity : AppCompatActivity() {
         }
         // 失败页：感叹号 → 小气泡显示失败原因（不弹窗）
         binding.btnFailTranslate.setOnClickListener { showFailBubble() }
-        // 本页超分：**三重语义**（超分 / 切回原图 / 切回超分底图），由控制器判当前该做哪一件。
-        // ⚠️ 超分功能关闭时按钮不显示（`refreshTranslationChrome` 置 GONE），点不到。
-        // ⚠️ 提示一律走 **app 状态浮层**（用户口径："应该也用 app 系统提示，不要用手机底部 Toast"），
-        //    拿不到悬浮窗权限 / 浮层被关掉时才退回 Toast（与翻译按钮同一条约定）。
-        binding.btnSrPage.setOnClickListener {
-            val before = controller.srActionOf(currentPage)
-            if (before == ReaderTranslationController.SrAction.BUSY) {
-                showSrNotice(getString(R.string.sr_fail_busy), isError = false)
-                return@setOnClickListener
-            }
-            // 超分是本地重计算（秒级）→ 先禁用给反馈，并挂一条"进行中"的常驻提示
-            binding.btnSrPage.isEnabled = false
-            showSrProgress(getString(R.string.sr_enhancing_page, currentPage + 1))
-            lifecycleScope.launch {
-                val result = controller.onSrButtonClicked(currentPage)
-                binding.btnSrPage.isEnabled = true
-                refreshTranslationChrome()
-                when (result) {
-                    // 失败：把**具体原因**原样交给浮层（红色、可点复制），不再写"请检查模型和尺寸"这种糊话
-                    is ReaderTranslationController.SrClickResult.Failed ->
-                        showSrNotice(result.message, isError = true)
-                    is ReaderTranslationController.SrClickResult.Done -> {
-                        val msg = when (result.action) {
-                            // 点完变成 SHOW_SR = 刚切成原图；SHOW_ORIGINAL = 刚切成超分底图；
-                            // 其余（ENHANCE 说明没超成）不会走到这里
-                            ReaderTranslationController.SrAction.SHOW_SR ->
-                                getString(R.string.sr_show_original_page, currentPage + 1)
-                            ReaderTranslationController.SrAction.SHOW_ORIGINAL ->
-                                getString(R.string.sr_show_sr_page, currentPage + 1)
-                            else -> getString(R.string.sr_done_page, currentPage + 1)
-                        }
-                        showSrNotice(msg, isError = false)
-                    }
-                }
-            }
-        }
+        // 超分三件套（与翻译三件套对称，都在 [refreshTranslationChrome] 里统一定显隐）：
+        //   · 超分 / 重新超分 —— 无条件跑一次
+        //   · 原图 ⇄ 超分底图 —— 瞬时切换，不挂进度提示
+        //   · 删除本页超分结果 —— 二次确认
+        // ⚠️ 提示一律走 **app 状态浮层**（用户口径："应该也用 app 系统提示，不要用手机底部 Toast"）。
+        binding.btnSrPage.setOnClickListener { onSrEnhanceClicked() }
+        binding.btnSrToggle.setOnClickListener { onSrToggleClicked() }
+        binding.btnSrClear.setOnClickListener { onSrClearClicked() }
         // 清除本页译文：**必须先二次确认**（用户口径：所有删除/清空操作都要确认）
         binding.btnClearTranslate.setOnClickListener { confirmClearPage(currentPage) }
         // 右下角按钮组 + 底部左右翻页键：按下缩放反馈（原先点了完全没有视觉反馈）
         attachPressFeedback(
             binding.btnTranslate, binding.btnToggleTranslate, binding.btnFailTranslate,
-            binding.btnSrPage, binding.btnPrev, binding.btnNext,
+            binding.btnSrPage, binding.btnSrToggle, binding.btnSrClear, binding.btnPrev, binding.btnNext,
         )
         applyPageImageSource()
     }
@@ -1379,6 +1351,10 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun showSrNotice(text: String, isError: Boolean) {
         if (statusOverlayEnabled() && TranslationStatusOverlay.canDraw(this)) {
             val overlay = TranslationStatusOverlay.getInstance(this)
+            // ⚠️ **必须先 dismiss**：`show()` 是**追加**一条芯片，不替换顶部 ——
+            //    不 dismiss 的话那条「正在超分…」常驻芯片（autoDismiss=false）会永远挂着
+            //    （真机反馈「然后一直卡在那」）。与翻译成功/失败的处理完全一致。
+            overlay.dismiss()
             if (isError) overlay.showError(text) else overlay.show(text)
         } else {
             UiUtils.showToast(this, text)
@@ -1489,7 +1465,7 @@ class MangaReaderActivity : AppCompatActivity() {
         binding.btnFailTranslate.visibility = if (failed) View.VISIBLE else View.GONE
         // 清除本页译文（**最右边**，用户口径）：只在当前页**有译文**时出现
         binding.btnClearTranslate.visibility = if (translated) View.VISIBLE else View.GONE
-        applySrButton(controller)
+        refreshSrButtons(controller)
         // 翻译按钮图标：成功 → 重翻图标；未译/失败 → 翻译图标
         binding.ivTranslate.setImageResource(
             if (translated) R.drawable.ic_refresh else R.drawable.ic_reader_translate
@@ -1508,30 +1484,115 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     /**
-     * 右下角「本页超分」按钮的显隐与高亮。
+     * 超分三件套的显隐与图标（**与翻译三件套完全对称**，用户口径 2026-10）：
      *
-     * | 控制器给出的语义 | 按钮 |
-     * |---|---|
-     * | [ReaderTranslationController.SrAction.HIDDEN]（超分功能关闭） | **不显示**（用户口径） |
-     * | [ReaderTranslationController.SrAction.BUSY] | 显示、置灰（半透明） |
-     * | [ReaderTranslationController.SrAction.SHOW_ORIGINAL]（正显示超分底图） | 显示、**高亮蓝** |
-     * | ENHANCE / SHOW_SR（没有超分底图可看） | 显示、白色 |
+     * | 元素 | 何时显示 | 图标 |
+     * |---|---|---|
+     * | `btn_sr_page` 超分/重新超分 | 超分开启时**恒显示** | 有结果 → `ic_refresh`（同"重翻"）；无 → `ic_reader_sr` |
+     * | `btn_sr_toggle` 原图⇄超分 | **有结果才显示**（同三态按钮） | 正显示超分图 → `ic_reader_sr` + 高亮蓝；显示原图 → 图库图标 + 白 |
+     * | `btn_sr_clear` 删除超分结果 | **有结果才显示**（同清除译文） | 删除图标 |
+     *
+     * ⚠️ 超分关闭时三枚一起 GONE（用户口径：阅读器不显示超分相关按钮）。
+     * ⚠️ 以前只有一枚按钮既跑超分又切换 —— 用户看不出点下去会发生什么
+     *    （真机反馈「切换按钮和超分按钮重复了」「超分完之后为什么没办法切换」）。
      */
-    private fun applySrButton(controller: ReaderTranslationController) {
+    private fun refreshSrButtons(controller: ReaderTranslationController) {
         val action = controller.srActionOf(currentPage)
         if (action == ReaderTranslationController.SrAction.HIDDEN) {
             binding.btnSrPage.visibility = View.GONE
+            binding.btnSrToggle.visibility = View.GONE
+            binding.btnSrClear.visibility = View.GONE
             return
         }
+        val hasResult = controller.hasSrResult(currentPage)
+        // ① 超分 / 重新超分：恒显示
         binding.btnSrPage.visibility = View.VISIBLE
-        val showingSr = action == ReaderTranslationController.SrAction.SHOW_ORIGINAL
-        binding.ivSrPage.imageTintList =
-            android.content.res.ColorStateList.valueOf(if (showingSr) 0xFF55AEEA.toInt() else Color.WHITE)
+        binding.ivSrPage.setImageResource(if (hasResult) R.drawable.ic_refresh else R.drawable.ic_reader_sr)
         val busy = action == ReaderTranslationController.SrAction.BUSY
         binding.btnSrPage.isEnabled = !busy
         binding.ivSrPage.alpha = if (busy) 0.4f else 1f
+        // ② 二态切换 + ③ 删除：**有超分结果才出现**
+        binding.btnSrToggle.visibility = if (hasResult) View.VISIBLE else View.GONE
+        binding.btnSrClear.visibility = if (hasResult) View.VISIBLE else View.GONE
+        if (hasResult) {
+            val showingSr = controller.srBaseOn(currentPage)
+            binding.ivSrToggle.setImageResource(
+                if (showingSr) R.drawable.ic_reader_sr else android.R.drawable.ic_menu_gallery
+            )
+            binding.ivSrToggle.imageTintList = android.content.res.ColorStateList.valueOf(
+                if (showingSr) 0xFF55AEEA.toInt() else Color.WHITE
+            )
+        }
     }
 
+    /**
+     * 「超分 / 重新超分」：无条件跑一次（有结果就覆盖）。
+     *
+     * ⚠️ **只有这一路才挂「正在超分…」常驻提示**；二态切换是瞬时的（真机日志实证：
+     * 切换时冒一句「正在超分第 N 页…」会让用户以为"没法切换，它又重超了一遍"）。
+     */
+    private fun onSrEnhanceClicked() {
+        val controller = translationController ?: return
+        if (controller.srActionOf(currentPage) == ReaderTranslationController.SrAction.BUSY) {
+            showSrNotice(getString(R.string.sr_fail_busy), isError = false)
+            return
+        }
+        binding.btnSrPage.isEnabled = false
+        showSrProgress(getString(R.string.sr_enhancing_page, currentPage + 1))
+        lifecycleScope.launch {
+            val result = controller.onSrButtonClicked(currentPage)
+            binding.btnSrPage.isEnabled = true
+            refreshTranslationChrome()
+            when (result) {
+                is ReaderTranslationController.SrClickResult.Failed -> showSrNotice(result.message, isError = true)
+                is ReaderTranslationController.SrClickResult.Done ->
+                    showSrNotice(getString(R.string.sr_done_page, currentPage + 1), isError = false)
+            }
+        }
+    }
+
+    /** 「原图 ⇄ 超分底图」二态切换（瞬时，不挂进度提示）。 */
+    private fun onSrToggleClicked() {
+        val controller = translationController ?: return
+        lifecycleScope.launch {
+            val action = controller.toggleSrBase(currentPage)
+            refreshTranslationChrome()
+            showSrNotice(
+                getString(
+                    if (action == ReaderTranslationController.SrAction.SHOW_ORIGINAL) {
+                        R.string.sr_show_sr_page
+                    } else {
+                        R.string.sr_show_original_page
+                    },
+                    currentPage + 1,
+                ),
+                isError = false,
+            )
+        }
+    }
+
+    /** 「删除本页超分结果」：**二次确认**（与清除译文同一约定：所有删除都要确认）。 */
+    private fun onSrClearClicked() {
+        val controller = translationController ?: return
+        ReaderDialogs.show(this, isDarkBackground()) {
+            setTitle(R.string.reader_sr_clear_confirm_title)
+            setMessage(getString(R.string.reader_sr_clear_confirm_msg, currentPage + 1))
+            setPositiveButton(R.string.reader_sr_clear_ok) { _, _ ->
+                lifecycleScope.launch {
+                    val deleted = controller.deleteSrResult(currentPage)
+                    refreshTranslationChrome()
+                    showSrNotice(
+                        getString(
+                            if (deleted) R.string.sr_clear_done_page else R.string.sr_clear_none_page,
+                            currentPage + 1,
+                        ),
+                        isError = false,
+                    )
+                }
+            }
+            setNegativeButton(R.string.cancel, null)
+        }
+    }
     /** 刷新进度条上的「已翻译」绿色区间。 */
     private fun refreshProgressTranslation() {
         binding.readerProgress.setTranslatedPages(translationController?.translatedPages() ?: emptySet())

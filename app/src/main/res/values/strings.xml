@@ -1077,6 +1077,13 @@
     <string name="reader_sr_auto_label">Upscale on translate</string>
     <string name="reader_sr_auto_on">The current page will be upscaled after each translation</string>
     <string name="reader_sr_auto_off">Translation no longer upscales; use the bottom-right button instead</string>
+    <string name="reader_sr_toggle_desc">Switch between original and upscaled</string>
+    <string name="reader_sr_clear_desc">Delete this page\'s upscaled image</string>
+    <string name="reader_sr_clear_confirm_title">Delete this page\'s upscaled image?</string>
+    <string name="reader_sr_clear_confirm_msg">The upscaled image of page %1$d will be deleted and the page will fall back to the original. Translations are untouched; you can upscale again anytime.</string>
+    <string name="reader_sr_clear_ok">Delete</string>
+    <string name="sr_clear_done_page">Upscaled image of page %1$d deleted</string>
+    <string name="sr_clear_none_page">Page %1$d has no upscaled image</string>
     <string name="reader_sr_button_desc">Upscale this page / show original</string>
     <string name="reader_translate_busy_sr">Still upscaling this page — try translating again in a moment</string>
     <!-- ═══ Super-resolution notices (2026-10: NEVER a vague message — every reason must be spelled out; shown in the in-app status chip, not a Toast) ═══ -->
@@ -1098,6 +1105,10 @@
     <string name="sr_done_page">Page %1$d upscaled</string>
     <string name="sr_show_original_page">Page %1$d is showing the original again (upscaled file kept)</string>
     <string name="sr_show_sr_page">Page %1$d is showing the upscaled base again</string>
+    <string name="reader_sr_base_label">Page base</string>
+    <string name="reader_sr_base_value_sr">Upscaled</string>
+    <string name="reader_sr_base_value_original">Original</string>
+    <string name="reader_sr_base_value_none">Not upscaled yet</string>
     <!-- Anime4K baseline (reader colour panel, 2026-10) -->
     <string name="reader_anime4k_label">Anime4K line enhance</string>
     <string name="reader_anime4k_hint">Sharpens and denoises line art without changing resolution and without any model download. Unavailable while super resolution is on (super resolution wins). Tap to cycle levels.</string>

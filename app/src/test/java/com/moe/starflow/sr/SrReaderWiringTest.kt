@@ -211,6 +211,61 @@ class SrReaderWiringTest {
     }
 
     @Test
+    fun srControlsMirrorTheTranslateTrioAndSitOnTheLeft() {
+        val act = activity()
+        val layout = read("src/main/res/layout/activity_manga_reader.xml")
+        // 用户口径（2026-10）：「超分之后变成重新超分，然后显示两态切换按钮，和翻译的逻辑差不多，
+        // 同样可以删除超分结果」+「把阅读器的超分的相关面板移到左边」。
+        for (id in listOf("btn_sr_page", "btn_sr_toggle", "btn_sr_clear")) {
+            assertTrue("布局缺 " + id, layout.contains("android:id=\"@+id/" + id + "\""))
+        }
+        // ⚠️ 顺序：超分三件套必须在**翻译三件套左边**（同一 LinearLayout 里按文档序排）
+        val order = listOf(
+            "btn_sr_toggle", "btn_sr_clear", "btn_sr_page",
+            "btn_toggle_translate", "btn_fail_translate", "btn_translate", "btn_clear_translate",
+        ).map { layout.indexOf("android:id=\"@+id/" + it + "\"") }
+        assertTrue("超分按钮必须全部在翻译按钮左边，且顺序固定", order.all { it > 0 } && order == order.sorted())
+        // 动作按钮：有结果时变「重新超分」图标（与"重翻"同款）
+        assertTrue(
+            "有结果要把动作按钮换成重超图标",
+            act.contains("if (hasResult) R.drawable.ic_refresh else R.drawable.ic_reader_sr"),
+        )
+        // 二态切换与删除：**有结果才出现**
+        assertTrue(
+            "切换/删除按钮要有结果才显示",
+            act.contains("binding.btnSrToggle.visibility = if (hasResult) View.VISIBLE else View.GONE") &&
+                act.contains("binding.btnSrClear.visibility = if (hasResult) View.VISIBLE else View.GONE"),
+        )
+        assertTrue("删除超分结果必须二次确认", act.contains("R.string.reader_sr_clear_confirm_title"))
+        assertTrue("删除走控制器的 deleteSrResult", act.contains("controller.deleteSrResult(currentPage)"))
+        assertTrue("二态切换走控制器的 toggleSrBase", act.contains("controller.toggleSrBase(currentPage)"))
+    }
+
+    @Test
+    fun pureToggleDoesNotShowTheEnhancingChip() {
+        // 真机日志实证：点一下**切换**，先冒「正在超分第 12 页…」再冒「已切回原图显示」——
+        // 用户因此以为"没法切换，它又重超了一遍"。
+        val act = activity()
+        val i = act.indexOf("private fun onSrToggleClicked()")
+        assertTrue("必须把二态切换拆成独立函数", i > 0)
+        val body = act.substring(i, act.indexOf("private fun onSrClearClicked()", i))
+        assertFalse("纯切换绝不能挂「正在超分…」", body.contains("showSrProgress("))
+        val e = act.indexOf("private fun onSrEnhanceClicked()")
+        val eBody = act.substring(e, act.indexOf("private fun onSrToggleClicked()", e))
+        assertTrue("超分那一路要挂进行中提示", eBody.contains("showSrProgress("))
+    }
+
+    @Test
+    fun everySrNoticeReplacesThePersistentChip() {
+        // 真机反馈「然后一直卡在那」：`show()` 是**追加**一条芯片、不替换顶部 ——
+        // 不先 dismiss 的话那条常驻的「正在超分…」会永远挂在屏幕上。
+        val act = activity()
+        val i = act.indexOf("private fun showSrNotice(")
+        assertTrue("找不到 showSrNotice", i > 0)
+        val body = act.substring(i, act.indexOf("private fun showSrProgress(", i))
+        assertTrue("showSrNotice 必须先 dismiss 掉常驻芯片", body.contains("overlay.dismiss()"))
+    }
+    @Test
     fun perPageSrButtonHasThreeSemanticsAndHidesWhenOff() {
         val act = activity()
         val layout = read("src/main/res/layout/activity_manga_reader.xml")

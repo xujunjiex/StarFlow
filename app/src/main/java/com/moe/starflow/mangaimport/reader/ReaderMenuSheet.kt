@@ -689,6 +689,7 @@ class ReaderMenuSheet(
             refreshAnime4kRow()
         }
 
+
         // ⚠️ 两个 Switch 的监听必须注册在 `refreshSrGroup` **之后**：Kotlin 的局部函数不允许前向引用，
         //    而开关回调里要调 `refreshSrGroup()` 把整组显隐重算一遍（关掉总开关要连本行一起收起来）。
         view.findViewById<Switch>(R.id.sw_reader_sr).setOnCheckedChangeListener { _, checked ->
@@ -1137,6 +1138,7 @@ class ReaderMenuSheet(
      * ⚠️ 这是**唯一**的宿主 → 面板推送入口（与小说面板的 `notifyHostState` 同一约定）：
      * 新增宿主可改的字段必须一起加进来，否则那处 UI 永远停在打开那一刻。
      */
+
     fun notifyTranslateChanged(
         records: List<ImportedPageTranslation>,
         chapters: List<MangaChapter>,

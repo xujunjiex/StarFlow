@@ -1012,6 +1012,13 @@
     <string name="reader_sr_auto_label">翻译时自动超分</string>
     <string name="reader_sr_auto_on">翻译完成后会自动超分当前页</string>
     <string name="reader_sr_auto_off">翻译不再自动超分，可用右下角按钮手动超分</string>
+    <string name="reader_sr_toggle_desc">原图 / 超分图 切换</string>
+    <string name="reader_sr_clear_desc">删除本页超分结果</string>
+    <string name="reader_sr_clear_confirm_title">删除本页超分结果？</string>
+    <string name="reader_sr_clear_confirm_msg">第 %1$d 页的超分图会被删除，这一页回到原图显示。译文不受影响，需要时可以重新超分。</string>
+    <string name="reader_sr_clear_ok">删除</string>
+    <string name="sr_clear_done_page">第 %1$d 页的超分结果已删除</string>
+    <string name="sr_clear_none_page">第 %1$d 页没有超分结果</string>
     <string name="reader_sr_button_desc">本页超分 / 显示原图</string>
     <string name="reader_translate_busy_sr">正在超分当前页，请稍候再翻译</string>
     <!-- ═══ 超分提示（用户口径 2026-10：**不许写模糊提示**，每条都要说清是哪一种原因；走 app 状态浮层，不用 Toast） ═══ -->
@@ -1032,6 +1039,10 @@
     <string name="sr_done_page">第 %1$d 页超分完成</string>
     <string name="sr_show_original_page">第 %1$d 页已切回原图显示（超分文件保留）</string>
     <string name="sr_show_sr_page">第 %1$d 页已切回超分底图</string>
+    <string name="reader_sr_base_label">本页底图</string>
+    <string name="reader_sr_base_value_sr">超分图</string>
+    <string name="reader_sr_base_value_original">原图</string>
+    <string name="reader_sr_base_value_none">还没超分</string>
     <!-- Anime4K 基础层（阅读器调色面板，2026-10） -->
     <string name="reader_anime4k_label">Anime4K 线条增强</string>
     <string name="reader_anime4k_hint">对画面做线条描深与去噪，分辨率不变、不下载任何模型。开启超分时本项不可用（超分优先）。点这一行循环切档。</string>
