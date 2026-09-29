@@ -1070,9 +1070,17 @@
     <string name="reader_sr_model_row">Super resolution: %1$s</string>
     <string name="reader_sr_none">Not selected</string>
     <string name="reader_sr_not_downloaded">%1$s (not downloaded)</string>
-    <string name="reader_sr_hint">Tap to download or switch super-resolution models. With the switch above on, pages are upscaled before OCR (better on low-resolution sources). It works together with Anime4K.</string>
-    <string name="reader_sr_switch_on">Reader super resolution on — pages are upscaled before OCR</string>
-    <string name="reader_sr_switch_off">Reader super resolution off</string>
+    <string name="reader_sr_hint">When on: tapping translate recognises the original page first, then upscales it automatically (OCR is never slowed down). The upscaled page becomes the base for translated text, and you can switch back to the original. Mutually exclusive with Anime4K (super resolution wins).</string>
+    <string name="reader_sr_switch_on">Reader super resolution on</string>
+    <string name="reader_sr_switch_off">Reader super resolution off (upscaled pages stay on disk)</string>
+    <string name="reader_sr_auto_label">Upscale on translate</string>
+    <string name="reader_sr_auto_on">The current page will be upscaled after each translation</string>
+    <string name="reader_sr_auto_off">Translation no longer upscales; use the bottom-right button instead</string>
+    <string name="reader_sr_button_desc">Upscale this page / show original</string>
+    <string name="reader_sr_enhancing">Upscaling the current page…</string>
+    <string name="reader_sr_failed">No upscaled result: make sure a super-resolution model is selected and downloaded, or the page is within the size limit</string>
+    <string name="reader_sr_showing_original">Showing the original page again (upscaled file kept)</string>
+    <string name="reader_sr_showing_sr">Showing the upscaled page again</string>
     <!-- Anime4K baseline (reader colour panel, 2026-10) -->
     <string name="reader_anime4k_label">Anime4K line enhance</string>
     <string name="reader_anime4k_hint">Sharpens and denoises line art without changing resolution and without any model download. Unavailable while super resolution is on (super resolution wins). Tap to cycle levels.</string>

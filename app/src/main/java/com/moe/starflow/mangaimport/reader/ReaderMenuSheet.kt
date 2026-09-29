@@ -97,6 +97,8 @@ class ReaderMenuCallbacks(
     val onOpenSrModelManagement: () -> Unit = {},
     /** 阅读器超分开关被切换（值已写入 prefs）。 */
     val onReaderSrChanged: (Boolean) -> Unit = {},
+    /** 「翻译时自动超分」被切换（值已写入 prefs）。 */
+    val onReaderSrAutoChanged: (Boolean) -> Unit = {},
     /** Anime4K 档位被切换（值已写入 prefs）：宿主需作废渲染缓存。 */
     val onAnime4kModeChanged: () -> Unit = {},
     /** 点章卡片主按钮：没有任务 = 翻译本章；跑着 = 暂停；暂停了 = 继续。 */
@@ -611,16 +613,6 @@ class ReaderMenuSheet(
         view.findViewById<TextView>(R.id.tv_sr_model_row).text =
             getString(R.string.reader_sr_model_row, srModelLabel(srPrefs))
         view.findViewById<View>(R.id.btn_model_sr).setOnClickListener { cb.onOpenSrModelManagement() }
-        view.findViewById<Switch>(R.id.sw_reader_sr).apply {
-            isChecked = SrSettings.isEnabledForReader(srPrefs)
-            setOnCheckedChangeListener { _, checked ->
-                SrSettings.setReaderEnabled(srPrefs, checked)
-                // 关掉时把已加载的超分引擎放掉（2x 模型几百 MB）；打开时不预热 —— 首翻再建
-                if (!checked) SuperResolutionEngines.releaseSrModel()
-                refreshEnhancedPreview()
-                cb.onReaderSrChanged(checked)
-            }
-        }
 
         // Anime4K 档位：**点一下循环切档**（点击关闭 → 线条修复 → 均衡 → 强恢复 → 关闭）。
         // ⚠️ 曾经是"弹窗 7 项 + 每档一句说明"，用户口径：不要弹窗、不要那么多选项、去掉「＋」。
@@ -656,7 +648,40 @@ class ReaderMenuSheet(
             val next = Anime4kMode.nextAfter(curMode)
             if (next == null) applyAnime4k(false, null) else applyAnime4k(true, next)
         }
-        refreshAnime4kRow()
+
+        /**
+         * 超分整组的显隐（用户口径 2026-10）：**超分关闭 → 不显示超分模型选择和
+         * 「翻译时自动超分」组件**，连说明行一起收，不要留一块空行。
+         *
+         * ⚠️ Anime4K 行**不在这一组里**、始终可见 —— 它是零下载的基础显示层，
+         * 关掉超分之后正是它的用武之地（超分开着时它才置灰，见 [refreshAnime4kRow]）。
+         */
+        fun refreshSrGroup() {
+            val p = CustomPreference.getInstance(requireContext()).getSharedPreferences()
+            val on = SrSettings.isEnabledForReader(p)
+            view.findViewById<View>(R.id.sr_panel_group).visibility = if (on) View.VISIBLE else View.GONE
+            view.findViewById<Switch>(R.id.sw_reader_sr).isChecked = on
+            view.findViewById<Switch>(R.id.sw_reader_sr_auto).isChecked =
+                p.getBoolean(SrSettings.KEY_AUTO, SrSettings.DEFAULT_AUTO)
+            refreshAnime4kRow()
+        }
+
+        // ⚠️ 两个 Switch 的监听必须注册在 `refreshSrGroup` **之后**：Kotlin 的局部函数不允许前向引用，
+        //    而开关回调里要调 `refreshSrGroup()` 把整组显隐重算一遍（关掉总开关要连本行一起收起来）。
+        view.findViewById<Switch>(R.id.sw_reader_sr).setOnCheckedChangeListener { _, checked ->
+            SrSettings.setReaderEnabled(srPrefs, checked)
+            // 关掉时把已加载的超分引擎放掉（2x 模型几百 MB）；打开时不预热 —— 首翻再建
+            if (!checked) SuperResolutionEngines.releaseSrModel()
+            refreshEnhancedPreview()
+            refreshSrGroup()
+            cb.onReaderSrChanged(checked)
+        }
+        // 「翻译时自动超分」：只管"点翻译要不要顺手超分"（超分本身总开关仍是上面那个）
+        view.findViewById<Switch>(R.id.sw_reader_sr_auto).setOnCheckedChangeListener { _, checked ->
+            SrSettings.setAutoEnabled(srPrefs, checked)
+            cb.onReaderSrAutoChanged(checked)
+        }
+        refreshSrGroup()
 
         fun refreshProc() {
             ivProc.colorFilter = cur().toColorFilter()
@@ -750,7 +775,7 @@ class ReaderMenuSheet(
         R.id.tv_brightness_label, R.id.tv_contrast_label,
         R.id.tv_rotate_label, R.id.tv_auto_turn_label, R.id.tv_download_label, R.id.tv_settings_label,
         R.id.tv_ocr_model_row, R.id.tv_translator_model_row,
-        R.id.tv_sr_model_row, R.id.tv_sr_switch_label, R.id.tv_anime4k_label,
+        R.id.tv_sr_model_row, R.id.tv_sr_switch_label, R.id.tv_sr_auto_label, R.id.tv_anime4k_label,
         R.id.tv_source_lang_value, R.id.tv_target_lang_value,
         R.id.tv_debounce_label, R.id.tv_ahead_label,
         // 与「OCR模型 / 翻译模型」两行同为 14sp 正文色
@@ -767,7 +792,7 @@ class ReaderMenuSheet(
         R.id.tv_rotate_value, R.id.tv_interval_value, R.id.tv_download_value,
         R.id.tv_source_caption, R.id.tv_target_caption,
         R.id.tv_debounce_value, R.id.tv_ahead_value,
-        R.id.tv_sr_hint, R.id.tv_anime4k_hint, R.id.tv_anime4k_value,
+        R.id.tv_sr_hint, R.id.tv_anime4k_value,
         // 「同时请求数」只剩**值/说明**走次要色
         R.id.tv_concurrency_hint,
         // 字号行的值与说明（「自动」胶囊的配色在 refreshFontSizeRow 里按状态给）
@@ -794,7 +819,10 @@ class ReaderMenuSheet(
         pageAdapter.dark = darkPanel
         // 调色/更多面板 Switch 配色（避免与面板背景重叠/看不清）
         val swTrack = if (dark) 0xFF3A4046.toInt() else 0xFFCFD8DC.toInt()
-        listOf(R.id.sw_invert, R.id.sw_grayscale, R.id.sw_book, R.id.sw_auto_turn, R.id.sw_reader_sr).forEach { id ->
+        listOf(
+            R.id.sw_invert, R.id.sw_grayscale, R.id.sw_book, R.id.sw_auto_turn,
+            R.id.sw_reader_sr, R.id.sw_reader_sr_auto,
+        ).forEach { id ->
             view.findViewById<Switch>(id).let {
                 it.thumbTintList = ColorStateList.valueOf(0xFF55AEEA.toInt())
                 it.trackTintList = ColorStateList.valueOf(swTrack)

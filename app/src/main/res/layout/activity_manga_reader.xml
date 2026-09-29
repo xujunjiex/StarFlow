@@ -199,6 +199,30 @@
                 android:contentDescription="@string/reader_tab_translate"/>
         </FrameLayout>
 
+        <!-- 本页超分（AI 放大）按钮：**三重语义**（用户口径 2026-10）
+             ① 该页还没超分（或换了模型）→ 点击 = 用当前模型超分
+             ② 已超分、正显示超分底图   → 点击 = 切回原图（**文件保留**，只是不显示）
+             ③ 已超分、正显示原图       → 点击 = 切回超分底图
+             ⚠️ 超分功能关闭时整个按钮不显示（由 refreshTranslationChrome 置 GONE）。
+             图标 tint：正显示超分底图 = 高亮蓝，显示原图 = 白，超分中 = 半透明。 -->
+        <FrameLayout
+            android:id="@+id/btn_sr_page"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:gravity="center"
+            android:clickable="true"
+            android:visibility="gone"
+            android:contentDescription="@string/reader_sr_button_desc">
+            <ImageView
+                android:id="@+id/iv_sr_page"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_reader_sr"
+                app:tint="#FFFFFF"
+                android:contentDescription="@string/reader_sr_button_desc"/>
+        </FrameLayout>
+
         <!-- 清除本页译文（**放在最右边**，用户口径）：只在当前页有译文时出现，
              点击**必须二次确认**（所有删除/清空操作都要确认）。图标复用既有删除图标。 -->
         <FrameLayout

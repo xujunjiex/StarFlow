@@ -2,6 +2,7 @@ package com.moe.starflow.mangaimport.data
 
 import android.content.Context
 import com.moe.starflow.data.TranslationHistoryDatabase
+import com.moe.starflow.sr.SrStore
 import com.moe.starflow.utils.LogCollector
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -66,6 +67,15 @@ object ShelfCleanup {
             } catch (e: Exception) {
                 // 删不掉不影响清单/文件已删的结果：下次进书架 purgeOrphanTranslations 还会兜底
                 LogCollector.e(TAG, "删除翻译记录失败: ${mangas.map { it.id }}", e)
+            }
+            // 超分缓存也要一起删（`sr_cache/<mangaId>_<page>.webp`）。
+            // ⚠️ 与翻译记录不同，它**没有孤儿兜底扫描**：不在这里删就永久占着磁盘
+            // （一本书 200 页 2x ≈ 54MB），只能靠 SrStore 的 512MB LRU 慢慢挤掉。
+            // ⚠️ 也用 `mangaId` 做 key，但删除是异步的 → 理论上与复用同 id 的新书有竞态，
+            //    代价只是"新书那几页要重新超分"，不影响正确性（文件按 mangaId+页码覆盖写）。
+            mangas.forEach { m ->
+                runCatching { SrStore.deleteManga(app, m.id) }
+                    .onFailure { LogCollector.w(TAG, "删除超分缓存失败 mangaId=${m.id}: ${it.message}") }
             }
         }
     }

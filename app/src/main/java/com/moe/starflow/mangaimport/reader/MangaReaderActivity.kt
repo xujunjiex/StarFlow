@@ -945,12 +945,42 @@ class MangaReaderActivity : AppCompatActivity() {
         }
         // 失败页：感叹号 → 小气泡显示失败原因（不弹窗）
         binding.btnFailTranslate.setOnClickListener { showFailBubble() }
+        // 本页超分：**三重语义**（超分 / 切回原图 / 切回超分底图），由控制器判当前该做哪一件。
+        // ⚠️ 超分功能关闭时按钮不显示（`refreshTranslationChrome` 置 GONE），点不到。
+        binding.btnSrPage.setOnClickListener {
+            val before = controller.srActionOf(currentPage)
+            when (before) {
+                ReaderTranslationController.SrAction.HIDDEN,
+                ReaderTranslationController.SrAction.BUSY -> {
+                    UiUtils.showToast(this, getString(R.string.reader_sr_enhancing))
+                }
+                else -> {
+                    // 超分是本地重计算（秒级）→ 先禁用给反馈，跑完再刷新语义
+                    binding.btnSrPage.isEnabled = false
+                    UiUtils.showToast(this, getString(R.string.reader_sr_enhancing))
+                    lifecycleScope.launch {
+                        val after = controller.onSrButtonClicked(currentPage)
+                        binding.btnSrPage.isEnabled = true
+                        refreshTranslationChrome()
+                        val msg = when (after) {
+                            // 点完变成 SHOW_SR = 刚切成原图；SHOW_ORIGINAL = 刚切成超分底图
+                            ReaderTranslationController.SrAction.SHOW_SR -> R.string.reader_sr_showing_original
+                            ReaderTranslationController.SrAction.SHOW_ORIGINAL -> R.string.reader_sr_showing_sr
+                            // 仍是 ENHANCE = 没超出来（没选模型 / 没下载 / 超像素上限 / 推理失败）
+                            ReaderTranslationController.SrAction.ENHANCE -> R.string.reader_sr_failed
+                            else -> 0
+                        }
+                        if (msg != 0) UiUtils.showToast(this@MangaReaderActivity, getString(msg))
+                    }
+                }
+            }
+        }
         // 清除本页译文：**必须先二次确认**（用户口径：所有删除/清空操作都要确认）
         binding.btnClearTranslate.setOnClickListener { confirmClearPage(currentPage) }
         // 右下角按钮组 + 底部左右翻页键：按下缩放反馈（原先点了完全没有视觉反馈）
         attachPressFeedback(
             binding.btnTranslate, binding.btnToggleTranslate, binding.btnFailTranslate,
-            binding.btnPrev, binding.btnNext,
+            binding.btnSrPage, binding.btnPrev, binding.btnNext,
         )
         applyPageImageSource()
     }
@@ -1418,6 +1448,7 @@ class MangaReaderActivity : AppCompatActivity() {
         binding.btnFailTranslate.visibility = if (failed) View.VISIBLE else View.GONE
         // 清除本页译文（**最右边**，用户口径）：只在当前页**有译文**时出现
         binding.btnClearTranslate.visibility = if (translated) View.VISIBLE else View.GONE
+        applySrButton(controller)
         // 翻译按钮图标：成功 → 重翻图标；未译/失败 → 翻译图标
         binding.ivTranslate.setImageResource(
             if (translated) R.drawable.ic_refresh else R.drawable.ic_reader_translate
@@ -1433,6 +1464,31 @@ class MangaReaderActivity : AppCompatActivity() {
         TranslationCacheManager.OverlayMode.TRANSLATED -> android.R.drawable.ic_menu_camera
         TranslationCacheManager.OverlayMode.ORIGINAL -> android.R.drawable.ic_menu_gallery
         else -> android.R.drawable.ic_menu_view
+    }
+
+    /**
+     * 右下角「本页超分」按钮的显隐与高亮。
+     *
+     * | 控制器给出的语义 | 按钮 |
+     * |---|---|
+     * | [ReaderTranslationController.SrAction.HIDDEN]（超分功能关闭） | **不显示**（用户口径） |
+     * | [ReaderTranslationController.SrAction.BUSY] | 显示、置灰（半透明） |
+     * | [ReaderTranslationController.SrAction.SHOW_ORIGINAL]（正显示超分底图） | 显示、**高亮蓝** |
+     * | ENHANCE / SHOW_SR（没有超分底图可看） | 显示、白色 |
+     */
+    private fun applySrButton(controller: ReaderTranslationController) {
+        val action = controller.srActionOf(currentPage)
+        if (action == ReaderTranslationController.SrAction.HIDDEN) {
+            binding.btnSrPage.visibility = View.GONE
+            return
+        }
+        binding.btnSrPage.visibility = View.VISIBLE
+        val showingSr = action == ReaderTranslationController.SrAction.SHOW_ORIGINAL
+        binding.ivSrPage.imageTintList =
+            android.content.res.ColorStateList.valueOf(if (showingSr) 0xFF55AEEA.toInt() else Color.WHITE)
+        val busy = action == ReaderTranslationController.SrAction.BUSY
+        binding.btnSrPage.isEnabled = !busy
+        binding.ivSrPage.alpha = if (busy) 0.4f else 1f
     }
 
     /** 刷新进度条上的「已翻译」绿色区间。 */
@@ -1474,8 +1530,14 @@ class MangaReaderActivity : AppCompatActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             if (visual != null && visual != TranslationCacheManager.OverlayMode.PLAIN) {
                 controller.visualBitmap(pageIndex, visual) // 渲染 + 预热缓存
+            } else {
+                // 没有 overlay 可渲染（未翻译 / 纯原图态）：仍要把**显示底图**预热进内存 ——
+                // 适配器取图走 `cachedDisplayBitmap`，它只读内存；不预热的话开着超分也只显示糊的原图。
+                controller.warmSrBase(pageIndex)
             }
             runOnUiThread {
+                // 底图的探测发生在 IO 侧（`srModelByPage` 在那里 seed）→ 回来后再刷一次右下角按钮
+                refreshTranslationChrome()
                 pageAdapter?.notifyItemChanged(pageIndex)
             }
         }
@@ -1649,6 +1711,18 @@ class MangaReaderActivity : AppCompatActivity() {
                     UiUtils.showToast(
                         this@MangaReaderActivity,
                         getString(if (enabled) R.string.reader_sr_switch_on else R.string.reader_sr_switch_off)
+                    )
+                    // 开关改的是**显示的底图**（超分底图 ⇄ 原图）→ 与字号/Anime4K 同一条链路：
+                    // 作废渲染缓存 + 重渲染当前页。不作废的话关掉开关画面上还是超分图。
+                    onAnime4kModeChangedFromPanel()
+                    refreshTranslationChrome()
+                },
+                onReaderSrAutoChanged = { enabled ->
+                    UiUtils.showToast(
+                        this@MangaReaderActivity,
+                        getString(
+                            if (enabled) R.string.reader_sr_auto_on else R.string.reader_sr_auto_off
+                        )
                     )
                 },
                 // ===== 章节卡片：主按钮（翻译本章/暂停/继续）+ 次按钮（清除本章译文/取消）=====

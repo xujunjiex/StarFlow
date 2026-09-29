@@ -236,7 +236,13 @@ object SuperResolutionEngines {
         return last
     }
 
-    private fun isSrModelUsable(context: Context, prefs: SharedPreferences): Boolean {
+    /**
+     * 「超分模型可用」= 选了模型**且**文件在。
+     *
+     * 公开是因为**显示底图**那条路径（`ReaderTranslationController.baseSig`）也要用同一个判据 ——
+     * 它决定"这一页该显示超分底图还是 Anime4K/原图"，两边各写一份必然漂移。
+     */
+    fun isSrModelUsable(context: Context, prefs: SharedPreferences): Boolean {
         val key = SrModelManager.getActiveKey(prefs) ?: return false
         return SrModelManager.isDownloaded(context, key)
     }

@@ -1005,9 +1005,17 @@
     <string name="reader_sr_model_row">超分模型：%1$s</string>
     <string name="reader_sr_none">未选择</string>
     <string name="reader_sr_not_downloaded">%1$s（未下载）</string>
-    <string name="reader_sr_hint">点这一行去下载/切换超分模型。开启上面的开关后，翻页会先放大再识别（低分辨率图源更准）。与 Anime4K 互不冲突，可同时生效。</string>
-    <string name="reader_sr_switch_on">阅读器超分已开启，翻页会先超分再识别</string>
-    <string name="reader_sr_switch_off">阅读器超分已关闭</string>
+    <string name="reader_sr_hint">开启后：点翻译会先用原图识别，识别完再自动超分（不拖慢识别）。超分结果默认为译文底图，也可切回原图。与 Anime4K 互斥（超分优先）。</string>
+    <string name="reader_sr_switch_on">阅读器超分已开启</string>
+    <string name="reader_sr_switch_off">阅读器超分已关闭（已生成的超分图仍留在磁盘上）</string>
+    <string name="reader_sr_auto_label">翻译时自动超分</string>
+    <string name="reader_sr_auto_on">翻译完成后会自动超分当前页</string>
+    <string name="reader_sr_auto_off">翻译不再自动超分，可用右下角按钮手动超分</string>
+    <string name="reader_sr_button_desc">本页超分 / 显示原图</string>
+    <string name="reader_sr_enhancing">正在超分当前页…</string>
+    <string name="reader_sr_failed">超分未产出：请确认已选择并下载超分模型，或该页分辨率超出上限</string>
+    <string name="reader_sr_showing_original">本页已切回原图显示（超分文件保留）</string>
+    <string name="reader_sr_showing_sr">本页已切回超分底图</string>
     <!-- Anime4K 基础层（阅读器调色面板，2026-10） -->
     <string name="reader_anime4k_label">Anime4K 线条增强</string>
     <string name="reader_anime4k_hint">对画面做线条描深与去噪，分辨率不变、不下载任何模型。开启超分时本项不可用（超分优先）。点这一行循环切档。</string>

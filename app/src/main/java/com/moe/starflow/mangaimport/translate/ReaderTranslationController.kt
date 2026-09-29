@@ -33,9 +33,14 @@ import com.moe.starflow.mangaimport.data.ImportedManga
 import com.moe.starflow.mangaimport.reader.ReaderPageSource
 import com.moe.starflow.translate.TranslationTextAPI
 import com.moe.starflow.translate.isLocalHeavyEngine
+import com.moe.starflow.sr.SrBaseKind
+import com.moe.starflow.sr.SrDisplayBase
 import com.moe.starflow.sr.SrModelManager
 import com.moe.starflow.sr.SrProcessor
 import com.moe.starflow.sr.SrSettings
+import com.moe.starflow.sr.SrStore
+import com.moe.starflow.sr.SuperResolutionEngines
+import com.moe.starflow.sr.anime4k.Anime4kMode
 import com.moe.starflow.translate.batch.ChapterJob
 import com.moe.starflow.translate.batch.ChapterJobRunner
 import com.moe.starflow.translate.batch.ChapterJobState
@@ -113,6 +118,15 @@ class ReaderTranslationController(
          */
         private const val WEBTOON_CACHE_KB = 64 * 1024
 
+        /**
+         * 超分/增强**显示底图**缓存预算。
+         *
+         * 2x 一页 ≈ 1848×2644 ARGB ≈ 19MB → 48MB 只装得下 2~3 页。
+         * 刻意不放大：底图只在"渲染那一瞬间 + 二态切换回来"用到，渲染产物在 `renderLru` 里，
+         * 底图被淘汰了重读一次 webp 只要几十毫秒。
+         */
+        private const val SR_BASE_CACHE_KB = 48 * 1024
+
         /** Webtoon 预热半径：当前页 ± [WEBTOON_PREWARM_RADIUS] 页。 */
         const val WEBTOON_PREWARM_RADIUS = 2
 
@@ -123,12 +137,36 @@ class ReaderTranslationController(
         /** 队列每轮之间的等待下限，避免窗口内无活时死循环空转。 */
         private const val QUEUE_IDLE_TICK_MS = 200L
 
-        private fun renderKey(pageIndex: Int, mode: TranslationCacheManager.OverlayMode) =
-            "page:$pageIndex:${mode.name}"
+        /** 渲染缓存 key 的页前缀（作废某页全部底图变体时按它前缀匹配）。 */
+        private fun pagePrefix(pageIndex: Int) = "page:$pageIndex:"
 
-        /** 首批半成品的独立缓存 key（见 [cachedDisplayBitmap]）。 */
-        private fun partialKey(pageIndex: Int) = "page:$pageIndex:PARTIAL"
+        /**
+         * 渲染缓存 key。
+         *
+         * ⚠️ **必须带底图签名** [baseSig]：同一页在「原图底图 / 超分底图 / Anime4K 底图」下
+         * 渲出来的位图是不同的，key 不带它就会把旧底图的译图当成新底图的结果返回
+         * （表现为：超分做完了、译文还是在糊的原图上）。
+         */
+        private fun renderKey(
+            pageIndex: Int,
+            mode: TranslationCacheManager.OverlayMode,
+            baseSig: String,
+        ) = "page:$pageIndex:${mode.name}:b$baseSig"
+
+        /** 首批半成品的独立缓存 key（见 [cachedDisplayBitmap]）。同样带底图签名。 */
+        private fun partialKey(pageIndex: Int, baseSig: String) = "page:$pageIndex:PARTIAL:b$baseSig"
+
+        /** Webtoon 译图 key。同样带底图签名（底图换了旧译图必须失效）。 */
+        private fun webtoonKey(pageIndex: Int, baseSig: String) = "$pageIndex:b$baseSig"
     }
+
+    /**
+     * 超分底图的一个缓存项：位图 + 它相对**渲染坐标空间**的倍率 + 产生它的设置签名。
+     *
+     * `sig` 是必须的：换了模型 / 换了 Anime4K 档 / 关了开关，缓存里那份底图就不再对应当前设置，
+     * 只按页码取会把旧底图（甚至别的模型的产物）当新的用。
+     */
+    private data class SrBase(val bitmap: Bitmap, val scale: Float, val sig: String)
 
     val version = MutableStateFlow(0L)
     val translateMode = MutableStateFlow(MODE_MANUAL)
@@ -187,6 +225,7 @@ class ReaderTranslationController(
         partialJob?.cancel()
         partialJob = null
         renderLru.evictAll()
+        srBaseLru.evictAll()
         clearWebtoonCache()
         LogCollector.d(TAG, "译文替换表已变更 → 作废已渲染译图（代次 $renderGeneration），等待重渲染")
         return true
@@ -206,6 +245,8 @@ class ReaderTranslationController(
         partialJob?.cancel()
         partialJob = null
         renderLru.evictAll()
+        // 底图签名里含 Anime4K 档位 → 档位变了缓存里那份底图就不再对应当前设置
+        srBaseLru.evictAll()
         clearWebtoonCache()
         LogCollector.d(TAG, "渲染参数已变更 → 作废已渲染译图（代次 $renderGeneration）")
     }
@@ -230,6 +271,260 @@ class ReaderTranslationController(
 
     /** 各页当前三态（内存态）。并发安全（IO 页图提供者 + 主线程切换都会读写）。 */
     private val currentVisualByPage = ConcurrentHashMap<Int, TranslationCacheManager.OverlayMode>()
+
+    // ========== 超分 / 增强「显示底图」（v2，2026-10） ==========
+
+    /**
+     * 超分/Anime4K **显示底图**缓存（key = 页号）。
+     *
+     * ⚠️ **只装底图、不装渲染产物**：底图是"翻译之前那一层"，与 overlay（译文/原文/纯原图）
+     * 正交。渲染产物按 `renderKey(page, mode, baseSig)` 存在 [renderLru] 里。
+     */
+    private val srBaseLru = object : LruCache<Int, SrBase>(SR_BASE_CACHE_KB) {
+        override fun sizeOf(key: Int, value: SrBase) = value.bitmap
+            .let { it.allocationByteCount.coerceAtLeast(it.rowBytes * it.height) } / 1024
+    }
+
+    /**
+     * 每页的「显示超分底图还是原图」二态（**用户口径：默认显示超分**）。
+     *
+     * 缺省 = true（超分底图）。用户点右下角超分按钮切到原图时写 false。
+     * ⚠️ 这是**纯显示态**，与"有没有超分文件"无关：切到原图**不删文件**（用户口径）。
+     */
+    private val srVisualByPage = ConcurrentHashMap<Int, Boolean>()
+
+    /**
+     * 该页已落盘的超分结果**是哪个模型超的**（seed 自 `SrStore.modelOf`，超分完成后立即写入）。
+     *
+     * 只在 IO 侧（[srBaseFor] / [warmSrBase] / 超分完成）维护，UI 侧 [srActionOf] 纯内存读 ——
+     * `refreshTranslationChrome()` 在主线程被高频调用，不能在里面读磁盘。
+     */
+    private val srModelByPage = ConcurrentHashMap<Int, String>()
+
+    /** 该页是否正显示超分底图（缺省 true）。 */
+    fun isSrVisualOn(pageIndex: Int): Boolean = srVisualByPage[pageIndex] ?: true
+
+    /**
+     * 该页当前的**底图签名** —— 渲染缓存 key 的一部分，也是"底图变没变"的唯一判据。
+     *
+     * 判据与 [SuperResolutionEngines.resolveSteps] 完全同源（超分模型优先、不可用时才 Anime4K）：
+     * ```
+     * "o"                    原图（超分关 或 用户把该页切回原图 或 该页还没有超分文件）
+     * "s:<模型名>"            已落盘的超分模型底图
+     * "a:<Anime4K 档位 id>"   Anime4K 同分辨率增强底图
+     * ```
+     *
+     * ⚠️ 会做一次 `File.isFile/length`（`SrStore.exists`）—— 每页几微秒，可接受；
+     * **绝不能在这里读 webp 或跑推理**（本函数会被适配器绑定路径调用）。
+     */
+    private fun baseSig(pageIndex: Int): String {
+        if (!isSrVisualOn(pageIndex)) return SrDisplayBase.baseSignature(SrBaseKind.ORIGINAL, null, null, false)
+        val prefs = appPrefs
+        val kind = SrDisplayBase.resolveBaseKind(
+            srVisualOn = true,
+            srEnabled = SrSettings.isEnabledForReader(prefs),
+            srModelUsable = SuperResolutionEngines.isSrModelUsable(context, prefs),
+            anime4kEnabled = Anime4kMode.isEnabled(prefs),
+        )
+        return when (kind) {
+            SrBaseKind.ORIGINAL -> "o"
+            SrBaseKind.SR_MODEL -> SrDisplayBase.baseSignature(
+                kind = kind,
+                srModelName = SrModelManager.getActiveKey(prefs)?.name,
+                anime4kModeId = null,
+                storedSrFile = SrStore.exists(context, manga.id, pageIndex),
+            )
+            SrBaseKind.ANIME4K -> SrDisplayBase.baseSignature(
+                kind = kind,
+                srModelName = null,
+                anime4kModeId = Anime4kMode.fromPrefs(prefs).id,
+                storedSrFile = false,
+            )
+        }
+    }
+
+    /**
+     * 取该页的显示底图（**suspend，可能读磁盘**）。
+     *
+     * - 超分模型可用且该页已有落盘结果 → 读 webp，`scale = 底图宽 / [spaceWidth]`
+     * - 否则若 Anime4K 开着 → 就地跑 Anime4K（1x）
+     * - 都没有 → null（调用方用原图，`baseScale = 1f`）
+     *
+     * @param space [spaceWidth] 所属的位图（Anime4K 要拿它做输入；超分分支只用宽度）
+     * @param spaceWidth **气泡坐标所在空间**的宽。分页渲染时 = 原图宽；
+     *   它决定 `baseScale`，进而决定 `OverlayRenderer` 反算出的坐标空间。
+     * @return (底图, baseScale)，底图归缓存所有，**调用方不得 recycle**
+     */
+    private suspend fun srBaseFor(pageIndex: Int, space: Bitmap, spaceWidth: Int): SrBase? {
+        if (pageIndex < 0 || spaceWidth <= 0) return null
+        val sig = baseSig(pageIndex)
+        if (sig == "o") {
+            srBaseLru.remove(pageIndex)
+            srModelByPage.remove(pageIndex)
+            return null
+        }
+        srBaseLru.get(pageIndex)?.let { if (it.sig == sig) return it }
+
+        if (sig.startsWith("s:")) {
+            val stored = withContext(Dispatchers.IO) { SrStore.load(context, manga.id, pageIndex) }
+            srModelByPage[pageIndex] = sig.removePrefix("s:")
+            if (stored == null) {
+                // 文件刚被系统/用户清掉（`SrStore` 以"文件存在"为真值）→ 本次回落原图
+                LogCollector.d(TAG, "超分底图读取失败，回落原图 page=$pageIndex")
+                return null
+            }
+            val scale = stored.width.toFloat() / spaceWidth
+            if (scale <= 1.001f) {
+                // 尺寸不对（截断/损坏）→ 宁可不放大，也不要把译文画错位
+                LogCollector.w(TAG, "超分底图尺寸异常 ${stored.width}x${stored.height} page=$pageIndex → 回落原图")
+                stored.recycle()
+                return null
+            }
+            return SrBase(stored, scale, sig).also { srBaseLru.put(pageIndex, it) }
+        }
+
+        // Anime4K：同分辨率增强，输出尺寸 == 输入尺寸 → baseScale 恒 1
+        val enhanced = withContext(Dispatchers.IO) {
+            runCatching {
+                SuperResolutionEngines.obtainAnime4k(context, appPrefs)?.upscale(space)
+            }.onFailure { LogCollector.w(TAG, "Anime4K 增强失败 page=$pageIndex: ${it.message}") }.getOrNull()
+        } ?: return null
+        return SrBase(enhanced, 1f, sig).also { srBaseLru.put(pageIndex, it) }
+    }
+
+    /**
+     * 只预热底图、不渲染 overlay（未翻译页 / 纯原图态走它）。
+     *
+     * ⚠️ 自己 `loadFull` 就自己 `recycle`（`ReaderPageSource.loadFull` 是纯解码、每次返回新位图）。
+     */
+    fun warmSrBase(pageIndex: Int) {
+        val sig = baseSig(pageIndex)
+        srBaseLru.get(pageIndex)?.let { if (it.sig == sig) return }
+        if (sig == "o") return
+        scope.launch(Dispatchers.IO) {
+            val src = loadFull(pageIndex) ?: return@launch
+            try {
+                srBaseFor(pageIndex, src, src.width)
+            } finally {
+                if (!src.isRecycled) src.recycle()
+            }
+        }
+    }
+
+    /** 底图变了（超分完成 / 二态切换 / 换模型）：作废该页渲染缓存并刷新上屏。 */
+    private suspend fun onBaseChanged(pageIndex: Int) {
+        srBaseLru.remove(pageIndex)
+        evictPageRenders(pageIndex)
+        clearWebtoonCache()
+        withContext(Dispatchers.Main) {
+            if (uiAttached && pageIndex == currentPageProvider()) onVisual()
+        }
+    }
+
+    /** 删掉某页**所有底图变体**的渲染产物（key 里带 sig，只能按前缀清）。 */
+    private fun evictPageRenders(pageIndex: Int) {
+        val prefix = pagePrefix(pageIndex)
+        renderLru.snapshot().keys.filter { it.startsWith(prefix) }.forEach { renderLru.remove(it) }
+    }
+
+    // ========== 右下角超分按钮（每页三重语义） ==========
+
+    /** 该页超分按钮此刻该做什么（UI 只读它决定图标/高亮/可点性）。**纯内存，无 IO**。 */
+    enum class SrAction {
+        /** 超分功能关闭 → 整个按钮不显示（用户口径） */
+        HIDDEN,
+
+        /** 正在超分 → 置灰 */
+        BUSY,
+
+        /** 未超分（或该页是别的模型超的）→ 点击 = 用当前模型超分（覆盖） */
+        ENHANCE,
+
+        /** 已超分、正显示超分底图 → 点击 = 切回原图（文件保留） */
+        SHOW_ORIGINAL,
+
+        /** 已超分、正显示原图 → 点击 = 切回超分底图 */
+        SHOW_SR,
+    }
+
+    fun srActionOf(pageIndex: Int): SrAction {
+        if (!SrSettings.isEnabledForReader(appPrefs)) return SrAction.HIDDEN
+        if (SrProcessor.isRunning(manga.id, pageIndex)) return SrAction.BUSY
+        val active = SrModelManager.getActiveKey(appPrefs)?.name
+        if (active == null || srModelByPage[pageIndex] != active) return SrAction.ENHANCE
+        return if (isSrVisualOn(pageIndex)) SrAction.SHOW_ORIGINAL else SrAction.SHOW_SR
+    }
+
+    /**
+     * 点击右下角超分按钮。
+     *
+     * - [SrAction.ENHANCE] → 对**原图**超分并落盘（`SrProcessor`，与 OCR 共用 `OcrLock` 串行）
+     * - [SrAction.SHOW_ORIGINAL] / [SrAction.SHOW_SR] → **二态切换**（只改显示，不动文件）
+     *
+     * @return 动作执行后的新状态（UI 据此提示；`SHOW_SR` = 刚刚切成原图、`SHOW_ORIGINAL` = 刚切成超分图）
+     */
+    suspend fun onSrButtonClicked(pageIndex: Int): SrAction {
+        val action = srActionOf(pageIndex)
+        when (action) {
+            SrAction.HIDDEN, SrAction.BUSY -> return action
+            SrAction.ENHANCE -> {
+                val ok = enhancePage(pageIndex)
+                if (!ok) return srActionOf(pageIndex)
+            }
+            SrAction.SHOW_ORIGINAL -> srVisualByPage[pageIndex] = false
+            SrAction.SHOW_SR -> srVisualByPage[pageIndex] = true
+        }
+        onBaseChanged(pageIndex)
+        return srActionOf(pageIndex)
+    }
+
+    /**
+     * 用当前模型对某页**原图**跑一次超分并落盘。
+     *
+     * ⚠️ **输入永远是 `loadFull` 出来的原图** —— 绝不能拿渲染后的译图去超分
+     * （那会把画好的字当像素放大）。译文是**数据**，超分底图之后重新渲染即可。
+     */
+    private suspend fun enhancePage(pageIndex: Int): Boolean {
+        if (!SrSettings.isEnabledForReader(appPrefs)) return false
+        if (SrModelManager.getActiveKey(appPrefs) == null) return false
+        val src = withContext(Dispatchers.IO) { loadFull(pageIndex) } ?: return false
+        val ok = try {
+            SrProcessor.enhanceAndStore(context, manga.id, pageIndex, src)
+        } finally {
+            // 原图是本次现解码的（`loadFull` 纯解码）→ 用完必须回收
+            if (!src.isRecycled) src.recycle()
+        }
+        if (ok) {
+            // 超分完成后默认显示在超分底图上（用户口径）
+            srVisualByPage[pageIndex] = true
+            srModelByPage[pageIndex] = SrModelManager.getActiveKey(appPrefs)?.name.orEmpty()
+        }
+        return ok
+    }
+
+    /**
+     * 「翻译时自动超分」在**非批量路径**（手动 / 自动 / 增量）的落点。
+     *
+     * ## 为什么在 `runTranslate` 的 `finally` 里（v2 的取舍，别再往前提）
+     * 用户口径是「拿原图 OCR **之后**再启动超分，不要与 OCR 同时」，而
+     * `runTranslate` 目前是**从 OCR 一直持 `OcrLock` 到翻译结束**的一整段
+     * （`SrProcessor` 也会抢同一把锁）—— 往前提只会让超分卡在等锁上，一点没提前。
+     * 真正要让超分与翻译请求重叠，得先把 `runTranslate` 拆成两阶段（见计划 R6.5）。
+     *
+     * ⚠️ **只对"用户正在看的那页"触发**：自动/增量模式会预翻后面 5~10 页，
+     * 每页都顺手超分 = 每翻一页多跑 5~10 次推理，队列会爬不动。
+     * 整章批量翻译那条路径不受此限（用户显式点了「翻译本章」，见 [translatePhase]）。
+     */
+    private fun maybeStartSrAfterTranslate(page: Int) {
+        if (!SrSettings.isAutoEnabledForReader(appPrefs)) return
+        if (page != currentPageProvider()) return
+        if (srModelByPage[page] == SrModelManager.getActiveKey(appPrefs)?.name) return
+        scope.launch(Dispatchers.IO) {
+            val ok = enhancePage(page)
+            LogCollector.d(TAG, "翻译后自动超分 page=$page ok=$ok")
+            if (ok) onBaseChanged(page)
+        }
+    }
 
     // ========== 宿主注入（避免控制器反向依赖 Activity / ReaderPageSource） ==========
 
@@ -678,7 +973,7 @@ class ReaderTranslationController(
                 return false
             }
             upsertState(page, ImportedPageTranslation.STATE_TRANSLATING)
-            renderLru.remove(partialKey(page))
+            renderLru.remove(partialKey(page, baseSig(page)))
             cacheCandidates = 0
             cacheHits = 0
 
@@ -691,7 +986,7 @@ class ReaderTranslationController(
             // ── 超分（v2）：OCR 已完成 → 此刻才是启动点 ──
             // • 网络 API：srJob 不 join，超分与翻译请求**并行**
             // • 本地引擎（LlamaCpp/NLLB）：都是 CPU 重活，**必须串行** → 立刻 join
-            srJob = maybeStartAutoSr(page, prep, translator)
+            srJob = maybeStartAutoSr(page, prep)
             if (translator.isLocalHeavyEngine()) srJob?.join()
             val overlayConfig = cacheManager.getOverlayConfig(appPrefs)
             val cfg = BatchPipelineConfig(
@@ -727,7 +1022,7 @@ class ReaderTranslationController(
             if (uiAttached && page == currentPageProvider()) {
                 renderInto(page, translated, TranslationCacheManager.OverlayMode.TRANSLATED, prep.bitmap, overlayConfig)
             }
-            renderLru.remove(partialKey(page))
+            renderLru.remove(partialKey(page, baseSig(page)))
             val row = ImportedPageTranslation(
                 mangaId = manga.id, pageIndex = page,
                 state = ImportedPageTranslation.STATE_SUCCESS,
@@ -789,7 +1084,6 @@ class ReaderTranslationController(
     private fun maybeStartAutoSr(
         page: Int,
         prep: PreparedPage,
-        translator: TranslationTextAPI?
     ): Job? {
         if (!SrSettings.isAutoEnabledForReader(appPrefs)) return null
         if (!SrSettings.isEnabledForReader(appPrefs)) return null
@@ -800,14 +1094,11 @@ class ReaderTranslationController(
         return scope.launch(Dispatchers.IO) {
             val ok = SrProcessor.enhanceAndStore(context, manga.id, page, prep.bitmap)
             if (ok) {
-                // 该页底图换了 → 所有渲染缓存作废（key 里也含超分签名，这里是双保险 + 立刻刷新）
-                withContext(Dispatchers.Main) {
-                    renderLru.remove(renderKey(page, TranslationCacheManager.OverlayMode.TRANSLATED))
-                    renderLru.remove(renderKey(page, TranslationCacheManager.OverlayMode.ORIGINAL))
-                    renderLru.remove(renderKey(page, TranslationCacheManager.OverlayMode.PLAIN))
-                    webtoonLru.remove(page)
-                    if (uiAttached && page == currentPageProvider()) onVisual()
-                }
+                // 超分完成后默认显示在超分底图上（用户口径）
+                srVisualByPage[page] = true
+                srModelByPage[page] = SrModelManager.getActiveKey(appPrefs)?.name.orEmpty()
+                // 底图换了 → 该页渲染缓存 + 底图缓存一起作废，并刷新上屏
+                onBaseChanged(page)
                 LogCollector.d(TAG, "翻译时自动超分完成 page=$page")
             } else {
                 // 自动超分失败不打扰用户（可能是没选模型/超像素上限/未开启）
@@ -858,10 +1149,12 @@ class ReaderTranslationController(
     }
 
     private fun evictPageCaches(pageIndex: Int) {
-        TranslationCacheManager.OverlayMode.values().forEach { renderLru.remove(renderKey(pageIndex, it)) }
-        renderLru.remove(partialKey(pageIndex))
-        webtoonLru.remove(pageIndex)
+        evictPageRenders(pageIndex)
+        webtoonLru.snapshot().keys.filter { it.startsWith("$pageIndex:") }.forEach { webtoonLru.remove(it) }
         currentVisualByPage.remove(pageIndex)
+        srBaseLru.remove(pageIndex)
+        srVisualByPage.remove(pageIndex)
+        srModelByPage.remove(pageIndex)
     }
 
     /** 该段页号里已成功翻译的页数。 */
@@ -1096,7 +1389,7 @@ class ReaderTranslationController(
         try {
             upsertState(page, ImportedPageTranslation.STATE_TRANSLATING)
             // 清掉上一轮可能残留的半成品：否则重翻时 cachedDisplayBitmap 会先把旧半成品显示出来
-            renderLru.remove(partialKey(page))
+            renderLru.remove(partialKey(page, baseSig(page)))
             // 本次翻译的统计从零起（管线是每次 runTranslate 新建的，这里跟着重置）
             cacheCandidates = 0
             cacheHits = 0
@@ -1159,7 +1452,7 @@ class ReaderTranslationController(
             logBubbles(page, translated)
             // 半成品不论是否上屏都要清：用户翻走后整页渲染不执行，那个 PARTIAL 会永久占着
             // 100MB 渲染缓存（只能靠 LRU 淘汰），且同页重翻时会先闪出旧半成品
-            renderLru.remove(partialKey(page))
+            renderLru.remove(partialKey(page, baseSig(page)))
 
             val row = ImportedPageTranslation(
                 mangaId = manga.id, pageIndex = page,
@@ -1202,6 +1495,9 @@ class ReaderTranslationController(
             phase(ReaderTranslatePhase.FAILED, msg)
         } finally {
             OcrLock.release()
+            // 「翻译时自动超分」在本路径的落点（见 [maybeStartSrAfterTranslate] 的时机说明）：
+            // **必须在 release 之后** —— 超分自己也抢同一把锁，放在锁内只会白等。
+            maybeStartSrAfterTranslate(page)
         }
     }
 
@@ -1410,8 +1706,8 @@ class ReaderTranslationController(
             if (bubbles.isEmpty()) return
             if (page != currentPageProvider()) return   // 后台队列页不渲染
             val cfg = cacheManager.getOverlayConfig(appPrefs)
-            val out = renderBubbles(pageBitmap, bubbles, TranslationCacheManager.OverlayMode.TRANSLATED, cfg)
-            renderLru.put(partialKey(page), out)
+            val out = renderPage(page, pageBitmap, bubbles, TranslationCacheManager.OverlayMode.TRANSLATED, cfg)
+            renderLru.put(partialKey(page, baseSig(page)), out)
             // 首批已出 → 后续进度就是第二批（管线回调不带批次，只能这样推）
             batchIndex = 2
             withContext(Dispatchers.Main) { onVisual() }
@@ -1441,8 +1737,10 @@ class ReaderTranslationController(
     /** 上一版整页译图（取消重翻 / 重翻在途时的显示回退）。无则 null。 */
     private fun lastFullRender(pageIndex: Int): Bitmap? {
         val mode = currentVisual(pageIndex)
+        // 纯原图态**没有 overlay**，不进 renderLru —— 返回 null 让调用方回落到超分/增强底图
+        // （`cachedDisplayBitmap` 里"没有译图就看底图"那一步）
         if (mode == TranslationCacheManager.OverlayMode.PLAIN) return null
-        return renderLru.get(renderKey(pageIndex, mode))
+        return renderLru.get(renderKey(pageIndex, mode, baseSig(pageIndex)))
     }
 
     /** 该页行里是否还留着可渲染的译文载荷（取消/失败后 upsertState 会保留）。 */
@@ -1451,24 +1749,35 @@ class ReaderTranslationController(
         return !row.bubbleRects.isNullOrBlank() || !row.translatedText.isNullOrBlank()
     }
 
-    /** 供适配器同步取图（IO 线程安全）：该页当前应显示的渲染图，无则 null（显示原图）。 */
-    fun cachedDisplayBitmap(pageIndex: Int): Bitmap? = when (stateOf(pageIndex)) {
-        ImportedPageTranslation.STATE_SUCCESS -> lastFullRender(pageIndex)
+    /**
+     * 供适配器同步取图（IO 线程安全）：该页当前应显示的图，无则 null（适配器回退源图）。
+     *
+     * 优先级：**译图 > 超分/增强底图 > 源图**。
+     * ⚠️ 本函数在 `onBindViewHolder` 路径上，**只读内存缓存**：底图的磁盘读取全部发生在
+     * [srBaseFor] / [warmSrBase]（IO 侧），这里只 `LruCache.get`。
+     */
+    fun cachedDisplayBitmap(pageIndex: Int): Bitmap? {
+        val rendered = when (stateOf(pageIndex)) {
+            ImportedPageTranslation.STATE_SUCCESS -> lastFullRender(pageIndex)
 
-        // 翻译中：返回「首批半成品」如果有 —— 否则用户翻走再翻回时看不到已经翻好的那半页。
-        // ⚠️ 必须用独立 key（PARTIAL）：不能用 renderKey(TRANSLATED)，
-        // 否则会和最终整页结果混在一起，且失败/取消后残留一张永远刷不掉的半成品。
-        // 半成品还没出来时回退到上一版整页译图：重翻期间页面不该突然退回原图（翻页也会闪一下）
-        ImportedPageTranslation.STATE_TRANSLATING ->
-            renderLru.get(partialKey(pageIndex)) ?: lastFullRender(pageIndex)
+            // 翻译中：返回「首批半成品」如果有 —— 否则用户翻走再翻回时看不到已经翻好的那半页。
+            // ⚠️ 必须用独立 key（PARTIAL）：不能用 renderKey(TRANSLATED)，
+            // 否则会和最终整页结果混在一起，且失败/取消后残留一张永远刷不掉的半成品。
+            // 半成品还没出来时回退到上一版整页译图：重翻期间页面不该突然退回原图（翻页也会闪一下）
+            ImportedPageTranslation.STATE_TRANSLATING ->
+                renderLru.get(partialKey(pageIndex, baseSig(pageIndex))) ?: lastFullRender(pageIndex)
 
-        // 未翻译但行里还带着上一次成功的载荷（典型：重翻被取消 / 切后台中断）：
-        // 继续显示旧译文。⚠️ 状态必须是 IDLE，队列才会重新挑中这一页去翻 —— 退回 SUCCESS 会让
-        // 「点了重翻」的页永远排不进队列（用户看到的是"重翻了却没变"）
-        ImportedPageTranslation.STATE_IDLE ->
-            if (rowHasPayload(pageIndex)) lastFullRender(pageIndex) else null
+            // 未翻译但行里还带着上一次成功的载荷（典型：重翻被取消 / 切后台中断）：
+            // 继续显示旧译文。⚠️ 状态必须是 IDLE，队列才会重新挑中这一页去翻 —— 退回 SUCCESS 会让
+            // 「点了重翻」的页永远排不进队列（用户看到的是"重翻了却没变"）
+            ImportedPageTranslation.STATE_IDLE ->
+                if (rowHasPayload(pageIndex)) lastFullRender(pageIndex) else null
 
-        else -> null
+            else -> null
+        }
+        if (rendered != null) return rendered
+        // 没有译图（未翻译 / 纯原图态）→ 有超分/增强底图就用它，否则 null（适配器显示源图）
+        return srBaseLru.get(pageIndex)?.bitmap
     }
 
     /** 在途的半成品渲染（每页只允许一个，见 [showPartial]）。 */
@@ -1491,35 +1800,51 @@ class ReaderTranslationController(
         partialJob = scope.launch(Dispatchers.IO) {
             val gen = renderGeneration
             val cfg = cacheManager.getOverlayConfig(appPrefs)
-            val out = renderBubbles(bitmap, bubbles, TranslationCacheManager.OverlayMode.TRANSLATED, cfg)
+            val out = renderPage(page, bitmap, bubbles, TranslationCacheManager.OverlayMode.TRANSLATED, cfg)
             // 代次变了 = 期间替换表被改过，这张半成品是旧规则的 → 丢弃（最终整页结果会覆盖）
             if (gen != renderGeneration) {
                 LogCollector.d(TAG, "showPartial: 替换表已变，丢弃旧规则的半成品 page=$page")
                 return@launch
             }
-            renderLru.put(partialKey(page), out)
+            renderLru.put(partialKey(page, baseSig(page)), out)
             withContext(Dispatchers.Main) { onVisual() }
         }
     }
 
-    /** 取某页某态的图。PLAIN=原图（loadFull）；译文/原文=缓存命中或实时渲染。 */
+    /**
+     * 取某页某态的图。纯原图态（PLAIN）返回**底图本身**（超分开着就是超分底图，否则原图）；
+     * 译文/原文态返回缓存命中或实时渲染。
+     *
+     * ⚠️ PLAIN 分支返回值可能是 `srBaseLru` 里那份底图（**不归调用方**）——调用方只读不改；
+     * 这与原来"返回 `loadFull` 结果"的约定一致（那份也由数据源自持/现解码，非调用方所有）。
+     */
     suspend fun visualBitmap(
         pageIndex: Int,
         mode: TranslationCacheManager.OverlayMode,
-    ): Bitmap? = when (mode) {
-        TranslationCacheManager.OverlayMode.PLAIN -> loadFull(pageIndex)
-        else -> {
-            val key = renderKey(pageIndex, mode)
-            renderLru.get(key) ?: run {
-                val row = rows.value[pageIndex] ?: return null
-                val config = cacheManager.getOverlayConfig(appPrefs)
-                val bubbles = PageTranslationCodec.fromRow(row, config.fontSize, config.bgColor) ?: return null
-                val orig = loadFull(pageIndex) ?: return null
-                val out = renderBubbles(orig, bubbles, mode, config)
-                renderLru.put(key, out)
-                out
+    ): Bitmap? {
+        if (mode == TranslationCacheManager.OverlayMode.PLAIN) {
+            val orig = loadFull(pageIndex) ?: return null
+            val base = srBaseFor(pageIndex, orig, orig.width)
+            if (base != null) {
+                // 底图不是 orig（超分/Anime4K 产物）→ 本次现解码的 orig 要回收
+                if (base.bitmap !== orig && !orig.isRecycled) orig.recycle()
+                return base.bitmap
             }
+            return orig
         }
+        val key = renderKey(pageIndex, mode, baseSig(pageIndex))
+        renderLru.get(key)?.let { return it }
+        val row = rows.value[pageIndex] ?: return null
+        val config = cacheManager.getOverlayConfig(appPrefs)
+        val bubbles = PageTranslationCodec.fromRow(row, config.fontSize, config.bgColor) ?: return null
+        val orig = loadFull(pageIndex) ?: return null
+        val out = try {
+            renderPage(pageIndex, orig, bubbles, mode, config)
+        } finally {
+            if (!orig.isRecycled) orig.recycle()
+        }
+        renderLru.put(key, out)
+        return out
     }
 
     /**
@@ -1527,6 +1852,9 @@ class ReaderTranslationController(
      *
      * ⚠️ 不能复用 [visualBitmap]：它会把结果放进 100MB 的 `renderLru`，而导出动辄上百页 →
      * 一路把 LRU 冲干净，把用户正在看的那页译图也挤掉，退回阅读器还得重渲。
+     *
+     * ⚠️ **刻意不用超分底图**（`base = null`）：导出包是给别人/别的设备看的，
+     * 不该因为"这台机器开过超分"就换一套分辨率；而且 2x 底图会让导出体积翻几倍。
      *
      * ⚠️ **必须在 IO 线程调用**（全尺寸解码 + 全页渲染）；调用方负责 `recycle()` 返回值。
      */
@@ -1537,7 +1865,10 @@ class ReaderTranslationController(
         val bubbles = PageTranslationCodec.fromRow(row, config.fontSize, config.bgColor) ?: return null
         val orig = loadFull(pageIndex) ?: return null
         return try {
-            renderBubbles(orig, bubbles, TranslationCacheManager.OverlayMode.TRANSLATED, config)
+            renderBubbles(
+                original = orig, bubbles = bubbles,
+                mode = TranslationCacheManager.OverlayMode.TRANSLATED, cfg = config, base = null,
+            )
         } finally {
             // renderOverlay 开头就 copy() 出独立副本 → 源图渲染完即可回收（导出逐页进行，别攒内存）
             orig.recycle()
@@ -1617,14 +1948,23 @@ class ReaderTranslationController(
         }
     }
 
-    /** 渲染一行气泡到页图（阅读器渲染的统一出口）。 */
+    /**
+     * 渲染一行气泡到页图（阅读器渲染的统一出口）。**纯函数式、非 suspend** ——
+     * 底图由调用方先经 [srBaseFor] 解析好传进来（那是唯一要读磁盘的一步）。
+     *
+     * @param base 显示底图；null = 用 [original] 本身（原图，baseScale = 1）
+     *
+     * ⚠️ **气泡坐标永远是"原图空间"**（v2 不做 OCR 前超分），超分底图只是**更密的像素**：
+     * `base.scale = 底图宽 / 坐标空间宽` 交给 `OverlayRenderer` 反算坐标空间，这里不手动乘任何坐标。
+     */
     private fun renderBubbles(
         original: Bitmap,
         bubbles: List<TranslatedBubble>,
         mode: TranslationCacheManager.OverlayMode,
         cfg: TranslationCacheManager.OverlayConfig,
+        base: SrBase?,
     ): Bitmap = OverlayRenderer.renderOverlay(
-        original = original,
+        original = base?.bitmap ?: original,
         regions = bubbles,
         fontSize = cfg.fontSize,
         autoFit = cfg.autoFit,
@@ -1648,19 +1988,35 @@ class ReaderTranslationController(
         // 超采样渲染（2026-10）：阅读器上屏的译图按 2 倍栅格化，让**文字**在低分辨率页上也清晰。
         // 底图不变（该多糊还多糊，那是图源决定的）；只有文字从"插值放大的像素"变成"按最终分辨率栅格化"。
         // ⚠️ 只在这一处传 >1：导出/查看器/历史都传默认 1f（它们不吃屏幕分辨率，且结果进 BitmapLruCache）。
-        renderScale = READER_RENDER_SCALE
+        renderScale = READER_RENDER_SCALE,
+        // 超分底图的倍率（v2）：底图 2x、renderScale 也是 2 → 恰好 1:1 落上去，零重采样。
+        // ⚠️ 输出尺寸恒为 `原图宽 × renderScale`，**与底图倍率无关** → renderLru 的内存占用不变。
+        baseScale = base?.scale ?: 1f,
+    )
+
+    /** 解析该页底图后再渲染（分页路径的统一入口：底图 + 渲染一起做完）。 */
+    private suspend fun renderPage(
+        pageIndex: Int,
+        original: Bitmap,
+        bubbles: List<TranslatedBubble>,
+        mode: TranslationCacheManager.OverlayMode,
+        cfg: TranslationCacheManager.OverlayConfig,
+    ): Bitmap = renderBubbles(
+        original = original, bubbles = bubbles, mode = mode, cfg = cfg,
+        base = srBaseFor(pageIndex, original, original.width),
     )
 
     /** 渲染并预热译文图缓存，同时切到该态。最终结果写入后**丢弃半成品**，避免残留旧图。 */
-    private fun renderInto(
+    private suspend fun renderInto(
         pageIndex: Int,
         bubbles: List<TranslatedBubble>,
         mode: TranslationCacheManager.OverlayMode,
         original: Bitmap,
         cfg: TranslationCacheManager.OverlayConfig,
     ) {
-        renderLru.put(renderKey(pageIndex, mode), renderBubbles(original, bubbles, mode, cfg))
-        renderLru.remove(partialKey(pageIndex))
+        val sig = baseSig(pageIndex)
+        renderLru.put(renderKey(pageIndex, mode, sig), renderPage(pageIndex, original, bubbles, mode, cfg))
+        renderLru.remove(partialKey(pageIndex, sig))
         currentVisualByPage[pageIndex] = mode
     }
 
@@ -1701,9 +2057,9 @@ class ReaderTranslationController(
     private val _webtoonTranslated = MutableStateFlow(true)
     val webtoonTranslated: StateFlow<Boolean> get() = _webtoonTranslated
 
-    /** Webtoon 译图缓存（key = pageIndex）。只放当前位置附近的几页，见 [prewarmWebtoon]。 */
-    private val webtoonLru = object : LruCache<Int, Bitmap>(WEBTOON_CACHE_KB) {
-        override fun sizeOf(key: Int, value: Bitmap) =
+    /** Webtoon 译图缓存（key = [webtoonKey]，**含底图签名**）。只放当前位置附近的几页。 */
+    private val webtoonLru = object : LruCache<String, Bitmap>(WEBTOON_CACHE_KB) {
+        override fun sizeOf(key: String, value: Bitmap) =
             value.allocationByteCount.coerceAtLeast(value.rowBytes * value.height) / 1024
     }
 
@@ -1736,7 +2092,7 @@ class ReaderTranslationController(
     fun webtoonCachedBitmap(pageIndex: Int): Bitmap? {
         if (!_webtoonTranslated.value) return null
         if (stateOf(pageIndex) != ImportedPageTranslation.STATE_SUCCESS) return null
-        return webtoonLru.get(pageIndex)
+        return webtoonLru.get(webtoonKey(pageIndex, baseSig(pageIndex)))
     }
 
     /**
@@ -1755,7 +2111,8 @@ class ReaderTranslationController(
         val from = (center - radius).coerceAtLeast(0)
         val to = (center + radius).coerceAtMost(total - 1)
         val pending = (from..to).filter { p ->
-            stateOf(p) == ImportedPageTranslation.STATE_SUCCESS && webtoonLru.get(p) == null
+            stateOf(p) == ImportedPageTranslation.STATE_SUCCESS &&
+                webtoonLru.get(webtoonKey(p, baseSig(p))) == null
         }
         if (pending.isEmpty()) return
 
@@ -1774,15 +2131,22 @@ class ReaderTranslationController(
                 val scale = if (fullW > 0) src.width.toFloat() / fullW else 1f
                 val scaled = if (scale != 1f && scale > 0f) bubbles.map { it.scaledBy(scale) } else bubbles
                 // Webtoon 只有「原图」与「译文」两态：原图不经渲染（适配器直出采样图），
-                // 所以这里恒按译文渲染
-                val out = renderBubbles(src, scaled, TranslationCacheManager.OverlayMode.TRANSLATED, cfg)
+                // 所以这里恒按译文渲染。
+                //
+                // ⚠️ **不用超分底图**：Webtoon 页是**按屏宽采样解码**的（超长条防 OOM），
+                //    而超分产物是"原图精确 2x"，拿它当底图要重算一套采样倍率，
+                //    且 Webtoon 本来就禁用单页翻译、右下角也没有超分按钮（用户口径）。
+                val out = renderBubbles(
+                    original = src, bubbles = scaled,
+                    mode = TranslationCacheManager.OverlayMode.TRANSLATED, cfg = cfg, base = null,
+                )
                 // 代次变了 = 渲染期间替换表被改过 → 这张是旧规则的，写进去会被预热的
                 // 「webtoonLru.get(p) == null」过滤永久跳过（规则再也生效不了）
                 if (gen != renderGeneration) {
                     LogCollector.d(TAG, "prewarmWebtoon: 替换表已变，丢弃旧规则的译图 page=$p")
                     break
                 }
-                webtoonLru.put(p, out)
+                webtoonLru.put(webtoonKey(p, baseSig(p)), out)
                 withContext(Dispatchers.Main) { onVisual() }
             }
         }

@@ -1,0 +1,29 @@
+<!-- 超分（AI 放大）图标：四角外扩括号 + 中间向上箭头。
+     ⚠️ 填充色恒为白，实际颜色由 ImageView 的 tint 决定（与同组的 ic_reader_translate 一致）：
+     正常 = 白色；该页正显示**超分底图** = 高亮蓝（#55AEEA）；超分中 = 半透明。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- 左上角 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M4.5,9.5V5.5A1,1 0 0 1 5.5,4.5h4v1.8h-3.2v3.2z"/>
+    <!-- 右上角 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M19.5,9.5V5.5A1,1 0 0 0 18.5,4.5h-4v1.8h3.2v3.2z"/>
+    <!-- 左下角 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M4.5,14.5v4A1,1 0 0 0 5.5,19.5h4v-1.8H6.3v-3.2z"/>
+    <!-- 右下角 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M19.5,14.5v4A1,1 0 0 1 18.5,19.5h-4v-1.8h3.2v-3.2z"/>
+    <!-- 中间向上箭头 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,7.4l4.1,4.1 -1.3,1.3 -1.9,-1.9v5.4h-1.8v-5.4l-1.9,1.9 -1.3,-1.3z"/>
+</vector>
