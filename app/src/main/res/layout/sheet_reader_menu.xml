@@ -458,19 +458,35 @@
                          ② 阅读器超分开关 = 本页「超分」总闸（阅读器独立，与截图链路无关）
                          ③ 翻译时自动超分 = 点翻译 → 原图 OCR → 之后启动超分（与 API 请求并行）
                          ④ Anime4K = 独立档位，点行循环切档；**超分开着时置灰**（两者互斥）
-                         ⚠️ **超分关闭时 sr_panel_group 整组 GONE**（用户口径：关闭就不显示超分
+                         ⚠️ **超分关闭时只隐藏 `sr_panel_group`**（用户口径：关闭就不显示超分
                             模型选择和「翻译时自动超分」组件）；Anime4K 行**保留可见**
                             —— 它是零下载的基础显示层，关掉超分后正是它的用武之地。
+                         ⚠️ **总开关 `sw_reader_sr` 必须在 `sr_panel_group` 之外**：
+                            超分**默认是关的**，把开关放进"关着就隐藏"的那一组 = **单向门** ——
+                            用户永远打不开这个功能（2026-10 真机反馈踩过：整个调色面板里
+                            一点超分的东西都看不到）。组内只放"开着才有意义"的东西。
                          ⚠️ 下面这些 TextView 都要在 applyPanelTheme 登记（label 组 / sub 组），
                             漏登记 = 深色调色面板下同色字压同色底、看不见
                          ══════════════════════════════════════════════ -->
+                    <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000" android:layout_marginTop="6dp"/>
+
+                    <!-- 超分总开关：**始终可见**（唯一入口，个性化里没有它） -->
+                    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                        android:orientation="horizontal" android:paddingTop="10dp" android:paddingBottom="8dp"
+                        android:gravity="center_vertical">
+                        <TextView android:id="@+id/tv_sr_switch_label" android:layout_width="0dp" android:layout_height="wrap_content"
+                            android:layout_weight="1" android:text="@string/reader_sr_switch_label" android:textSize="14sp" android:textColor="#333333"
+                            android:ellipsize="end" android:maxLines="1"
+                            android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="14sp" android:autoSizeStepGranularity="1sp"/>
+                        <Switch android:id="@+id/sw_reader_sr" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
+                    </LinearLayout>
+
+                    <!-- 超分开启后才显示的那几项 -->
                     <LinearLayout android:id="@+id/sr_panel_group" android:layout_width="match_parent"
                         android:layout_height="wrap_content" android:orientation="vertical">
 
-                        <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000" android:layout_marginTop="6dp"/>
-
                         <LinearLayout android:id="@+id/btn_model_sr" android:layout_width="match_parent" android:layout_height="wrap_content"
-                            android:orientation="horizontal" android:paddingTop="10dp" android:paddingBottom="10dp"
+                            android:orientation="horizontal" android:paddingTop="4dp" android:paddingBottom="10dp"
                             android:gravity="center_vertical" android:clickable="true">
                             <TextView android:id="@+id/tv_sr_model_row" android:layout_width="0dp" android:layout_height="wrap_content"
                                 android:layout_weight="1" android:textSize="14sp" android:textColor="#333333"
@@ -478,16 +494,6 @@
                                 android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="14sp" android:autoSizeStepGranularity="1sp"/>
                             <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
                                 android:text="›" android:textSize="16sp" android:textColor="#BBBBBB"/>
-                        </LinearLayout>
-
-                        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-                            android:orientation="horizontal" android:paddingBottom="8dp"
-                            android:gravity="center_vertical">
-                            <TextView android:id="@+id/tv_sr_switch_label" android:layout_width="0dp" android:layout_height="wrap_content"
-                                android:layout_weight="1" android:text="@string/reader_sr_switch_label" android:textSize="14sp" android:textColor="#333333"
-                                android:ellipsize="end" android:maxLines="1"
-                                android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="14sp" android:autoSizeStepGranularity="1sp"/>
-                            <Switch android:id="@+id/sw_reader_sr" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
                         </LinearLayout>
 
                         <!-- 「翻译时自动超分」：管的是"点翻译要不要顺手超分"。

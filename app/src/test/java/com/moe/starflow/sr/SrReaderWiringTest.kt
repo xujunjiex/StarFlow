@@ -89,10 +89,50 @@ class SrReaderWiringTest {
         )
         // Anime4K 行**不在**超分组里（关掉超分后还要能用，否则这个功能永远不可用）
         val groupStart = layout.indexOf("android:id=\"@+id/sr_panel_group\"")
-        val groupEnd = layout.indexOf("</LinearLayout>", groupStart)
-        val anime4k = layout.indexOf("android:id=\"@+id/btn_anime4k\"")
         assertTrue("sr_panel_group 必须真的存在", groupStart > 0)
+        // ⚠️ 必须从 `<LinearLayout` **标签本身**开始配对计数：`groupStart` 指的是
+        //    `android:id="…sr_panel_group"` 这个属性，它在标签内部 —— 从那里开始数会漏掉
+        //    外层那一层，结果停在第一个子控件的右括号上，后面几条断言就全是假的。
+        val groupEnd = matchingLinearLayoutEnd(layout, layout.lastIndexOf("<LinearLayout", groupStart))
+        val anime4k = layout.indexOf("android:id=\"@+id/btn_anime4k\"")
         assertTrue("Anime4K 行必须在 sr_panel_group 之外（关掉超分后仍可用）", anime4k > groupEnd)
+
+        // ⚠️ **总开关也必须在组外** —— 这是真机踩过的单向门：
+        //    超分**默认是关的**，开关一旦落在"关着就隐藏"的那一组里，用户永远看不到它、
+        //    也就永远打不开这个功能（表现为"阅读器面板里一点超分的东西都没有"）。
+        val switchPos = layout.indexOf("android:id=\"@+id/sw_reader_sr\"")
+        val switchAutoPos = layout.indexOf("android:id=\"@+id/sw_reader_sr_auto\"")
+        val modelRowPos = layout.indexOf("android:id=\"@+id/btn_model_sr\"")
+        assertTrue("总开关必须存在", switchPos > 0)
+        assertTrue(
+            "超分总开关 sw_reader_sr 绝不能在 sr_panel_group 里面（否则是单向门）",
+            switchPos < groupStart,
+        )
+        assertTrue("超分模型行要在组**内**（超分关着时该一起消失）", modelRowPos in groupStart until groupEnd)
+        assertTrue(
+            "「翻译时自动超分」开关要在组**内**（超分关着时该一起消失）",
+            switchAutoPos in groupStart until groupEnd,
+        )
+    }
+
+    /** 从某个 `<LinearLayout` 的起点找到与它配对的 `</LinearLayout>` 起点（按嵌套计数）。 */
+    private fun matchingLinearLayoutEnd(text: String, openIdx: Int): Int {
+        var i = openIdx
+        var depth = 0
+        while (i < text.length) {
+            val nextOpen = text.indexOf("<LinearLayout", i)
+            val nextClose = text.indexOf("</LinearLayout>", i)
+            if (nextClose < 0) return text.length
+            if (nextOpen in 0 until nextClose) {
+                depth++
+                i = nextOpen + 13
+            } else {
+                depth--
+                if (depth == 0) return nextClose
+                i = nextClose + 15
+            }
+        }
+        return text.length
     }
 
     @Test
