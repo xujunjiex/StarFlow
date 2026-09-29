@@ -582,33 +582,42 @@
                     android:textColor="#888"
                     android:layout_marginBottom="8dp"/>
 
-                <!-- 模型标题 + 行内选中标记（不可点 RadioButton，点行本身即选中 —— 与 LlamaCpp 模型页同做法）。
-                     ⚠️ 必须逐行显式赋值：只写 isChecked=true 会让上一个模型的高亮留在屏幕上。 -->
+                <!-- 一个模型 = **一个可点的整体**：外层容器拿行根 id，同时包住「标题 + 选中圈」与下载行。
+                     ⚠️ 行根 id 必须在**同时包住标题与下载行**的这一层 —— 挂在 <include> 上时标题在它之外，
+                     用户点模型名毫无反应（真机反馈：「只能一级切换、无法二级切换」）。
+                     行内按钮（浏览器/下载/删除/取消）各有自己的监听器，会自行消费点击，不受影响。 -->
                 <LinearLayout
+                    android:id="@+id/sr_aji_balanced_row"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical">
+                    android:orientation="vertical"
+                    android:clickable="true">
 
-                    <TextView
-                        android:layout_width="0dp"
+                    <LinearLayout
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/sr_model_animejanai_balanced"
-                        android:textSize="14sp"
-                        android:textStyle="bold"/>
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
 
-                    <RadioButton
-                        android:id="@+id/sr_aji_balanced_radio"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:clickable="false"
-                        android:focusable="false"/>
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/sr_model_animejanai_balanced"
+                            android:textSize="14sp"
+                            android:textStyle="bold"/>
+
+                        <RadioButton
+                            android:id="@+id/sr_aji_balanced_radio"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:clickable="false"
+                            android:focusable="false"/>
+                    </LinearLayout>
+
+                    <include
+                        layout="@layout/item_model_row_browser"/>
                 </LinearLayout>
-
-                <include
-                    layout="@layout/item_model_row_browser"
-                    android:id="@+id/sr_aji_balanced_row"/>
 
                 <View
                     android:layout_width="match_parent"
@@ -619,33 +628,42 @@
                     android:layout_marginTop="8dp"
                     android:layout_marginBottom="8dp"/>
 
-                <!-- 模型标题 + 行内选中标记（不可点 RadioButton，点行本身即选中 —— 与 LlamaCpp 模型页同做法）。
-                     ⚠️ 必须逐行显式赋值：只写 isChecked=true 会让上一个模型的高亮留在屏幕上。 -->
+                <!-- 一个模型 = **一个可点的整体**：外层容器拿行根 id，同时包住「标题 + 选中圈」与下载行。
+                     ⚠️ 行根 id 必须在**同时包住标题与下载行**的这一层 —— 挂在 <include> 上时标题在它之外，
+                     用户点模型名毫无反应（真机反馈：「只能一级切换、无法二级切换」）。
+                     行内按钮（浏览器/下载/删除/取消）各有自己的监听器，会自行消费点击，不受影响。 -->
                 <LinearLayout
+                    android:id="@+id/sr_aji_perf_row"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical">
+                    android:orientation="vertical"
+                    android:clickable="true">
 
-                    <TextView
-                        android:layout_width="0dp"
+                    <LinearLayout
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/sr_model_animejanai_performance"
-                        android:textSize="14sp"
-                        android:textStyle="bold"/>
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
 
-                    <RadioButton
-                        android:id="@+id/sr_aji_perf_radio"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:clickable="false"
-                        android:focusable="false"/>
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/sr_model_animejanai_performance"
+                            android:textSize="14sp"
+                            android:textStyle="bold"/>
+
+                        <RadioButton
+                            android:id="@+id/sr_aji_perf_radio"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:clickable="false"
+                            android:focusable="false"/>
+                    </LinearLayout>
+
+                    <include
+                        layout="@layout/item_model_row_browser"/>
                 </LinearLayout>
-
-                <include
-                    layout="@layout/item_model_row_browser"
-                    android:id="@+id/sr_aji_perf_row"/>
 
                 <View
                     android:layout_width="match_parent"
@@ -656,33 +674,42 @@
                     android:layout_marginTop="8dp"
                     android:layout_marginBottom="8dp"/>
 
-                <!-- 模型标题 + 行内选中标记（不可点 RadioButton，点行本身即选中 —— 与 LlamaCpp 模型页同做法）。
-                     ⚠️ 必须逐行显式赋值：只写 isChecked=true 会让上一个模型的高亮留在屏幕上。 -->
+                <!-- 一个模型 = **一个可点的整体**：外层容器拿行根 id，同时包住「标题 + 选中圈」与下载行。
+                     ⚠️ 行根 id 必须在**同时包住标题与下载行**的这一层 —— 挂在 <include> 上时标题在它之外，
+                     用户点模型名毫无反应（真机反馈：「只能一级切换、无法二级切换」）。
+                     行内按钮（浏览器/下载/删除/取消）各有自己的监听器，会自行消费点击，不受影响。 -->
                 <LinearLayout
+                    android:id="@+id/sr_aji_sharp1_balanced_row"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical">
+                    android:orientation="vertical"
+                    android:clickable="true">
 
-                    <TextView
-                        android:layout_width="0dp"
+                    <LinearLayout
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/sr_model_animejanai_sharp1_balanced"
-                        android:textSize="14sp"
-                        android:textStyle="bold"/>
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
 
-                    <RadioButton
-                        android:id="@+id/sr_aji_sharp1_balanced_radio"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:clickable="false"
-                        android:focusable="false"/>
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/sr_model_animejanai_sharp1_balanced"
+                            android:textSize="14sp"
+                            android:textStyle="bold"/>
+
+                        <RadioButton
+                            android:id="@+id/sr_aji_sharp1_balanced_radio"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:clickable="false"
+                            android:focusable="false"/>
+                    </LinearLayout>
+
+                    <include
+                        layout="@layout/item_model_row_browser"/>
                 </LinearLayout>
-
-                <include
-                    layout="@layout/item_model_row_browser"
-                    android:id="@+id/sr_aji_sharp1_balanced_row"/>
 
                 <View
                     android:layout_width="match_parent"
@@ -693,33 +720,42 @@
                     android:layout_marginTop="8dp"
                     android:layout_marginBottom="8dp"/>
 
-                <!-- 模型标题 + 行内选中标记（不可点 RadioButton，点行本身即选中 —— 与 LlamaCpp 模型页同做法）。
-                     ⚠️ 必须逐行显式赋值：只写 isChecked=true 会让上一个模型的高亮留在屏幕上。 -->
+                <!-- 一个模型 = **一个可点的整体**：外层容器拿行根 id，同时包住「标题 + 选中圈」与下载行。
+                     ⚠️ 行根 id 必须在**同时包住标题与下载行**的这一层 —— 挂在 <include> 上时标题在它之外，
+                     用户点模型名毫无反应（真机反馈：「只能一级切换、无法二级切换」）。
+                     行内按钮（浏览器/下载/删除/取消）各有自己的监听器，会自行消费点击，不受影响。 -->
                 <LinearLayout
+                    android:id="@+id/sr_aji_sharp1_perf_row"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical">
+                    android:orientation="vertical"
+                    android:clickable="true">
 
-                    <TextView
-                        android:layout_width="0dp"
+                    <LinearLayout
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/sr_model_animejanai_sharp1_performance"
-                        android:textSize="14sp"
-                        android:textStyle="bold"/>
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
 
-                    <RadioButton
-                        android:id="@+id/sr_aji_sharp1_perf_radio"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:clickable="false"
-                        android:focusable="false"/>
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/sr_model_animejanai_sharp1_performance"
+                            android:textSize="14sp"
+                            android:textStyle="bold"/>
+
+                        <RadioButton
+                            android:id="@+id/sr_aji_sharp1_perf_radio"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:clickable="false"
+                            android:focusable="false"/>
+                    </LinearLayout>
+
+                    <include
+                        layout="@layout/item_model_row_browser"/>
                 </LinearLayout>
-
-                <include
-                    layout="@layout/item_model_row_browser"
-                    android:id="@+id/sr_aji_sharp1_perf_row"/>
 
                 <View
                     android:layout_width="match_parent"
@@ -730,33 +766,42 @@
                     android:layout_marginTop="8dp"
                     android:layout_marginBottom="8dp"/>
 
-                <!-- 模型标题 + 行内选中标记（不可点 RadioButton，点行本身即选中 —— 与 LlamaCpp 模型页同做法）。
-                     ⚠️ 必须逐行显式赋值：只写 isChecked=true 会让上一个模型的高亮留在屏幕上。 -->
+                <!-- 一个模型 = **一个可点的整体**：外层容器拿行根 id，同时包住「标题 + 选中圈」与下载行。
+                     ⚠️ 行根 id 必须在**同时包住标题与下载行**的这一层 —— 挂在 <include> 上时标题在它之外，
+                     用户点模型名毫无反应（真机反馈：「只能一级切换、无法二级切换」）。
+                     行内按钮（浏览器/下载/删除/取消）各有自己的监听器，会自行消费点击，不受影响。 -->
                 <LinearLayout
+                    android:id="@+id/sr_aji_sd_row"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical">
+                    android:orientation="vertical"
+                    android:clickable="true">
 
-                    <TextView
-                        android:layout_width="0dp"
+                    <LinearLayout
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/sr_model_animejanai_sd_compact"
-                        android:textSize="14sp"
-                        android:textStyle="bold"/>
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
 
-                    <RadioButton
-                        android:id="@+id/sr_aji_sd_radio"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:clickable="false"
-                        android:focusable="false"/>
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/sr_model_animejanai_sd_compact"
+                            android:textSize="14sp"
+                            android:textStyle="bold"/>
+
+                        <RadioButton
+                            android:id="@+id/sr_aji_sd_radio"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:clickable="false"
+                            android:focusable="false"/>
+                    </LinearLayout>
+
+                    <include
+                        layout="@layout/item_model_row_browser"/>
                 </LinearLayout>
-
-                <include
-                    layout="@layout/item_model_row_browser"
-                    android:id="@+id/sr_aji_sd_row"/>
 
             </LinearLayout>
 
@@ -797,33 +842,42 @@
                     android:textColor="#888"
                     android:layout_marginBottom="8dp"/>
 
-                <!-- 模型标题 + 行内选中标记（不可点 RadioButton，点行本身即选中 —— 与 LlamaCpp 模型页同做法）。
-                     ⚠️ 必须逐行显式赋值：只写 isChecked=true 会让上一个模型的高亮留在屏幕上。 -->
+                <!-- 一个模型 = **一个可点的整体**：外层容器拿行根 id，同时包住「标题 + 选中圈」与下载行。
+                     ⚠️ 行根 id 必须在**同时包住标题与下载行**的这一层 —— 挂在 <include> 上时标题在它之外，
+                     用户点模型名毫无反应（真机反馈：「只能一级切换、无法二级切换」）。
+                     行内按钮（浏览器/下载/删除/取消）各有自己的监听器，会自行消费点击，不受影响。 -->
                 <LinearLayout
+                    android:id="@+id/sr_w2xc_n0_row"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical">
+                    android:orientation="vertical"
+                    android:clickable="true">
 
-                    <TextView
-                        android:layout_width="0dp"
+                    <LinearLayout
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/sr_model_w2x_cunet_n0"
-                        android:textSize="14sp"
-                        android:textStyle="bold"/>
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
 
-                    <RadioButton
-                        android:id="@+id/sr_w2xc_n0_radio"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:clickable="false"
-                        android:focusable="false"/>
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/sr_model_w2x_cunet_n0"
+                            android:textSize="14sp"
+                            android:textStyle="bold"/>
+
+                        <RadioButton
+                            android:id="@+id/sr_w2xc_n0_radio"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:clickable="false"
+                            android:focusable="false"/>
+                    </LinearLayout>
+
+                    <include
+                        layout="@layout/item_model_row_browser"/>
                 </LinearLayout>
-
-                <include
-                    layout="@layout/item_model_row_browser"
-                    android:id="@+id/sr_w2xc_n0_row"/>
 
                 <View
                     android:layout_width="match_parent"
@@ -834,33 +888,42 @@
                     android:layout_marginTop="8dp"
                     android:layout_marginBottom="8dp"/>
 
-                <!-- 模型标题 + 行内选中标记（不可点 RadioButton，点行本身即选中 —— 与 LlamaCpp 模型页同做法）。
-                     ⚠️ 必须逐行显式赋值：只写 isChecked=true 会让上一个模型的高亮留在屏幕上。 -->
+                <!-- 一个模型 = **一个可点的整体**：外层容器拿行根 id，同时包住「标题 + 选中圈」与下载行。
+                     ⚠️ 行根 id 必须在**同时包住标题与下载行**的这一层 —— 挂在 <include> 上时标题在它之外，
+                     用户点模型名毫无反应（真机反馈：「只能一级切换、无法二级切换」）。
+                     行内按钮（浏览器/下载/删除/取消）各有自己的监听器，会自行消费点击，不受影响。 -->
                 <LinearLayout
+                    android:id="@+id/sr_w2xc_n1_row"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical">
+                    android:orientation="vertical"
+                    android:clickable="true">
 
-                    <TextView
-                        android:layout_width="0dp"
+                    <LinearLayout
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/sr_model_w2x_cunet_n1"
-                        android:textSize="14sp"
-                        android:textStyle="bold"/>
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
 
-                    <RadioButton
-                        android:id="@+id/sr_w2xc_n1_radio"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:clickable="false"
-                        android:focusable="false"/>
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/sr_model_w2x_cunet_n1"
+                            android:textSize="14sp"
+                            android:textStyle="bold"/>
+
+                        <RadioButton
+                            android:id="@+id/sr_w2xc_n1_radio"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:clickable="false"
+                            android:focusable="false"/>
+                    </LinearLayout>
+
+                    <include
+                        layout="@layout/item_model_row_browser"/>
                 </LinearLayout>
-
-                <include
-                    layout="@layout/item_model_row_browser"
-                    android:id="@+id/sr_w2xc_n1_row"/>
 
                 <View
                     android:layout_width="match_parent"
@@ -871,33 +934,42 @@
                     android:layout_marginTop="8dp"
                     android:layout_marginBottom="8dp"/>
 
-                <!-- 模型标题 + 行内选中标记（不可点 RadioButton，点行本身即选中 —— 与 LlamaCpp 模型页同做法）。
-                     ⚠️ 必须逐行显式赋值：只写 isChecked=true 会让上一个模型的高亮留在屏幕上。 -->
+                <!-- 一个模型 = **一个可点的整体**：外层容器拿行根 id，同时包住「标题 + 选中圈」与下载行。
+                     ⚠️ 行根 id 必须在**同时包住标题与下载行**的这一层 —— 挂在 <include> 上时标题在它之外，
+                     用户点模型名毫无反应（真机反馈：「只能一级切换、无法二级切换」）。
+                     行内按钮（浏览器/下载/删除/取消）各有自己的监听器，会自行消费点击，不受影响。 -->
                 <LinearLayout
+                    android:id="@+id/sr_w2xc_n2_row"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical">
+                    android:orientation="vertical"
+                    android:clickable="true">
 
-                    <TextView
-                        android:layout_width="0dp"
+                    <LinearLayout
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/sr_model_w2x_cunet_n2"
-                        android:textSize="14sp"
-                        android:textStyle="bold"/>
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
 
-                    <RadioButton
-                        android:id="@+id/sr_w2xc_n2_radio"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:clickable="false"
-                        android:focusable="false"/>
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/sr_model_w2x_cunet_n2"
+                            android:textSize="14sp"
+                            android:textStyle="bold"/>
+
+                        <RadioButton
+                            android:id="@+id/sr_w2xc_n2_radio"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:clickable="false"
+                            android:focusable="false"/>
+                    </LinearLayout>
+
+                    <include
+                        layout="@layout/item_model_row_browser"/>
                 </LinearLayout>
-
-                <include
-                    layout="@layout/item_model_row_browser"
-                    android:id="@+id/sr_w2xc_n2_row"/>
 
                 <View
                     android:layout_width="match_parent"
@@ -908,33 +980,42 @@
                     android:layout_marginTop="8dp"
                     android:layout_marginBottom="8dp"/>
 
-                <!-- 模型标题 + 行内选中标记（不可点 RadioButton，点行本身即选中 —— 与 LlamaCpp 模型页同做法）。
-                     ⚠️ 必须逐行显式赋值：只写 isChecked=true 会让上一个模型的高亮留在屏幕上。 -->
+                <!-- 一个模型 = **一个可点的整体**：外层容器拿行根 id，同时包住「标题 + 选中圈」与下载行。
+                     ⚠️ 行根 id 必须在**同时包住标题与下载行**的这一层 —— 挂在 <include> 上时标题在它之外，
+                     用户点模型名毫无反应（真机反馈：「只能一级切换、无法二级切换」）。
+                     行内按钮（浏览器/下载/删除/取消）各有自己的监听器，会自行消费点击，不受影响。 -->
                 <LinearLayout
+                    android:id="@+id/sr_w2xc_n3_row"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical">
+                    android:orientation="vertical"
+                    android:clickable="true">
 
-                    <TextView
-                        android:layout_width="0dp"
+                    <LinearLayout
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/sr_model_w2x_cunet_n3"
-                        android:textSize="14sp"
-                        android:textStyle="bold"/>
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
 
-                    <RadioButton
-                        android:id="@+id/sr_w2xc_n3_radio"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:clickable="false"
-                        android:focusable="false"/>
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/sr_model_w2x_cunet_n3"
+                            android:textSize="14sp"
+                            android:textStyle="bold"/>
+
+                        <RadioButton
+                            android:id="@+id/sr_w2xc_n3_radio"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:clickable="false"
+                            android:focusable="false"/>
+                    </LinearLayout>
+
+                    <include
+                        layout="@layout/item_model_row_browser"/>
                 </LinearLayout>
-
-                <include
-                    layout="@layout/item_model_row_browser"
-                    android:id="@+id/sr_w2xc_n3_row"/>
 
             </LinearLayout>
 
@@ -975,33 +1056,42 @@
                     android:textColor="#888"
                     android:layout_marginBottom="8dp"/>
 
-                <!-- 模型标题 + 行内选中标记（不可点 RadioButton，点行本身即选中 —— 与 LlamaCpp 模型页同做法）。
-                     ⚠️ 必须逐行显式赋值：只写 isChecked=true 会让上一个模型的高亮留在屏幕上。 -->
+                <!-- 一个模型 = **一个可点的整体**：外层容器拿行根 id，同时包住「标题 + 选中圈」与下载行。
+                     ⚠️ 行根 id 必须在**同时包住标题与下载行**的这一层 —— 挂在 <include> 上时标题在它之外，
+                     用户点模型名毫无反应（真机反馈：「只能一级切换、无法二级切换」）。
+                     行内按钮（浏览器/下载/删除/取消）各有自己的监听器，会自行消费点击，不受影响。 -->
                 <LinearLayout
+                    android:id="@+id/sr_w2xs_n0_row"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical">
+                    android:orientation="vertical"
+                    android:clickable="true">
 
-                    <TextView
-                        android:layout_width="0dp"
+                    <LinearLayout
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/sr_model_w2x_swin_n0"
-                        android:textSize="14sp"
-                        android:textStyle="bold"/>
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
 
-                    <RadioButton
-                        android:id="@+id/sr_w2xs_n0_radio"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:clickable="false"
-                        android:focusable="false"/>
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/sr_model_w2x_swin_n0"
+                            android:textSize="14sp"
+                            android:textStyle="bold"/>
+
+                        <RadioButton
+                            android:id="@+id/sr_w2xs_n0_radio"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:clickable="false"
+                            android:focusable="false"/>
+                    </LinearLayout>
+
+                    <include
+                        layout="@layout/item_model_row_browser"/>
                 </LinearLayout>
-
-                <include
-                    layout="@layout/item_model_row_browser"
-                    android:id="@+id/sr_w2xs_n0_row"/>
 
                 <View
                     android:layout_width="match_parent"
@@ -1012,33 +1102,42 @@
                     android:layout_marginTop="8dp"
                     android:layout_marginBottom="8dp"/>
 
-                <!-- 模型标题 + 行内选中标记（不可点 RadioButton，点行本身即选中 —— 与 LlamaCpp 模型页同做法）。
-                     ⚠️ 必须逐行显式赋值：只写 isChecked=true 会让上一个模型的高亮留在屏幕上。 -->
+                <!-- 一个模型 = **一个可点的整体**：外层容器拿行根 id，同时包住「标题 + 选中圈」与下载行。
+                     ⚠️ 行根 id 必须在**同时包住标题与下载行**的这一层 —— 挂在 <include> 上时标题在它之外，
+                     用户点模型名毫无反应（真机反馈：「只能一级切换、无法二级切换」）。
+                     行内按钮（浏览器/下载/删除/取消）各有自己的监听器，会自行消费点击，不受影响。 -->
                 <LinearLayout
+                    android:id="@+id/sr_w2xs_n1_row"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical">
+                    android:orientation="vertical"
+                    android:clickable="true">
 
-                    <TextView
-                        android:layout_width="0dp"
+                    <LinearLayout
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/sr_model_w2x_swin_n1"
-                        android:textSize="14sp"
-                        android:textStyle="bold"/>
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
 
-                    <RadioButton
-                        android:id="@+id/sr_w2xs_n1_radio"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:clickable="false"
-                        android:focusable="false"/>
+                        <TextView
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/sr_model_w2x_swin_n1"
+                            android:textSize="14sp"
+                            android:textStyle="bold"/>
+
+                        <RadioButton
+                            android:id="@+id/sr_w2xs_n1_radio"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:clickable="false"
+                            android:focusable="false"/>
+                    </LinearLayout>
+
+                    <include
+                        layout="@layout/item_model_row_browser"/>
                 </LinearLayout>
-
-                <include
-                    layout="@layout/item_model_row_browser"
-                    android:id="@+id/sr_w2xs_n1_row"/>
 
             </LinearLayout>
 

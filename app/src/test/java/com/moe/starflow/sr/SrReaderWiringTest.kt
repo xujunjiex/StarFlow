@@ -1,5 +1,6 @@
 package com.moe.starflow.sr
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -142,6 +143,50 @@ class SrReaderWiringTest {
         assertFalse("主题清单里不该再登记 tv_anime4k_hint", menuSheet().contains("R.id.tv_anime4k_hint"))
         // 新增的「翻译时自动超分」标签必须登记进 label 组（漏登记 = 深色面板下看不见）
         assertTrue("tv_sr_auto_label 必须进 label 配色组", menuSheet().contains("R.id.tv_sr_auto_label"))
+    }
+
+    @Test
+    fun switchingModelOnlyProgrammaticallyNeverFiresUserCallbacks() {
+        val sheet = menuSheet()
+        // ⚠️ 真机反馈：「每次进入阅读器的面板都会提示翻译完成后自动超分」。
+        //    根因：`isChecked = true` 会**派发** OnCheckedChangeListener（与用户手点同一条路），
+        //    而 `refreshSrGroup()` 每次开面板都会回填这两个开关 → 每次都弹提示；
+        //    超分开着时还会顺带触发 `onReaderSrChanged` → 作废全部渲染缓存 + 重渲染。
+        assertTrue("必须有「程序化回填期间抑制回调」的开关", sheet.contains("var suppressSrSwitch = false"))
+        assertTrue("回填前要置位", sheet.contains("suppressSrSwitch = true"))
+        assertTrue("回填后要复位（finally，异常路径也一样）", sheet.contains("suppressSrSwitch = false"))
+        // 两个监听都必须早退（少写一个就等于没修）
+        val guarded = Regex("if \\(suppressSrSwitch\\) return@setOnCheckedChangeListener").findAll(sheet).count()
+        assertEquals("两个超分 Switch 的监听都要被抑制", 2, guarded)
+    }
+
+    @Test
+    fun srModelRowRootCoversBothTitleAndDownloadRow() {
+        // ⚠️ 真机反馈：「已下载的模型无法切换（只能一级切换，无法二级切换）」。
+        //    根因：行根 id 挂在 <include> 上，而「模型名 + 选中圈」在它**外面** ——
+        //    用户点模型名（最自然的目标，旁边还画了个单选圈）什么都不会发生。
+        //    行根必须在同时包住「标题/选中圈」与「下载行」的那一层上。
+        val layout = read("src/main/res/layout/fragment_model_management.xml")
+        for (base in listOf(
+            "sr_aji_balanced", "sr_aji_perf", "sr_aji_sharp1_balanced", "sr_aji_sharp1_perf",
+            "sr_aji_sd", "sr_w2xc_n0", "sr_w2xc_n1", "sr_w2xc_n2", "sr_w2xc_n3",
+            "sr_w2xs_n0", "sr_w2xs_n1",
+        )) {
+            val wrapper = layout.indexOf("android:id=\"@+id/${base}_row\"")
+            val radio = layout.indexOf("android:id=\"@+id/${base}_radio\"")
+            val include = layout.indexOf("layout=\"@layout/item_model_row_browser\"", wrapper)
+            assertTrue("$base: 找不到行根", wrapper > 0)
+            assertTrue("$base: 找不到选中圈", radio > 0)
+            // 选中圈在行根**之后**（即被它包住），下载行也在行根之后
+            assertTrue("$base: 选中圈必须在行根容器里（否则点模型名没反应）", radio > wrapper)
+            assertTrue("$base: 下载行必须在行根容器里", include > wrapper)
+            // 行根的闭合标签必须在两者之后 —— 即它确实"包住"了这两块
+            val close = matchingLinearLayoutEnd(layout, layout.lastIndexOf("<LinearLayout", wrapper))
+            assertTrue("$base: 行根必须包住选中圈", close > radio)
+            assertTrue("$base: 行根必须包住下载行", close > include)
+            // <include> 自己不该再抢这个 id（否则行根又变成"只包住下载行"）
+            assertFalse("$base: include 不该再带行根 id", layout.contains("android:id=\"@+id/${base}_row\"/>"))
+        }
     }
 
     @Test

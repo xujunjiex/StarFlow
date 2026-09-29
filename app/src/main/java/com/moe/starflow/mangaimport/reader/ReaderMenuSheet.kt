@@ -650,8 +650,26 @@ class ReaderMenuSheet(
         }
 
         /**
+         * 程序化回填两个超分 Switch 期间**抑制它们的回调**。
+         *
+         * ⚠️ 这是真机反馈修出来的：`isChecked = true` 会**派发** `OnCheckedChangeListener`
+         * （跟用户手点走的是同一条路），于是每次打开面板都会：
+         * - 弹一次「翻译完成后会自动超分当前页」（`sw_reader_sr_auto` 在 XML 里的初值是 false，
+         *   而默认值是 true → 每次都算"变化"）。**注意这个开关在超分关闭时是隐藏的，
+         *   但隐藏不影响回调派发** —— 所以用户会看到一个"看不见的开关"在弹提示。
+         * - 超分开着时还会多弹一次「阅读器超分已开启」，并触发 `onReaderSrChanged`
+         *   → 宿主作废**全部**渲染缓存 + 重渲染当前页（每次开面板白烧一遍）。
+         *
+         * 同一个坑项目里已有先例：调色滑块的 `suppressPush`（"程序化改控件期间抑制 push"）。
+         */
+        var suppressSrSwitch = false
+
+        /**
          * 超分整组的显隐（用户口径 2026-10）：**超分关闭 → 不显示超分模型选择和
          * 「翻译时自动超分」组件**，连说明行一起收，不要留一块空行。
+         *
+         * ⚠️ 总开关 `sw_reader_sr` **不在这一组里**（布局里就在组外）：超分默认关，
+         * 开关一旦落在"关着就隐藏"的组内就是**单向门** —— 用户永远打不开这个功能。
          *
          * ⚠️ Anime4K 行**不在这一组里**、始终可见 —— 它是零下载的基础显示层，
          * 关掉超分之后正是它的用武之地（超分开着时它才置灰，见 [refreshAnime4kRow]）。
@@ -659,16 +677,23 @@ class ReaderMenuSheet(
         fun refreshSrGroup() {
             val p = CustomPreference.getInstance(requireContext()).getSharedPreferences()
             val on = SrSettings.isEnabledForReader(p)
-            view.findViewById<View>(R.id.sr_panel_group).visibility = if (on) View.VISIBLE else View.GONE
-            view.findViewById<Switch>(R.id.sw_reader_sr).isChecked = on
-            view.findViewById<Switch>(R.id.sw_reader_sr_auto).isChecked =
-                p.getBoolean(SrSettings.KEY_AUTO, SrSettings.DEFAULT_AUTO)
+            val autoOn = p.getBoolean(SrSettings.KEY_AUTO, SrSettings.DEFAULT_AUTO)
+            suppressSrSwitch = true
+            try {
+                view.findViewById<View>(R.id.sr_panel_group).visibility = if (on) View.VISIBLE else View.GONE
+                view.findViewById<Switch>(R.id.sw_reader_sr).isChecked = on
+                view.findViewById<Switch>(R.id.sw_reader_sr_auto).isChecked = autoOn
+            } finally {
+                suppressSrSwitch = false
+            }
             refreshAnime4kRow()
         }
 
         // ⚠️ 两个 Switch 的监听必须注册在 `refreshSrGroup` **之后**：Kotlin 的局部函数不允许前向引用，
         //    而开关回调里要调 `refreshSrGroup()` 把整组显隐重算一遍（关掉总开关要连本行一起收起来）。
         view.findViewById<Switch>(R.id.sw_reader_sr).setOnCheckedChangeListener { _, checked ->
+            // 程序化回填 → 不是用户操作，什么都不做（见 suppressSrSwitch 的注释）
+            if (suppressSrSwitch) return@setOnCheckedChangeListener
             SrSettings.setReaderEnabled(srPrefs, checked)
             // 关掉时把已加载的超分引擎放掉（2x 模型几百 MB）；打开时不预热 —— 首翻再建
             if (!checked) SuperResolutionEngines.releaseSrModel()
@@ -678,6 +703,7 @@ class ReaderMenuSheet(
         }
         // 「翻译时自动超分」：只管"点翻译要不要顺手超分"（超分本身总开关仍是上面那个）
         view.findViewById<Switch>(R.id.sw_reader_sr_auto).setOnCheckedChangeListener { _, checked ->
+            if (suppressSrSwitch) return@setOnCheckedChangeListener
             SrSettings.setAutoEnabled(srPrefs, checked)
             cb.onReaderSrAutoChanged(checked)
         }
