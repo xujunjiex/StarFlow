@@ -29,8 +29,32 @@ class ModelDownloadRepository private constructor(private val context: Context) 
 
     fun getState(modelKey: ModelKey): DownloadState = stateMap[modelKey] ?: DownloadState.Idle
 
-    fun getModelInfo(modelKey: ModelKey): ModelInfo? =
-        modelListCached.value.firstOrNull { it.modelKey == modelKey }
+    /**
+     * 按 key 取模型元数据（**自带"确保清单已加载"**）。
+     *
+     * ⚠️ 这里必须自愈，不能只读那个缓存：清单原本只在 `StarFlowApplication` 里
+     * `GlobalScope.launch { repo.loadModelList() }` 异步载入一次。缓存还没填上（冷启动后马上进阅读器、
+     * 或者那次协程失败）时，所有 `getModelInfo(...) == null` 的调用都会把**已下载的模型**判成
+     * 「未下载」——真机反馈正是这个：模型管理页下载好了、阅读器面板却显示「未下载」，
+     * 而且超分还会报「模型文件不存在」。
+     *
+     * `loadModelList` 本身只是读 assets 里的 JSON（几 KB，纯同步），所以按需同步补一次是安全的。
+     */
+    fun getModelInfo(modelKey: ModelKey): ModelInfo? {
+        ensureModelListLoaded()
+        return modelListCached.value.firstOrNull { it.modelKey == modelKey }
+    }
+
+    /**
+     * 清单为空就同步补加载一次（幂等、有锁、失败只记日志不抛）。
+     * 供 [getModelInfo] 与其它"按 key 查文件"的路径兜底。
+     */
+    @Synchronized
+    private fun ensureModelListLoaded() {
+        if (modelListCached.value.isNotEmpty()) return
+        runCatching { loadModelListBlocking() }
+            .onFailure { LogCollector.e(TAG, "同步加载模型清单失败（按 key 查文件会失准）", it) }
+    }
 
     fun getBrowserUrl(modelKey: ModelKey): String? =
         getModelInfo(modelKey)?.browserUrl
@@ -296,8 +320,13 @@ class ModelDownloadRepository private constructor(private val context: Context) 
     /**
      * Load model metadata from the bundled assets JSON.
      * Must be called after getInstance() and before any download.
+     *
+     * ⚠️ 保留 `suspend` 只是为了让既有调用方（`StarFlowApplication` 里在协程中调）不用改；
+     * 函数体是**纯同步**的（读 assets + JSON 解析），所以 [ensureModelListLoaded] 可以同步调它。
      */
-    suspend fun loadModelList() {
+    suspend fun loadModelList() = loadModelListBlocking()
+
+    private fun loadModelListBlocking() {
         val json = context.assets.open("models/downloadinfo.json")
             .bufferedReader().use { it.readText() }
         val root = org.json.JSONObject(json)

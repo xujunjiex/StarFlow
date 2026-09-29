@@ -1019,11 +1019,11 @@
     <string name="sr_fail_nothing_enabled">没有可用的增强方式：既没有选超分模型，Anime4K 也没开</string>
     <string name="sr_fail_no_model">还没选超分模型：到「超分模型管理 → 超分」里点一下模型名选中它（只下载、不选中是不会生效的）</string>
     <string name="sr_fail_model_missing">模型文件不存在：%1$s\n可能没下载完、或者文件已被删掉 —— 请回模型管理页重新下载</string>
-    <string name="sr_fail_engine_init">模型加载失败：%1$s\n文件可能损坏，或这个模型在当前设备上不被 ONNX Runtime 支持</string>
+    <string name="sr_fail_engine_init">模型加载失败：%1$s\n可以到模型管理页把这个模型重新下载一次</string>
     <string name="sr_fail_source_too_large">本页分辨率太大，超分跳过了：本页 %1$d×%2$d（%3$.1f 百万像素）超过该模型的 %4$.1f 百万像素上限\n请换一个更小的模型，或对分辨率更低的图源使用超分</string>
     <string name="sr_fail_anime4k_init">Anime4K 初始化失败（当前设备不支持 GLES3，或着色器编译失败）</string>
     <string name="sr_fail_anime4k_too_large">本页分辨率太大，Anime4K 跳过了：本页 %1$d×%2$d（%3$.1f 百万像素）超过 %4$.1f 百万像素上限\n想放大这种页面请改用「超分模型」（Anime4K 只做同分辨率线条修复）</string>
-    <string name="sr_fail_inference">超分推理失败（模型与这张图不兼容，或内存不足）</string>
+    <string name="sr_fail_inference">超分推理失败，引擎原文如下（点这条可以复制）</string>
     <string name="sr_fail_save">超分图写盘失败：存储空间不足，或 sr_cache 目录不可写</string>
     <string name="sr_fail_page_load">读不到这一页的原图（文件丢失或解码失败）</string>
     <string name="sr_fail_busy">这一页正在超分中，请稍候</string>

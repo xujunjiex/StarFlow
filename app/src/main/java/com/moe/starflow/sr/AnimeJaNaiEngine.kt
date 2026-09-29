@@ -271,10 +271,35 @@ class AnimeJaNaiEngine(private val modelFile: File) : SuperResolutionEngine {
         return ByteBuffer.allocateDirect(iw * ih * 3 * bytesPer).order(ByteOrder.nativeOrder())
     }
 
+    /**
+     * 建输入张量。
+     *
+     * ## ⚠️⚠️ fp16 必须走 `ByteBuffer + OnnxJavaType.FLOAT16`（2026-10 真机踩实）
+     *
+     * ORT 的 Java API **靠 buffer 类型推断张量类型**：
+     * ```
+     * createTensor(env, ShortBuffer, shape)  →  tensor(int16)   ← 错！
+     * createTensor(env, ByteBuffer, shape, OnnxJavaType.FLOAT16) → tensor(float16)  ← 对
+     * ```
+     * 而 AnimeJaNai 那 5 个模型要的是 `tensor(float16)`，于是会直接报
+     * ```
+     * ORT_INVALID_ARGUMENT: Unexpected input data type.
+     *   Actual: (tensor(int16)), expected: (tensor(float16))
+     * ```
+     * Python 侧不会踩到（`np.float16` 自带 dtype），**只有 Java API 有这个坑** ——
+     * 所以"本机 python 验证过能跑"并不能推出设备上能跑。
+     *
+     * 缓冲里的**比特**本来就是 fp16（`floatToHalf` 写进去的），所以换成 ByteBuffer 直接传即可，
+     * 不需要改 `fillInput`。
+     */
     private fun createInputTensor(e: OrtEnvironment, buf: ByteBuffer, iw: Int, ih: Int): OnnxTensor {
         val shape = longArrayOf(1, 3, ih.toLong(), iw.toLong())
-        return if (fp16) OnnxTensor.createTensor(e, buf.asShortBuffer(), shape)
-        else OnnxTensor.createTensor(e, buf.asFloatBuffer(), shape)
+        buf.rewind()   // ORT 从 position 开始读，必须归零
+        return if (fp16) {
+            OnnxTensor.createTensor(e, buf, shape, OnnxJavaType.FLOAT16)
+        } else {
+            OnnxTensor.createTensor(e, buf.asFloatBuffer(), shape)
+        }
     }
 
     /**
