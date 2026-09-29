@@ -266,6 +266,57 @@ class SrReaderWiringTest {
         assertTrue("showSrNotice 必须先 dismiss 掉常驻芯片", body.contains("overlay.dismiss()"))
     }
     @Test
+    fun togglingToOriginalNeverClearsTheSrResult() {
+        // 真机反馈：「点击切换回原图，整个超分的组件都没有了」。
+        // 根因：`srBaseFor` 以前把「用户切回原图」与「结果不存在」都当成 `sig == "o"`，
+        // 一并 `srModelByPage.remove(...)` → `hasSrResult` 变 false → 整个超分组消失 → 再也切不回去。
+        val ctl = controller()
+        val i = ctl.indexOf("private suspend fun srBaseFor(")
+        assertTrue("找不到 srBaseFor", i > 0)
+        val body = ctl.substring(i, i + 3500)   // 只看 srBaseFor 这一段的固定窗口（~50 行）
+        assertTrue(
+            "结果的存在性必须只由**文件**决定（storedModelOrNull）",
+            body.contains("SrStore.storedModelOrNull(context, manga.id, pageIndex)"),
+        )
+        // 清除只允许发生在「文件确实不存在」那一支里，且必须排在「切回原图」早退**之前**
+        val nullBranch = body.indexOf("if (storedModel == null) {")
+        val removeAt = body.indexOf("srModelByPage.remove(pageIndex)")
+        val toggleAt = body.indexOf("if (!isSrVisualOn(pageIndex)) return null")
+        assertTrue("找不到那一支", nullBranch > 0 && removeAt > 0 && toggleAt > 0)
+        assertTrue("清除结果只能发生在「文件不存在」那一支里（不能因为切回原图就清）", removeAt in nullBranch until toggleAt)
+        assertEquals("srBaseFor 里只允许一处清除", 1, Regex("srModelByPage\\.remove\\(pageIndex\\)").findAll(body).count())
+        // 组显隐：只有 HIDDEN / chromeHidden / Webtoon 才 GONE，不允许因为"切回原图"而 GONE
+        val act = activity()
+        val j = act.indexOf("private fun refreshSrButtons(")
+        val aBody = act.substring(j, j + 1200)   // 只看这个函数开头那一段就够
+        assertTrue(
+            "超分组整组显隐只由 HIDDEN / chromeHidden / Webtoon 决定",
+            aBody.contains("action == ReaderTranslationController.SrAction.HIDDEN || chromeHidden || mode == 3"),
+        )
+        assertFalse(
+            "不许用 srBaseOn / isSrVisualOn 去决定整组显隐（那就是这个 bug）",
+            aBody.substringBefore("binding.srGroup.visibility = View.VISIBLE").contains("srBaseOn"),
+        )
+    }
+
+    @Test
+    fun srHasItsOwnFloatingGroupNotNestedInTheTranslateOne() {
+        // 用户口径：「单独设计一个组件组放到右边！专门显示超分相关的东西」。
+        val layout = read("src/main/res/layout/activity_manga_reader.xml")
+        val srGroup = layout.indexOf("android:id=\"@+id/sr_group\"")
+        val translateGroup = layout.indexOf("android:id=\"@+id/translate_group\"")
+        assertTrue("要有独立的超分组", srGroup > 0)
+        assertTrue("超分组要排在翻译组之前（= 它的正上方，同一条右侧竖列）", srGroup < translateGroup)
+        // 三枚按钮必须在 sr_group 里，而不是 translate_group 里
+        val srEnd = layout.indexOf("</LinearLayout>", srGroup)
+        for (id in listOf("btn_sr_page", "btn_sr_toggle", "btn_sr_clear")) {
+            val p = layout.indexOf("android:id=\"@+id/" + id + "\"")
+            assertTrue("$id 必须在 sr_group 内", p in srGroup until srEnd)
+        }
+        // 整组显隐在 refreshTranslationChrome（每页每次刷新都走它）
+        assertTrue("refreshSrButtons 要能整组 GONE", activity().contains("binding.srGroup.visibility = View.GONE"))
+    }
+    @Test
     fun perPageSrButtonHasThreeSemanticsAndHidesWhenOff() {
         val act = activity()
         val layout = read("src/main/res/layout/activity_manga_reader.xml")
@@ -275,9 +326,9 @@ class SrReaderWiringTest {
         assertTrue("显隐/高亮要读控制器给出的语义", act.contains("controller.srActionOf("))
         // 关闭时不显示
         assertTrue(
-            "超分关闭（HIDDEN）时按钮必须 GONE",
+            "超分关闭（HIDDEN）时**整组** GONE（超分组现在是独立的一组）",
             act.contains("ReaderTranslationController.SrAction.HIDDEN") &&
-                act.contains("binding.btnSrPage.visibility = View.GONE"),
+                act.contains("binding.srGroup.visibility = View.GONE"),
         )
     }
 }

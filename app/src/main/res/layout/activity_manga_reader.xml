@@ -131,18 +131,23 @@
         </FrameLayout>
     </LinearLayout>
 
-    <!-- 右下角翻译浮层组：翻译按钮 +（有翻译结果时出现）三态切换按钮，同一背景组件。
-         翻译按钮成功态图标变「重翻」（ic_refresh），点击即重新翻译；三态按钮点按循环 译文/原文/原图，长按开详情。 -->
+    <!-- ═══════════ 超分浮层组（**独立一组**，用户口径 2026-10）═══════════
+         与翻译浮层组完全分开：自己的背景、自己的显隐、自己的三枚按钮。
+         放在右下角浮层组的**正上方**（同一条右侧竖列），互不挤占。
+         三枚按钮与翻译侧一一对应：
+           超分 / 重新超分（恒显示，有结果时图标变"重翻"）｜原图⇄超分（有结果才显示）｜删除（有结果才显示）
+         ⚠️ 超分功能关闭 / Webtoon / 隐藏上下 UI 时整组 GONE（efreshTranslationChrome）。 -->
     <LinearLayout
-        android:id="@+id/translate_group"
+        android:id="@+id/sr_group"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom|end"
         android:layout_marginEnd="20dp"
-        android:layout_marginBottom="62dp"
+        android:layout_marginBottom="112dp"
         android:orientation="horizontal"
         android:gravity="center"
         android:padding="6dp"
+        android:visibility="gone"
         android:background="@drawable/bg_reader_translate_group">
 
         <!-- ═══════ 超分三件套（**在翻译三件套左边**，用户口径 2026-10）═══════
@@ -206,6 +211,21 @@
                 app:tint="#FFFFFF"
                 android:contentDescription="@string/reader_sr_button_desc"/>
         </FrameLayout>
+    </LinearLayout>
+    <!-- 右下角翻译浮层组：翻译按钮 +（有翻译结果时出现）三态切换按钮，同一背景组件。
+         翻译按钮成功态图标变「重翻」（ic_refresh），点击即重新翻译；三态按钮点按循环 译文/原文/原图，长按开详情。 -->
+    <LinearLayout
+        android:id="@+id/translate_group"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="20dp"
+        android:layout_marginBottom="62dp"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:padding="6dp"
+        android:background="@drawable/bg_reader_translate_group">
+
         <FrameLayout
             android:id="@+id/btn_toggle_translate"
             android:layout_width="40dp"

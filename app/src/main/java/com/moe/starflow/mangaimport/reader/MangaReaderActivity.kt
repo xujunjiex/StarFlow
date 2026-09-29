@@ -647,15 +647,15 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     /**
-     * 应用上下 UI 显隐（淡入淡出）。翻译浮层组另有「Webtoon 无单页翻译 / 未译页」的约束，
-     * 显示前先让 [refreshTranslationChrome] 把它定到位，不该显示的就不参与淡入。
+     * 应用上下 UI 显隐（淡入淡出）。翻译浮层组与**独立的超分浮层组**各有自己的显隐约束，
+     * 显示前先让 [refreshTranslationChrome] 把它们定到位，不该显示的就不参与淡入。
      */
     private fun applyChromeVisibility() {
         if (!chromeHidden) refreshTranslationChrome()
-        val group = binding.translateGroup
-        // 本就不显示的（Webtoon / 未译页）不参与动画，否则会把它强行淡出来
-        val groupShown = group.visibility == View.VISIBLE
-        for (v in chromeViews() + (if (groupShown) listOf(group) else emptyList())) {
+        // 本就不显示的（Webtoon / 未译页 / 超分关闭）不参与动画，否则会把它强行淡出来
+        val shown = listOf(binding.translateGroup, binding.srGroup)
+            .filter { it.visibility == View.VISIBLE }
+        for (v in chromeViews() + shown) {
             if (chromeHidden) fadeOutChrome(v) else fadeInChrome(v)
         }
     }
@@ -1498,12 +1498,15 @@ class MangaReaderActivity : AppCompatActivity() {
      */
     private fun refreshSrButtons(controller: ReaderTranslationController) {
         val action = controller.srActionOf(currentPage)
-        if (action == ReaderTranslationController.SrAction.HIDDEN) {
-            binding.btnSrPage.visibility = View.GONE
-            binding.btnSrToggle.visibility = View.GONE
-            binding.btnSrClear.visibility = View.GONE
+        // ⚠️ **整组的显隐在这里统一决定**（它现在是独立的一组，不再挂在翻译组里）：
+        // 超分关闭 → 整组 GONE；Webtoon（mode==3）/ 隐藏上下 UI 时也整组 GONE。
+        // ⚠️ 注意：**只有"超分功能关闭"才 GONE** —— 用户把某一页切回原图**不是**关闭超分，
+        //    那一页的三枚按钮必须留着（否则就再也切不回超分图了，真机踩过）。
+        if (action == ReaderTranslationController.SrAction.HIDDEN || chromeHidden || mode == 3) {
+            binding.srGroup.visibility = View.GONE
             return
         }
+        binding.srGroup.visibility = View.VISIBLE
         val hasResult = controller.hasSrResult(currentPage)
         // ① 超分 / 重新超分：恒显示
         binding.btnSrPage.visibility = View.VISIBLE

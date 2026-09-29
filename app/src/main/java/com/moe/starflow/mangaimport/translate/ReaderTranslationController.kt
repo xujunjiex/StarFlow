@@ -364,10 +364,27 @@ class ReaderTranslationController(
      */
     private suspend fun srBaseFor(pageIndex: Int, space: Bitmap, spaceWidth: Int): SrBase? {
         if (pageIndex < 0 || spaceWidth <= 0) return null
+
+        // ── ① 先回答「**这一页到底有没有超分结果**」——它与"现在显示哪张底图"是**两件事** ──
+        // ⚠️ 真机反馈：「点击切换回原图，整个超分的组件都没有了」。
+        //    根因就在这里：以前把「用户切回原图」和「结果不存在」都当成 `sig == "o"`，
+        //    一并 `srModelByPage.remove(...)` → `hasSrResult` 变 false → 右下角整个超分组消失，
+        //    于是**再也切不回超分图**（按钮没了）。
+        //    现在：结果的存在性只看**文件**（IO 一次 stat+读标记），显示态由 `isSrVisualOn` 单独管。
+        val storedModel = withContext(Dispatchers.IO) { SrStore.storedModelOrNull(context, manga.id, pageIndex) }
+        if (storedModel == null) {
+            srModelByPage.remove(pageIndex)
+            srBaseLru.remove(pageIndex)
+        } else {
+            srModelByPage[pageIndex] = storedModel
+        }
+
+        // ── ② 显示态：用户把这一页切回原图 → 不取底图（但上面那句仍记着"结果还在"）──
+        if (!isSrVisualOn(pageIndex)) return null
+
         val sig = baseSig(pageIndex)
         if (sig == "o") {
             srBaseLru.remove(pageIndex)
-            srModelByPage.remove(pageIndex)
             return null
         }
         srBaseLru.get(pageIndex)?.let { if (it.sig == sig) return it }
@@ -376,9 +393,6 @@ class ReaderTranslationController(
             val stored = withContext(Dispatchers.IO) { SrStore.load(context, manga.id, pageIndex) }
             // ⚠️ 记的是**标记文件里的模型**（不是 sig 里那个）：换模型后 `srActionOf` 要能看出
             //    "这一页是别的模型超的 → 该重新超分"，拿 sig 当答案永远等于"已经是当前模型"。
-            srModelByPage[pageIndex] =
-                withContext(Dispatchers.IO) { SrStore.storedModelOrNull(context, manga.id, pageIndex) }
-                    ?: SrStore.UNKNOWN_MODEL
             if (stored == null) {
                 // 文件刚被系统/用户清掉（`SrStore` 以"文件存在"为真值）→ 本次回落原图
                 LogCollector.d(TAG, "超分底图读取失败，回落原图 page=$pageIndex")
