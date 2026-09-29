@@ -1209,7 +1209,14 @@ class ReaderTranslationController(
             // ⚠️ "点了没反应"排查关键：这条说明锁被别的翻译占着（截屏翻译在跑 / 上一次取消的任务
             // 还卡在 native OCR 里）。频繁出现 = 有地方没释放锁，别当成用户没点。
             LogCollector.w(TAG, "翻译按钮：OcrLock 被占用 → 提示忙（page=$currentPageProvider()）")
-            return TranslateClick.Busy
+            // ⚠️ **超分也抢这把锁**（v2 起自动超分在翻译结束、锁释放后立刻启动）——
+            //    那种情况下面文案必须说清是谁在占，否则用户看到"翻译引擎被占用"会以为坏了。
+            //    （R6.5 把手动路径的锁范围缩到 OCR 之后，这条提示自然就消失了。）
+            return if (SrProcessor.isBusy()) {
+                TranslateClick.Hint(context.getString(R.string.reader_translate_busy_sr))
+            } else {
+                TranslateClick.Busy
+            }
         }
         val page = currentPageProvider()
         manualJob = scope.launch(Dispatchers.IO) { runTranslate(page, fromQueue = false) }

@@ -1078,6 +1078,7 @@
     <string name="reader_sr_auto_on">The current page will be upscaled after each translation</string>
     <string name="reader_sr_auto_off">Translation no longer upscales; use the bottom-right button instead</string>
     <string name="reader_sr_button_desc">Upscale this page / show original</string>
+    <string name="reader_translate_busy_sr">Still upscaling this page — try translating again in a moment</string>
     <string name="reader_sr_enhancing">Upscaling the current page…</string>
     <string name="reader_sr_failed">No upscaled result: make sure a super-resolution model is selected and downloaded, or the page is within the size limit</string>
     <string name="reader_sr_showing_original">Showing the original page again (upscaled file kept)</string>

@@ -1013,6 +1013,7 @@
     <string name="reader_sr_auto_on">翻译完成后会自动超分当前页</string>
     <string name="reader_sr_auto_off">翻译不再自动超分，可用右下角按钮手动超分</string>
     <string name="reader_sr_button_desc">本页超分 / 显示原图</string>
+    <string name="reader_translate_busy_sr">正在超分当前页，请稍候再翻译</string>
     <string name="reader_sr_enhancing">正在超分当前页…</string>
     <string name="reader_sr_failed">超分未产出：请确认已选择并下载超分模型，或该页分辨率超出上限</string>
     <string name="reader_sr_showing_original">本页已切回原图显示（超分文件保留）</string>

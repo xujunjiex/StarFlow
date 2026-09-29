@@ -44,6 +44,15 @@ object SrProcessor {
     fun isRunning(mangaId: Long, page: Int): Boolean = inFlight.containsKey(keyOf(mangaId, page))
 
     /**
+     * 此刻**有没有任何**超分任务在跑（含"已排队、正在等 `OcrLock`"）。
+     *
+     * ⚠️ 用途：超分与 OCR 共用 [OcrLock]，所以超分持锁期间用户点翻译会撞上"引擎被占用"。
+     * 阅读器的忙碌提示据此区分**是谁在占锁** —— 不区分的话用户看到的是"翻译引擎被占用"，
+     * 而实际上只是后台在超分，看起来就像 bug。
+     */
+    fun isBusy(): Boolean = inFlight.isNotEmpty()
+
+    /**
      * 对一页做超分并落盘。**覆盖**该页已有的超分结果（用户口径：只保留一份）。
      *
      * @param src 该页的**原图**（`ReaderPageSource.loadFull` 的结果）。
