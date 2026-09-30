@@ -6,9 +6,11 @@ import android.graphics.Rect
 import android.util.LruCache
 import androidx.preference.PreferenceManager
 import com.moe.starflow.R
+import com.moe.starflow.data.ImportedPageSr
 import com.moe.starflow.data.ImportedPageTranslation
 import com.moe.starflow.data.TranslationCacheManager
 import com.moe.starflow.data.TranslationHistoryDatabase
+import com.moe.starflow.mangaimport.data.MangaChapter
 import com.moe.starflow.manga.OcrLock
 import com.moe.starflow.manga.TranslationCancelledException
 import com.moe.starflow.manga.TranslateUtils
@@ -56,6 +58,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -207,6 +210,10 @@ class ReaderTranslationController(
     private val dao = db.importedPageTranslationDao()
     private val cacheManager = TranslationCacheManager(context)
     private val rows = MutableStateFlow<Map<Int, ImportedPageTranslation>>(emptyMap())
+
+    /** 超分逐页记录（面板的「超分记录」列表用它）。与 [rows] 平行、互不覆盖。 */
+    private val srDao = db.importedPageSrDao()
+    private val srRows = MutableStateFlow<Map<Int, ImportedPageSr>>(emptyMap())
 
     private val appPrefs get() = PreferenceManager.getDefaultSharedPreferences(context)
     private val customPrefs get() = CustomPreference.getInstance(context)
@@ -578,7 +585,7 @@ class ReaderTranslationController(
      *
      * 用户口径（2026-10）：「超分之后…同样可以删除超分结果」。
      */
-    suspend fun deleteSrResult(pageIndex: Int): Boolean {
+    suspend fun deleteSrResult(pageIndex: Int, dropRecord: Boolean = false): Boolean {
         val deleted = withContext(Dispatchers.IO) { SrStore.deletePage(context, manga.id, pageIndex) }
         srBaseLru.remove(pageIndex)
         srModelByPage.remove(pageIndex)
@@ -586,9 +593,54 @@ class ReaderTranslationController(
         srVisualByPage.remove(pageIndex)
         evictPageRenders(pageIndex)
         clearWebtoonCache()
+        // 记录同步：面板行内的「删除」要连记录一起清掉（否则删完文件还留着一行「完成」）；
+        // 右下角那枚删除按钮走默认（记录退回「未超分」，面板上仍能看到"这页超过、现在没了"）。
+        if (dropRecord) {
+            srRows.update { it - pageIndex }
+            runCatching { srDao.deletePage(manga.id, mangaKey, pageIndex) }
+                .onFailure { LogCollector.e(TAG, "删除超分记录失败 page=$pageIndex", it) }
+        } else {
+            upsertSrRow(pageIndex) {
+                it.copy(state = ImportedPageSr.STATE_IDLE, failCode = null, failMessage = null)
+            }
+        }
+        srVersion.value += 1
         withContext(Dispatchers.Main) { if (uiAttached) onVisual() }
-        LogCollector.d(TAG, "删除超分结果 page=$pageIndex ok=$deleted")
+        LogCollector.d(TAG, "删除超分结果 page=$pageIndex ok=$deleted dropRecord=$dropRecord")
         return deleted
+    }
+
+    /**
+     * **清除本章超分**：把 [chapter] 区间内每一页的超分产物 + 记录一起删掉。
+     *
+     * ⚠️ 与「清除本章译文」同一条取舍：**只动本章区间**，别的章一行不碰。
+     * ⚠️ 中途 `ensureActive()`：一页要删两个文件（webp + json），整章几百页时不检查取消
+     * 会让用户在点了"取消"之后还得等它跑完。
+     */
+    suspend fun clearChapterSr(chapter: MangaChapter, chapterIndex: Int) = withContext(Dispatchers.IO) {
+        for (p in chapter.startPage..chapter.endPage) {
+            ensureActive()
+            runCatching { SrStore.deletePage(context, manga.id, p) }
+            srBaseLru.remove(p)
+            srModelByPage.remove(p)
+            srVisualByPage.remove(p)
+        }
+        srRows.update { m -> m.filterKeys { it < chapter.startPage || it > chapter.endPage } }
+        srVersion.value += 1
+        runCatching { srDao.deletePageRange(manga.id, mangaKey, chapter.startPage, chapter.endPage) }
+            .onFailure { LogCollector.e(TAG, "清除本章超分记录失败 ch=$chapterIndex", it) }
+        evictAllRendersForChapter()
+        LogCollector.d(
+            TAG,
+            "清除本章超分 ch=$chapterIndex pages=${chapter.startPage}..${chapter.endPage}"
+        )
+    }
+
+    /** 作废全部渲染缓存（清除本章后各页的底图都变了，按页清不如整清 —— 与字号变更同一取舍）。 */
+    private suspend fun evictAllRendersForChapter() = withContext(Dispatchers.Main) {
+        renderLru.evictAll()
+        clearWebtoonCache()
+        if (uiAttached) onVisual()
     }
 
     /**
@@ -639,7 +691,7 @@ class ReaderTranslationController(
         val src = withContext(Dispatchers.IO) { loadFull(pageIndex) }
             ?: return SrOutcome.fail(SrFailReason.PAGE_LOAD_FAILED, context.getString(R.string.sr_fail_page_load))
         val outcome = try {
-            SrProcessor.enhanceAndStore(context, manga.id, pageIndex, src, manga.translationKey)
+            runSr(pageIndex, src)
         } finally {
             // 原图是本次现解码的（`loadFull` 纯解码）→ 用完必须回收
             if (!src.isRecycled) src.recycle()
@@ -650,6 +702,141 @@ class ReaderTranslationController(
             srModelByPage[pageIndex] = SrModelManager.getActiveKey(appPrefs)?.name.orEmpty()
         }
         return outcome
+    }
+
+    /**
+     * 跑一次超分并落盘 —— **超分的唯一执行入口**（手动按钮 / 翻译时自动 / 整章批量都汇到这里）。
+     *
+     * 提示的开关就挂在这一层，所以「进行中」那条芯片**天然成对**：不管从哪条路进来、
+     * 成功还是失败、甚至协程被取消，都会收到一次 `onSrProgress(page, false)`。
+     * ⚠️ 新增调用点时**别再直接调 `SrProcessor.enhanceAndStore`** —— 那样就绕开了提示。
+     */
+    private suspend fun runSr(page: Int, src: Bitmap): SrOutcome {
+        val started = System.currentTimeMillis()
+        markSrRunning(page, src, started)
+        val outcome = withSrRunningNotice(page) {
+            SrProcessor.enhanceAndStore(context, manga.id, page, src, manga.translationKey)
+        }
+        markSrFinished(page, outcome, started)
+        return outcome
+    }
+
+    // ========== 超分记录（面板的「超分记录」列表） ==========
+
+    /**
+     * 写一行超分记录（在旧值基础上改）。
+     *
+     * ⚠️ 与译文侧 `upsertState` 同一套纪律：`srRows` 用 `update{}`（读-改-写会与取消清理竞态丢更新）、
+     * 指纹与 id 由这里统一补（不许调用方各写一份）。
+     * ⚠️ 写库失败**只记日志不抛**：记录是"过程留痕"，不是超分本身 —— 绝不能因为记不上
+     * 就让用户看不到超分结果。
+     */
+    private suspend fun upsertSrRow(page: Int, transform: (ImportedPageSr) -> ImportedPageSr) {
+        val old = srRows.value[page] ?: ImportedPageSr(
+            mangaId = manga.id, pageIndex = page,
+            state = ImportedPageSr.STATE_IDLE, mangaKey = mangaKey,
+        )
+        val row = transform(old).copy(
+            mangaId = manga.id, pageIndex = page, mangaKey = mangaKey,
+            updatedAtMs = System.currentTimeMillis(),
+        )
+        srRows.update { it + (page to row) }
+        srVersion.value += 1
+        try {
+            srDao.upsert(row)
+        } catch (e: Exception) {
+            LogCollector.e(TAG, "写超分记录失败 page=$page", e)
+        }
+    }
+
+    private suspend fun markSrRunning(page: Int, src: Bitmap, startedAtMs: Long) = upsertSrRow(page) {
+        it.copy(
+            state = ImportedPageSr.STATE_RUNNING,
+            startedAtMs = startedAtMs,
+            srcWidth = src.width, srcHeight = src.height,
+            srcBytes = srcBytesOf(page),
+            // 上一轮的失败原因不能留在「进行中」这一行上，否则面板会显示"超分中 + 上次的报错"
+            failCode = null, failMessage = null,
+        )
+    }
+
+    private suspend fun markSrFinished(page: Int, outcome: SrOutcome, startedAtMs: Long) = upsertSrRow(page) { old ->
+        val now = System.currentTimeMillis()
+        if (outcome.ok) {
+            // 尺寸/模型/字节都从**磁盘上的真实产物**读回来（标记 + 文件本身就是真值），
+            // 不从内存里的 bitmap 猜 —— 两处读会漂移。
+            val info = SrStore.infoOf(context, manga.id, page, manga.translationKey)
+            old.copy(
+                state = ImportedPageSr.STATE_SUCCESS,
+                failCode = null, failMessage = null,
+                modelName = info?.model ?: SrModelManager.getActiveKey(appPrefs)?.name,
+                outWidth = info?.width ?: 0, outHeight = info?.height ?: 0, outBytes = info?.bytes ?: 0L,
+                startedAtMs = if (old.startedAtMs > 0) old.startedAtMs else startedAtMs,
+                finishedAtMs = now,
+            )
+        } else {
+            old.copy(
+                state = ImportedPageSr.STATE_FAILED,
+                failCode = outcome.reason?.name,
+                failMessage = outcome.message(context),
+                finishedAtMs = now,
+            )
+        }
+    }
+
+    /** 该页原图的**文件字节数**（拿不到 0）。仅用于记录展示，任何异常都吞掉。 */
+    private fun srcBytesOf(page: Int): Long =
+        runCatching { ownSource.pageBytes(page) }.getOrDefault(0L)
+
+    /** 全部超分记录（pageIndex 升序），供面板。 */
+    fun srRecords(): List<ImportedPageSr> = srRows.value.values.sortedBy { it.pageIndex }
+
+    /** 某段页号里**超分成功**的页数（章卡片徽章用）。 */
+    fun srSuccessCount(from: Int, to: Int): Int =
+        srRows.value.values.count { it.pageIndex in from..to && it.state == ImportedPageSr.STATE_SUCCESS }
+
+    /**
+     * 超分记录流：宿主面板订阅它拿"记录 + 在途"的最新快照。
+     * 与 [version] 并不同源（超分不动译文行），所以单独一个。
+     */
+    val srVersion = MutableStateFlow(0L)
+
+    /**
+     * 「正在超分第 N 页…」提示的开合（`true` 起、`false` 收）。
+     *
+     * ⚠️ 收尾那句必须走 `NonCancellable`：超分协程被取消（退出阅读器 / 取消整章任务）时，
+     * 普通 `finally` 里的挂起会**再次被取消**，`onSrProgress(page, false)` 根本发不出去 →
+     * 那条常驻芯片就永远挂在屏幕上了。
+     *
+     * 回调统一在主线程触发（与 `onSrNotice` 同一约定），宿主不必自己切线程。
+     */
+    private suspend fun <T> withSrRunningNotice(page: Int, block: suspend () -> T): T {
+        withContext(Dispatchers.Main) { onSrProgress(page, true) }
+        try {
+            return block()
+        } finally {
+            withContext(NonCancellable + Dispatchers.Main) { onSrProgress(page, false) }
+        }
+    }
+
+    /**
+     * 这一页是不是**已经是"当前模型"超的**了（→ 不用再超）。
+     *
+     * 用户口径 2026-10：「不判模型、无条件重跑一遍并覆盖落盘**不行**」——
+     * 判据就是「**同模型跳过，换过模型才重超**」。
+     *
+     * ⚠️ 两处调用点（手动/自动的 [startAutoSr] 与章节批量的 [maybeStartAutoSr]）**必须同源**：
+     * 以前只有前者判，后者每页都无条件重超一遍 —— 代价不只是白算，超分还要抢 `OcrLock`，
+     * 整章批量时会把 OCR 串行一路卡住。抽成这一个函数就是防它们再漂移。
+     *
+     * ⚠️ `srModelByPage` 是**内存态**，只在页面真正上屏时由 `srBaseFor` / `warmSrBase` 从
+     * `SrStore.storedModelOrNull` seed。所以"刚进阅读器、还没翻到这一页"时它可能为空 →
+     * 这一次仍会超。**这是有意的**：宁可在"不确定"时多跑一次，也不能拿一个可能过期的内存缓存
+     * 去断言"已经超好了"（那会让用户一直看着旧模型、甚至别的书留下的产物）。
+     */
+    private fun srAlreadyCurrent(page: Int): Boolean {
+        val active = SrModelManager.getActiveKey(appPrefs)?.name ?: return false
+        return srModelByPage[page] == active
     }
 
     /**
@@ -677,7 +864,7 @@ class ReaderTranslationController(
         if (!SrSettings.isAutoEnabledForReader(appPrefs)) return null
         if (page != currentPageProvider()) return null
         // 该页已经是"当前模型超的" → 没什么可做（换过模型 / 手动点过都会走到这）
-        if (srModelByPage[page] == SrModelManager.getActiveKey(appPrefs)?.name) return null
+        if (srAlreadyCurrent(page)) return null
         return scope.launch(Dispatchers.IO) {
             val outcome = enhancePage(page)
             if (outcome.ok) {
@@ -812,6 +999,7 @@ class ReaderTranslationController(
         onVisual = {}
         onPhase = { _, _ -> }
         onSrNotice = { _, _ -> }
+        onSrProgress = { _, _ -> }
     }
 
     /**
@@ -907,6 +1095,11 @@ class ReaderTranslationController(
      */
     fun onReaderClosed() {
         cancelEverything()
+        // ⚠️ **超分本章必须停下来**（与章节翻译刻意不同）：章节翻译有前台服务 + 通知栏，
+        //    关掉阅读器用户仍能看进度、能暂停取消；超分本章**没有通知栏入口**，而它的
+        //    「正在超分第 N 页…」是**系统级浮层窗口** —— 跟着跑到后台就会把芯片贴到别的应用上，
+        //    且 `unbindUi()` 刚把 onSrProgress 清成空 lambda，那些芯片再也没人收（永久残留）。
+        cancelSrChapterJob()
         translateMode.value = MODE_MANUAL
         version.value += 1
         unbindUi()
@@ -916,6 +1109,7 @@ class ReaderTranslationController(
     fun shutdownAll() {
         closed = true
         cancelEverything()
+        cancelSrChapterJob()
         chapterRunner.shutdown()
         translateMode.value = MODE_MANUAL
         version.value += 1
@@ -1120,6 +1314,102 @@ class ReaderTranslationController(
         }
     }
 
+    // ========== 超分本章（与「翻译本章」互斥的第二个批量任务） ==========
+
+    /**
+     * 一次「超分本章」任务的进度（纯内存，任务结束即 null）。
+     *
+     * ⚠️ 与 [ChapterJob] **刻意不复用同一个类型**：那个带 `ChapterJobState`（暂停/继续/等待），
+     * 而超分没有"排队等待"可言 —— `SrProcessor` 内部对同一页去重、对外全局串行，
+     * 一页一页跑完就结束。套上去只会让面板多出一堆永远不出现的状态分支。
+     */
+    data class SrChapterJob(
+        val chapterIndex: Int,
+        /** 已结算（成功或失败）的页数。 */
+        val done: Int,
+        val total: Int,
+        /** 刚处理完的页码 +1（0 = 还没开始）。 */
+        val page: Int,
+    )
+
+    private val _srChapterJob = MutableStateFlow<SrChapterJob?>(null)
+
+    /** 正在跑的超分本章任务（null = 没有）。面板据此切换按钮文案与进度。 */
+    val srChapterJob: StateFlow<SrChapterJob?> get() = _srChapterJob
+
+    private var srChapterJobTask: Job? = null
+
+    /**
+     * **超分本章**：从 [pages] 里逐页跑一次超分（[runSr]），产物落盘 + 写记录。
+     *
+     * ## 为什么不用 `ChapterJobRunner`
+     * 那个 runner 的价值是「准备阶段串行 + 翻译阶段并发 N」。而超分**本身就是全局串行**的
+     * （`SrProcessor` + `OcrLock`），套上来只会多一层永远并不起作用的调度，还要造一个假的
+     * 两阶段接口。这里一个 for 循环就是全部真相。
+     *
+     * ## 互斥（用户口径 2026-10）
+     * 「不能出现两边都开启批量翻译某章和超分某章」—— 翻译在跑时这里直接 return，
+     * **由宿主给出提示**（`reader_sr_blocked_by_translate`）；反过来 [startChapterJob] 也一样。
+     * 两边都不静默。
+     *
+     * ## 取消
+     * 取消 = 取消这个协程（在途那一页的 native 推理打不断，但产物不再采用 —— 与章节翻译同一套）。
+     * ⚠️ **离开阅读器必须调 [cancelSrChapterJob]**（见 [onReaderClosed]）：超分本章没有通知栏入口，
+     * 而它的进行中提示是**系统级浮层**，跟着跑到后台会把芯片贴到别的应用上且无人能消。
+     */
+    fun startSrChapterJob(chapterIndex: Int, pages: List<Int>) {
+        val targets = pages.filter { it >= 0 }
+        if (targets.isEmpty()) return
+        if (_srChapterJob.value != null) return
+        if (srBatchBlockedByTranslate()) return     // 互斥：宿主已经给过提示
+        _srChapterJob.value = SrChapterJob(chapterIndex, done = 0, total = targets.size, page = 0)
+        srChapterJobTask = scope.launch(Dispatchers.IO) {
+            var done = 0
+            try {
+                for (p in targets) {
+                    if (!isActive) break
+                    // ⚠️ 一页一张全尺寸位图：**逐页取、逐页还**，绝不整章装进内存
+                    //    （2x 一页就 40MB，整章必 OOM）。
+                    val src = loadFull(p)
+                    if (src == null) {
+                        LogCollector.w(TAG, "超分本章：读不到第 ${p + 1} 页原图，跳过")
+                    } else {
+                        try {
+                            runSr(p, src)
+                        } finally {
+                            if (!src.isRecycled) src.recycle()
+                        }
+                    }
+                    done++
+                    _srChapterJob.value = SrChapterJob(chapterIndex, done, targets.size, p + 1)
+                }
+            } finally {
+                // ⚠️ 收尾必须 `NonCancellable`：取消时普通 finally 里的挂起会被再次取消，
+                //    任务状态就会永久停在「超分中」（面板上那章再也点不动）。
+                withContext(NonCancellable) {
+                    _srChapterJob.value = null
+                    srVersion.value += 1
+                }
+            }
+        }
+    }
+
+    /** 取消「超分本章」（丢还没跑的页，**已超好的产物保留** —— 与取消章节翻译同一口径）。 */
+    fun cancelSrChapterJob() {
+        srChapterJobTask?.cancel()
+        srChapterJobTask = null
+        _srChapterJob.value = null
+        srVersion.value += 1
+    }
+
+    // ── 互斥判据（宿主在点击入口处调，负责给出提示） ──
+
+    /** 「超分本章」被翻译批量挡住（有任一章的翻译任务在跑/暂停）。 */
+    fun srBatchBlockedByTranslate(): Boolean = chapterJobs.value.isNotEmpty()
+
+    /** 「翻译本章」被超分批量挡住。 */
+    fun translateBatchBlockedBySr(): Boolean = _srChapterJob.value != null
+
     // ========== 章节批量翻译（应用级后台任务 · 章卡片上的「翻译本章 / 暂停 / 取消」） ==========
 
     /**
@@ -1215,6 +1505,9 @@ class ReaderTranslationController(
     fun startChapterJob(chapterIndex: Int, pages: List<Int>, label: String = "", startPage: Int = 0) {
         val targets = pages.filter { it >= 0 }
         if (targets.isEmpty()) return
+        // **互斥**（用户口径 2026-10）：超分本章在跑时不许再开翻译本章。宿主在点击入口
+        // 已经拦过并给了提示，这里是第二道（防止别的调用点绕过 —— 例如通知栏/未来的入口）。
+        if (translateBatchBlockedBySr()) return
         cancelEverything()
         // ⚠️⚠️ **必须把 cancelFlag 复位**（2026-09-28 定位到的致命 bug）：
         // `cancelEverything()` 会把队列取消标志置 true，而这个标志是**手动/增量队列**的取消信号；
@@ -1286,7 +1579,26 @@ class ReaderTranslationController(
         }
         return 0L
     }
+    /**
+     * OCR 阶段的**入口**：只负责登记「OCR 有需求」这个窗口，真正的活在 [ocrPhaseLocked]。
+     *
+     * ⚠️ 为什么要多包这一层：`OcrLock.beginOcrDemand()` / `endOcrDemand()` 必须**成对**，
+     * 而 `ocrPhaseLocked` 里有十几处 `return`（等锁超时、模型缺失、位图加载失败、取消…）——
+     * 在函数体里逐个补 `end` 是必漏的写法。包一层 `try/finally` 就构造性保证了配对。
+     *
+     * 窗口**只包 OCR 阶段、不包整章任务**：超分据此让路（见 `OcrLock.beginOcrDemand` 的注释），
+     * 但整章翻译期间超分仍然跑得起来（用户口径：超分要和翻译中一起出现）。
+     */
     private suspend fun ocrPhase(page: Int): PreparedPage? {
+        OcrLock.beginOcrDemand()
+        try {
+            return ocrPhaseLocked(page)
+        } finally {
+            OcrLock.endOcrDemand()
+        }
+    }
+
+    private suspend fun ocrPhaseLocked(page: Int): PreparedPage? {
         // ⚠️ **等锁必须有超时，且超时要如实记账**（2026-09-28 用户报的"进度在涨、什么都没翻、
         // 正在翻译的卡片直接消失"就是这个静默 return null 造成的）：
         // 以前 `while (isRunning) delay()` 之后 `tryAcquire()` 一旦被别人抢先就**静默返回 null** ——
@@ -1525,10 +1837,16 @@ class ReaderTranslationController(
         if (!SrSettings.isAutoEnabledForReader(appPrefs)) return null
         if (!SrSettings.isEnabledForReader(appPrefs)) return null
         if (prep.bitmap.isRecycled) return null
+        // ⚠️ **同一模型已经超过就不重超**（用户口径 2026-10：「不判模型、无条件重跑一遍并覆盖
+        //    落盘不行」）。这一句以前漏了 —— 章节批量每页都白跑一次超分，还要抢 OcrLock，
+        //    把 OCR 串行一路卡住。判据与手动/自动路径**同源**（[srAlreadyCurrent]）。
+        if (srAlreadyCurrent(page)) return null
         // ⚠️ 这里**不再自己预判**"模型下没下载/选没选"：判断集中在 `SuperResolutionEngines`，
         //    它才能给出**具体原因**。预判成 return null 的话用户什么都看不到。
         return scope.launch(Dispatchers.IO) {
-            val outcome = SrProcessor.enhanceAndStore(context, manga.id, page, prep.bitmap, manga.translationKey)
+            // ⚠️ 走 runSr（不是直接调 SrProcessor）：它顺带挂「正在超分第 N 页…」的进行中提示。
+            //    整章批量时**每页都会发一对**（用户口径 2026-10：「每一页都提示」）。
+            val outcome = runSr(page, prep.bitmap)
             if (outcome.ok) {
                 // 超分完成后默认显示在超分底图上（用户口径）
                 srVisualByPage[page] = true
@@ -1751,6 +2069,13 @@ class ReaderTranslationController(
             LogCollector.e(TAG, "migrateLegacyMangaKey failed", e)
         }
         rows.value = dao.forManga(manga.id, mangaKey).associateBy { it.pageIndex }
+        // 超分侧同款：先清残留的「超分中」（理由与 resetTranslating 完全一致），再载入
+        try {
+            srDao.resetRunning(manga.id, mangaKey)
+        } catch (e: Exception) {
+            LogCollector.e(TAG, "resetRunning(sr) failed", e)
+        }
+        srRows.value = srDao.forManga(manga.id, mangaKey).associateBy { it.pageIndex }
         version.value += 1
     }
 
@@ -2781,6 +3106,24 @@ class ReaderTranslationController(
      */
     @Volatile
     var onSrNotice: (text: String, isError: Boolean) -> Unit = { _, _ -> }
+
+    /**
+     * **超分「进行中」的开合**（`running = true` 起、`false` 收）：宿主负责呈现成一条
+     * **与别的提示并存**的常驻芯片（`AppNotice.showRunning` / `clearRunning`）。
+     *
+     * ⚠️ 与 [onSrNotice]（结果类）**刻意分开**：结果那条要能顶掉旧的、还要会自己消失，
+     * 而进行中这条必须**和「翻译中…」并排**（用户口径 2026-10：「超分执行的时候也要有提示信息，
+     * 而且会和翻译中一起出现」）。合成一个回调的话，宿主只能二选一：要么把「翻译中…」顶掉，
+     * 要么让进行中那条永远挂着。
+     *
+     * 落点在 [enhancePage] 与 [maybeStartAutoSr] 两处（手动按钮 + 自动/批量），
+     * 由 [withSrRunningNotice] 保证 **true/false 严格成对** —— 超分失败、抛异常、协程被取消
+     * 都必须收到 `false`，否则那条芯片会一直挂在屏幕上。
+     *
+     * @param page 第几页（0 基）。整章批量时**每页都会发一对**，宿主按页记账才不会互相覆盖。
+     */
+    @Volatile
+    var onSrProgress: (page: Int, running: Boolean) -> Unit = { _, _ -> }
 
     // ========== 私有：写记录 ==========
 

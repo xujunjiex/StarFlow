@@ -72,6 +72,38 @@ object OcrLock {
         private set
 
     /**
+     * 正在等 / 正在用 OCR 引擎的**需求数**（> 0 = 有 OCR 在排队）。
+     *
+     * ## ⚠️ 为什么需要它（2026-10，用户追问「超分还没结束，下一个 OCR 就启动了怎么办」）
+     *
+     * 超分与 OCR 共用这把锁，而**超分单页可以跑几秒到几十秒**（ncnn/Vulkan 重档位）。
+     * 没有这个标记时会出现一条**饿死**路径：超分一放锁就立刻回头抢（它是轮询抢的，
+     * 且离锁最近），排队中的 OCR 页只能干等 —— 章节批量路径的 `acquireOcrLockWithWait`
+     * 等满 60s 就把那一页记成失败（`PROCESS_EXCEPTION`「OCR 引擎忙」），
+     * 表现为**成片地"什么都没翻、页却失败了"**。
+     *
+     * 有了它，超分的等锁条件多一条 `hasOcrDemand()`：**只要还有 OCR 在等/在用，超分就不抢**。
+     * 正在跑的那一次超分**不会被打断**（不等它跑完没有意义），但下一次一定让给 OCR。
+     *
+     * ⚠️ 需求窗口**只包 OCR 阶段、不包整章任务** —— 包住整章会让"整章翻译期间一次超分都跑不了"，
+     * 与用户要的"超分要和翻译中一起出现"直接矛盾。
+     */
+    private val ocrDemand = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /** OCR 侧：进入「我要用引擎」的窗口。**必须与 [endOcrDemand] 成对（放 `finally`）**。 */
+    fun beginOcrDemand() {
+        ocrDemand.incrementAndGet()
+    }
+
+    /** OCR 侧：离开那个窗口。多减一次不会变负（防配对写错把标记永久关掉）。 */
+    fun endOcrDemand() {
+        ocrDemand.updateAndGet { if (it > 0) it - 1 else 0 }
+    }
+
+    /** 现在还有 OCR 在等 / 在用引擎吗（**超分的等锁循环要判它**，见 [beginOcrDemand] 的注释）。 */
+    fun hasOcrDemand(): Boolean = ocrDemand.get() > 0
+
+    /**
      * 拿锁并返回**持有者令牌**（0 = 没拿到）。
      *
      * ⚠️ 为什么需要令牌：自愈（[maybeRecoverStale]）会在超时时**强制释放**别人的锁；

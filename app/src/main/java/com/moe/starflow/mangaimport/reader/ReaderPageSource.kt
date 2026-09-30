@@ -228,6 +228,23 @@ class ReaderPageSource(
         return originalWidths[position] ?: 0
     }
 
+    /**
+     * 该页**原始文件**的字节数（拿不到 → 0）。
+     *
+     * 用途：超分面板的「详情」要对比「原始 / 超分后」的大小（用户口径 2026-10）。
+     * ⚠️ zip 走**中央目录里记的** `entry.size`（不解压）；目录导入走 `File.length()`。
+     * 两者都是"文件的大小"，不是"解码后占的内存"—— 这正是用户要看的东西。
+     */
+    fun pageBytes(position: Int): Long {
+        val key = pageKeys.getOrNull(position) ?: return 0L
+        return try {
+            if (isArchive) zip()?.getEntry(key)?.size ?: 0L
+            else File(localRoot, key).length()
+        } catch (e: Throwable) {
+            0L
+        }
+    }
+
     /** 原始页 key（未排序）—— 只给页序迁移用（[com.moe.starflow.mangaimport.data.MangaPageOrder]）。 */
     fun rawPageKeys(): List<String> = rawKeys
 

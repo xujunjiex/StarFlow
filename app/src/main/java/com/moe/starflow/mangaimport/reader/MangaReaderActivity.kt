@@ -32,6 +32,7 @@ import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.ViewPager2
 import com.moe.starflow.R
 import com.moe.starflow.databinding.ActivityMangaReaderBinding
+import com.moe.starflow.data.ImportedPageSr
 import com.moe.starflow.data.ImportedPageTranslation
 import com.moe.starflow.data.TranslationCacheManager
 import com.moe.starflow.mangaimport.data.ImportedManga
@@ -182,6 +183,15 @@ class MangaReaderActivity : AppCompatActivity() {
     /** 「已暂停回退手动」这次退出是否已经提示过（避免 onStop + onDestroy 重复弹）。 */
     private var pausedToManualNotified = false
 
+    /**
+     * 每页那条「正在超分…」芯片的句柄（页号 → `AppNotice.showRunning` 返回的 id）。
+     *
+     * ⚠️ 必须**按页**存，不能只存一个：整章批量时几页会同时在等 `OcrLock`，
+     * 单变量会让后一页覆盖前一页的句柄 → 前一页收尾时摘掉后一页的芯片。
+     * 见 [showSrRunning] / [clearAllSrRunningChips]。
+     */
+    private val srRunningChipByPage = HashMap<Int, Long>()
+
     /** 仿真/高级动画共享状态（折线触点 + 翻页方向）。 */
     private val animState = ReaderAnimationState()
     private var webtoonTapDetector: GestureDetector? = null
@@ -285,6 +295,11 @@ class MangaReaderActivity : AppCompatActivity() {
             // 控制器可能从 IO 协程发过来（它内部只在自动超分那条路径 `withContext(Main)`）。
             c.onSrNotice = { text, isError ->
                 runOnUiThread { if (!isFinishing) showSrNotice(text, isError) }
+            }
+            // 超分「进行中」的开合（控制器保证 true/false 成对，含失败与取消）。同一约定：
+            // 回调已经在主线程，`runOnUiThread` 只是防御性兜底。
+            c.onSrProgress = { page, running ->
+                runOnUiThread { if (!isFinishing) showSrRunning(page, running) }
             }
             // Webtoon 显示态（原图/译文）落在控制器上：applyPager()/预热都按它决定渲不渲染
             c.setWebtoonTranslated(webtoonTranslated)
@@ -593,6 +608,9 @@ class MangaReaderActivity : AppCompatActivity() {
         // ⚠️ 必须清掉状态浮层：它是**进程级单例 + TYPE_APPLICATION_OVERLAY 系统窗口**，
         // 退出阅读器后「检测中…／翻译中…」会挂在桌面/其它页面上，且没有任何入口能消掉
         // （直到下一次翻译成功或失败）。翻译在途时退出阅读器就会触发。
+        // ⚠️ 先清「正在超分…」的句柄表再 dismiss：`dismiss()` 会把芯片一起收走，
+        // 但**不会**动我们这张表 —— 留着过期 id 没害处（id 永不复用），但没必要攒着。
+        clearAllSrRunningChips()
         TranslationStatusOverlay.getInstance(this@MangaReaderActivity).dismiss()
         // 兜底：onStop 没发过（进程被杀/未走 onStop 的路径）而当时确实在自动翻 → 补一次
         if (wasActive && !pausedToManualNotified) {
@@ -1182,6 +1200,9 @@ class MangaReaderActivity : AppCompatActivity() {
             waitingPages = c?.panelWaitingPages() ?: emptySet(),
             ocrPages = c?.ocrPages() ?: emptySet(),
             translatingPages = c?.translatingPages() ?: emptySet(),
+            // 超分那一路（记录列表切到「超分」页签时显示）
+            srRecords = c?.srRecords() ?: emptyList(),
+            srJob = c?.srChapterJob?.value,
         )
     }
 
@@ -1200,6 +1221,12 @@ class MangaReaderActivity : AppCompatActivity() {
         }
         controller.addJobFinishedListener(finished)
         jobFinishedListener = finished
+        // **超分本章**：任务每推进一步就把面板刷新一次。
+        // ⚠️ 必须有：面板是「打开那一刻的快照」，宿主不推它就永远停在开始那一下 ——
+        //    用户会看到"点了超分本章，面板一动不动"。一页一次（每页几秒），不会掉帧。
+        lifecycleScope.launch {
+            controller.srChapterJob.collect { pushPanelNow() }
+        }
         // 进度浮层同时跟**任务进度**与**在途阶段**（识别中 / 翻译中）走：
         // 只跟 jobs 的话，阶段变化（OCR → 翻译）不改 done，用户会看到「明明在调 API，还写着识别中」。
         lifecycleScope.launch {
@@ -1330,11 +1357,96 @@ class MangaReaderActivity : AppCompatActivity() {
         confirmClearChapter(chapterIndex)
     }
 
+    // ========== 超分本章（面板「超分」记录页签） ==========
+
+    /**
+     * 超分章卡片的**主按钮**：没在跑 = 超分本章；跑着 = 取消。
+     *
+     * ## 互斥（用户口径 2026-10）
+     * 「不能出现两边都开启批量翻译某章和超分某章」—— 翻译在跑时**直接提示并返回**，
+     * 不静默（静默就是"点了没反应"）。
+     */
+    private fun onSrChapterPrimaryClicked(chapterIndex: Int) {
+        val controller = translationController ?: return
+        if (controller.srChapterJob.value?.chapterIndex == chapterIndex) {
+            controller.cancelSrChapterJob()
+            pushPanelNow()
+            notifyUser(getString(R.string.reader_sr_chapter_cancelled))
+            return
+        }
+        if (controller.srBatchBlockedByTranslate()) {
+            notifyUser(getString(R.string.reader_sr_blocked_by_translate), AppNotice.Style.ERROR)
+            return
+        }
+        // 没选/没下模型时**先拦住**：否则会一页页失败，用户得等一整章才知道原因
+        if (!SuperResolutionEngines.isSrModelUsable(this, prefs)) {
+            notifyUser(getString(R.string.reader_sr_need_model), AppNotice.Style.ERROR)
+            return
+        }
+        val chapter = chapters.getOrNull(chapterIndex) ?: return
+        // 只超**还没超成功**的页（已有的结果不白跑 —— 与"同模型不重超"同一条口径）
+        val done = controller.srRecords()
+            .filter { it.state == ImportedPageSr.STATE_SUCCESS }
+            .map { it.pageIndex }
+            .toSet()
+        val targets = (chapter.startPage..chapter.endPage).filter { it !in done }
+        if (targets.isEmpty()) {
+            notifyUser(getString(R.string.reader_sr_chapter_nothing))
+            return
+        }
+        controller.startSrChapterJob(chapterIndex, targets)
+        notifyUser(getString(R.string.reader_sr_chapter_started))
+        pushPanelNow()
+    }
+
+    /** 超分章卡片的**次按钮**：清除本章超分（**二次确认** —— 所有删除都要确认）。 */
+    private fun confirmClearChapterSr(chapterIndex: Int) {
+        val controller = translationController ?: return
+        val chapter = chapters.getOrNull(chapterIndex) ?: return
+        ReaderDialogs.show(this, isDarkBackground()) {
+            setTitle(R.string.reader_sr_clear_chapter_title)
+            setMessage(getString(R.string.reader_sr_clear_chapter_msg))
+            setPositiveButton(R.string.reader_sr_clear_chapter_ok) { _, _ ->
+                lifecycleScope.launch {
+                    controller.clearChapterSr(chapter, chapterIndex)
+                    pushPanelNow()
+                    invalidateRenderInputsAndReRender()
+                    notifyUser(getString(R.string.reader_sr_chapter_cleared))
+                }
+            }
+            setNegativeButton(R.string.cancel, null)
+        }
+    }
+
+    /** 超分记录行内的「删除」：删这一页的超分结果（与右下角那枚删除按钮同一件事）。 */
+    private fun confirmDeleteSrPage(page: Int) {
+        val controller = translationController ?: return
+        ReaderDialogs.show(this, isDarkBackground()) {
+            setTitle(R.string.reader_sr_clear_confirm_title)
+            setMessage(getString(R.string.reader_sr_clear_confirm_msg, page + 1))
+            setPositiveButton(R.string.reader_sr_clear_ok) { _, _ ->
+                lifecycleScope.launch {
+                    controller.deleteSrResult(page, dropRecord = true)
+                    pushPanelNow()
+                    if (page == currentPage) invalidateRenderInputsAndReRender()
+                    notifyUser(getString(R.string.reader_sr_page_deleted))
+                }
+            }
+            setNegativeButton(R.string.cancel, null)
+        }
+    }
+
     private fun startChapterBatch(chapterIndex: Int, pages: List<Int>) {
         val controller = translationController ?: return
         val chapter = chapters.getOrNull(chapterIndex) ?: return
         if (pages.isEmpty()) {
             notifyUser(getString(R.string.reader_translate_chapter_nothing))
+            return
+        }
+        // **互斥**（用户口径 2026-10）：超分本章在跑时不许再开翻译本章 —— 两个批量任务都要抢
+        // `OcrLock`，同时开就是互相拖死；而且用户根本分不清哪条进度是哪条。要有提示，不静默。
+        if (controller.translateBatchBlockedBySr()) {
+            notifyUser(getString(R.string.reader_translate_blocked_by_sr), AppNotice.Style.ERROR)
             return
         }
         // 章标题一起带过去：后台任务要靠它显示通知栏文案（阅读器关掉后拿不到 chapters）
@@ -1478,28 +1590,56 @@ class MangaReaderActivity : AppCompatActivity() {
     ) = AppNotice.show(this, text, style, autoDismiss = autoDismiss)
 
     /**
-     * **超分提示统一出口**（用户口径：超分也要用 app 的「系统提示」，不要用手机底部 Toast）。
+     * **超分结果提示的统一出口**（用户口径：超分也要用 app 的「系统提示」，不要用手机底部 Toast）。
+     *
+     * ⚠️ **只收超分自己那条「正在超分…」，不再 `dismiss()` 清屏**（用户口径 2026-10）：
+     * 「超分执行的时候也要有提示信息，而且要和翻译中**一起出现**」—— `dismiss()` 会把并排的
+     * 「翻译中…」一起抹掉，那正是"两条并存"做不到的原因。收尾改由 [clearAllSrRunningChips]
+     * 精确完成。（守卫 `SrReaderWiringTest.everySrNoticeClearsOnlyItsOwnRunningChip` 盯着这条。）
      *
      * @param isError 失败原因 → 红色 chip（可点复制，方便用户把原文发出来）；普通提示 → 黑底 chip
      */
     private fun showSrNotice(text: String, isError: Boolean) {
-        // ⚠️ **必须先 dismiss**：`show()` 是**追加**一条芯片，不替换顶部 ——
-        //    不 dismiss 的话那条「正在超分…」常驻芯片（autoDismiss=false）会永远挂着
-        //    （真机反馈「然后一直卡在那」）。与翻译成功/失败的处理完全一致。
-        //    （守卫 `SrReaderWiringTest.everySrNoticeReplacesThePersistentChip` 盯的就是这一句）
-        if (AppNotice.canUseOverlay(this)) {
-            val overlay = TranslationStatusOverlay.getInstance(this)
-            overlay.dismiss()
-        }
+        clearAllSrRunningChips()
         notifyUser(text, if (isError) AppNotice.Style.ERROR else AppNotice.Style.INFO)
     }
 
     /**
-     * 超分「进行中」的常驻提示：`autoDismiss = false` → 一直挂着，直到被结果 / 失败替换
-     * （与翻译的"检测中…/翻译中…"同一套用法）。
+     * 超分「进行中」提示的开合（**与「翻译中…」并排共存**，用户口径 2026-10）。
+     *
+     * ⚠️ 走 `AppNotice.showRunning` 而**不是** `Style.PROGRESS`：后者是 `showImmediate` =
+     * **替换**顶部那一条 —— 超分一开始就把「翻译中…」顶掉，用户永远看不到两条并存
+     * （`TranslationStatusOverlay.showRunning` 的注释里列了三个入口各自为什么不行）。
+     *
+     * ⚠️ **按页记账**：整章批量时每页都会起一次超分，几页可以同时在等 `OcrLock`。
+     * 只存一个句柄的话后一页会覆盖前一页 → 前一页收尾时把**后一页**的芯片摘掉，
+     * 屏幕上就是"芯片随机消失"。
      */
-    private fun showSrProgress(text: String) =
-        notifyUser(text, AppNotice.Style.PROGRESS, autoDismiss = false)
+    private fun showSrRunning(page: Int, running: Boolean) {
+        clearSrRunningChip(page)   // 同页重复进入（重试 / 重翻）先收掉上一条，避免叠成两条
+        if (running) {
+            srRunningChipByPage[page] =
+                AppNotice.showRunning(this, getString(R.string.sr_enhancing_page, page + 1))
+        }
+    }
+
+    /** 手动点「超分 / 重新超分」时的进行中提示（与自动超分走同一条路）。 */
+    private fun showSrProgress(page: Int) = showSrRunning(page, running = true)
+
+    private fun clearSrRunningChip(page: Int) {
+        AppNotice.clearRunning(this, srRunningChipByPage.remove(page) ?: 0L)
+    }
+
+    /**
+     * 收掉**全部**「正在超分…」芯片（超分出结果时要顶掉它们）。
+     *
+     * ⚠️ 只动超分自己这一类芯片：并排的「翻译中…」「正在翻译本章…」一条都不能碰 ——
+     * 这正是它取代原来那句 `overlay.dismiss()` 的原因。
+     */
+    private fun clearAllSrRunningChips() {
+        for (id in srRunningChipByPage.values) AppNotice.clearRunning(this, id)
+        srRunningChipByPage.clear()
+    }
 
     /** 注入「页图提供者」：适配器绑定页时优先取译文/原文渲染图（无则原图），
      *  避免 RecyclerView 重绑/复用把已显示的译图覆盖回原图。 */
@@ -1681,7 +1821,7 @@ class MangaReaderActivity : AppCompatActivity() {
             return
         }
         binding.btnSrPage.isEnabled = false
-        showSrProgress(getString(R.string.sr_enhancing_page, currentPage + 1))
+        showSrProgress(currentPage)
         lifecycleScope.launch {
             val result = controller.onSrButtonClicked(currentPage)
             binding.btnSrPage.isEnabled = true
@@ -1756,6 +1896,18 @@ class MangaReaderActivity : AppCompatActivity() {
 
     /** 上一次把状态推给面板的时刻（节流用，见 [refreshProgressTranslation]）。 */
     private var lastPanelPushMs = 0L
+
+    /**
+     * 把面板状态**立即**推一次。
+     *
+     * ⚠️ 与 [refreshProgressTranslation] 的节流版分工不同：那个是**高频**路径（每页四个阶段变化）
+     * 必须合并；这里是**用户显式操作**（点了超分本章 / 清空本章），晚 300ms 才更新会被当成"点了没反应"。
+     */
+    private fun pushPanelNow() {
+        val sheet = supportFragmentManager.findFragmentByTag(ReaderMenuSheet.TAG) as? ReaderMenuSheet ?: return
+        lastPanelPushMs = android.os.SystemClock.elapsedRealtime()
+        sheet.notifyTranslateChanged()
+    }
 
     /** 把指定页显示切到 controller 的当前态（译文/原文/原图）。
      *  不直接写 visibleImage（它可能是邻页，写错视图 = 错图）；而是把该页当前态渲染图预热进缓存后
@@ -1994,6 +2146,10 @@ class MangaReaderActivity : AppCompatActivity() {
                 },
                 // ===== 章节卡片：主按钮（翻译本章/暂停/继续）+ 次按钮（清除本章译文/取消）=====
                 onChapterSelected = { index -> goToChapterIndex(index) },
+                // 超分记录列表（面板切到「超分」页签）同源接线
+                onSrChapterPrimary = { index -> onSrChapterPrimaryClicked(index) },
+                onSrChapterSecondary = { index -> confirmClearChapterSr(index) },
+                onSrDeletePage = { page -> confirmDeleteSrPage(page) },
                 onChapterPrimary = { index -> onChapterPrimaryClicked(index) },
                 onChapterSecondary = { index -> onChapterSecondaryClicked(index) },
                 // 面板行内「删除」与右下角清除图标共用同一个确认流程

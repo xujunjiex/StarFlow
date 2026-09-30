@@ -169,7 +169,7 @@ class SrReaderWiringTest {
         //    行根必须在同时包住「标题/选中圈」与「下载行」的那一层上。
         val layout = read("src/main/res/layout/fragment_model_management.xml")
         for (base in listOf(
-            "sr_w2x_anime_m1", "sr_w2x_anime_n2", "sr_cunet_m1",
+            "sr_w2x_anime_m1", "sr_w2x_anime_n2", "sr_w2x_photo_m1", "sr_w2x_photo_n2", "sr_cunet_m1",
             "sr_cunet_n1", "sr_cunet_n2", "sr_srmd_x2", "sr_srmd_nf_x2", "sr_cugan_dn",
             "sr_cugan_cons", "sr_cugan_d3", "sr_rsrgan_a6b"
         )) {
@@ -196,7 +196,8 @@ class SrReaderWiringTest {
         // 用户口径：「超分的提示信息应该也用 app 系统提示，不要用手机底部 Toast」
         // 2026-10 起提示出口收敛到 AppNotice（阅读器/书架共用，唯一允许兜底 Toast 的地方）
         assertTrue("必须有一个统一的超分提示出口", act.contains("private fun showSrNotice(text: String, isError: Boolean)"))
-        assertTrue("进行中的提示要常驻（autoDismiss=false），直到被结果替换", act.contains("private fun showSrProgress(text: String)"))
+        assertTrue("进行中的提示必须与别的提示**并存**（AppNotice.showRunning，不是替换顶部的 PROGRESS）",
+            act.contains("private fun showSrProgress(page: Int)"))
         assertFalse("阅读器里不许再直接弹 Toast（必须走 AppNotice）", act.contains("UiUtils.showToast("))
         val notice = read("src/main/java/com/moe/starflow/utils/AppNotice.kt")
         assertTrue("失败要用红色可复制的 chip（AppNotice.Style.ERROR）", notice.contains("overlay.showError(text)"))
@@ -260,14 +261,53 @@ class SrReaderWiringTest {
     }
 
     @Test
-    fun everySrNoticeReplacesThePersistentChip() {
-        // 真机反馈「然后一直卡在那」：`show()` 是**追加**一条芯片、不替换顶部 ——
-        // 不先 dismiss 的话那条常驻的「正在超分…」会永远挂在屏幕上。
+    fun everySrNoticeClearsOnlyItsOwnRunningChip() {
+        // 两个用户口径叠在一起，缺一不可：
+        // ① 2026-10 早期真机反馈「然后一直卡在那」：`show()` 是**追加**一条芯片、不替换顶部 ——
+        //    不收掉那条常驻的「正在超分…」，它就会永远挂在屏幕上；
+        // ② 2026-10 新口径「超分执行时也要有提示，而且要和翻译中**一起出现**」：收尾**不能**再
+        //    用 `overlay.dismiss()` —— 那是**清空全部**堆叠消息，会把并排的「翻译中…」一起抹掉。
+        // 所以收尾必须是**按句柄精确移除**（`clearAllSrRunningChips`），只动超分自己那类芯片。
         val act = activity()
         val i = act.indexOf("private fun showSrNotice(")
         assertTrue("找不到 showSrNotice", i > 0)
-        val body = act.substring(i, act.indexOf("private fun showSrProgress(", i))
-        assertTrue("showSrNotice 必须先 dismiss 掉常驻芯片", body.contains("overlay.dismiss()"))
+        val body = act.substring(i, act.indexOf("private fun showSrRunning(", i))
+        assertTrue("showSrNotice 必须收掉超分自己的进行中芯片", body.contains("clearAllSrRunningChips()"))
+        assertFalse(
+            "showSrNotice 不许再 dismiss() 清屏 —— 那会把并排的「翻译中…」一起抹掉",
+            body.contains("dismiss()"),
+        )
+        // 收尾的实际做法必须逐条按句柄移除，而不是"这一类全清"之外的更粗粒度
+        val clear = act.indexOf("private fun clearAllSrRunningChips(")
+        assertTrue("找不到 clearAllSrRunningChips", clear > 0)
+        val next = act.indexOf("\n    private fun ", clear + 1).let { if (it > clear) it else act.length }
+        assertTrue(
+            "必须逐条按句柄移除（AppNotice.clearRunning）",
+            act.substring(clear, next).contains("AppNotice.clearRunning("),
+        )
+        // 控制器侧：开合必须**成对**，否则那条芯片会永久驻留
+        val ctl = controller()
+        assertTrue(
+            "控制器要有 onSrProgress 回调（结果类走 onSrNotice，两者刻意分开）",
+            ctl.contains("var onSrProgress: (page: Int, running: Boolean) -> Unit"),
+        )
+        assertTrue(
+            "收尾那句必须走 NonCancellable —— 协程被取消时普通 finally 里的挂起发不出去，" +
+                "芯片就永远挂着了",
+            ctl.contains("NonCancellable + Dispatchers.Main"),
+        )
+        assertTrue(
+            "超分要有唯一执行入口（提示才天然成对）",
+            ctl.contains("private suspend fun runSr(page: Int, src: Bitmap)"),
+        )
+        assertEquals(
+            "不许有人绕开 runSr 直接调 SrProcessor.enhanceAndStore（那就绕开了「正在超分…」提示）",
+            1,
+            Regex("SrProcessor\\.enhanceAndStore\\(").findAll(ctl).count(),
+        )
+        // 宿主侧：必须按**页**记账 —— 整章批量时几页会同时等 OcrLock，
+        // 只存一个句柄会让后一页覆盖前一页，前一页收尾时摘掉后一页的芯片
+        assertTrue("宿主必须按页记句柄", act.contains("private val srRunningChipByPage = HashMap<Int, Long>()"))
     }
     @Test
     fun togglingToOriginalNeverClearsTheSrResult() {

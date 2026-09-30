@@ -133,6 +133,41 @@ object SrStore {
     const val UNKNOWN_MODEL = "-"
 
     /**
+     * 落盘标记里记着的**结果元数据**（超分面板「详情」要展示的那几项）。
+     *
+     * 尺寸/时间来自标记文件（写的时候就在里面了），**字节数来自图片文件本身**
+     * （标记不存它 —— 存了也会与真实文件漂移，而文件才是真值）。
+     */
+    data class StoredInfo(
+        val model: String,
+        val width: Int,
+        val height: Int,
+        val scale: Int,
+        val savedAtMs: Long,
+        val bytes: Long,
+    )
+
+    /**
+     * 读一页超分结果的元数据；**没有属于这本书的结果时返回 null**。
+     *
+     * 与 [load] 同一条归属校验（指纹不符一律当没有），不做的话删书重导后
+     * 面板会展示上一本书的模型名与尺寸。
+     */
+    fun infoOf(ctx: Context, mangaId: Long, page: Int, mangaKey: String): StoredInfo? {
+        if (!exists(ctx, mangaId, page, mangaKey)) return null
+        val m = readMarker(ctx, mangaId, page) ?: return null
+        val img = imageFile(ctx, mangaId, page)
+        return StoredInfo(
+            model = m.optString("model").takeIf { it.isNotEmpty() } ?: UNKNOWN_MODEL,
+            width = m.optInt("w", 0),
+            height = m.optInt("h", 0),
+            scale = m.optInt("scale", 2),
+            savedAtMs = m.optLong("ts", 0L),
+            bytes = if (img.isFile) img.length() else 0L,
+        )
+    }
+
+    /**
      * 写入一页的超分结果（**覆盖**已有文件 —— 用户口径"只保留一份"）。
      *
      * @param bitmaps 传进来的 2x 底图；本函数**不回收**它（归调用方）。

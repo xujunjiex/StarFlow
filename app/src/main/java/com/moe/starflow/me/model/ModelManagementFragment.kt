@@ -158,6 +158,10 @@ class ModelManagementFragment : Fragment() {
         SrFamily(R.id.sr_w2x_group_title, R.id.sr_w2x_group_selected, listOf(
             SrRow(ModelKey.SR_W2X_UP7_ANIME_M1, R.id.sr_w2x_anime_m1_row, R.id.sr_w2x_anime_m1_radio, R.id.sr_w2x_anime_m1_title),
             SrRow(ModelKey.SR_W2X_UP7_ANIME_N2, R.id.sr_w2x_anime_n2_row, R.id.sr_w2x_anime_n2_radio, R.id.sr_w2x_anime_n2_title),
+            // 照片族（同一族、另一套权重）：用户口径 2026-10「upconv 的照片放大模型丢了，
+            // 需要加到 upconv 的那个组里面，一共 4 个才对」
+            SrRow(ModelKey.SR_W2X_UP7_PHOTO_M1, R.id.sr_w2x_photo_m1_row, R.id.sr_w2x_photo_m1_radio, R.id.sr_w2x_photo_m1_title),
+            SrRow(ModelKey.SR_W2X_UP7_PHOTO_N2, R.id.sr_w2x_photo_n2_row, R.id.sr_w2x_photo_n2_radio, R.id.sr_w2x_photo_n2_title),
         )),
         SrFamily(R.id.sr_cunet_group_title, R.id.sr_cunet_group_selected, listOf(
             SrRow(ModelKey.SR_W2X_CUNET_M1, R.id.sr_cunet_m1_row, R.id.sr_cunet_m1_radio, R.id.sr_cunet_m1_title),
@@ -185,6 +189,8 @@ class ModelManagementFragment : Fragment() {
     private fun srExpectedSize(key: ModelKey): String = when (key) {
         ModelKey.SR_W2X_UP7_ANIME_M1 -> "~1.1MB"
         ModelKey.SR_W2X_UP7_ANIME_N2 -> "~1.1MB"
+        ModelKey.SR_W2X_UP7_PHOTO_M1 -> "~1.1MB"
+        ModelKey.SR_W2X_UP7_PHOTO_N2 -> "~1.1MB"
         ModelKey.SR_W2X_CUNET_M1 -> "~2.7MB"
         ModelKey.SR_W2X_CUNET_N1 -> "~2.7MB"
         ModelKey.SR_W2X_CUNET_N2 -> "~2.7MB"

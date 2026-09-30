@@ -626,6 +626,8 @@
 
     <string name="sr_model_w2x_up7_anime_m1">waifu2x upconv_7 动漫 · 不降噪</string>
     <string name="sr_model_w2x_up7_anime_n2">waifu2x upconv_7 动漫 · 强力降噪</string>
+    <string name="sr_model_w2x_up7_photo_m1">waifu2x upconv_7 照片 · 不降噪</string>
+    <string name="sr_model_w2x_up7_photo_n2">waifu2x upconv_7 照片 · 强力降噪</string>
     <string name="sr_model_w2x_cunet_m1">waifu2x cunet · 不降噪</string>
     <string name="sr_model_w2x_cunet_n1">waifu2x cunet · 中度降噪</string>
     <string name="sr_model_w2x_cunet_n2">waifu2x cunet · 强力降噪</string>
@@ -646,7 +648,7 @@
     <string name="sr_rsrgan_group">Real-ESRGAN 动漫 6B（4x）</string>
     <string name="sr_rsrgan_group_desc">4 倍放大（其它族都是 2x），17MB，画风改动最激进。</string>
     <string name="sr_w2x_group">waifu2x upconv_7</string>
-    <string name="sr_w2x_group_desc">体积最小（1.06MB）、速度最快。干净图源选「不降噪」；噪点多/扫描件选「强力降噪」——官方示例用的就是这一档。</string>
+    <string name="sr_w2x_group_desc">体积最小（1.06MB）、速度最快。两套权重：动漫权重给手绘页，照片权重给真人照片、彩页、网点重的图源。干净图源选「不降噪」；噪点多/扫描件选「强力降噪」——官方示例用的就是这一档。</string>
     <string name="sr_cunet_group">waifu2x cunet</string>
     <string name="sr_cunet_group_desc">59 层，比 upconv_7 更耐噪点与 JPEG 伪影；实测峰值在「强力降噪」。</string>
     <string name="sr_fail_exception">引擎异常</string>
@@ -1035,6 +1037,31 @@
     <string name="reader_sr_switch_on">阅读器超分已开启</string>
     <string name="reader_sr_switch_off">阅读器超分已关闭（已生成的超分图仍留在磁盘上）</string>
     <string name="reader_sr_auto_label">翻译时自动超分</string>
+
+    <!-- ═══ 超分记录系统（2026-10）═══ -->
+    <string name="reader_records_tab_translate">翻译</string>
+    <string name="reader_records_tab_sr">超分</string>
+    <string name="reader_sr_state_running">超分中</string>
+    <string name="reader_sr_chapter_translate">超分本章</string>
+    <string name="reader_sr_chapter_clear">清空本章</string>
+    <string name="reader_sr_chapter_running">超分中 %1$d/%2$d</string>
+    <string name="reader_sr_chapter_done">超分完成</string>
+    <string name="reader_sr_badge">已超分 %1$d/%2$d</string>
+    <string name="reader_sr_blocked_by_translate">本章正在翻译中，请先暂停或取消，再开始超分。</string>
+    <string name="reader_translate_blocked_by_sr">本章正在超分中，请先取消超分，再开始翻译。</string>
+    <string name="reader_sr_clear_chapter_title">清空本章超分</string>
+    <string name="reader_sr_clear_chapter_msg">将删除本章所有页的超分结果，页面回到原图。确定吗？</string>
+    <string name="reader_sr_clear_chapter_ok">清空</string>
+    <string name="reader_sr_detail_model">模型：%1$s</string>
+    <string name="reader_sr_detail_src">原始 %1$d×%2$d · %3$s</string>
+    <string name="reader_sr_detail_out">超分后 %1$d×%2$d · %3$s</string>
+    <string name="reader_sr_detail_none">暂无超分结果</string>
+    <string name="reader_sr_page_deleted">已删除本页超分结果</string>
+    <string name="reader_sr_chapter_nothing">本章没有需要超分的页。</string>
+    <string name="reader_sr_chapter_started">正在超分本章…</string>
+    <string name="reader_sr_chapter_cancelled">已取消超分本章</string>
+    <string name="reader_sr_chapter_cleared">已清空本章超分</string>
+    <string name="reader_sr_need_model">请先选择并下载一个超分模型。</string>
     <string name="reader_sr_auto_on">翻译完成后会自动超分当前页</string>
     <string name="reader_sr_auto_off">翻译不再自动超分，可用右下角按钮手动超分</string>
     <string name="reader_sr_toggle_desc">原图 / 超分图 切换</string>

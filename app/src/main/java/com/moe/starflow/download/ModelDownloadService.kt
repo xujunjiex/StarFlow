@@ -238,6 +238,8 @@ class ModelDownloadService : LifecycleService() {
         //    这样新增模型忘了补这里会**编译不过**（保留下面的穷尽 when 安全网）。
         ModelKey.SR_W2X_UP7_ANIME_M1 -> getString(SrModelManager.nameResOf(this))
         ModelKey.SR_W2X_UP7_ANIME_N2 -> getString(SrModelManager.nameResOf(this))
+        ModelKey.SR_W2X_UP7_PHOTO_M1 -> getString(SrModelManager.nameResOf(this))
+        ModelKey.SR_W2X_UP7_PHOTO_N2 -> getString(SrModelManager.nameResOf(this))
         ModelKey.SR_W2X_CUNET_M1 -> getString(SrModelManager.nameResOf(this))
         ModelKey.SR_W2X_CUNET_N1 -> getString(SrModelManager.nameResOf(this))
         ModelKey.SR_W2X_CUNET_N2 -> getString(SrModelManager.nameResOf(this))
@@ -589,6 +591,7 @@ class ModelDownloadService : LifecycleService() {
         // ⚠️ 与 ModelDownloadRepository.baseDirFor 是**两份必须一致的副本**（都要改）：
         //    这里曾把 SR_W2X_UP7_PHOTO_M1 写了两遍、看着像少一档
         ModelKey.SR_W2X_UP7_ANIME_M1, ModelKey.SR_W2X_UP7_ANIME_N2,
+        ModelKey.SR_W2X_UP7_PHOTO_M1, ModelKey.SR_W2X_UP7_PHOTO_N2,
         ModelKey.SR_W2X_CUNET_M1, ModelKey.SR_W2X_CUNET_N1, ModelKey.SR_W2X_CUNET_N2,
         ModelKey.SR_SRMD_X2, ModelKey.SR_SRMD_NF_X2,
         ModelKey.SR_REALCUGAN_NODENOISE, ModelKey.SR_REALCUGAN_CONSERVATIVE,

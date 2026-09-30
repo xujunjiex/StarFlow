@@ -250,6 +250,50 @@
       ]
     },
     {
+      "model_key": "SR_W2X_UP7_PHOTO_M1",
+      "browser_url": "https://github.com/nihui/waifu2x-ncnn-vulkan",
+      "family": "waifu2x",
+      "scale": 2,
+      "noise": -1,
+      "prepad": 7,
+      "files": [
+        {
+          "file_name": "w2x_up7_photo_m1.param",
+          "download_url": "https://raw.githubusercontent.com/nihui/waifu2x-ncnn-vulkan/master/models/models-upconv_7_photo/scale2.0x_model.param",
+          "file_size": 1047,
+          "checksum": "d731ed12a5334c0a895b580052ed8c52"
+        },
+        {
+          "file_name": "w2x_up7_photo_m1.bin",
+          "download_url": "https://raw.githubusercontent.com/nihui/waifu2x-ncnn-vulkan/master/models/models-upconv_7_photo/scale2.0x_model.bin",
+          "file_size": 1106248,
+          "checksum": "cd1b4ff2bff94e3a95c39c7b0d3cdbde"
+        }
+      ]
+    },
+    {
+      "model_key": "SR_W2X_UP7_PHOTO_N2",
+      "browser_url": "https://github.com/nihui/waifu2x-ncnn-vulkan",
+      "family": "waifu2x",
+      "scale": 2,
+      "noise": 2,
+      "prepad": 7,
+      "files": [
+        {
+          "file_name": "w2x_up7_photo_n2.param",
+          "download_url": "https://raw.githubusercontent.com/nihui/waifu2x-ncnn-vulkan/master/models/models-upconv_7_photo/noise2_scale2.0x_model.param",
+          "file_size": 1047,
+          "checksum": "d731ed12a5334c0a895b580052ed8c52"
+        },
+        {
+          "file_name": "w2x_up7_photo_n2.bin",
+          "download_url": "https://raw.githubusercontent.com/nihui/waifu2x-ncnn-vulkan/master/models/models-upconv_7_photo/noise2_scale2.0x_model.bin",
+          "file_size": 1106248,
+          "checksum": "dc7f412e46937d74d673e0bb9b0765f8"
+        }
+      ]
+    },
+    {
       "model_key": "SR_W2X_CUNET_M1",
       "browser_url": "https://github.com/nihui/waifu2x-ncnn-vulkan",
       "family": "waifu2x",

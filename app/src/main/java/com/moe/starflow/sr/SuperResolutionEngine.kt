@@ -419,6 +419,31 @@ object SuperResolutionEngines {
     }
 
     /**
+     * 阅读器链路下**引擎能吃的最大输入像素数** —— 给大图预处理（`SrDownscale.plan`）定压缩目标用。
+     *
+     * ⚠️ 这个上限是**按输出**算的（`NcnnSrEngine.maxInputPixels = 10MP / scale²`）：
+     * 2x 档是 2.5MP、Real-ESRGAN 4x 只有 0.625MP。**只按"短边 1080"压是不够的** ——
+     * 1080x2592 的长条是 2.8MP，照样超限、照样只得到一句"图太大"。
+     *
+     * @return 引擎上限；引擎取不到（没选模型 / 文件缺失 / 初始化失败）→ 0，
+     *   调用方退回落地的兜底值 —— **真正的原因不在这里报**，由 `applySteps` 给出细分
+     *   （没选模型 / 文件不在 / 加载失败，用户要做的事完全不同）。
+     */
+    fun inputPixelLimitForReader(context: Context, prefs: SharedPreferences): Long {
+        val steps = resolveSteps(
+            srEnabled = SrSettings.isEnabledForReader(prefs),
+            srModelUsable = isSrModelUsable(context, prefs),
+            anime4kEnabled = Anime4kMode.isEnabled(prefs),
+        )
+        val step = steps.firstOrNull() ?: return 0L
+        val pick = when (step) {
+            SrStep.SR_MODEL -> obtain(context, prefs)
+            SrStep.ANIME4K -> obtainAnime4k(context, prefs)
+        }
+        return pick.engine?.maxInputPixels ?: 0L
+    }
+
+    /**
      * 释放超分模型引擎。
      *
      * ⚠️ **真正的释放在后台线程做**，不要在调用线程上同步做 ——

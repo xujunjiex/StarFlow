@@ -9,8 +9,8 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [HistoryEntity::class, PageCacheEntity::class, TextTranslateRecord::class, ChatMessageEntity::class, ImportedPageTranslation::class, NovelParagraphTranslation::class],
-    version = 18,
+    entities = [HistoryEntity::class, PageCacheEntity::class, TextTranslateRecord::class, ChatMessageEntity::class, ImportedPageTranslation::class, NovelParagraphTranslation::class, ImportedPageSr::class],
+    version = 19,
     exportSchema = false
 )
 abstract class TranslationHistoryDatabase : RoomDatabase() {
@@ -24,6 +24,9 @@ abstract class TranslationHistoryDatabase : RoomDatabase() {
     abstract fun importedPageTranslationDao(): ImportedPageTranslationDao
 
     abstract fun novelParagraphTranslationDao(): NovelParagraphTranslationDao
+
+    /** 超分逐页记录（阅读器超分面板的记录系统）。 */
+    abstract fun importedPageSrDao(): ImportedPageSrDao
 
     companion object {
         @Volatile
@@ -258,13 +261,49 @@ abstract class TranslationHistoryDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v18 → v19：**超分逐页记录表**（阅读器超分面板的记录系统）。
+         *
+         * 纯新增 + 幂等（`CREATE TABLE IF NOT EXISTS`），绝不 ALTER 现有表 —— 与 [MIGRATION_17_18] 同一写法。
+         *
+         * ⚠️ 列定义必须与 [ImportedPageSr] **逐字对齐**，包括**不写 DEFAULT**：
+         * Kotlin 的数据类默认值（`state = 0`）是语言层的，Room 生成的建表语句里**没有** DEFAULT 子句。
+         * 多写一个 `DEFAULT 0` 就会与 Entity 的 schema 不符 → 升级用户一打开库即抛
+         * `IllegalStateException: Migration didn't properly handle`，而**全新安装的用户完全遇不到**。
+         * 守卫：`ImportedPageSrDaoTest`（Robolectric 真建库并跑迁移链）。
+         */
+        val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS imported_page_sr (" +
+                    "mangaId INTEGER NOT NULL, " +
+                    "pageIndex INTEGER NOT NULL, " +
+                    "state INTEGER NOT NULL, " +
+                    "modelName TEXT, " +
+                    "srcWidth INTEGER NOT NULL, " +
+                    "srcHeight INTEGER NOT NULL, " +
+                    "srcBytes INTEGER NOT NULL, " +
+                    "outWidth INTEGER NOT NULL, " +
+                    "outHeight INTEGER NOT NULL, " +
+                    "outBytes INTEGER NOT NULL, " +
+                    "failCode TEXT, " +
+                    "failMessage TEXT, " +
+                    "startedAtMs INTEGER NOT NULL, " +
+                    "finishedAtMs INTEGER NOT NULL, " +
+                    "updatedAtMs INTEGER NOT NULL, " +
+                    "mangaKey TEXT, " +
+                    "PRIMARY KEY(mangaId, pageIndex))"
+                )
+            }
+        }
+
         fun getInstance(context: Context): TranslationHistoryDatabase {
             return instance ?: synchronized(this) {
                 instance ?: Room.databaseBuilder(
                     context.applicationContext,
                     TranslationHistoryDatabase::class.java,
                     "translation_history.db"
-                ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18)
+                ).addMigrations(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19)
                 .fallbackToDestructiveMigration()
                 .build().also { instance = it }
             }

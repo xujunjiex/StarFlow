@@ -24,6 +24,7 @@ class OcrLockTest {
         // 恢复真实时钟 + 兜底：测试失败也不要污染后续用例
         OcrLock.clockNs = { System.nanoTime() }
         while (OcrLock.isRunning) OcrLock.release()
+        while (OcrLock.hasOcrDemand()) OcrLock.endOcrDemand()
     }
 
     @Test
@@ -110,5 +111,47 @@ class OcrLockTest {
         assertTrue("旧持有者不许放掉新持有者的锁", OcrLock.isRunning)
         OcrLock.release(ocr)
         assertFalse(OcrLock.isRunning)
+    }
+
+    // ═══════════════ 「OCR 需求」计数（超分不抢排队 OCR 的锁，2026-10）═══════════════
+
+    /**
+     * 计数器语义（**不是布尔**）：多个 OCR 页可以同时排队（章节批量里 OCR 串行、但等锁的
+     * 那一刻可能不止一个协程），任意一个提前 `end` 都不能把标记关掉。
+     */
+    @Test
+    fun ocrDemandIsACounterNotABoolean() {
+        assertFalse("初始没有需求", OcrLock.hasOcrDemand())
+
+        OcrLock.beginOcrDemand()
+        OcrLock.beginOcrDemand()
+        assertTrue("两个 OCR 同时在等 → 仍是 true", OcrLock.hasOcrDemand())
+
+        OcrLock.endOcrDemand()
+        assertTrue("还有一个人在等 → 不许提前变 false", OcrLock.hasOcrDemand())
+
+        OcrLock.endOcrDemand()
+        assertFalse("全部离开 → false", OcrLock.hasOcrDemand())
+    }
+
+    /** 多减一次不能变负 —— 否则后续 `hasOcrDemand()` 永远是 true，超分会**永久让路**。 */
+    @Test
+    fun endOcrDemandNeverGoesNegative() {
+        OcrLock.endOcrDemand()
+        OcrLock.endOcrDemand()
+        assertFalse(OcrLock.hasOcrDemand())
+
+        OcrLock.beginOcrDemand()
+        assertTrue(OcrLock.hasOcrDemand())
+        OcrLock.endOcrDemand()
+    }
+
+    /** 「OCR 在排队」与「锁被持有」是**两件独立的事**：超分的等锁循环要同时判两个。 */
+    @Test
+    fun ocrDemandIsIndependentOfLockOwnership() {
+        OcrLock.beginOcrDemand()
+        assertFalse("只有需求、没有持有者（OCR 还在等锁的排布里）", OcrLock.isRunning)
+        assertTrue("但超分必须据此让路", OcrLock.hasOcrDemand())
+        OcrLock.endOcrDemand()
     }
 }

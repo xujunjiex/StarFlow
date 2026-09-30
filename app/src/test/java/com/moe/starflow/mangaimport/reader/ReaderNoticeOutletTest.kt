@@ -213,16 +213,44 @@ class ReaderNoticeOutletTest {
         )
     }
 
-    /** 超分提示同样必须走统一出口（用户口径：超分也要用 app 的「系统提示」）。 */
+    /** 成员函数 [name] 的函数体（到下一个同缩进的 `private fun` 为止）。 */
+    private fun bodyOf(text: String, name: String): String {
+        val start = text.indexOf("private fun $name(")
+        assertTrue("找不到 $name", start >= 0)
+        val end = text.indexOf("\n    private fun ", start + 1).let { if (it > start) it else text.length }
+        return text.substring(start, end)
+    }
+
+    /**
+     * 超分提示同样必须走统一出口（用户口径：超分也要用 app 的「系统提示」）。
+     *
+     * ⚠️ 两类提示**刻意走不同出口**，别合并：
+     * - **结果 / 报错**（`showSrNotice`）→ `notifyUser`：追加一条、带 Toast 兜底；
+     * - **进行中**（`showSrProgress` → `showSrRunning`）→ `AppNotice.showRunning` ——
+     *   它必须与并排的「翻译中…」**共存**，而 `notifyUser(..., PROGRESS)` 走的是
+     *   `showImmediate` = **替换**顶部那一条，一发就把「翻译中…」顶掉（2026-10 用户口径：
+     *   「超分执行的时候也要有提示信息，而且要和翻译中一起出现」）。
+     */
     @Test
-    fun srNoticesGoThroughNotifyUser() {
+    fun srNoticesGoThroughTheAppNoticeOutlets() {
         val text = readerSource()
         assertTrue("showSrNotice 必须委托 notifyUser", notifyUserBody(text).isNotEmpty())
-        for (fn in listOf("showSrNotice", "showSrProgress")) {
-            val start = text.indexOf("private fun $fn(")
-            assertTrue("找不到 $fn", start >= 0)
-            val end = text.indexOf("\n    private fun ", start + 1).let { if (it > start) it else text.length }
-            assertTrue("$fn 必须通过 notifyUser 提示", text.substring(start, end).contains("notifyUser("))
-        }
+        assertTrue(
+            "超分结果/报错必须走 notifyUser",
+            bodyOf(text, "showSrNotice").contains("notifyUser("),
+        )
+        val running = bodyOf(text, "showSrRunning")
+        assertTrue(
+            "进行中必须走 AppNotice.showRunning（与「翻译中…」并存），不能走 notifyUser 的 PROGRESS",
+            running.contains("AppNotice.showRunning("),
+        )
+        assertFalse(
+            "进行中不许改回 PROGRESS —— 那是替换顶部一条，会把「翻译中…」顶掉",
+            running.contains("AppNotice.Style.PROGRESS"),
+        )
+        assertTrue(
+            "进行中要用句柄精确收尾（只摘自己那条）",
+            text.contains("AppNotice.clearRunning("),
+        )
     }
 }

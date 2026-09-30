@@ -71,6 +71,10 @@ class TranslationStatusOverlay private constructor(private val context: Context)
     // 标记为「不随 dismiss 清屏」的 chip（showSticky 用）—— 屏幕方向变化这类提示
     // 必须在随后的「检测中…」清屏中存活，否则用户根本读不到（实测被吃掉）。
     private val stickyChips = HashSet<TextView>()
+    // 「进行中」芯片（showRunning 用）→ 句柄 id。**LinkedHashMap**：槽位满时要按**加入顺序**
+    // 挤掉最旧的那条，HashMap 的迭代序跟插入序无关，挤谁是随机的。
+    private val runningChips = LinkedHashMap<TextView, Long>()
+    private val nextRunningId = java.util.concurrent.atomic.AtomicLong(0)
     // 待显示队列（超过 MAX_SLOTS 时排队）
     private val messageQueue = LinkedList<QueuedMessage>()
 
@@ -110,6 +114,10 @@ class TranslationStatusOverlay private constructor(private val context: Context)
                 top.background = createRoundedBackground(Color.argb(150, 0, 0, 0))
                 top.isClickable = false
                 top.setOnClickListener(null)
+                // ⚠️ 这条芯片被**改作他用**了 → 不再属于「进行中」那一类。
+                //    不摘的话，它原来那一页超分结束时会 `removeRunning` 把这条**进度**芯片删掉
+                //    （表现：一条提示莫名其妙自己消失）。
+                runningChips.remove(top)
                 rescheduleDismiss(top, autoDismiss)
                 // 确保窗口已附着：窗口可能已被系统移除而 isShowing 仍为 true（回归修复）
                 addToWindowIfNeeded()
@@ -157,6 +165,68 @@ class TranslationStatusOverlay private constructor(private val context: Context)
     }
 
     /**
+     * 追加一条**「进行中」芯片**：不替换顶部、不自动消失，返回**句柄**供 [removeRunning] 精确移除。
+     *
+     * ## 为什么不能复用现成的三个入口（用户口径 2026-10）
+     *
+     * 用户要求「超分执行时也要有提示，而且要和『翻译中…』**一起出现** —— 我们的通知系统
+     * 本来就支持同时显示多条」。现成的三条路都做不到这件事：
+     *
+     * | 入口 | 行为 | 为什么不满足 |
+     * |---|---|---|
+     * | [showImmediate] | **替换**最顶部一条 | 超分一开始就把「翻译中…」顶掉，永远看不到两条并存 |
+     * | [show] | 追加但 `autoDismiss=true` | 超分单页可跑几分钟，提示会先自己消失 |
+     * | [showSticky] | 追加、扛得住 `dismiss()` | 但它**也登记进 sticky** → 翻译收尾那次清屏清不掉它 → 会赖在屏幕上 |
+     *
+     * 所以这里新的语义是「**追加 + 不自动消失 + 可被精确移除**」：既与别的芯片并存，
+     * 又能在超分结束时**只摘掉自己**（而不是像以前那样 `dismiss()` 清掉全部 —— 那正是
+     * 「和翻译中一起出现」做不到的原因）。
+     *
+     * ⚠️ **不进 [stickyChips]** 是刻意的：任何一次 `dismiss()`（翻译成功/失败、阅读器
+     * `onDestroy` 清屏）都会把它一起收走 —— 这是"调用方忘了 [removeRunning] 也不会永久驻留"
+     * 的兜底。反之若登记成 sticky，漏移除就是永久挂着（[showSticky] 的注释里记着同一个坑）。
+     *
+     * ⚠️ 槽位满时**优先挤掉最旧的一条同类芯片**，绝不先动普通/进度芯片：整章批量翻译时
+     * 每页都会起一次超分，若按"挤最旧的"处理就会把并排的「翻译中…」或「正在翻译本章…」抹掉。
+     *
+     * @return 句柄（> 0），交给 [removeRunning]；浮层总开关关掉 → 0（此时 [removeRunning] 是空操作）。
+     */
+    fun showRunning(message: String): Long {
+        if (!isEnabled()) return 0L
+        LogCollector.d(TAG, message)
+        val id = nextRunningId.incrementAndGet()
+        runOnMainThread {
+            val layout = ensureContainer()
+            while (layout.childCount >= MAX_SLOTS) {
+                val victim = runningChips.keys.firstOrNull()
+                    ?: layout.children().firstOrNull { it !in stickyChips }
+                    ?: layout.getChildAt(0)
+                dismissRunnables.remove(victim)?.let { mainHandler.removeCallbacks(it) }
+                stickyChips.remove(victim)
+                runningChips.remove(victim)
+                layout.removeView(victim)
+            }
+            val chip = addChip(message, isError = false, autoDismiss = false)
+            runningChips[chip] = id
+        }
+        return id
+    }
+
+    /**
+     * 移除 [showRunning] 返回的那一条（**只摘它自己**，别的芯片一条不动）。
+     *
+     * 句柄为 0 / 那条已经不在场（被 `dismiss()` 收走、或被槽位挤掉）→ 空操作。
+     */
+    fun removeRunning(id: Long) {
+        if (id == 0L) return
+        runOnMainThread {
+            val chip = runningChips.entries.firstOrNull { it.value == id }?.key ?: return@runOnMainThread
+            runningChips.remove(chip)
+            removeChip(chip)
+        }
+    }
+
+    /**
      * 显示错误提示（红色背景，可点击复制）。替换最顶部一条。
      *
      * @param autoDismissMs 到点自动消失（毫秒）。**默认 null = 一直挂着**，直到被下一次
@@ -173,6 +243,8 @@ class TranslationStatusOverlay private constructor(private val context: Context)
             val top = topChip()
             val chip = if (top != null) {
                 top.text = message
+                // 同 showImmediate：被复用的那条已经变成报错芯片，不再是「进行中」芯片
+                runningChips.remove(top)
                 top
             } else {
                 addChip(message, isError = true, autoDismiss = false)
@@ -235,6 +307,16 @@ class TranslationStatusOverlay private constructor(private val context: Context)
     // ========== Internal ==========
 
     private fun activeCount(): Int = container?.childCount ?: 0
+
+    /**
+     * **测试缝**：当前屏上芯片的文字（按堆叠顺序）。生产逻辑不消费它。
+     *
+     * 存在的理由：容器是私有的，而「[showRunning] 是**追加**、不是替换」与
+     * 「[removeRunning] **只**摘自己那条」这两条恰恰是没法从外部观察的语义
+     * （2026-10 用户口径「超分提示要和翻译中一起出现」）—— 靠读源码断言容易漂。
+     */
+    internal fun debugChipTexts(): List<String> =
+        container?.children()?.map { (it as TextView).text.toString() } ?: emptyList()
 
     /** 容器当前的所有子 View（保持顺序）。 */
     private fun android.view.ViewGroup.children(): List<android.view.View> =
@@ -321,6 +403,8 @@ class TranslationStatusOverlay private constructor(private val context: Context)
         // ⚠️ 同步清理身份集合：不清的话它永久增长，且 showSticky 选「牺牲者」时
         // 用 `it !in stickyChips` 判断会认错对象（已消失的 chip 仍被认为在场）
         stickyChips.remove(chip)
+        // 同上：句柄表也要跟着清，否则 removeRunning 会去移除一条早已不在场的 chip
+        runningChips.remove(chip)
         dismissRunnables.remove(chip)?.let { mainHandler.removeCallbacks(it) }
         if (layout.childCount == 0) {
             removeFromWindow()
@@ -342,6 +426,9 @@ class TranslationStatusOverlay private constructor(private val context: Context)
         val layout = container ?: return
         dismissRunnables.values.forEach { mainHandler.removeCallbacks(it) }
         dismissRunnables.clear()
+        // 「进行中」芯片**从不登记 sticky**，所以两个分支都会把它们清掉 → 句柄表也一并清空，
+        // 免得留下的句柄让调用方以为"还有一条在场"。
+        runningChips.clear()
         if (keepSticky && stickyChips.isNotEmpty()) {
             // ⚠️ 保留 sticky：**先记下要留的，再整体清空，最后按原顺序加回**。
             // 不要写「逐个 removeView 再 addView」——那要求每个 chip 的 parent 恰是本 layout，

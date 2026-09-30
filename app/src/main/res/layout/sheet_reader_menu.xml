@@ -370,6 +370,22 @@
                         android:text="@string/reader_translate_concurrency_hint"/>
                 </LinearLayout>
 
+                <!-- 记录来源：翻译 / 超分（用户口径 2026-10：「给超分面板也设计一个类似翻译面板那样的
+                     记录系统」）。两个列表**共用同一个 RecyclerView 与同一套筛选 chips** ——
+                     适配器换一份，筛选行与列表位置完全不动，用户看不出是两套。
+                     ⚠️ 这两个 TextView 必须登记进 applyPanelTheme（label 组），漏了在深色面板下看不见。 -->
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:layout_marginTop="10dp" android:layout_marginBottom="2dp">
+                    <TextView android:id="@+id/tab_records_translate" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="@string/reader_records_tab_translate" android:textSize="15sp"
+                        android:textColor="#333333" android:paddingTop="4dp" android:paddingBottom="4dp"
+                        android:paddingStart="2dp" android:paddingEnd="18dp" android:clickable="true"/>
+                    <TextView android:id="@+id/tab_records_sr" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                        android:text="@string/reader_records_tab_sr" android:textSize="15sp"
+                        android:textColor="#888888" android:paddingTop="4dp" android:paddingBottom="4dp"
+                        android:paddingStart="2dp" android:paddingEnd="18dp" android:clickable="true"/>
+                </LinearLayout>
+
                 <HorizontalScrollView android:layout_width="match_parent" android:layout_height="wrap_content" android:scrollbars="none">
                     <LinearLayout android:id="@+id/translate_filter_row" android:layout_width="wrap_content" android:layout_height="wrap_content"
                         android:orientation="horizontal"/>

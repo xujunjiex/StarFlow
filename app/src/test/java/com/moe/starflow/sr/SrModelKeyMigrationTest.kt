@@ -11,11 +11,17 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 
 /**
- * `sr_active_model_key` 的档位迁移守卫（2026-10 upconv_7 精简）。
+ * `sr_active_model_key` 的档位迁移守卫（2026-10）。
  *
- * upconv_7 从 4 档（动漫 M1/N3 + 照片 M1/N3）精简为 2 档（动漫 M1 + 动漫 N2）：
- * 用户 prefs 里存着被下架的档位名时，[SrModelManager.getActiveKey] 必须**就近迁移**
- * 而不是当作"未选择" —— 否则超分开着却没有模型，用户看到的是功能坏了。
+ * 历史：upconv_7 一度从 4 档（动漫 M1/N3 + 照片 M1/N3）精简为 2 档（动漫 M1/N2），照片族整体下架。
+ * **2026-10 底照片族回归**（用户口径：「upconv 的照片放大模型丢了，需要加到 upconv 的那个组里面，
+ * 一共 4 个才对」）——现在是「动漫 M1/N2 + 照片 M1/N2」四档。
+ *
+ * 两条不变式：
+ * 1. 用户 prefs 里存着**已不存在**的档位名时，[SrModelManager.getActiveKey] 必须**就近迁移**
+ *    而不是当作"未选择"（否则超分开着却没有模型，用户看到的是功能坏了）；
+ * 2. **仍然存在的档位名绝不能被重定向** —— 照片键回归之后还往动漫上映射，就是
+ *    "用户选了照片模型、实际跑动漫模型"的静默错误。
  */
 @RunWith(RobolectricTestRunner::class)
 class SrModelKeyMigrationTest {
@@ -46,13 +52,28 @@ class SrModelKeyMigrationTest {
         )
     }
 
-    /** 照片族已下架：不降噪 → 动漫不降噪，极强降噪 → 动漫强力降噪。 */
+    /** 照片族已**回归**：两个键都是真档位，谁也不许再被重定向到动漫键。 */
     @Test
-    fun legacyPhotoKeysMigrateToAnimeTiers() {
+    fun photoKeysAreRealTiersNotAliases() {
         store("SR_W2X_UP7_PHOTO_M1")
-        assertEquals(ModelKey.SR_W2X_UP7_ANIME_M1, SrModelManager.getActiveKey(prefs))
+        assertEquals(
+            "照片不降噪必须解析成它自己（重定向到动漫 = 用户选了照片却跑动漫）",
+            ModelKey.SR_W2X_UP7_PHOTO_M1,
+            SrModelManager.getActiveKey(prefs),
+        )
+        store("SR_W2X_UP7_PHOTO_N2")
+        assertEquals(ModelKey.SR_W2X_UP7_PHOTO_N2, SrModelManager.getActiveKey(prefs))
+    }
+
+    /** 照片族的极强降噪 N3 仍然没有 → 就近迁到同族的 N2（**不是**动漫族）。 */
+    @Test
+    fun legacyPhotoN3MigratesWithinTheSameFamily() {
         store("SR_W2X_UP7_PHOTO_N3")
-        assertEquals(ModelKey.SR_W2X_UP7_ANIME_N2, SrModelManager.getActiveKey(prefs))
+        assertEquals(
+            "跨族迁移会让「照片」变成「动漫」，用户完全看不出来",
+            ModelKey.SR_W2X_UP7_PHOTO_N2,
+            SrModelManager.getActiveKey(prefs),
+        )
     }
 
     /** 完全不认识的值仍然是「未选择」（走得通 [SrOutcome] 的 no-model 分支）。 */
@@ -62,12 +83,15 @@ class SrModelKeyMigrationTest {
         assertNull(SrModelManager.getActiveKey(prefs))
     }
 
-    /** upconv_7 族只剩「不降噪 + 强力降噪」两档（用户口径：一个降噪、一个不降噪就够）。 */
+    /** upconv_7 族 = **4 档**：动漫两档 + 照片两档（用户口径 2026-10）。 */
     @Test
-    fun upconvFamilyIsTrimmedToTwoTiers() {
+    fun upconvFamilyHasFourTiersTwoPerWeightSet() {
         val up7 = SrModelManager.allKeys.filter { it.name.startsWith("SR_W2X_UP7_") }
         assertEquals(
-            listOf(ModelKey.SR_W2X_UP7_ANIME_M1, ModelKey.SR_W2X_UP7_ANIME_N2),
+            listOf(
+                ModelKey.SR_W2X_UP7_ANIME_M1, ModelKey.SR_W2X_UP7_ANIME_N2,
+                ModelKey.SR_W2X_UP7_PHOTO_M1, ModelKey.SR_W2X_UP7_PHOTO_N2,
+            ),
             up7,
         )
     }

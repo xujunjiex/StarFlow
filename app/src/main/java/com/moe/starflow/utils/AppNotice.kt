@@ -15,6 +15,7 @@ import com.moe.starflow.translate.TranslationStatusOverlay
  *
  * ⚠️ **本文件是全应用唯一允许调用 `UiUtils.showToast` 的地方**（守卫 `ReaderNoticeOutletTest`）。
  * 新加提示请调 [show]，不要自己弹 Toast：少了兜底判据，用户看到的就是「点了毫无反馈」。
+ * **进行中的连续状态**（要与别的提示并存、结束才收）用 [showRunning] + [clearRunning]。
  */
 object AppNotice {
 
@@ -89,5 +90,38 @@ object AppNotice {
             Style.ERROR -> overlay.showError(text)
             Style.BRIEF_ERROR -> overlay.showError(text, autoDismissMs = BRIEF_ERROR_MS, sticky = true)
         }
+    }
+
+    /**
+     * 追加一条**「进行中」提示**：不替换顶部、不自动消失，返回句柄交给 [clearRunning] 精确移除。
+     *
+     * ## 什么时候用它（用户口径 2026-10）
+     *
+     * 「超分执行的时候也要有提示信息，而且要和『翻译中…』**一起出现** —— 我们的通知系统
+     * 本来就支持同时显示多个通知」。[Style.PROGRESS] 走的是 `showImmediate` = **替换**顶部，
+     * 用它就永远看不到"翻译中 + 正在超分"两条并存，所以另开这一个出口。
+     *
+     * 典型用法：任务开始 → `val id = showRunning(...)`；任务结束（含失败 / 取消）→
+     * `clearRunning(context, id)`。**成对使用**，别只发不清。
+     *
+     * ⚠️ **故意不做 Toast 兜底**（[canUseOverlay] 为假时直接返回 0，既不显示也不报错）：
+     * 这是**连续状态**（整章批量时每页都会发一条），浮层开关关掉时保持静默正是那个设置本身的
+     * 语义 —— 与翻译进度芯片同一口径（退化成 Toast 就是每页刷一条）。
+     * 结果/报错仍然走 [show]，那边带兜底，用户不会"毫无反馈"。
+     */
+    fun showRunning(context: Context, text: String): Long {
+        val app = context.applicationContext
+        if (!canUseOverlay(app)) return 0L
+        return TranslationStatusOverlay.getInstance(app).showRunning(text)
+    }
+
+    /**
+     * 移除 [showRunning] 返回的那一条（**只摘它自己**，并排的「翻译中…」等一条不动）。
+     *
+     * 句柄为 0、或那条已经不在场（被清屏收走 / 被槽位挤掉）→ 空操作，可以放心重复调。
+     */
+    fun clearRunning(context: Context, id: Long) {
+        if (id == 0L) return
+        TranslationStatusOverlay.getInstance(context.applicationContext).removeRunning(id)
     }
 }

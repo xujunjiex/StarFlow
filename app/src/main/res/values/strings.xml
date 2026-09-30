@@ -692,6 +692,8 @@
 
     <string name="sr_model_w2x_up7_anime_m1">waifu2x upconv_7 Anime · No denoise</string>
     <string name="sr_model_w2x_up7_anime_n2">waifu2x upconv_7 Anime · Strong denoise</string>
+    <string name="sr_model_w2x_up7_photo_m1">waifu2x upconv_7 Photo · No denoise</string>
+    <string name="sr_model_w2x_up7_photo_n2">waifu2x upconv_7 Photo · Strong denoise</string>
     <string name="sr_model_w2x_cunet_m1">waifu2x cunet · No denoise</string>
     <string name="sr_model_w2x_cunet_n1">waifu2x cunet · Medium denoise</string>
     <string name="sr_model_w2x_cunet_n2">waifu2x cunet · Strong denoise</string>
@@ -712,7 +714,7 @@
     <string name="sr_rsrgan_group">Real-ESRGAN anime 6B (4x)</string>
     <string name="sr_rsrgan_group_desc">4x upscale (other families are 2x), 17MB, the most aggressive style change.</string>
     <string name="sr_w2x_group">waifu2x upconv_7</string>
-    <string name="sr_w2x_group_desc">Smallest (1.06MB) and fastest. Use No denoise for clean sources; use Strong denoise — the level used in the official examples — for noisy or scanned pages.</string>
+    <string name="sr_w2x_group_desc">Smallest (1.06MB) and fastest. Two weight sets: Anime for drawn pages, Photo for real photos, colour pages and heavy screentone. Pick No denoise for clean sources; Strong denoise — the level used in the official examples — for noisy or scanned pages.</string>
     <string name="sr_cunet_group">waifu2x cunet</string>
     <string name="sr_cunet_group_desc">59 layers; more tolerant of noise and JPEG artifacts. Peaks at Strong denoise.</string>
     <string name="sr_active_switched">Switched to %1$s</string>
@@ -1099,6 +1101,31 @@
     <string name="reader_sr_switch_on">Reader super resolution on</string>
     <string name="reader_sr_switch_off">Reader super resolution off (upscaled pages stay on disk)</string>
     <string name="reader_sr_auto_label">Upscale on translate</string>
+
+    <!-- ═══ 超分记录系统（2026-10）═══ -->
+    <string name="reader_records_tab_translate">Translation</string>
+    <string name="reader_records_tab_sr">Super-resolution</string>
+    <string name="reader_sr_state_running">Upscaling</string>
+    <string name="reader_sr_chapter_translate">Upscale chapter</string>
+    <string name="reader_sr_chapter_clear">Clear chapter</string>
+    <string name="reader_sr_chapter_running">Upscaling %1$d/%2$d</string>
+    <string name="reader_sr_chapter_done">Upscaled</string>
+    <string name="reader_sr_badge">%1$d/%2$d upscaled</string>
+    <string name="reader_sr_blocked_by_translate">Chapter translation is running. Pause or cancel it before upscaling.</string>
+    <string name="reader_translate_blocked_by_sr">Chapter upscaling is running. Cancel it before translating.</string>
+    <string name="reader_sr_clear_chapter_title">Clear chapter upscaling</string>
+    <string name="reader_sr_clear_chapter_msg">Delete the upscaled image of every page in this chapter? Pages go back to the original artwork.</string>
+    <string name="reader_sr_clear_chapter_ok">Clear</string>
+    <string name="reader_sr_detail_model">Model: %1$s</string>
+    <string name="reader_sr_detail_src">Original %1$d×%2$d · %3$s</string>
+    <string name="reader_sr_detail_out">Upscaled %1$d×%2$d · %3$s</string>
+    <string name="reader_sr_detail_none">No upscaled result</string>
+    <string name="reader_sr_page_deleted">Upscaled result deleted</string>
+    <string name="reader_sr_chapter_nothing">No page in this chapter needs upscaling.</string>
+    <string name="reader_sr_chapter_started">Upscaling this chapter…</string>
+    <string name="reader_sr_chapter_cancelled">Chapter upscaling cancelled</string>
+    <string name="reader_sr_chapter_cleared">Chapter upscaling cleared</string>
+    <string name="reader_sr_need_model">Select and download a super-resolution model first.</string>
     <string name="reader_sr_auto_on">The current page will be upscaled after each translation</string>
     <string name="reader_sr_auto_off">Translation no longer upscales; use the bottom-right button instead</string>
     <string name="reader_sr_toggle_desc">Switch between original and upscaled</string>

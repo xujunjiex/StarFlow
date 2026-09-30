@@ -14,9 +14,14 @@ import com.moe.starflow.mangaimport.data.mangaChapterLabel
 import com.moe.starflow.utils.ReaderDialogs
 
 /**
- * 漫画章节目录（**点顶部页码胶囊 / 面板章标题**打开）。
+ * 漫画章节目录（**入口只有一个：点顶部页码胶囊** —— `MangaReaderActivity.tvPageIndicator`）。
  *
- * 与小说目录同一套做法（`NovelTocDialog`）：高度按「行高 × min(章数, 上限)」钉死，
+ * ⚠️ 别照旧注释去找"面板里的章标题"：`ReaderMenuSheet` **从来没引用过本类**
+ * （`git log -S ReaderChapterDialog -- ReaderMenuSheet.kt` 是空的）。面板那边在
+ * 2026-09 的章卡片改版里删掉的是「◀ 章 / 章 ▶」**切章**行，那本来也不是开目录的入口。
+ * 小说侧的同款是 `NovelTocDialog`（入口 = `activity_novel_reader.xml` 的 `top_pill`）。
+ *
+ * 与小说目录同一套做法：高度按「行高 × min(章数, 上限)」钉死，
  * 小书贴内容、大书封顶滚动；配色**跟随阅读背景深浅**（走 `ReaderDialogs`），不随全局主题。
  *
  * 每行右侧是**本章实时状态**（用户口径 2026-09-28：点顶部胶囊要像文本那边一样展开、

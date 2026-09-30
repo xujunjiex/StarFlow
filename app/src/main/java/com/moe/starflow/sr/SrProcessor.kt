@@ -92,7 +92,13 @@ object SrProcessor {
             // 而且这里**必然**会撞锁：章节批量翻译是「OCR 串行 + 翻译并发」，
             // 本页 translatePhase 跑超分时，完全可能另一页正在 OCR。
             // 用 `use` 的话超分会直接抛异常失败 —— 表现为"自动超分时灵时不灵"。
-            while (OcrLock.isRunning) {
+            // ⚠️ 等锁条件有**两条**（用户 2026-10 追问「超分还没结束，下一个 OCR 就启动了怎么办」）：
+            //    ① 锁被占着；
+            //    ② **还有 OCR 在排队**（`hasOcrDemand`）—— 这条是"不插队"：没有它，超分会在一放锁
+            //       的瞬间回头抢（它离锁最近），排队中的 OCR 页只能干等到 60s 超时被判失败
+            //       （章节批量会成片地"什么都没翻、页却失败了"）。
+            //    正在跑的这一次超分不会被打断，但下一次一定让给 OCR。
+            while (OcrLock.isRunning || OcrLock.hasOcrDemand()) {
                 if (!currentCoroutineContext().isActive) return@withContext SrOutcome.fail(SrFailReason.EXCEPTION, "cancelled while waiting for OcrLock")
                 delay(LOCK_POLL_MS)
             }
@@ -117,31 +123,60 @@ object SrProcessor {
                     delay(LOCK_HEARTBEAT_MS)
                 }
             }
+            // ── 大图预处理（用户口径 2026-10：短边压到 1080p 再超分）──
+            // ⚠️ 必须在**持锁期间**做完：缩放本身也是重活（4000x3000 分步下采样），
+            //    放到锁外会与别的 OCR/超分抢核，正是这把锁要避免的事。
+            // ⚠️ 压缩目标要**同时**满足「短边 1080」与「引擎的输入像素上限」——
+            //    前者是用户口径，后者是硬约束（2x 档 2.5MP / Real-ESRGAN 4x 0.625MP）：
+            //    2000x3000 的页在改这一版之前就是**直接超限失败**的，用户只看到一句"图太大"。
+            val feedPixels = SuperResolutionEngines.inputPixelLimitForReader(app, prefs)
+            val feed: Bitmap = SrDownscale.plan(src.width, src.height, feedPixels)?.let { plan ->
+                SrDownscale.apply(src, plan).also {
+                    LogCollector.d(
+                        TAG,
+                        "超分前压缩: ${src.width}x${src.height} → ${it.width}x${it.height}" +
+                            "（引擎上限 ${if (feedPixels > 0) feedPixels else SrDownscale.DEFAULT_MAX_FEED_PIXELS} px，$k）"
+                    )
+                }
+            } ?: src
             val attempt: SrOutcome
             try {
-                attempt = SuperResolutionEngines.upscaleForReader(app, prefs, src)
+                attempt = SuperResolutionEngines.upscaleForReader(app, prefs, feed)
             } finally {
                 heartbeatJob.cancel()
                 OcrLock.release(lockToken)
+                // 压缩图是本函数造的 → 引擎已经不再读它，立刻回收。
+                // ⚠️ `src` 是**调用方的**，绝不能在这里动（`feed === src` 时直接跳过）。
+                if (feed !== src && !feed.isRecycled) feed.recycle()
             }
             if (!attempt.ok) {
                 LogCollector.d(TAG, "超分未产出: ${attempt.reason} ${attempt.detail ?: ""} ($k)")
                 return@withContext attempt
             }
             // `attempt.ok` 为真但 bitmap 为空只可能来自 `SrOutcome.stored()`（本函数不用它），兜底当失败
-            val product: Bitmap = attempt.bitmap
+            val raw: Bitmap = attempt.bitmap
                 ?: return@withContext SrOutcome.fail(SrFailReason.INFERENCE_FAILED)
             // 先交出所有权：下面任何一条提前 return 都由 finally 负责回收
-            out = product
+            out = raw
             // ⚠️ 产物**没放大**就不是"超分结果"：`resolveSteps` 在「超分开着 + 模型不可用 +
             //    Anime4K 开着」时只给出 ANIME4K 一步，而 Anime4K 刻意不放大 → 落盘会造出
             //    「界面显示已超分、画面毫无变化」的幽灵状态（三枚按钮都在、切换也没区别），
             //    而且这个 1x 文件正是 `srPreviewFor` 早退分支（返回被回收的位图）的触发条件。
             //    返回明确原因，让用户看到"去选/去下载模型"，Anime4K 只作即时显示底图。
-            if (product.width <= src.width) {
-                LogCollector.d(TAG, "超分产物未放大（${product.width}px <= 源 ${src.width}px），不落盘: $k")
+            //
+            // ⚠️ 判据比的是**喂给引擎的那张图**（[feed]），不是原图 `src`：大图走压缩路径时
+            //    产物可以 ≤ 原图（下面还要收敛到"像素数 ≤ 原图"），拿 src 比会把正常的超分结果
+            //    判成"没放大"而白跑一遍。Anime4K 的 1x 仍然被这条拦住（产物宽度 == feed 宽度）。
+            if (raw.width <= feed.width) {
+                LogCollector.d(TAG, "超分产物未放大（${raw.width}px <= 输入 ${feed.width}px），不落盘: $k")
                 return@withContext SrOutcome.fail(SrFailReason.NOT_UPSCALED)
             }
+            // 收敛：产物**像素数不超过原图**（用户口径「体积不能超过原来的像素和大小」）。
+            // 2x 重建出来的细节保留着，净效果是"原图分辨率、超分画质"。
+            val product: Bitmap = SrDownscale.clampToOriginalPixels(raw, src.width, src.height)?.also {
+                out = it                      // 先换所有权，再回收中间产物
+                if (!raw.isRecycled) raw.recycle()
+            } ?: raw
             val model = SrModelManager.getActiveKey(prefs)?.name ?: "-"
             val saved = SrStore.save(app, mangaId, page, product, model, mangaKey, cacheLimitMb(prefs))
             if (!saved) {
