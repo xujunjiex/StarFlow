@@ -35,35 +35,18 @@ object SrModelManager {
      * 新增模型时**同时**要加：`ModelKey`、`downloadinfo.json`、以及本列表。
      */
     val allKeys: List<ModelKey> = listOf(
-        // AnimeJaNai（ONNX，CPU）
-        ModelKey.SR_ANIMEJANAI_HD_BALANCED,
-        ModelKey.SR_ANIMEJANAI_HD_PERFORMANCE,
-        ModelKey.SR_ANIMEJANAI_HD_SHARP1_BALANCED,
-        ModelKey.SR_ANIMEJANAI_HD_SHARP1_PERFORMANCE,
-        ModelKey.SR_ANIMEJANAI_SD_COMPACT,
-        // ncnn + Vulkan（GPU）—— 顺序即页面顺序，族内按档位
         ModelKey.SR_W2X_UP7_ANIME_M1,
-        ModelKey.SR_W2X_UP7_ANIME_N0,
-        ModelKey.SR_W2X_UP7_ANIME_N1,
-        ModelKey.SR_W2X_UP7_ANIME_N2,
         ModelKey.SR_W2X_UP7_ANIME_N3,
         ModelKey.SR_W2X_UP7_PHOTO_M1,
-        ModelKey.SR_W2X_UP7_PHOTO_N0,
-        ModelKey.SR_W2X_UP7_PHOTO_N1,
-        ModelKey.SR_W2X_UP7_PHOTO_N2,
         ModelKey.SR_W2X_UP7_PHOTO_N3,
         ModelKey.SR_W2X_CUNET_M1,
-        ModelKey.SR_W2X_CUNET_N0,
         ModelKey.SR_W2X_CUNET_N1,
         ModelKey.SR_W2X_CUNET_N2,
-        ModelKey.SR_W2X_CUNET_N3,
         ModelKey.SR_SRMD_X2,
         ModelKey.SR_SRMD_NF_X2,
-        ModelKey.SR_REALCUGAN_CONSERVATIVE,
-        ModelKey.SR_REALCUGAN_DENOISE1X,
-        ModelKey.SR_REALCUGAN_DENOISE2X,
-        ModelKey.SR_REALCUGAN_DENOISE3X,
         ModelKey.SR_REALCUGAN_NODENOISE,
+        ModelKey.SR_REALCUGAN_CONSERVATIVE,
+        ModelKey.SR_REALCUGAN_DENOISE3X,
         ModelKey.SR_REALESRGAN_ANIME6B,
     )
 
@@ -80,34 +63,18 @@ object SrModelManager {
      * 两处各写一套必然漂移（改了一个忘了另一个 → 同一个模型两个名字）。
      */
     fun nameResOf(key: ModelKey): Int = when (key) {
-        ModelKey.SR_ANIMEJANAI_HD_BALANCED -> R.string.sr_model_animejanai_balanced
-        ModelKey.SR_ANIMEJANAI_HD_PERFORMANCE -> R.string.sr_model_animejanai_performance
-        ModelKey.SR_ANIMEJANAI_HD_SHARP1_BALANCED -> R.string.sr_model_animejanai_sharp1_balanced
-        ModelKey.SR_ANIMEJANAI_HD_SHARP1_PERFORMANCE -> R.string.sr_model_animejanai_sharp1_performance
-        ModelKey.SR_ANIMEJANAI_SD_COMPACT -> R.string.sr_model_animejanai_sd_compact
-        // ncnn 族 —— 与 downloadinfo.json / 布局 XML 一一对应
         ModelKey.SR_W2X_UP7_ANIME_M1 -> R.string.sr_model_w2x_up7_anime_m1
-        ModelKey.SR_W2X_UP7_ANIME_N0 -> R.string.sr_model_w2x_up7_anime_n0
-        ModelKey.SR_W2X_UP7_ANIME_N1 -> R.string.sr_model_w2x_up7_anime_n1
-        ModelKey.SR_W2X_UP7_ANIME_N2 -> R.string.sr_model_w2x_up7_anime_n2
         ModelKey.SR_W2X_UP7_ANIME_N3 -> R.string.sr_model_w2x_up7_anime_n3
         ModelKey.SR_W2X_UP7_PHOTO_M1 -> R.string.sr_model_w2x_up7_photo_m1
-        ModelKey.SR_W2X_UP7_PHOTO_N0 -> R.string.sr_model_w2x_up7_photo_n0
-        ModelKey.SR_W2X_UP7_PHOTO_N1 -> R.string.sr_model_w2x_up7_photo_n1
-        ModelKey.SR_W2X_UP7_PHOTO_N2 -> R.string.sr_model_w2x_up7_photo_n2
         ModelKey.SR_W2X_UP7_PHOTO_N3 -> R.string.sr_model_w2x_up7_photo_n3
         ModelKey.SR_W2X_CUNET_M1 -> R.string.sr_model_w2x_cunet_m1
-        ModelKey.SR_W2X_CUNET_N0 -> R.string.sr_model_w2x_cunet_n0
         ModelKey.SR_W2X_CUNET_N1 -> R.string.sr_model_w2x_cunet_n1
         ModelKey.SR_W2X_CUNET_N2 -> R.string.sr_model_w2x_cunet_n2
-        ModelKey.SR_W2X_CUNET_N3 -> R.string.sr_model_w2x_cunet_n3
         ModelKey.SR_SRMD_X2 -> R.string.sr_model_srmd_x2
         ModelKey.SR_SRMD_NF_X2 -> R.string.sr_model_srmd_nf_x2
-        ModelKey.SR_REALCUGAN_CONSERVATIVE -> R.string.sr_model_cugan_cons
-        ModelKey.SR_REALCUGAN_DENOISE1X -> R.string.sr_model_cugan_d1
-        ModelKey.SR_REALCUGAN_DENOISE2X -> R.string.sr_model_cugan_d2
-        ModelKey.SR_REALCUGAN_DENOISE3X -> R.string.sr_model_cugan_d3
         ModelKey.SR_REALCUGAN_NODENOISE -> R.string.sr_model_cugan_dn
+        ModelKey.SR_REALCUGAN_CONSERVATIVE -> R.string.sr_model_cugan_cons
+        ModelKey.SR_REALCUGAN_DENOISE3X -> R.string.sr_model_cugan_d3
         ModelKey.SR_REALESRGAN_ANIME6B -> R.string.sr_model_rsrgan_a6b
         else -> 0
     }

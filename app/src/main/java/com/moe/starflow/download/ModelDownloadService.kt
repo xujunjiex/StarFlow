@@ -11,6 +11,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.moe.starflow.R
+import com.moe.starflow.sr.SrModelManager
 import com.moe.starflow.utils.LogCollector
 import com.moe.starflow.utils.UiUtils
 import kotlinx.coroutines.CancellationException
@@ -230,34 +231,24 @@ class ModelDownloadService : LifecycleService() {
         ModelKey.PP_OCR_V5_REC_RU -> "PP-OCRv5 REC RU"
         ModelKey.PP_OCR_V6_MEDIUM_DET -> "PP-OCRv6 DET (medium)"
         ModelKey.PP_OCR_V6_MEDIUM_REC -> "PP-OCRv6 REC (medium)"
-        ModelKey.SR_ANIMEJANAI_HD_BALANCED -> "AnimeJaNai HD Balanced"
-        ModelKey.SR_ANIMEJANAI_HD_PERFORMANCE -> "AnimeJaNai HD Performance"
-        ModelKey.SR_ANIMEJANAI_HD_SHARP1_BALANCED -> "AnimeJaNai HD Sharp1 Balanced"
-        ModelKey.SR_ANIMEJANAI_HD_SHARP1_PERFORMANCE -> "AnimeJaNai HD Sharp1 Performance"
-        ModelKey.SR_ANIMEJANAI_SD_COMPACT -> "AnimeJaNai SD Compact"
-        ModelKey.SR_W2X_UP7_ANIME_M1 -> "waifu2x upconv_7 Anime · No denoise"
-        ModelKey.SR_W2X_UP7_ANIME_N0 -> "waifu2x upconv_7 Anime · Light denoise"
-        ModelKey.SR_W2X_UP7_ANIME_N1 -> "waifu2x upconv_7 Anime · Medium denoise"
-        ModelKey.SR_W2X_UP7_ANIME_N2 -> "waifu2x upconv_7 Anime · Strong denoise"
-        ModelKey.SR_W2X_UP7_ANIME_N3 -> "waifu2x upconv_7 Anime · Max denoise"
-        ModelKey.SR_W2X_UP7_PHOTO_M1 -> "waifu2x upconv_7 Photo · No denoise"
-        ModelKey.SR_W2X_UP7_PHOTO_N0 -> "waifu2x upconv_7 Photo · Light denoise"
-        ModelKey.SR_W2X_UP7_PHOTO_N1 -> "waifu2x upconv_7 Photo · Medium denoise"
-        ModelKey.SR_W2X_UP7_PHOTO_N2 -> "waifu2x upconv_7 Photo · Strong denoise"
-        ModelKey.SR_W2X_UP7_PHOTO_N3 -> "waifu2x upconv_7 Photo · Max denoise"
-        ModelKey.SR_W2X_CUNET_M1 -> "waifu2x cunet · No denoise"
-        ModelKey.SR_W2X_CUNET_N0 -> "waifu2x cunet · Light denoise"
-        ModelKey.SR_W2X_CUNET_N1 -> "waifu2x cunet · Medium denoise"
-        ModelKey.SR_W2X_CUNET_N2 -> "waifu2x cunet · Strong denoise"
-        ModelKey.SR_W2X_CUNET_N3 -> "waifu2x cunet · Max denoise"
-        ModelKey.SR_SRMD_X2 -> "SRMD · 2x with denoise"
-        ModelKey.SR_SRMD_NF_X2 -> "SRMD · 2x no denoise"
-        ModelKey.SR_REALCUGAN_CONSERVATIVE -> "Real-CUGAN · 2x Conservative"
-        ModelKey.SR_REALCUGAN_DENOISE1X -> "Real-CUGAN · 2x Denoise 1x"
-        ModelKey.SR_REALCUGAN_DENOISE2X -> "Real-CUGAN · 2x Denoise 2x"
-        ModelKey.SR_REALCUGAN_DENOISE3X -> "Real-CUGAN · 2x Denoise 3x"
-        ModelKey.SR_REALCUGAN_NODENOISE -> "Real-CUGAN · 2x No denoise"
-        ModelKey.SR_REALESRGAN_ANIME6B -> "Real-ESRGAN · Anime 6B (4x)"
+        // ⚠️ 超分 13 档的显示名**不能在这里硬编码**（这里曾写死英文：中文界面下下载通知是
+        //    "waifu2x upconv_7 Anime · No denoise"，而且 N3 = 极强降噪被写成 "Light denoise" 错档）。
+        //    统一走 `SrModelManager.nameResOf` —— 它是「ModelKey → 显示名」的唯一映射，
+        //    与模型管理页的行标题共用 `sr_model_*`（中英各一份）。分支仍然逐条列全，
+        //    这样新增模型忘了补这里会**编译不过**（保留下面的穷尽 when 安全网）。
+        ModelKey.SR_W2X_UP7_ANIME_M1 -> getString(SrModelManager.nameResOf(this))
+        ModelKey.SR_W2X_UP7_ANIME_N3 -> getString(SrModelManager.nameResOf(this))
+        ModelKey.SR_W2X_UP7_PHOTO_M1 -> getString(SrModelManager.nameResOf(this))
+        ModelKey.SR_W2X_UP7_PHOTO_N3 -> getString(SrModelManager.nameResOf(this))
+        ModelKey.SR_W2X_CUNET_M1 -> getString(SrModelManager.nameResOf(this))
+        ModelKey.SR_W2X_CUNET_N1 -> getString(SrModelManager.nameResOf(this))
+        ModelKey.SR_W2X_CUNET_N2 -> getString(SrModelManager.nameResOf(this))
+        ModelKey.SR_SRMD_X2 -> getString(SrModelManager.nameResOf(this))
+        ModelKey.SR_SRMD_NF_X2 -> getString(SrModelManager.nameResOf(this))
+        ModelKey.SR_REALCUGAN_CONSERVATIVE -> getString(SrModelManager.nameResOf(this))
+        ModelKey.SR_REALCUGAN_DENOISE3X -> getString(SrModelManager.nameResOf(this))
+        ModelKey.SR_REALCUGAN_NODENOISE -> getString(SrModelManager.nameResOf(this))
+        ModelKey.SR_REALESRGAN_ANIME6B -> getString(SrModelManager.nameResOf(this))
     }
 
     private fun formatBytes(bytes: Long): String {
@@ -562,15 +553,14 @@ class ModelDownloadService : LifecycleService() {
         ModelKey.PP_OCR_V5_DET, ModelKey.PP_OCR_V5_REC_ZH,
         ModelKey.PP_OCR_V5_REC_EN, ModelKey.PP_OCR_V5_REC_KO,
         ModelKey.PP_OCR_V5_REC_RU -> File(applicationContext.getExternalFilesDir(null), "ppocrv5")
-        ModelKey.SR_ANIMEJANAI_HD_BALANCED, ModelKey.SR_ANIMEJANAI_HD_PERFORMANCE, ModelKey.SR_ANIMEJANAI_HD_SHARP1_BALANCED,
-        ModelKey.SR_ANIMEJANAI_HD_SHARP1_PERFORMANCE, ModelKey.SR_ANIMEJANAI_SD_COMPACT, ModelKey.SR_W2X_UP7_ANIME_M1,
-        ModelKey.SR_W2X_UP7_ANIME_N0, ModelKey.SR_W2X_UP7_ANIME_N1, ModelKey.SR_W2X_UP7_ANIME_N2,
-        ModelKey.SR_W2X_UP7_ANIME_N3, ModelKey.SR_W2X_UP7_PHOTO_M1, ModelKey.SR_W2X_UP7_PHOTO_N0,
-        ModelKey.SR_W2X_UP7_PHOTO_N1, ModelKey.SR_W2X_UP7_PHOTO_N2, ModelKey.SR_W2X_UP7_PHOTO_N3,
-        ModelKey.SR_W2X_CUNET_M1, ModelKey.SR_W2X_CUNET_N0, ModelKey.SR_W2X_CUNET_N1,
-        ModelKey.SR_W2X_CUNET_N2, ModelKey.SR_W2X_CUNET_N3, ModelKey.SR_SRMD_X2,
-        ModelKey.SR_SRMD_NF_X2, ModelKey.SR_REALCUGAN_CONSERVATIVE, ModelKey.SR_REALCUGAN_DENOISE1X,
-        ModelKey.SR_REALCUGAN_DENOISE2X, ModelKey.SR_REALCUGAN_DENOISE3X, ModelKey.SR_REALCUGAN_NODENOISE,
+        // ⚠️ 与 ModelDownloadRepository.baseDirFor 是**两份必须一致的副本**（都要改）：
+        //    这里曾把 SR_W2X_UP7_PHOTO_M1 写了两遍、看着像少一档
+        ModelKey.SR_W2X_UP7_ANIME_M1, ModelKey.SR_W2X_UP7_ANIME_N3,
+        ModelKey.SR_W2X_UP7_PHOTO_M1, ModelKey.SR_W2X_UP7_PHOTO_N3,
+        ModelKey.SR_W2X_CUNET_M1, ModelKey.SR_W2X_CUNET_N1, ModelKey.SR_W2X_CUNET_N2,
+        ModelKey.SR_SRMD_X2, ModelKey.SR_SRMD_NF_X2,
+        ModelKey.SR_REALCUGAN_NODENOISE, ModelKey.SR_REALCUGAN_CONSERVATIVE,
+        ModelKey.SR_REALCUGAN_DENOISE3X,
         ModelKey.SR_REALESRGAN_ANIME6B -> File(applicationContext.getExternalFilesDir(null), "sr")
     }
 

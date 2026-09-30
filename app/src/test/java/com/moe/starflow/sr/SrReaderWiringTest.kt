@@ -169,14 +169,10 @@ class SrReaderWiringTest {
         //    行根必须在同时包住「标题/选中圈」与「下载行」的那一层上。
         val layout = read("src/main/res/layout/fragment_model_management.xml")
         for (base in listOf(
-            "sr_aji_balanced", "sr_aji_perf", "sr_aji_sharp1_balanced", "sr_aji_sharp1_perf",
-            "sr_aji_balanced", "sr_aji_perf", "sr_aji_sharp1_balanced", "sr_aji_sharp1_perf", "sr_aji_sd",
-            "sr_w2xa_m1", "sr_w2xa_n0", "sr_w2xa_n1", "sr_w2xa_n2", "sr_w2xa_n3",
-            "sr_w2xp_m1", "sr_w2xp_n0", "sr_w2xp_n1", "sr_w2xp_n2", "sr_w2xp_n3",
-            "sr_w2xc_m1", "sr_w2xc_n0", "sr_w2xc_n1", "sr_w2xc_n2", "sr_w2xc_n3",
-            "sr_srmd_x2", "sr_srmd_nf_x2", "sr_cugan_cons", "sr_cugan_d1", "sr_cugan_d2",
-            "sr_cugan_d3", "sr_cugan_dn", "sr_rsrgan_a6b"
-            )) {
+            "sr_w2x_anime_m1", "sr_w2x_anime_n3", "sr_w2x_photo_m1", "sr_w2x_photo_n3", "sr_cunet_m1",
+            "sr_cunet_n1", "sr_cunet_n2", "sr_srmd_x2", "sr_srmd_nf_x2", "sr_cugan_dn",
+            "sr_cugan_cons", "sr_cugan_d3", "sr_rsrgan_a6b"
+        )) {
             val wrapper = layout.indexOf("android:id=\"@+id/${base}_row\"")
             val radio = layout.indexOf("android:id=\"@+id/${base}_radio\"")
             val include = layout.indexOf("layout=\"@layout/item_model_row_browser\"", wrapper)

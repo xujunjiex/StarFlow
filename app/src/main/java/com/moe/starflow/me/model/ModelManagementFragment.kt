@@ -155,52 +155,26 @@ class ModelManagementFragment : Fragment() {
      * （两边各写一份是有意的：XML 管版式、这里管语义；错位了「当前使用」会标到别的族上）。
      */
     private val srFamilies: List<SrFamily> = listOf(
-        // ── AnimeJaNai（ONNX Runtime，CPU）—— 沿用分支原有 5 档 ──
-        SrFamily(R.id.sr_aji_group_title, R.id.sr_aji_group_selected, listOf(
-            SrRow(ModelKey.SR_ANIMEJANAI_HD_BALANCED, R.id.sr_aji_balanced_row, R.id.sr_aji_balanced_radio, R.id.sr_aji_balanced_title),
-            SrRow(ModelKey.SR_ANIMEJANAI_HD_PERFORMANCE, R.id.sr_aji_perf_row, R.id.sr_aji_perf_radio, R.id.sr_aji_perf_title),
-            SrRow(ModelKey.SR_ANIMEJANAI_HD_SHARP1_BALANCED, R.id.sr_aji_sharp1_balanced_row, R.id.sr_aji_sharp1_balanced_radio, R.id.sr_aji_sharp1_balanced_title),
-            SrRow(ModelKey.SR_ANIMEJANAI_HD_SHARP1_PERFORMANCE, R.id.sr_aji_sharp1_perf_row, R.id.sr_aji_sharp1_perf_radio, R.id.sr_aji_sharp1_perf_title),
-            SrRow(ModelKey.SR_ANIMEJANAI_SD_COMPACT, R.id.sr_aji_sd_row, R.id.sr_aji_sd_radio, R.id.sr_aji_sd_title),
+        SrFamily(R.id.sr_w2x_group_title, R.id.sr_w2x_group_selected, listOf(
+            SrRow(ModelKey.SR_W2X_UP7_ANIME_M1, R.id.sr_w2x_anime_m1_row, R.id.sr_w2x_anime_m1_radio, R.id.sr_w2x_anime_m1_title),
+            SrRow(ModelKey.SR_W2X_UP7_ANIME_N3, R.id.sr_w2x_anime_n3_row, R.id.sr_w2x_anime_n3_radio, R.id.sr_w2x_anime_n3_title),
+            SrRow(ModelKey.SR_W2X_UP7_PHOTO_M1, R.id.sr_w2x_photo_m1_row, R.id.sr_w2x_photo_m1_radio, R.id.sr_w2x_photo_m1_title),
+            SrRow(ModelKey.SR_W2X_UP7_PHOTO_N3, R.id.sr_w2x_photo_n3_row, R.id.sr_w2x_photo_n3_radio, R.id.sr_w2x_photo_n3_title),
         )),
-        // ── waifu2x upconv_7 · 动漫（ncnn + Vulkan GPU）──
-        SrFamily(R.id.sr_w2xa_group_title, R.id.sr_w2xa_group_selected, listOf(
-            SrRow(ModelKey.SR_W2X_UP7_ANIME_M1, R.id.sr_w2xa_m1_row, R.id.sr_w2xa_m1_radio, R.id.sr_w2xa_m1_title),
-            SrRow(ModelKey.SR_W2X_UP7_ANIME_N0, R.id.sr_w2xa_n0_row, R.id.sr_w2xa_n0_radio, R.id.sr_w2xa_n0_title),
-            SrRow(ModelKey.SR_W2X_UP7_ANIME_N1, R.id.sr_w2xa_n1_row, R.id.sr_w2xa_n1_radio, R.id.sr_w2xa_n1_title),
-            SrRow(ModelKey.SR_W2X_UP7_ANIME_N2, R.id.sr_w2xa_n2_row, R.id.sr_w2xa_n2_radio, R.id.sr_w2xa_n2_title),
-            SrRow(ModelKey.SR_W2X_UP7_ANIME_N3, R.id.sr_w2xa_n3_row, R.id.sr_w2xa_n3_radio, R.id.sr_w2xa_n3_title),
+        SrFamily(R.id.sr_cunet_group_title, R.id.sr_cunet_group_selected, listOf(
+            SrRow(ModelKey.SR_W2X_CUNET_M1, R.id.sr_cunet_m1_row, R.id.sr_cunet_m1_radio, R.id.sr_cunet_m1_title),
+            SrRow(ModelKey.SR_W2X_CUNET_N1, R.id.sr_cunet_n1_row, R.id.sr_cunet_n1_radio, R.id.sr_cunet_n1_title),
+            SrRow(ModelKey.SR_W2X_CUNET_N2, R.id.sr_cunet_n2_row, R.id.sr_cunet_n2_radio, R.id.sr_cunet_n2_title),
         )),
-        // ── waifu2x upconv_7 · 照片（ncnn + Vulkan GPU）──
-        SrFamily(R.id.sr_w2xp_group_title, R.id.sr_w2xp_group_selected, listOf(
-            SrRow(ModelKey.SR_W2X_UP7_PHOTO_M1, R.id.sr_w2xp_m1_row, R.id.sr_w2xp_m1_radio, R.id.sr_w2xp_m1_title),
-            SrRow(ModelKey.SR_W2X_UP7_PHOTO_N0, R.id.sr_w2xp_n0_row, R.id.sr_w2xp_n0_radio, R.id.sr_w2xp_n0_title),
-            SrRow(ModelKey.SR_W2X_UP7_PHOTO_N1, R.id.sr_w2xp_n1_row, R.id.sr_w2xp_n1_radio, R.id.sr_w2xp_n1_title),
-            SrRow(ModelKey.SR_W2X_UP7_PHOTO_N2, R.id.sr_w2xp_n2_row, R.id.sr_w2xp_n2_radio, R.id.sr_w2xp_n2_title),
-            SrRow(ModelKey.SR_W2X_UP7_PHOTO_N3, R.id.sr_w2xp_n3_row, R.id.sr_w2xp_n3_radio, R.id.sr_w2xp_n3_title),
-        )),
-        // ── waifu2x cunet（ncnn + Vulkan GPU）──
-        SrFamily(R.id.sr_w2xc_group_title, R.id.sr_w2xc_group_selected, listOf(
-            SrRow(ModelKey.SR_W2X_CUNET_M1, R.id.sr_w2xc_m1_row, R.id.sr_w2xc_m1_radio, R.id.sr_w2xc_m1_title),
-            SrRow(ModelKey.SR_W2X_CUNET_N0, R.id.sr_w2xc_n0_row, R.id.sr_w2xc_n0_radio, R.id.sr_w2xc_n0_title),
-            SrRow(ModelKey.SR_W2X_CUNET_N1, R.id.sr_w2xc_n1_row, R.id.sr_w2xc_n1_radio, R.id.sr_w2xc_n1_title),
-            SrRow(ModelKey.SR_W2X_CUNET_N2, R.id.sr_w2xc_n2_row, R.id.sr_w2xc_n2_radio, R.id.sr_w2xc_n2_title),
-            SrRow(ModelKey.SR_W2X_CUNET_N3, R.id.sr_w2xc_n3_row, R.id.sr_w2xc_n3_radio, R.id.sr_w2xc_n3_title),
-        )),
-        // ── SRMD（2x）（ncnn + Vulkan GPU）──
         SrFamily(R.id.sr_srmd_group_title, R.id.sr_srmd_group_selected, listOf(
             SrRow(ModelKey.SR_SRMD_X2, R.id.sr_srmd_x2_row, R.id.sr_srmd_x2_radio, R.id.sr_srmd_x2_title),
             SrRow(ModelKey.SR_SRMD_NF_X2, R.id.sr_srmd_nf_x2_row, R.id.sr_srmd_nf_x2_radio, R.id.sr_srmd_nf_x2_title),
         )),
-        // ── Real-CUGAN（2x）（ncnn + Vulkan GPU）──
         SrFamily(R.id.sr_cugan_group_title, R.id.sr_cugan_group_selected, listOf(
-            SrRow(ModelKey.SR_REALCUGAN_CONSERVATIVE, R.id.sr_cugan_cons_row, R.id.sr_cugan_cons_radio, R.id.sr_cugan_cons_title),
-            SrRow(ModelKey.SR_REALCUGAN_DENOISE1X, R.id.sr_cugan_d1_row, R.id.sr_cugan_d1_radio, R.id.sr_cugan_d1_title),
-            SrRow(ModelKey.SR_REALCUGAN_DENOISE2X, R.id.sr_cugan_d2_row, R.id.sr_cugan_d2_radio, R.id.sr_cugan_d2_title),
-            SrRow(ModelKey.SR_REALCUGAN_DENOISE3X, R.id.sr_cugan_d3_row, R.id.sr_cugan_d3_radio, R.id.sr_cugan_d3_title),
             SrRow(ModelKey.SR_REALCUGAN_NODENOISE, R.id.sr_cugan_dn_row, R.id.sr_cugan_dn_radio, R.id.sr_cugan_dn_title),
+            SrRow(ModelKey.SR_REALCUGAN_CONSERVATIVE, R.id.sr_cugan_cons_row, R.id.sr_cugan_cons_radio, R.id.sr_cugan_cons_title),
+            SrRow(ModelKey.SR_REALCUGAN_DENOISE3X, R.id.sr_cugan_d3_row, R.id.sr_cugan_d3_radio, R.id.sr_cugan_d3_title),
         )),
-        // ── Real-ESRGAN 动漫 6B（4x）（ncnn + Vulkan GPU）──
         SrFamily(R.id.sr_rsrgan_group_title, R.id.sr_rsrgan_group_selected, listOf(
             SrRow(ModelKey.SR_REALESRGAN_ANIME6B, R.id.sr_rsrgan_a6b_row, R.id.sr_rsrgan_a6b_radio, R.id.sr_rsrgan_a6b_title),
         )),
@@ -211,33 +185,18 @@ class ModelManagementFragment : Fragment() {
 
     /** 每个超分模型的预估体积文案（仅展示用；真实值以 downloadinfo.json 为准） */
     private fun srExpectedSize(key: ModelKey): String = when (key) {
-        ModelKey.SR_ANIMEJANAI_HD_BALANCED,
-        ModelKey.SR_ANIMEJANAI_HD_SHARP1_BALANCED -> "~1.9MB"
-        ModelKey.SR_ANIMEJANAI_HD_PERFORMANCE,
-        ModelKey.SR_ANIMEJANAI_HD_SHARP1_PERFORMANCE -> "~0.7MB"
-        ModelKey.SR_ANIMEJANAI_SD_COMPACT -> "~1.2MB"
         ModelKey.SR_W2X_UP7_ANIME_M1 -> "~1.1MB"
-        ModelKey.SR_W2X_UP7_ANIME_N0 -> "~1.1MB"
-        ModelKey.SR_W2X_UP7_ANIME_N1 -> "~1.1MB"
-        ModelKey.SR_W2X_UP7_ANIME_N2 -> "~1.1MB"
         ModelKey.SR_W2X_UP7_ANIME_N3 -> "~1.1MB"
         ModelKey.SR_W2X_UP7_PHOTO_M1 -> "~1.1MB"
-        ModelKey.SR_W2X_UP7_PHOTO_N0 -> "~1.1MB"
-        ModelKey.SR_W2X_UP7_PHOTO_N1 -> "~1.1MB"
-        ModelKey.SR_W2X_UP7_PHOTO_N2 -> "~1.1MB"
         ModelKey.SR_W2X_UP7_PHOTO_N3 -> "~1.1MB"
         ModelKey.SR_W2X_CUNET_M1 -> "~2.7MB"
-        ModelKey.SR_W2X_CUNET_N0 -> "~2.7MB"
         ModelKey.SR_W2X_CUNET_N1 -> "~2.7MB"
         ModelKey.SR_W2X_CUNET_N2 -> "~2.7MB"
-        ModelKey.SR_W2X_CUNET_N3 -> "~2.7MB"
         ModelKey.SR_SRMD_X2 -> "~2.9MB"
         ModelKey.SR_SRMD_NF_X2 -> "~2.9MB"
-        ModelKey.SR_REALCUGAN_CONSERVATIVE -> "~2.5MB"
-        ModelKey.SR_REALCUGAN_DENOISE1X -> "~2.5MB"
-        ModelKey.SR_REALCUGAN_DENOISE2X -> "~2.5MB"
-        ModelKey.SR_REALCUGAN_DENOISE3X -> "~2.5MB"
         ModelKey.SR_REALCUGAN_NODENOISE -> "~2.5MB"
+        ModelKey.SR_REALCUGAN_CONSERVATIVE -> "~2.5MB"
+        ModelKey.SR_REALCUGAN_DENOISE3X -> "~2.5MB"
         ModelKey.SR_REALESRGAN_ANIME6B -> "~17.1MB"
         else -> ""
     }
