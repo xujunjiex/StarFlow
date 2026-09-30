@@ -1,0 +1,6 @@
+# 备份与快照产物不入库
+_backups/
+_snapshots/
+# Python 字节码缓存
+__pycache__/
+*.pyc

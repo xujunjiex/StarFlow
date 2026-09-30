@@ -1,0 +1,80 @@
+/*
+ * device-guard.gradle -- machine-level guard for "device tasks that uninstall apps"
+ *
+ * Installed in ~/.gradle/init.d/ so it applies to EVERY Gradle project and EVERY
+ * caller (human, IDE, or AI agent).
+ *
+ * Why this exists (real incident, 2026-09-30):
+ *   Ran `:app:connectedDebugAndroidTest` against a phone holding real user data.
+ *   AGP's connected-test flow goes through UTP, which UNINSTALLS the app under test
+ *   before installing the new one. MIUI then rejected the install, and there is no
+ *   rollback: the uninstall had already succeeded. The app, its /data/data and its
+ *   external files dir were all gone, with no backup to restore from.
+ *
+ * Blocked task names:
+ *   - anything containing "uninstall"   -> directly removes the app + its data
+ *   - anything starting with "connected" -> UTP uninstalls the app under test
+ *   - anything containing "manageddevice" -> same semantics
+ *
+ * To deliberately run one (e.g. on a disposable test device), opt in explicitly:
+ *   PowerShell : $env:ALLOW_DEVICE_UNINSTALL='1'
+ *   bash       : ALLOW_DEVICE_UNINSTALL=1
+ * Opting in still prints a loud warning listing what is about to be destroyed.
+ *
+ * NOTE: text is intentionally English -- the Windows Gradle console is GBK and
+ *       mangles Chinese, and a safety message that cannot be read is useless.
+ *
+ * This script never breaks the build on its own errors: failures are downgraded
+ * to warnings, so a bug here cannot brick every Gradle build on the machine.
+ */
+
+def ALLOW = System.getenv('ALLOW_DEVICE_UNINSTALL') == '1'
+
+def reasonOf = { String name ->
+    def n = name.toLowerCase()
+    if (n.contains('uninstall')) return 'task name contains "uninstall" -- removes the app AND all of its data'
+    if (n.startsWith('connected')) return 'connected test -- UTP uninstalls the app under test first, and does NOT roll back'
+    if (n.contains('manageddevice')) return 'managed-device test -- same uninstall semantics'
+    return null
+}
+
+gradle.taskGraph.whenReady { graph ->
+    try {
+        def risky = graph.allTasks.findAll { reasonOf(it.name) != null }
+        if (risky.isEmpty()) return
+
+        if (!ALLOW) {
+            def sb = new StringBuilder()
+            sb.append('\n')
+            sb.append('=' * 78).append('\n')
+            sb.append('  BLOCKED: this task uninstalls the app and deletes its data\n')
+            sb.append('=' * 78).append('\n')
+            risky.each { t ->
+                sb.append("  task   : ${t.path}\n")
+                sb.append("  reason : ${reasonOf(t.name)}\n")
+            }
+            sb.append('\n')
+            sb.append('  Real incident 2026-09-30: running this against a phone with real data\n')
+            sb.append('  wiped the shelf, translation history and all settings, with no backup.\n')
+            sb.append('  AGP uninstalls first; when the install was blocked there was no rollback.\n')
+            sb.append('\n')
+            sb.append('  If you really need it:\n')
+            sb.append('    1) use a device with no real data, or\n')
+            sb.append('    2) back up first:  pwsh guard/backup-app.ps1\n')
+            sb.append('    3) then opt in:    ALLOW_DEVICE_UNINSTALL=1   (env var) and re-run\n')
+            sb.append('=' * 78).append('\n')
+            throw new GradleException(sb.toString())
+        }
+
+        logger.lifecycle('\n' + '!' * 78)
+        logger.lifecycle('  ALLOW_DEVICE_UNINSTALL=1 -> proceeding with DESTRUCTIVE task(s):')
+        risky.each { t -> logger.lifecycle("    ${t.path}") }
+        logger.lifecycle("  ${reasonOf(risky[0].name)}")
+        logger.lifecycle('  This WILL remove app data and cannot be undone.')
+        logger.lifecycle('!' * 78 + '\n')
+    } catch (GradleException ge) {
+        throw ge
+    } catch (Throwable t) {
+        logger.warn("device-guard.gradle internal error (ignored, build continues): ${t}")
+    }
+}
