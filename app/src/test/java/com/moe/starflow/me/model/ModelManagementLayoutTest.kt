@@ -174,14 +174,24 @@ class ModelManagementLayoutTest {
     fun superResolutionGroupsAndRowsAreComplete() {
         val root = inflate()
 
-        for (id in listOf(R.id.sr_aji_group_title, R.id.sr_w2xc_group_title, R.id.sr_w2xs_group_title)) {
-            assertNotNull("缺超分组标题 $id", root.findViewById<View>(id))
-        }
-        for (id in listOf(R.id.sr_aji_group_selected, R.id.sr_w2xc_group_selected, R.id.sr_w2xs_group_selected)) {
-            assertNotNull("缺超分组「当前使用」$id", root.findViewById<View>(id))
-        }
+        // 7 个族：AnimeJaNai（ONNX）+ 6 个 ncnn 族（waifu2x upconv_7 动漫/照片、cunet、SRMD、
+        // Real-CUGAN、Real-ESRGAN）。swin 已移除（16MB/档、15-19 秒/页、且无法转 ncnn）。
+        val titles = listOf(
+            R.id.sr_aji_group_title, R.id.sr_w2xa_group_title, R.id.sr_w2xp_group_title,
+            R.id.sr_w2xc_group_title, R.id.sr_srmd_group_title, R.id.sr_cugan_group_title,
+            R.id.sr_rsrgan_group_title
+        )
+        for (id in titles) assertNotNull("缺超分组标题 $id", root.findViewById<View>(id))
+
+        val selecteds = listOf(
+            R.id.sr_aji_group_selected, R.id.sr_w2xa_group_selected, R.id.sr_w2xp_group_selected,
+            R.id.sr_w2xc_group_selected, R.id.sr_srmd_group_selected, R.id.sr_cugan_group_selected,
+            R.id.sr_rsrgan_group_selected
+        )
+        for (id in selecteds) assertNotNull("缺超分组「当前使用」$id", root.findViewById<View>(id))
 
         val rows = srRowIds()
+        assertEquals("超分行数应为 28（5 AnimeJaNai + 23 ncnn）", 28, rows.size)
         val roots = rows.map { root.findViewById<View>(it) }
         rows.forEachIndexed { i, id -> assertNotNull("超分行根缺失: $id", roots[i]) }
         assertEquals("超分行根 id 必须唯一", rows.size, roots.toSet().size)
@@ -266,9 +276,12 @@ class ModelManagementLayoutTest {
         // 每一行都要有 title id（置灰要用），缺一个那行就不置灰
         val layout = java.io.File("src/main/res/layout/fragment_model_management.xml").readText()
         for (base in listOf(
-            "sr_aji_balanced", "sr_aji_perf", "sr_aji_sharp1_balanced", "sr_aji_sharp1_perf",
-            "sr_aji_sd", "sr_w2xc_n0", "sr_w2xc_n1", "sr_w2xc_n2", "sr_w2xc_n3",
-            "sr_w2xs_n0", "sr_w2xs_n1",
+            "sr_aji_balanced", "sr_aji_perf", "sr_aji_sharp1_balanced", "sr_aji_sharp1_perf", "sr_aji_sd",
+            "sr_w2xa_m1", "sr_w2xa_n0", "sr_w2xa_n1", "sr_w2xa_n2", "sr_w2xa_n3",
+            "sr_w2xp_m1", "sr_w2xp_n0", "sr_w2xp_n1", "sr_w2xp_n2", "sr_w2xp_n3",
+            "sr_w2xc_m1", "sr_w2xc_n0", "sr_w2xc_n1", "sr_w2xc_n2", "sr_w2xc_n3",
+            "sr_srmd_x2", "sr_srmd_nf_x2", "sr_cugan_cons", "sr_cugan_d1", "sr_cugan_d2",
+            "sr_cugan_d3", "sr_cugan_dn", "sr_rsrgan_a6b",
         )) {
             assertTrue("$base 缺标题 id（置灰要用）", layout.contains("android:id=\"@+id/${base}_title\""))
         }
@@ -276,16 +289,34 @@ class ModelManagementLayoutTest {
 
     /** 超分模型行的行根 id（顺序同 ModelManagementFragment.srFamilies） */
     private fun srRowIds() = listOf(
+        // 5 AnimeJaNai + 23 ncnn = 28（顺序同 ModelManagementFragment.srFamilies）
         R.id.sr_aji_balanced_row,
         R.id.sr_aji_perf_row,
         R.id.sr_aji_sharp1_balanced_row,
         R.id.sr_aji_sharp1_perf_row,
         R.id.sr_aji_sd_row,
+        R.id.sr_w2xa_m1_row,
+        R.id.sr_w2xa_n0_row,
+        R.id.sr_w2xa_n1_row,
+        R.id.sr_w2xa_n2_row,
+        R.id.sr_w2xa_n3_row,
+        R.id.sr_w2xp_m1_row,
+        R.id.sr_w2xp_n0_row,
+        R.id.sr_w2xp_n1_row,
+        R.id.sr_w2xp_n2_row,
+        R.id.sr_w2xp_n3_row,
+        R.id.sr_w2xc_m1_row,
         R.id.sr_w2xc_n0_row,
         R.id.sr_w2xc_n1_row,
         R.id.sr_w2xc_n2_row,
         R.id.sr_w2xc_n3_row,
-        R.id.sr_w2xs_n0_row,
-        R.id.sr_w2xs_n1_row
+        R.id.sr_srmd_x2_row,
+        R.id.sr_srmd_nf_x2_row,
+        R.id.sr_cugan_cons_row,
+        R.id.sr_cugan_d1_row,
+        R.id.sr_cugan_d2_row,
+        R.id.sr_cugan_d3_row,
+        R.id.sr_cugan_dn_row,
+        R.id.sr_rsrgan_a6b_row,
     )
 }

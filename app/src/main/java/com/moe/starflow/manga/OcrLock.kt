@@ -61,27 +61,59 @@ object OcrLock {
     @Volatile
     private var heartbeatNs = 0L
 
+    /** 持有者令牌自增源 + 当前持有者令牌（见 [acquire] 的注释）。 */
+    private val nextToken = java.util.concurrent.atomic.AtomicLong(0)
+    @Volatile
+    private var ownerToken = 0L
+
     /** 自愈释放过几次（排查用：非 0 说明有地方漏放锁）。 */
     @Volatile
     var staleReleaseCount = 0
         private set
 
+    /**
+     * 拿锁并返回**持有者令牌**（0 = 没拿到）。
+     *
+     * ⚠️ 为什么需要令牌：自愈（[maybeRecoverStale]）会在超时时**强制释放**别人的锁；
+     * 而那个"其实还活着"的旧持有者随后走到 `finally` 时，旧的 `release()` 会把**新持有者**的锁放掉
+     * → 第三个调用方又能进 → 两个线程同时用单例 ONNX 引擎（正是这把锁要防的事）。
+     * 带令牌放锁时，只有令牌仍是当前持有者才生效 ⇒ 误释放的后果被限制在"这一次超时"。
+     */
     @Synchronized
-    fun tryAcquire(): Boolean {
+    fun acquire(): Long {
         maybeRecoverStale()
-        if (isRunning) return false
+        if (isRunning) return 0L
         isRunning = true
         val now = clockNs()
         heldSinceNs = now
         heartbeatNs = now
-        return true
+        ownerToken = nextToken.incrementAndGet()
+        return ownerToken
     }
 
     @Synchronized
-    fun release() {
+    fun tryAcquire(): Boolean = acquire() != 0L
+
+    /** 只有**持有者自己**（令牌相符）才放得掉锁；令牌为 0 或已过期 = 空操作。 */
+    @Synchronized
+    fun release(token: Long) {
+        if (token == 0L || token != ownerToken) return
+        clearLocked()
+    }
+
+    /**
+     * 无令牌放锁（旧调用点/短临界区兼容用）。
+     * ⚠️ 长临界区（跨 OCR + 翻译）**必须**用 [release] 的令牌版，否则会被自愈竞态误伤。
+     */
+    @Synchronized
+    fun release() = clearLocked()
+
+    @Synchronized
+    private fun clearLocked() {
         isRunning = false
         heldSinceNs = 0L
         heartbeatNs = 0L
+        ownerToken = 0L
     }
 
     /**
@@ -92,6 +124,11 @@ object OcrLock {
      */
     fun heartbeat() {
         if (isRunning) heartbeatNs = clockNs()
+    }
+
+    /** 带令牌的心跳：只有当前持有者才刷得动（旧持有者的孤儿 ticker 不会把别人的锁"养着"）。 */
+    fun heartbeat(token: Long) {
+        if (isRunning && token != 0L && token == ownerToken) heartbeatNs = clockNs()
     }
 
     /** 已被持有多久（毫秒；没持有返回 0）。 */

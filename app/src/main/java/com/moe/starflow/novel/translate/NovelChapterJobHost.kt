@@ -57,7 +57,7 @@ data class NovelWaitingBatch(
  *   **已翻好的译文保留**（都在 [ChapterJobRunner] 里，与漫画同一套语义）
  * - 进度快照通过 [TranslationJobRegistry] 汇总给前台服务（`TranslationJobService` 每章一条通知）
  *
- * ⚠️ **单位号必须全局唯一**：[ChapterJobRunner] 内部按"页号"记在途项（`inFlight[page]`），
+ * ⚠️ **单位号必须全局唯一**：[ChapterJobRunner] 内部按**自增 `Task.id`** 记在途项（页号只是 Task 的字段），
  * 多章同时跑时各章的批序号会撞车（第 3 章的第 0 批与第 5 章的第 0 批都是 0）——
  * 所以这里发的是**自增 unitId**，再映射回 (章, 批序号, 段号)。
  */
@@ -99,6 +99,18 @@ class NovelChapterJobHost(
     private var uiChanged: (() -> Unit)? = null
 
     val uiAttached: Boolean get() = uiChanged != null
+
+    /**
+     * 是否**曾经**被阅读器挂上过。
+     *
+     * ⚠️ 与漫画 `ReaderTranslationHub.everAttached` 同一个理由：宿主创建后收集协程会**立刻收到一次**
+     * 当前值，而那一刻 Activity 还在 `bindUi()` 之前（`uiAttached` 仍 false）→ 不加这道闸，
+     * 刚建好的宿主会被当场 `releaseIfIdle` 回收，Activity 手上留一个已 `shutdownAll()` 的实例，
+     * 「翻译本章」从此点不动。
+     */
+    @Volatile
+    var everAttached: Boolean = false
+        private set
 
     private val finishedListeners = CopyOnWriteArrayList<(Int, Int, Int, Boolean) -> Unit>()
 
@@ -157,6 +169,9 @@ class NovelChapterJobHost(
 
     fun isRunning(): Boolean = runner.isBusy()
 
+    /** 身份指纹（= `book.addedAt`）：宿主用它判断"同一个 id 是否已经换了一本书"。 */
+    fun translationKeyOf(): String = book.translationKey
+
     // ===== UI 挂载 =====
 
     fun bindUi(
@@ -167,6 +182,7 @@ class NovelChapterJobHost(
     ) {
         uiConfirmOversize = confirmOversize
         uiChanged = onChanged
+        everAttached = true
     }
 
     fun unbindUi() {
@@ -263,7 +279,9 @@ class NovelChapterJobHost(
     /** 该章**还没开始翻**的批，按序号排。纯内存：任务结束/取消后自然为空。 */
     fun waitingBatches(chapterIndex: Int): List<NovelWaitingBatch> {
         val ids = synchronized(unitLock) { chapterUnits[chapterIndex] } ?: return emptyList()
-        val waiting = runner.waitingPages.value
+        // 「等待」= 队列里还没取的 + **已进流水线但还没轮到准备的**（`QUEUED`，见 ChapterTaskStage）
+        // —— 后者以前被算成"在飞"，面板会把它显示成「翻译中」，与"还没开始"直接矛盾
+        val waiting = runner.waitingPages.value + runner.queuedPages()
         return ids.filter { it in waiting }
             .mapNotNull { id -> synchronized(unitLock) { units[id] } }
     }
@@ -276,17 +294,36 @@ class NovelChapterJobHost(
     }
 
     /**
-     * 该章**正在提交/等待服务端返回**的批（已 OCR 完成、正在发请求或等响应）。
+     * 该章**正在提交/等待服务端返回**的批（请求已发出或正等响应）。
      *
      * 用户口径（2026-09-27）：「正在提交等待返回的批次片段**背景要高亮处理**」——
      * 这些批既不在「等待」里（队列已经取走）、也还没写库（没有译文），
      * 只靠章卡片上的进度数字看不出"现在轮到哪几批"，所以单独暴露给面板。
+     *
+     * ⚠️ 判据是 **`translatingPages()`（翻译段）**，不是 `inFlightPages()`（含"已预取还没开始"）：
+     * 小说没有 OCR，准备阶段是个空操作，真正该高亮的只有**已经进翻译段**的那几批
+     * （与漫画面板「识别中 / 翻译中」分开显示同一口径，2026-09-28）。
      */
     fun activeBatches(chapterIndex: Int): List<NovelWaitingBatch> {
         val ids = synchronized(unitLock) { chapterUnits[chapterIndex] } ?: return emptyList()
-        val inflight = runner.inFlightPages()
+        val inflight = runner.translatingPages()
         return ids.filter { it in inflight }
             .mapNotNull { id -> synchronized(unitLock) { units[id] } }
+    }
+
+    /**
+     * 该章**已被章节任务占住**的段（在途 + 排队中）。
+     *
+     * ⚠️ 给阅读器的自动/增量队列做去重用：它们只看库里的 SUCCESS 行，而章任务的段在翻完前
+     * 库里还是 IDLE —— 不排除就会**同一段同时发两次请求**（白烧额度、两倍内存）。
+     */
+    fun inFlightAndWaitingParas(chapterIndex: Int): Set<Int> {
+        val ids = synchronized(unitLock) { chapterUnits[chapterIndex] } ?: return emptySet()
+        // `ChapterJobRunner` 自带锁，这里不用 host 的 unitLock 包它（避免锁序交叉）
+        val owned = runner.runningOwnedPages() + runner.waitingPages.value
+        return ids.filter { it in owned }
+            .flatMap { id -> synchronized(unitLock) { units[id]?.paraIndexes.orEmpty() } }
+            .toSet()
     }
 
     /** 正在翻的批（所有章）—— 面板一次性取用，与 [waitingByChapter] 同一套形状。 */
@@ -415,12 +452,25 @@ object NovelTranslationHub : ChapterJobSource {
     /** 取（或创建）某本书的宿主。旧实例里的书标题可能过期（书架改名），这里以调用方传的为准。 */
     @Synchronized
     fun hostFor(context: Context, book: ImportedNovel): NovelChapterJobHost {
-        hosts[book.id]?.let { return it }
+        // ⚠️ 与漫画侧同一个理由：小说 id 也是"清单最大 id + 1"，删书后重导会**复用 id**，
+        // 而译文身份是 `addedAt`（novelKey）。只按 id 命中会把旧宿主（连同旧书的 repo 缓存、
+        // 旧 novelKey）交给新书 → 新书按旧指纹读写译文（看着正常、重启后译文"消失"且清不掉）。
+        hosts[book.id]?.let { cached ->
+            if (cached.translationKeyOf() == book.translationKey) return cached
+            LogCollector.i("NovelChapterJob", "novelId=${book.id} 身份指纹变了（删除后复用 id）→ 重建宿主")
+            // ⚠️ 必须**无条件**摘掉：走 releaseIfIdle 的话，旧宿主正在跑任务/还挂着 UI 时它会直接
+            // return，而我们紧接着就把 hosts/collectors 覆盖掉 —— 旧宿主从此不可达、它的 runner
+            // 还在烧额度、收集协程永远活着（漫画侧 ReaderTranslationHub 就是无条件 remove+cancel）。
+            hosts.remove(book.id)
+            collectors.remove(book.id)?.cancel()
+            cached.shutdownAll()
+        }
         val host = NovelChapterJobHost(context.applicationContext, book, scope)
         hosts[book.id] = host
         collectors[book.id] = scope.launch {
             host.chapterJobs.collect {
                 TranslationJobRegistry.notifyChanged()
+                if (!host.everAttached) return@collect
                 if (!host.uiAttached && !host.isRunning()) releaseIfIdle(book.id)
             }
         }
@@ -428,7 +478,6 @@ object NovelTranslationHub : ChapterJobSource {
         return host
     }
 
-    fun find(novelId: Long): NovelChapterJobHost? = hosts[novelId]
 
     /**
      * 没有 UI 挂着、也没有任务在跑 → 回收宿主（释放段落/目录缓存与单元账本）。
@@ -457,9 +506,4 @@ object NovelTranslationHub : ChapterJobSource {
         return handled
     }
 
-    /** 活动任务数（宿主判断要不要拉起前台服务）。 */
-    fun activeJobCount(): Int = snapshot().count {
-        it.state == ChapterJobState.RUNNING || it.state == ChapterJobState.PAUSED ||
-            it.state == ChapterJobState.QUEUED
-    }
 }

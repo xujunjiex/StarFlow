@@ -16,6 +16,7 @@ import com.moe.starflow.R
 import com.moe.starflow.mangaimport.reader.MangaReaderActivity
 import com.moe.starflow.novel.reader.NovelReaderActivity
 import com.moe.starflow.utils.LogCollector
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -46,6 +47,14 @@ class TranslationJobService : LifecycleService() {
 
         const val CHANNEL_ID = "chapter_translation"
         const val NOTIFICATION_ID_SERVICE = 9998
+
+        /**
+         * 「任务开始时先把服务拉起来、registry 还没来得及重算」的宽限期。
+         *
+         * 服务起来时 registry 还是空表（宿主的重算在 IO 线程上），不能当场 `stopSelf()`
+         * ——否则整段任务都没有通知栏进度。给宿主 [REGISTRY_SYNC_GRACE_MS] 毫秒把状态推上来。
+         */
+        const val REGISTRY_SYNC_GRACE_MS = 3_000L
 
         /** 启动（或唤醒）前台服务：任务已经在跑，这里只是把通知栏挂上去。 */
         fun start(context: Context) {
@@ -104,12 +113,21 @@ class TranslationJobService : LifecycleService() {
 
     private var observing = false
 
+    /** 是否**见过**活动任务。用于避开"服务先于 submit 被拉起 → 见到空快照就自杀"的竞态。 */
+    private var sawActiveJob = false
+
     /** 镜像 registry 的任务快照 → 每章一条通知；没有活动任务了就停服务。 */
     // 通知权限已在 `canPostNotifications()` 里查过（lint 不会跟进 helper，所以显式声明已处理）
     @SuppressLint("MissingPermission")
     private fun observeJobs() {
         if (observing) return
         observing = true
+        // ⚠️ **先同步一次 registry**：`startChapterBatch()` 是「先 submit、再 start 服务」，
+        // 而 registry 的重算挂在宿主的 collect（IO 线程）上 —— 服务可能在它之前就 `onStartCommand`，
+        // 那时 `activeJobs` 还是空表 → 老代码直接 `stopSelf()`，通知栏进度**整段任务都不会出现**
+        // （2026-09-28 日志实证：服务在任务开始 4 秒后就"已停止（任务仍在后台跑）"）。
+        // `notifyChanged()` 是同步重算，读的就是各宿主此刻的真实状态，这里补一刀就同步上了。
+        runCatching { TranslationJobRegistry.notifyChanged() }
         lifecycleScope.launch {
             TranslationJobRegistry.activeJobs.collect { jobs ->
                 // ⚠️ 只给**还在跑**的章发通知：`jobs` 里会长期保留 DONE/CANCELLED 的章
@@ -120,10 +138,21 @@ class TranslationJobService : LifecycleService() {
                         it.state == ChapterJobState.PAUSED
                 }
                 if (active.isEmpty()) {
+                    // ⚠️ **没见过活动任务就别自杀**：上面那个竞态只剩这一层兜底 —— 给宿主一点时间
+                    // 把状态推上来（grace 期内再来一次活动快照就照常发通知）。
+                    if (!sawActiveJob) {
+                        delay(REGISTRY_SYNC_GRACE_MS)
+                        runCatching { TranslationJobRegistry.notifyChanged() }
+                        // ⚠️ 用注册表的**活动判据**（`hasActiveJobs`）复查，别再手写一遍三态过滤：
+                        // 两处判据曾经不一致过（这里多写一个 != CANCELLED 就永远停不下来）。
+                        if (TranslationJobRegistry.hasActiveJobs.value) return@collect
+                    }
+                    LogCollector.d(TAG, "没有活动任务 → 停止前台服务")
                     clearAll()
                     stopSelf()
                     return@collect
                 }
+                sawActiveJob = true
                 active.forEach { job -> notify(job) }
                 // 已经不在活动列表里的通知要撤掉（跑完/取消的章）
                 val alive = active.map { it.notificationId }.toSet()
@@ -146,9 +175,11 @@ class TranslationJobService : LifecycleService() {
         if (!canPostNotifications()) return
         val label = job.chapterLabel.ifBlank { getString(R.string.manga_chapter_label, job.chapterIndex + 1) }
         val title = getString(R.string.chapter_translate_notify_title, job.bookTitle, label)
+        // ⚠️ 到这里的章**一定是活动章**（调用方的 `active` 已滤掉 DONE/CANCELLED），
+        // 所以不再有 CANCELLED 分支 —— 那是不可达代码（审查发现 `chapter_translate_notify_cancelled`
+        // 因此是两个语言里的死资源）。
         val text = when (job.state) {
             ChapterJobState.PAUSED -> getString(R.string.chapter_translate_notify_paused, job.done, job.total)
-            ChapterJobState.CANCELLED -> getString(R.string.chapter_translate_notify_cancelled)
             else -> getString(R.string.chapter_translate_notify_progress, job.done, job.total)
         }
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
@@ -169,7 +200,7 @@ class TranslationJobService : LifecycleService() {
                 0, getString(R.string.reader_translate_chapter_resume),
                 actionIntent(JobAction.RESUME, job, job.notificationId + 2)
             )
-        } else if (job.state != ChapterJobState.CANCELLED) {
+        } else {
             builder.addAction(
                 0, getString(R.string.reader_translate_chapter_pause),
                 actionIntent(JobAction.PAUSE, job, job.notificationId + 2)

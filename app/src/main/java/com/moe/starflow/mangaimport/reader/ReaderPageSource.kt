@@ -42,7 +42,10 @@ class ReaderPageSource(
      * 与「章内自然排序」，两边算出来不一样的话章区间就会错位（点第3章跳到别人的页）。
      * 清单里那份只给书架显示章数用，阅读器这份才是权威 —— 两者不一致时以这份为准并回写清单。
      */
-    private val split: MangaChapterSplitter.Result = MangaChapterSplitter.split(resolveRawPages())
+    /** 原始页 key（**未排序**）：分章/排序的输入，页序迁移也要用它算旧顺序。 */
+    private val rawKeys: List<String> = resolveRawPages()
+
+    private val split: MangaChapterSplitter.Result = MangaChapterSplitter.split(rawKeys)
 
     private val pageKeys: List<String> = split.keys
 
@@ -103,6 +106,9 @@ class ReaderPageSource(
             LogCollector.w(TAG, "loadFull: 页号越界 position=$position（size=${pageKeys.size}）")
             return null
         }
+        // ⚠️ 这里**不再有超分缓存快路径**：v2 架构把超分整体移出了 loadFull
+        //    （主线程推理会 ANR；且用户口径是「OCR 永远在原图上做，超分只做显示底图」）。
+        //    合并时 master 侧的 enhanceCachedOrNull 调用随已删除的实现一起作废。
         return try {
             val bmp = if (isArchive) {
                 // 复用缓存的 ZipFile（与 openEntry 同一条路径）：每次新开都要重读中央目录，
@@ -221,6 +227,12 @@ class ReaderPageSource(
         ensureOriginalSize(position)
         return originalWidths[position] ?: 0
     }
+
+    /** 原始页 key（未排序）—— 只给页序迁移用（[com.moe.starflow.mangaimport.data.MangaPageOrder]）。 */
+    fun rawPageKeys(): List<String> = rawKeys
+
+    /** 当前权威页序（分章后的阅读顺序）。 */
+    fun orderedPageKeys(): List<String> = pageKeys
 
     /** 该页**原图**高度。用途：适配器按原始宽高比把行高**钉死**，见 [WebtoonAdapter] 的绑定注释。 */
     fun originalHeight(position: Int): Int {

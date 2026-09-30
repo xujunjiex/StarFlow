@@ -235,12 +235,29 @@ class ModelDownloadService : LifecycleService() {
         ModelKey.SR_ANIMEJANAI_HD_SHARP1_BALANCED -> "AnimeJaNai HD Sharp1 Balanced"
         ModelKey.SR_ANIMEJANAI_HD_SHARP1_PERFORMANCE -> "AnimeJaNai HD Sharp1 Performance"
         ModelKey.SR_ANIMEJANAI_SD_COMPACT -> "AnimeJaNai SD Compact"
-        ModelKey.SR_WAIFU2X_CUNET_N0 -> "waifu2x cunet n0"
-        ModelKey.SR_WAIFU2X_CUNET_N1 -> "waifu2x cunet n1"
-        ModelKey.SR_WAIFU2X_CUNET_N2 -> "waifu2x cunet n2"
-        ModelKey.SR_WAIFU2X_CUNET_N3 -> "waifu2x cunet n3"
-        ModelKey.SR_WAIFU2X_SWIN_N0 -> "waifu2x swin_unet n0"
-        ModelKey.SR_WAIFU2X_SWIN_N1 -> "waifu2x swin_unet n1"
+        ModelKey.SR_W2X_UP7_ANIME_M1 -> "waifu2x upconv_7 Anime · No denoise"
+        ModelKey.SR_W2X_UP7_ANIME_N0 -> "waifu2x upconv_7 Anime · Light denoise"
+        ModelKey.SR_W2X_UP7_ANIME_N1 -> "waifu2x upconv_7 Anime · Medium denoise"
+        ModelKey.SR_W2X_UP7_ANIME_N2 -> "waifu2x upconv_7 Anime · Strong denoise"
+        ModelKey.SR_W2X_UP7_ANIME_N3 -> "waifu2x upconv_7 Anime · Max denoise"
+        ModelKey.SR_W2X_UP7_PHOTO_M1 -> "waifu2x upconv_7 Photo · No denoise"
+        ModelKey.SR_W2X_UP7_PHOTO_N0 -> "waifu2x upconv_7 Photo · Light denoise"
+        ModelKey.SR_W2X_UP7_PHOTO_N1 -> "waifu2x upconv_7 Photo · Medium denoise"
+        ModelKey.SR_W2X_UP7_PHOTO_N2 -> "waifu2x upconv_7 Photo · Strong denoise"
+        ModelKey.SR_W2X_UP7_PHOTO_N3 -> "waifu2x upconv_7 Photo · Max denoise"
+        ModelKey.SR_W2X_CUNET_M1 -> "waifu2x cunet · No denoise"
+        ModelKey.SR_W2X_CUNET_N0 -> "waifu2x cunet · Light denoise"
+        ModelKey.SR_W2X_CUNET_N1 -> "waifu2x cunet · Medium denoise"
+        ModelKey.SR_W2X_CUNET_N2 -> "waifu2x cunet · Strong denoise"
+        ModelKey.SR_W2X_CUNET_N3 -> "waifu2x cunet · Max denoise"
+        ModelKey.SR_SRMD_X2 -> "SRMD · 2x with denoise"
+        ModelKey.SR_SRMD_NF_X2 -> "SRMD · 2x no denoise"
+        ModelKey.SR_REALCUGAN_CONSERVATIVE -> "Real-CUGAN · 2x Conservative"
+        ModelKey.SR_REALCUGAN_DENOISE1X -> "Real-CUGAN · 2x Denoise 1x"
+        ModelKey.SR_REALCUGAN_DENOISE2X -> "Real-CUGAN · 2x Denoise 2x"
+        ModelKey.SR_REALCUGAN_DENOISE3X -> "Real-CUGAN · 2x Denoise 3x"
+        ModelKey.SR_REALCUGAN_NODENOISE -> "Real-CUGAN · 2x No denoise"
+        ModelKey.SR_REALESRGAN_ANIME6B -> "Real-ESRGAN · Anime 6B (4x)"
     }
 
     private fun formatBytes(bytes: Long): String {
@@ -489,12 +506,16 @@ class ModelDownloadService : LifecycleService() {
         ModelKey.PP_OCR_V5_DET, ModelKey.PP_OCR_V5_REC_ZH,
         ModelKey.PP_OCR_V5_REC_EN, ModelKey.PP_OCR_V5_REC_KO,
         ModelKey.PP_OCR_V5_REC_RU -> File(applicationContext.getExternalFilesDir(null), "ppocrv5")
-        ModelKey.SR_ANIMEJANAI_HD_BALANCED, ModelKey.SR_ANIMEJANAI_HD_PERFORMANCE,
-        ModelKey.SR_ANIMEJANAI_HD_SHARP1_BALANCED, ModelKey.SR_ANIMEJANAI_HD_SHARP1_PERFORMANCE,
-        ModelKey.SR_ANIMEJANAI_SD_COMPACT -> File(applicationContext.getExternalFilesDir(null), "sr")
-        ModelKey.SR_WAIFU2X_CUNET_N0, ModelKey.SR_WAIFU2X_CUNET_N1,
-        ModelKey.SR_WAIFU2X_CUNET_N2, ModelKey.SR_WAIFU2X_CUNET_N3,
-        ModelKey.SR_WAIFU2X_SWIN_N0, ModelKey.SR_WAIFU2X_SWIN_N1 -> File(applicationContext.getExternalFilesDir(null), "sr")
+        ModelKey.SR_ANIMEJANAI_HD_BALANCED, ModelKey.SR_ANIMEJANAI_HD_PERFORMANCE, ModelKey.SR_ANIMEJANAI_HD_SHARP1_BALANCED,
+        ModelKey.SR_ANIMEJANAI_HD_SHARP1_PERFORMANCE, ModelKey.SR_ANIMEJANAI_SD_COMPACT, ModelKey.SR_W2X_UP7_ANIME_M1,
+        ModelKey.SR_W2X_UP7_ANIME_N0, ModelKey.SR_W2X_UP7_ANIME_N1, ModelKey.SR_W2X_UP7_ANIME_N2,
+        ModelKey.SR_W2X_UP7_ANIME_N3, ModelKey.SR_W2X_UP7_PHOTO_M1, ModelKey.SR_W2X_UP7_PHOTO_N0,
+        ModelKey.SR_W2X_UP7_PHOTO_N1, ModelKey.SR_W2X_UP7_PHOTO_N2, ModelKey.SR_W2X_UP7_PHOTO_N3,
+        ModelKey.SR_W2X_CUNET_M1, ModelKey.SR_W2X_CUNET_N0, ModelKey.SR_W2X_CUNET_N1,
+        ModelKey.SR_W2X_CUNET_N2, ModelKey.SR_W2X_CUNET_N3, ModelKey.SR_SRMD_X2,
+        ModelKey.SR_SRMD_NF_X2, ModelKey.SR_REALCUGAN_CONSERVATIVE, ModelKey.SR_REALCUGAN_DENOISE1X,
+        ModelKey.SR_REALCUGAN_DENOISE2X, ModelKey.SR_REALCUGAN_DENOISE3X, ModelKey.SR_REALCUGAN_NODENOISE,
+        ModelKey.SR_REALESRGAN_ANIME6B -> File(applicationContext.getExternalFilesDir(null), "sr")
     }
 
     companion object {

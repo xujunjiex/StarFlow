@@ -36,7 +36,9 @@ logs/
 # Gitignored directories
 .reference/
 tools/
-models/
+# ⚠️ 必须锚定到**根目录**：不锚定的话 `models/` 会顺带匹配
+#    app/src/main/assets/models/ —— 往那里新增资产文件会被**静默忽略**（审计发现）
+/models/
 scripts/
 markdown/
 superpowers/

@@ -5,7 +5,7 @@ import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import ai.onnxruntime.TensorInfo
-import android.app.Instrumentation
+import androidx.test.runner.AndroidJUnitRunner
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
@@ -16,21 +16,29 @@ import java.nio.ByteOrder
 /**
  * **超分模型真机性能基准**（不是单元测试，是一次性的测量工具）。
  *
- * 用法：
+ * ## ⚠️ 这个 runner 同时承担两件事（2026-09-30 合并两条分支时改写）
+ *
+ * 它原先直接继承 `android.app.Instrumentation`（当时的理由：`androidx.test:runner` 没缓存，
+ * 不想联网拉依赖）。但另一条分支加了标准的 `NcnnSrEngineDeviceTest`（仪器化 JUnit 测试），
+ * 而 **manifest 里只能声明一个 instrumentation** —— 于是改成继承 [AndroidJUnitRunner] 并按参数分流：
+ *
  * ```
- * .\gradlew :app:assembleDebugAndroidTest
- * adb install -r app\build\outputs\apk\androidTest\debug\app-debug-androidTest.apk
- * adb shell am instrument -w com.moe.starflow.test/com.moe.starflow.bench.SrBenchmarkRunner
+ * # 跑基准（本类自己的逻辑）
+ * adb shell am instrument -w -e bench true com.moe.starflow.test/com.moe.starflow.bench.SrBenchmarkRunner
  * adb shell cat /storage/emulated/0/Android/data/com.moe.starflow/files/sr_benchmark.txt
+ *
+ * # 跑普通仪器化测试（走父类 AndroidJUnitRunner）
+ * .\gradlew :app:connectedDebugAndroidTest
+ * # 或 adb shell am instrument -w com.moe.starflow.test/com.moe.starflow.bench.SrBenchmarkRunner
  * ```
  *
- * 为什么不用 androidx.test：那要联网拉依赖，而本项目连 `androidx.test:runner` 都没缓存。
- * `android.app.Instrumentation` 是**框架类**，零依赖，`onStart` 里跑完把报告写文件即可。
+ * ⚠️ `androidx.test:runner` 现已随项目依赖一起拉取（见 app/build.gradle 的 androidTestImplementation），
+ *    所以"零依赖"这个原始理由已不成立。
  *
  * ⚠️ 这是**测量工具**，不是产品路径：输入用全 0（卷积耗时与内容无关，还省掉 fp16 转换），
  *    也不做 halo 裁剪（相对推理耗时可忽略）。产品路径仍然只有 `AnimeJaNaiEngine` 一条。
  */
-class SrBenchmarkRunner : Instrumentation() {
+class SrBenchmarkRunner : AndroidJUnitRunner() {
 
     private val tag = "SrBench"
 
@@ -39,6 +47,11 @@ class SrBenchmarkRunner : Instrumentation() {
     private fun align16(v: Int) = ((v + 15) / 16) * 16
 
     override fun onStart() {
+        // 没带 `-e bench true` → 交回父类跑正常的仪器化 JUnit 测试
+        if (arguments?.getString("bench") != "true") {
+            super.onStart()
+            return
+        }
         com.moe.starflow.sr.SrBenchmark.run(targetContext)
         val sb = StringBuilder()
         try {

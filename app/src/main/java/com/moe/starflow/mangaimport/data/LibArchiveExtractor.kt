@@ -67,7 +67,9 @@ object LibArchiveExtractor {
                 if (relative.isEmpty()) continue
                 val target = File(destDir, relative)
                 // 防路径穿越：包内条目不许写到目标目录之外
-                if (!target.canonicalPath.startsWith(rootPath)) {
+                // ⚠️ 必须带**路径分隔符**比较：裸前缀比较会放过 `../pages_evil/x.jpg`
+                // （canonicalPath = `<...>/pages_evil/x.jpg`，而 rootPath = `<...>/pages` → startsWith 为真）
+                if (!target.canonicalPath.startsWith(rootPath + File.separator)) {
                     LogCollector.w(TAG, "跳过越界条目: $relative")
                     continue
                 }

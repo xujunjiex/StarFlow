@@ -73,7 +73,9 @@ class ReaderControllerConcurrencyTest {
         val s = src()
         // 放锁点有两个：`onOcrDone` 的提前放锁 + `finally` 的兜底放锁。
         // 无条件 release 会"放两把" → 别的任务以为锁空着就冲进来，与 native OCR 并发。
-        assertTrue("finally 里必须条件释放", s.contains("if (lockHeld) OcrLock.release()"))
+        // 合并：加上了 OcrLock 的**持有者令牌**（master 的修复，防「旧持有者放掉新持有者的锁」）。
+        // 断言意图不变：finally 里必须**条件**释放，且恰好一次。
+        assertTrue("finally 里必须条件释放", s.contains("if (lockHeld) OcrLock.release(ocrToken)"))
         assertTrue("提前放锁也要条件化", s.contains("lockHeld = false"))
         // 本地引擎的 join 必须在放锁之后（否则超分等锁、我们等超分 = 死锁）
         val hook = s.indexOf("onOcrDone = ocrDone@{ t ->")
@@ -81,7 +83,8 @@ class ReaderControllerConcurrencyTest {
         val body = s.substring(hook, s.indexOf(") ?: return", hook))
         assertTrue(
             "放锁必须排在 join 之前",
-            body.indexOf("OcrLock.release()") in 1 until body.indexOf("job.join()"),
+            // 合并后放锁带 OcrLock 持有者令牌（master 的修复），断言意图不变
+            body.indexOf("OcrLock.release(ocrToken)") in 1 until body.indexOf("job.join()"),
         )
     }
 

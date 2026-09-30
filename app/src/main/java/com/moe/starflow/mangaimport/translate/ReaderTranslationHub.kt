@@ -50,7 +50,18 @@ object ReaderTranslationHub : ChapterJobSource {
     /** 取（或创建）某本书的控制器。同一本书永远只有一份（任务/缓存不会分裂）。 */
     @Synchronized
     fun controllerFor(context: Context, manga: ImportedManga): ReaderTranslationController {
-        controllers[manga.id]?.let { return it }
+        // ⚠️ **必须比身份指纹**，不能只看 id：书架删除后新导入的书会**复用同一个 id**
+        // （`书架最大id+1`），而控制器在构造时就捕获了 `mangaKey = manga.translationKey`
+        // → 旧控制器若还活着，新书会按**旧指纹**读写译文（当场看着正常，重启后译文"消失"、
+        // 书架删除也清不掉）。指纹不一致 → 丢掉旧实例、重建。
+        controllers[manga.id]?.let { cached ->
+            // 已关闭（被 releaseIfIdle 回收过）→ 不能再交出去
+            if (!cached.closed && cached.translationKeyOf() == manga.translationKey) return cached
+            LogCollector.i(TAG, "mangaId=${manga.id} 身份指纹变了（删除后复用 id）→ 重建控制器")
+            controllers.remove(manga.id)
+            collectors.remove(manga.id)?.cancel()
+            cached.shutdownAll()
+        }
         val app = context.applicationContext
         val controller = ReaderTranslationController(app, manga, scope)
         controllers[manga.id] = controller
@@ -70,7 +81,17 @@ object ReaderTranslationHub : ChapterJobSource {
         return controller
     }
 
-    fun find(mangaId: Long): ReaderTranslationController? = controllers[mangaId]
+
+    /**
+     * 阅读器关闭后调用：这本书没有任务在跑就回收控制器。
+     *
+     * ⚠️ 没有它的话控制器**永远不会被回收**：唯一的回收触发点是 `chapterJobs` 的收集协程，
+     * 而任务跑完就不会再有新值 —— 阅读器关掉（`uiAttached=false`）也等不到那次发射。
+     * 结果每开一本书就常驻一份 `renderLru`（预算 100MB）+ 页图数据源，直到进程被杀。
+     */
+    fun onReaderClosed(mangaId: Long) {
+        releaseIfIdle(mangaId)
+    }
 
     /**
      * 没有 UI 挂着、也没有任务在跑 → 回收控制器（释放渲染缓存与页图数据源）。
@@ -85,22 +106,6 @@ object ReaderTranslationHub : ChapterJobSource {
         c.shutdownAll()
         TranslationJobRegistry.notifyChanged()
         LogCollector.i(TAG, "回收阅读器翻译控制器 mangaId=$mangaId（无 UI 且无任务）")
-    }
-
-    // ===== 通知栏动作入口（也支持直接调，不必经注册表） =====
-
-    fun pause(mangaId: Long, chapterIndex: Int) = controllers[mangaId]?.pauseChapterJob(chapterIndex)
-    fun resume(mangaId: Long, chapterIndex: Int) = controllers[mangaId]?.resumeChapterJob(chapterIndex)
-
-    fun cancel(mangaId: Long, chapterIndex: Int) {
-        controllers[mangaId]?.cancelChapterJob(chapterIndex)
-        releaseIfIdle(mangaId)
-    }
-
-    /** 取消一本书的全部章节任务（换书时用）。 */
-    fun cancelAll(mangaId: Long) {
-        controllers[mangaId]?.cancelAllChapterJobs()
-        releaseIfIdle(mangaId)
     }
 
     // ===== ChapterJobSource =====
@@ -135,9 +140,4 @@ object ReaderTranslationHub : ChapterJobSource {
         return true
     }
 
-    /** 活动任务数（宿主判断要不要拉起前台服务）。 */
-    fun activeJobCount(): Int = snapshot().count {
-        it.state == ChapterJobState.RUNNING || it.state == ChapterJobState.PAUSED ||
-            it.state == ChapterJobState.QUEUED
-    }
 }

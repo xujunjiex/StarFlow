@@ -72,7 +72,8 @@ class SrReaderWiringTest {
         assertTrue(
             "runTranslate 的 finally 必须「条件放锁 → 兜底启动超分」（放锁只能放一次，" +
                 "而兜底只在没能提前启动时才跑）",
-            src.contains("if (lockHeld) OcrLock.release()") &&
+            // 合并后放锁带 OcrLock 持有者令牌（master 的修复），意图不变：条件释放、恰好一次
+            src.contains("if (lockHeld) OcrLock.release(ocrToken)") &&
                 src.contains("if (!srStarted && !cancel.get()) maybeStartSrAfterTranslate(page)"),
         )
     }
@@ -169,9 +170,13 @@ class SrReaderWiringTest {
         val layout = read("src/main/res/layout/fragment_model_management.xml")
         for (base in listOf(
             "sr_aji_balanced", "sr_aji_perf", "sr_aji_sharp1_balanced", "sr_aji_sharp1_perf",
-            "sr_aji_sd", "sr_w2xc_n0", "sr_w2xc_n1", "sr_w2xc_n2", "sr_w2xc_n3",
-            "sr_w2xs_n0", "sr_w2xs_n1",
-        )) {
+            "sr_aji_balanced", "sr_aji_perf", "sr_aji_sharp1_balanced", "sr_aji_sharp1_perf", "sr_aji_sd",
+            "sr_w2xa_m1", "sr_w2xa_n0", "sr_w2xa_n1", "sr_w2xa_n2", "sr_w2xa_n3",
+            "sr_w2xp_m1", "sr_w2xp_n0", "sr_w2xp_n1", "sr_w2xp_n2", "sr_w2xp_n3",
+            "sr_w2xc_m1", "sr_w2xc_n0", "sr_w2xc_n1", "sr_w2xc_n2", "sr_w2xc_n3",
+            "sr_srmd_x2", "sr_srmd_nf_x2", "sr_cugan_cons", "sr_cugan_d1", "sr_cugan_d2",
+            "sr_cugan_d3", "sr_cugan_dn", "sr_rsrgan_a6b"
+            )) {
             val wrapper = layout.indexOf("android:id=\"@+id/${base}_row\"")
             val radio = layout.indexOf("android:id=\"@+id/${base}_radio\"")
             val include = layout.indexOf("layout=\"@layout/item_model_row_browser\"", wrapper)

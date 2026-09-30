@@ -1050,7 +1050,7 @@ class NovelPanelSheet(
         for ((key, label) in options) {
             val chip = TextView(requireContext()).apply {
                 text = getString(label)
-                textSize = 13f
+                textSize = 15f
                 setPadding(dp8 * 2, dp8, dp8 * 2, dp8)
                 tag = key
                 setOnClickListener { applyFilter(key, view) }

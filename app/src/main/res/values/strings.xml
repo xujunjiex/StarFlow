@@ -696,10 +696,60 @@
     <string name="sr_model_animejanai_sharp1_balanced">AnimeJaNai HD V3.1 · Sharp1 Balanced</string>
     <string name="sr_model_animejanai_sharp1_performance">AnimeJaNai HD V3.1 · Sharp1 Performance</string>
     <string name="sr_model_animejanai_sd_compact">AnimeJaNai SD · Compact</string>
+    <string name="sr_group_w2x_up7_anime">waifu2x upconv_7 Anime (2x, ncnn GPU)</string>
+    <string name="sr_group_w2x_up7_anime_desc">Official waifu2x upconv_7 anime model running on ncnn + Vulkan. Fastest family measured: ~2 s/page, only 1.1 MB per level, quality on par with cunet. Levels are denoise strength — this model degrades quickly with denoise, so keep it on \"No denoise\" unless the source is dirty.</string>
+    <string name="sr_group_w2x_up7_photo">waifu2x upconv_7 Photo (2x, ncnn GPU)</string>
+    <string name="sr_group_w2x_up7_photo_desc">The photographic weights of upconv_7. More faithful but softer lines than the anime variant — use the anime family for line art; this one suits photos, colour pages and covers.</string>
+    <string name="sr_group_waifu2x_cunet">waifu2x cunet (2x, ncnn GPU)</string>
+    <string name="sr_group_waifu2x_cunet_desc">Official waifu2x cunet architecture (59 layers, 4 SE blocks). More tolerant of dirty sources than upconv_7 — denoise does not hurt it, and it peaks at \"Medium denoise\". Pick this for scan noise or heavy JPEG artefacts. Needs the GPU: CPU takes 10–37 s.</string>
+    <string name="sr_group_srmd">SRMD (2x, ncnn GPU)</string>
+    <string name="sr_group_srmd_desc">SRMD is a multi-degradation model: denoise strength is a runtime parameter, so one model covers many degradation levels. Highest measured fidelity of all families, but ~3x slower than upconv_7 — pick it only when you want maximum quality.</string>
+    <string name="sr_group_realcugan">Real-CUGAN (2x, ncnn GPU)</string>
+    <string name="sr_group_realcugan_desc">Bilibili\'s Real-CUGAN, the model used by the koto reader. Subjectively sharper with more punch, but it changes the source more aggressively — our PSNR is low, which is the cost of \"redrawing\" rather than \"restoring\". ⚠️ PSNR measures resemblance, not beauty — compare samples yourself before deciding.</string>
+    <string name="sr_group_realesrgan">Real-ESRGAN (4x, ncnn GPU)</string>
+    <string name="sr_group_realesrgan_desc">Real-ESRGAN anime 6B weights, 4x upscale (double the others). 17 MB and the most aggressive re-drawing of all — lowest measured fidelity. Use only when you truly need 4x.</string>
+
+    <string name="sr_model_w2x_up7_anime_m1">waifu2x upconv_7 Anime · No denoise</string>
+    <string name="sr_model_w2x_up7_anime_n0">waifu2x upconv_7 Anime · Light denoise</string>
+    <string name="sr_model_w2x_up7_anime_n1">waifu2x upconv_7 Anime · Medium denoise</string>
+    <string name="sr_model_w2x_up7_anime_n2">waifu2x upconv_7 Anime · Strong denoise</string>
+    <string name="sr_model_w2x_up7_anime_n3">waifu2x upconv_7 Anime · Max denoise</string>
+    <string name="sr_model_w2x_up7_photo_m1">waifu2x upconv_7 Photo · No denoise</string>
+    <string name="sr_model_w2x_up7_photo_n0">waifu2x upconv_7 Photo · Light denoise</string>
+    <string name="sr_model_w2x_up7_photo_n1">waifu2x upconv_7 Photo · Medium denoise</string>
+    <string name="sr_model_w2x_up7_photo_n2">waifu2x upconv_7 Photo · Strong denoise</string>
+    <string name="sr_model_w2x_up7_photo_n3">waifu2x upconv_7 Photo · Max denoise</string>
+    <string name="sr_model_w2x_cunet_m1">waifu2x cunet · No denoise</string>
+    <string name="sr_model_w2x_cunet_n0">waifu2x cunet · Light denoise</string>
+    <string name="sr_model_w2x_cunet_n1">waifu2x cunet · Medium denoise</string>
+    <string name="sr_model_w2x_cunet_n2">waifu2x cunet · Strong denoise</string>
+    <string name="sr_model_w2x_cunet_n3">waifu2x cunet · Max denoise</string>
+    <string name="sr_model_srmd_x2">SRMD · 2x with denoise</string>
+    <string name="sr_model_srmd_nf_x2">SRMD · 2x no denoise</string>
+    <string name="sr_model_cugan_cons">Real-CUGAN · 2x Conservative</string>
+    <string name="sr_model_cugan_d1">Real-CUGAN · 2x Denoise 1x</string>
+    <string name="sr_model_cugan_d2">Real-CUGAN · 2x Denoise 2x</string>
+    <string name="sr_model_cugan_d3">Real-CUGAN · 2x Denoise 3x</string>
+    <string name="sr_model_cugan_dn">Real-CUGAN · 2x No denoise</string>
+    <string name="sr_model_rsrgan_a6b">Real-ESRGAN · Anime 6B (4x)</string>
+
     <string name="sr_low_res_tip">💡 Super resolution can only help genuinely low-resolution sources. Pages already 1000px+ wide barely change, and heavy screentone may be re-drawn. Keep it off unless the source is small.</string>
     <string name="sr_storage_note">📁 Models live in Android/data/com.moe.starflow/files/sr/ — deleting those files uninstalls the model (the app will show it as "not downloaded").\n🎯 Super resolution only applies to the manga reader. Screenshot/recording translation and the novel reader never upscale, and OCR always reads the original page.\n🗂 Upscaled pages are 2x images cached per page in files/sr_cache/. Switching model overwrites the same page, and deleting a manga removes them too.</string>
     <string name="sr_no_model_selected">No super-resolution model selected — download one below</string>
+    <string name="sr_w2xa_group">waifu2x upconv_7 · Anime</string>
+    <string name="sr_w2xa_group_desc">Smallest (1.06MB) and fastest (0.9s @632x912), tied for best quality.</string>
+    <string name="sr_w2xp_group">waifu2x upconv_7 · Photo</string>
+    <string name="sr_w2xp_group_desc">For colour / photographic sources.</string>
+    <string name="sr_w2xc_group">waifu2x cunet</string>
+    <string name="sr_w2xc_group_desc">59 layers; more tolerant of noise and JPEG artifacts. Peaks at medium denoise.</string>
+    <string name="sr_srmd_group">SRMD (2x)</string>
+    <string name="sr_srmd_group_desc">Highest fidelity (best measured PSNR) but about 3x slower.</string>
+    <string name="sr_cugan_group">Real-CUGAN (2x)</string>
+    <string name="sr_cugan_group_desc">Bilibili\'s model — sharper but re-draws more aggressively.</string>
+    <string name="sr_rsrgan_group">Real-ESRGAN anime 6B (4x)</string>
+    <string name="sr_rsrgan_group_desc">**4x** upscale (others are 2x), 17MB, the most aggressive style change.</string>
     <string name="sr_active_switched">Switched to %1$s</string>
+    <string name="sr_need_download">This model isn\'t downloaded yet — tap Download on its row first</string>
     <!-- Personalization · Super resolution -->
     <string name="sr_settings_category">Super resolution (AI upscaling)</string>
     <string name="sr_model_manage_title">Super-resolution models</string>
@@ -1128,6 +1178,10 @@
     <string name="reader_translate_retranslate_current">Re-translate this page</string>
     <string name="reader_translate_state_idle">Not translated</string>
     <string name="reader_translate_state_translating">Translating</string>
+    <!-- "Recognizing" = the OCR stage (always serial, at most 1 page). It is a different in-progress state from "Translating". -->
+    <string name="reader_translate_state_ocr">Recognizing</string>
+    <!-- One entry of the status chip: %1$s = stage name, %2$s = page list (P3, P4) -->
+    <string name="reader_translate_stage_entry">%1$s %2$s</string>
     <string name="reader_translate_state_success">✓ Done</string>
     <string name="reader_translate_state_failed">Failed</string>
     <string name="reader_translate_row_detail">Details</string>
@@ -1163,8 +1217,6 @@
     <string name="reader_chapter_count">%1$d chapters</string>
     <!-- 顶部页码胶囊：章标题 · 章内第几页 / 本章共几页 -->
     <string name="reader_page_indicator_chapter">%1$s · %2$d/%3$d</string>
-    <string name="reader_chapter_prev">Previous chapter</string>
-    <string name="reader_chapter_next">Next chapter</string>
     <string name="reader_chapter_first">Already at the first chapter</string>
     <string name="reader_chapter_last">Already at the last chapter</string>
     <string name="reader_chapter_badge">%1$d/%2$d translated</string>
@@ -1190,20 +1242,17 @@
     <string name="chapter_translate_notify_title">%1$s · %2$s</string>
     <string name="chapter_translate_notify_progress">Translating %1$d/%2$d pages</string>
     <string name="chapter_translate_notify_paused">Paused · %1$d/%2$d pages</string>
-    <string name="chapter_translate_notify_cancelled">Cancelled</string>
-    <string name="chapter_translate_notify_resume">Resume</string>
     <string name="chapter_translate_notify_summary_title">Chapter translation</string>
     <string name="chapter_translate_notify_summary">%1$d chapter(s) translating in background</string>
     <string name="reader_translate_chapter_clear">Clear</string>
     <string name="reader_translate_chapter_running">Translating chapter %1$d/%2$d</string>
     <!-- 章节批量翻译的并发度（漫画：OCR 串行，调高主要加快翻译请求） -->
     <string name="reader_translate_concurrency">Max concurrent translation requests</string>
-    <string name="reader_translate_concurrency_hint">Whole-chapter translation only, and NOT for local models (they stay serial). Each page sends its translation request as soon as its OCR finishes, without waiting for earlier ones; up to N run at once, the rest queue.</string>
+    <string name="reader_translate_concurrency_hint">Max concurrent requests for whole-chapter and incremental translation; local models stay at 1. OCR itself is always serial.</string>
     <string name="reader_translate_state_waiting">Waiting</string>
     <string name="reader_translate_chapter_hint">Translating chapter %1$d/%2$d. Double-tap to pause.</string>
     <string name="reader_translate_chapter_finished">Chapter finished: %1$d/%2$d translated</string>
     <string name="reader_translate_chapter_nothing">Nothing to translate in this chapter</string>
-    <string name="reader_translate_chapter_summary">%1$s · %2$d/%3$d done · %4$d ongoing · %5$d failed</string>
     <!-- 一键翻译整章的确认弹窗：默认「只翻未完成」，可强行「全部重翻」（覆盖已成功的页） -->
     <string name="reader_translate_chapter_confirm_title">Translate this chapter</string>
     <string name="reader_translate_chapter_confirm_msg">This chapter has %1$d pages: %2$d untranslated, %3$d failed, %4$d done.</string>
@@ -1221,10 +1270,10 @@
          全部命中时不说 API 数（0 条），partial 时同时给出两个口径的分母。 -->
     <string name="reader_translate_all_cached">Translated (%1$d, all from cache)</string>
     <string name="reader_translate_partial_cached">Translated (%1$d/%2$d cached, %3$d via API)</string>
-    <string name="reader_translate_paused_to_manual">Translation paused, switched to manual mode.</string>
-    <string name="reader_translate_cancelled">Stopped. Switched to manual mode.</string>
+    <string name="reader_translate_force_stopped">Translation was force-stopped.</string>
+    <string name="reader_translate_force_stopped_to_manual">Translation was force-stopped, switched to manual mode.</string>
     <string name="reader_translate_debounce">Start delay</string>
-    <string name="reader_translate_debounce_hint">How long to wait after a page turn before translating (debounce), shared by auto and incremental. Smaller feels snappier but wastes pages while you keep turning.</string>
+    <string name="reader_translate_debounce_hint">Delay before translating after a page turn (auto/incremental). Smaller responds faster; more wasted translations while turning.</string>
     <string name="reader_translate_ahead_pages">Pages ahead</string>
     <string name="reader_translate_failed_badge">Translation failed</string>
     <string name="reader_translate_disabled_mode">Translation is not available in Webtoon mode</string>
@@ -1613,7 +1662,7 @@
     <string name="novel_translate_oversize_skipped">Skipped the over-long batch</string>
     <!-- ===== 同时 API 请求数（文本翻译；本地引擎固定 1） ===== -->
     <string name="novel_translate_concurrency">Max concurrent translation requests</string>
-    <string name="novel_translate_concurrency_hint">Incremental and whole-chapter translation only, and NOT for local models (they stay serial). Batches are sent in reading order without waiting for earlier ones; up to N run at once, the rest queue. Higher is faster and costs more quota.</string>
+    <string name="novel_translate_concurrency_hint">Max concurrent requests for whole-chapter and incremental translation; local models stay at 1. The rest queue in reading order.</string>
     <!-- ===== 章卡片：后台章节任务的进度（单位是**批**，不是页） ===== -->
     <string name="novel_chapter_running_batches">Translating %1$d/%2$d batches</string>
     <string name="novel_chapter_paused_batches">Paused · %1$d/%2$d batches</string>
@@ -1676,21 +1725,15 @@
     <string name="reader_clear_page_confirm_title">Clear this page\'s translation?</string>
     <string name="reader_clear_page_confirm_msg">This deletes the translation of page %1$d (source text and bubble data included) and shows the original image again. This cannot be undone.</string>
     <string name="reader_clear_page_confirm_ok">Clear</string>
-    <string name="reader_clear_row_confirm_msg">This deletes the translation record of page %1$d and shows the original image again. This cannot be undone.</string>
 
     <!-- waifu2x family (2026-10, official ONNX build from deepghs/waifu2x_onnx) -->
-    <string name="sr_group_waifu2x_cunet">waifu2x cunet (2x, ONNX)</string>
-    <string name="sr_group_waifu2x_cunet_desc">The cunet architecture from the official waifu2x model set. The four levels are denoise strengths: n0 leaves the source alone (most faithful, line restore + upscale only), n3 aggressively removes scan noise and JPEG artefacts. ⚠️ Highest measured quality, but **very slow on phones**: about **35s per page** (640×960 → 2x), 20x slower than AnimeJaNai. Prefer AnimeJaNai unless you are happy waiting half a minute per page.</string>
     <string name="sr_group_waifu2x_swin">waifu2x swin_unet (2x, ONNX)</string>
     <string name="sr_group_waifu2x_swin_desc">the SwinIR architecture from the waifu2x model set (16.8MB per level). ⚠️ **Measured as very slow on phones** (Transformer running on CPU) and 3x the size of cunet — prefer cunet unless you have confirmed it looks clearly better on your sources.</string>
-    <string name="sr_model_w2x_cunet_n0">cunet · No denoise (n0)</string>
-    <string name="sr_model_w2x_cunet_n1">cunet · Light denoise (n1)</string>
-    <string name="sr_model_w2x_cunet_n2">cunet · Medium denoise (n2)</string>
-    <string name="sr_model_w2x_cunet_n3">cunet · Strong denoise (n3)</string>
     <string name="sr_model_w2x_swin_n0">swin_unet · No denoise (n0)</string>
     <string name="sr_model_w2x_swin_n1">swin_unet · Light denoise (n1)</string>
 
     <!-- Image quality (colour panel, 2026-10) -->
     <string name="reader_sr_switch_label">Super resolution</string>
     <string name="reader_chapter_badge_waiting">%1$d pages waiting</string>
+    <string name="reader_translate_ocr_busy">The OCR engine stayed busy too long (another translation is running). This page was skipped - retry later.</string>
 </resources>

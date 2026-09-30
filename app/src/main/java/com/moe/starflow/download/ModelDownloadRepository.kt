@@ -355,7 +355,15 @@ class ModelDownloadRepository private constructor(private val context: Context) 
                     checksum = fileObj.optString("checksum", "")
                 ))
             }
-            models.add(ModelInfo(modelKey, browserUrl, files))
+            models.add(ModelInfo(
+                modelKey = modelKey,
+                browserUrl = browserUrl,
+                files = files,
+                srFamily = modelObj.optString("family", "").ifEmpty { null },
+                srScale = modelObj.optInt("scale", 0),
+                srNoise = modelObj.optInt("noise", 0),
+                srPrepad = modelObj.optInt("prepad", 0)
+            ))
         }
         modelListCached.value = models
         LogCollector.d(TAG, "loadModelList: loaded ${models.size} models")
@@ -435,13 +443,18 @@ class ModelDownloadRepository private constructor(private val context: Context) 
         ModelKey.PP_OCR_V5_DET, ModelKey.PP_OCR_V5_REC_ZH,
         ModelKey.PP_OCR_V5_REC_EN, ModelKey.PP_OCR_V5_REC_KO,
         ModelKey.PP_OCR_V5_REC_RU -> File(context.getExternalFilesDir(null), "ppocrv5")
-        // 超分模型统一放一个目录，模型文件名本身已带族/等级前缀，不会重名
-        ModelKey.SR_ANIMEJANAI_HD_BALANCED, ModelKey.SR_ANIMEJANAI_HD_PERFORMANCE,
-        ModelKey.SR_ANIMEJANAI_HD_SHARP1_BALANCED, ModelKey.SR_ANIMEJANAI_HD_SHARP1_PERFORMANCE,
-        ModelKey.SR_ANIMEJANAI_SD_COMPACT -> File(context.getExternalFilesDir(null), "sr")
-        ModelKey.SR_WAIFU2X_CUNET_N0, ModelKey.SR_WAIFU2X_CUNET_N1,
-        ModelKey.SR_WAIFU2X_CUNET_N2, ModelKey.SR_WAIFU2X_CUNET_N3,
-        ModelKey.SR_WAIFU2X_SWIN_N0, ModelKey.SR_WAIFU2X_SWIN_N1 -> File(context.getExternalFilesDir(null), "sr")
+        // 超分模型统一放一个目录；文件名自带族/档位前缀，不会重名
+        // （⚠️ waifu2x 的 cunet 与 upconv_7 上游**同名**，清单里的 file_name 必须各自改名）
+        ModelKey.SR_ANIMEJANAI_HD_BALANCED, ModelKey.SR_ANIMEJANAI_HD_PERFORMANCE, ModelKey.SR_ANIMEJANAI_HD_SHARP1_BALANCED,
+        ModelKey.SR_ANIMEJANAI_HD_SHARP1_PERFORMANCE, ModelKey.SR_ANIMEJANAI_SD_COMPACT, ModelKey.SR_W2X_UP7_ANIME_M1,
+        ModelKey.SR_W2X_UP7_ANIME_N0, ModelKey.SR_W2X_UP7_ANIME_N1, ModelKey.SR_W2X_UP7_ANIME_N2,
+        ModelKey.SR_W2X_UP7_ANIME_N3, ModelKey.SR_W2X_UP7_PHOTO_M1, ModelKey.SR_W2X_UP7_PHOTO_N0,
+        ModelKey.SR_W2X_UP7_PHOTO_N1, ModelKey.SR_W2X_UP7_PHOTO_N2, ModelKey.SR_W2X_UP7_PHOTO_N3,
+        ModelKey.SR_W2X_CUNET_M1, ModelKey.SR_W2X_CUNET_N0, ModelKey.SR_W2X_CUNET_N1,
+        ModelKey.SR_W2X_CUNET_N2, ModelKey.SR_W2X_CUNET_N3, ModelKey.SR_SRMD_X2,
+        ModelKey.SR_SRMD_NF_X2, ModelKey.SR_REALCUGAN_CONSERVATIVE, ModelKey.SR_REALCUGAN_DENOISE1X,
+        ModelKey.SR_REALCUGAN_DENOISE2X, ModelKey.SR_REALCUGAN_DENOISE3X, ModelKey.SR_REALCUGAN_NODENOISE,
+        ModelKey.SR_REALESRGAN_ANIME6B -> File(context.getExternalFilesDir(null), "sr")
     }
 
     /** 返回某模型的目标文件（未下载时为期望路径；仅用于已完整下载的模型）。 */

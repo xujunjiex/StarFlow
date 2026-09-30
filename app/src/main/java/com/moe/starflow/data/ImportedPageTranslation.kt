@@ -5,6 +5,7 @@ import androidx.room.Entity
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 
 /**
  * 阅读器每页翻译记录（key = mangaId + pageIndex）。
@@ -58,6 +59,24 @@ interface ImportedPageTranslationDao {
     /** 全部出现过记录的 mangaId（去重），供书架清理孤儿行用。 */
     @Query("SELECT DISTINCT mangaId FROM imported_page_translation")
     suspend fun allMangaIds(): List<Long>
+
+    /**
+     * **页序迁移**：把这本书的行按 [mapping]（旧下标 → 新下标）重排（见 `MangaPageOrder`）。
+     *
+     * ⚠️ 必须整体在一个事务里（先读、再删、再插）：中途失败会留下"一半新序一半旧序"的行，比不迁移更糟。
+     * ⚠️ 也不能逐行 `UPDATE pageIndex`：`pageIndex` 是主键的一部分，置换过程中会与尚未搬迁的行撞键
+     * （`OnConflictStrategy.REPLACE` 会**静默吃掉**一行）。
+     */
+    @Transaction
+    suspend fun rekeyPages(mangaId: Long, mangaKey: String, mapping: IntArray) {
+        val rows = forManga(mangaId, mangaKey)
+        if (rows.isEmpty()) return
+        deleteMangaScoped(mangaId, mangaKey)
+        rows.forEach { row ->
+            val target = mapping.getOrNull(row.pageIndex)
+            upsert(if (target != null && target >= 0) row.copy(pageIndex = target) else row)
+        }
+    }
 
     /** 某漫画下出现过的全部身份指纹（供旧指纹一次性迁移）。 */
     @Query("SELECT DISTINCT mangaKey FROM imported_page_translation WHERE mangaId = :mangaId")

@@ -46,6 +46,7 @@ import com.moe.starflow.sr.anime4k.Anime4kMode
 import com.moe.starflow.translate.batch.ChapterJob
 import com.moe.starflow.translate.batch.ChapterJobRunner
 import com.moe.starflow.translate.batch.ChapterJobState
+import com.moe.starflow.translate.batch.InFlightTask
 import com.moe.starflow.translate.widget.BallStateManager
 import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.LogCollector
@@ -54,6 +55,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -141,6 +143,17 @@ class ReaderTranslationController(
 
         /** 渲染缓存 key 的页前缀（作废某页全部底图变体时按它前缀匹配）。 */
         private fun pagePrefix(pageIndex: Int) = "page:$pageIndex:"
+        /**
+         * 等 OCR 引擎锁的最长时间 / 轮询间隔。
+         *
+         * ⚠️ **超时必须记失败 + 记日志**，不能静默跳过：静默跳过会让「进度在涨、什么都没翻，
+         * 面板上正在翻译的卡片直接消失」且毫无线索（2026-09-28 用户报的三个症状同一个根因）。
+         */
+        private const val OCR_LOCK_WAIT_TIMEOUT_MS = 60_000L
+        private const val OCR_LOCK_POLL_MS = 50L
+
+        private fun renderKey(pageIndex: Int, mode: TranslationCacheManager.OverlayMode) =
+            "page:$pageIndex:${mode.name}"
 
         /**
          * 渲染缓存 key。
@@ -671,11 +684,14 @@ class ReaderTranslationController(
 
     // ⚠️ 默认就走**自持数据源**（而不是 { null }）：后台任务/通知栏进来时 Activity 没 bind，
     // 用 { null } 的话每一页都会"原图加载失败"（静默 → 全页标失败 → 队列跳过 → 看着像没反应）
-    private var loadFull: (Int) -> Bitmap? = { ownSource.loadFull(it) }
-    private var loadWebtoon: ((Int) -> Bitmap?)? = null
-    private var originalWidthOf: ((Int) -> Int)? = null
-    private var currentPageProvider: () -> Int = { -1 }
-    private var pageCount: () -> Int = { 0 }
+    // ⚠️ 这几个 lambda 都是**主线程写（bind/unbindUi）、应用级后台任务读**，
+    // 必须 @Volatile：否则（JMM 无 happens-before）unbindUi() 之后后台仍可能看到旧 lambda
+    // → 继续调用已销毁 Activity 的页图加载器/浮层回调（正是这段注释声称要避免的泄漏）。
+    @Volatile private var loadFull: (Int) -> Bitmap? = { ownSource.loadFull(it) }
+    @Volatile private var loadWebtoon: ((Int) -> Bitmap?)? = null
+    @Volatile private var originalWidthOf: ((Int) -> Int)? = null
+    @Volatile private var currentPageProvider: () -> Int = { -1 }
+    @Volatile private var pageCount: () -> Int = { 0 }
 
     /**
      * 阅读器 UI 是否还挂着。
@@ -698,6 +714,17 @@ class ReaderTranslationController(
      */
     @Volatile
     var everAttached: Boolean = false
+        private set
+
+    /**
+     * 是否已被 [shutdownAll] 关掉（hub 回收后就**不能再 bind**）。
+     *
+     * ⚠️ 竞态：`controllerFor()` 与 Activity 的 `bind()` 之间，hub 的收集协程可能判定
+     * 「无 UI 且无任务」把它回收（那一刻 `uiAttached` 还是 false）→ Activity 手上留一个已关实例，
+     * 之后「翻译本章」全都不动。阅读器 bind 后自检这个标志并换一个新实例即可闭合窗口。
+     */
+    @Volatile
+    var closed: Boolean = false
         private set
 
     /**
@@ -840,6 +867,7 @@ class ReaderTranslationController(
 
     /** 彻底停掉（连章节批量任务一起）—— 换书 / 控制器被回收时用。 */
     fun shutdownAll() {
+        closed = true
         cancelEverything()
         chapterRunner.shutdown()
         translateMode.value = MODE_MANUAL
@@ -897,9 +925,9 @@ class ReaderTranslationController(
                     delay(debounceMs.value.toLong().coerceAtLeast(QUEUE_IDLE_TICK_MS))
                     if (translateMode.value == MODE_MANUAL) break
 
-                    // ⚠️ 必须先查锁：runTranslate 拿不到锁会直接 return（本页没翻），
-                    // 而循环下一轮又会重选到同一个仍是 IDLE 的页 → **每 500ms 空转一次，
-                    // 永远翻不动、也永远走不到"队列耗尽"**。这里原地等待并提示，锁一释放就继续。
+                    // ⚠️ 必须先查锁：OCR 拿不到锁这一页就白跑，而循环下一轮又会重选到同一个仍是
+                    // IDLE 的页 → **每 500ms 空转一次，永远翻不动、也永远走不到"队列耗尽"**。
+                    // 这里原地等待并提示，锁一释放就继续。
                     if (OcrLock.isRunning) {
                         if (!waitingNotified) {
                             waitingNotified = true
@@ -916,20 +944,41 @@ class ReaderTranslationController(
                     val total = pageCount()
                     if (total <= 0) break
                     val cur = currentPageProvider().coerceIn(0, total - 1)
-                    val window = if (translateMode.value == MODE_AUTO) 1 else aheadPages.value
-                    val end = (cur + window).coerceAtMost(total)
 
-                    val target = (cur until end).firstOrNull { p -> isTranslatable(p) }
-                    if (target == null) {
+                    if (translateMode.value == MODE_AUTO) {
+                        // **自动**：窗口恒 1 页，仍走单页路径 —— 它要保留**页内分批 + 流式**
+                        // （边翻边出：用户正看着这一页，先出一部分才有意义）。
+                        // 并发数在这里没有意义（同时只有 1 页）。
+                        val target = cur.takeIf { isTranslatable(it) }
+                        if (target == null) {
+                            LogCollector.d(TAG, "queue drained: 当前页 P${cur + 1} 无需翻译")
+                            drained = true
+                            break
+                        }
+                        queuePage.value = target
+                        try {
+                            runTranslate(target, fromQueue = true)
+                        } finally {
+                            queuePage.value = -1
+                        }
+                        continue
+                    }
+
+                    // **增量**：一个窗口一次 —— OCR 逐页串行 + 翻译请求并发 `同时请求数`。
+                    // 用户口径（2026-09-28）：「最大请求数对增量翻译也应该生效」。
+                    val end = (cur + aheadPages.value).coerceAtMost(total)
+                    val targets = (cur until end).filter { p -> isTranslatable(p) }
+                    if (targets.isEmpty()) {
                         LogCollector.d(TAG, "queue drained: 窗口 [$cur, $end) 无待翻页")
                         drained = true
                         break
                     }
-                    queuePage.value = target
-                    try {
-                        runTranslate(target, fromQueue = true)
-                    } finally {
-                        queuePage.value = -1
+                    val dispatched = runWindow(targets)
+                    if (dispatched == 0) {
+                        // 整窗口都在 OCR 阶段失败（失败已各自落库）→ 别原地空转
+                        LogCollector.d(TAG, "queue drained: 窗口 [$cur, $end) 全部未产出")
+                        drained = true
+                        break
                     }
                 }
             } finally {
@@ -945,8 +994,84 @@ class ReaderTranslationController(
      * **只有「未翻译(IDLE)」才翻**：`SUCCESS` 显然跳过；`FAILED` 也跳过 ——
      * 否则内容性失败（如空白页 OCR 为空）会被窗口反复重挑，**无限重试**。
      */
-    private fun isTranslatable(page: Int): Boolean =
-        stateOf(page) == ImportedPageTranslation.STATE_IDLE
+    private fun isTranslatable(page: Int): Boolean {
+        // ⚠️ 还要排除**章节任务已经拿走的页**：它们在库里的状态可能仍是 IDLE（识别中/预取中不写库），
+        // 只看库状态会让增量窗口与整章任务翻同一页 → OCR 两遍 + API 请求两份（白烧额度）。
+        if (page in chapterRunner.runningOwnedPages()) return false
+        return stateOf(page) == ImportedPageTranslation.STATE_IDLE
+    }
+
+    /**
+     * **增量模式的一个窗口**：OCR 逐页串行 + 翻译请求**并发 N**（`manga_concurrent_requests`）。
+     *
+     * 用户口径（2026-09-28）：「最大请求数对增量翻译也应该生效」——语义与整章任务**完全一致**：
+     * - OCR 仍逐页串行（引擎是单例、持 `OcrLock`）→ 界面恒为「1 页识别中」；
+     * - 识别完**立刻**把这一页交给翻译段（并发 N 个请求在飞，多的排队）；
+     * - 取消 = 协程取消：在途页**强制结束、不入库**（`translatePhase` 的取消分支退回未翻译），
+     *   与「打开面板 / 退出阅读器」时的强制退出同一套；
+     * - 只有"用户正在看的那页"渲染上屏（[translatePhase] 内部判定）。
+     *
+     * ⚠️ **先占槽位再 OCR**：把流水线深度压在「1 页识别 + N 页翻译」，
+     * 内存（每页一张全尺寸 page bitmap）不随窗口大小（最多 10 页）膨胀。
+     *
+     * @return 本窗口真的进入翻译阶段的页数（0 = 窗口内全都没产出 → 队列耗尽）
+     */
+    private suspend fun runWindow(targets: List<Int>): Int {
+        val slots = kotlinx.coroutines.sync.Semaphore(
+            TranslationConcurrency.mangaConcurrency(context, appPrefs).coerceAtLeast(1)
+        )
+        var dispatched = 0
+        try {
+            coroutineScope {
+                for (page in targets) {
+                    if (!isActive || translateMode.value != MODE_AHEAD) break
+                    if (!isTranslatable(page)) continue
+                    slots.acquire()
+                    if (!isActive) {
+                        slots.release()
+                        break
+                    }
+                    queuePage.value = page
+                    reportQueuePhase(page, ReaderTranslatePhase.DETECTING, null)
+                    val prep = ocrPhase(page)
+                    if (prep == null) {
+                        // OCR 阶段自己已经写了失败记录 + 日志（等锁超时/加载失败/空页）
+                        slots.release()
+                        continue
+                    }
+                    reportQueuePhase(page, ReaderTranslatePhase.TRANSLATING, null)
+                    dispatched++
+                    launch {
+                        try {
+                            if (translatePhase(page, prep, label = "增量")) {
+                                reportQueuePhase(page, ReaderTranslatePhase.SUCCESS, null)
+                            }
+                        } finally {
+                            slots.release()
+                        }
+                    }
+                }
+            }
+        } finally {
+            queuePage.value = -1
+        }
+        LogCollector.d(TAG, "增量窗口 [$targets] 已提交 $dispatched 页（并发 ${TranslationConcurrency.mangaConcurrency(context, appPrefs)}）")
+        return dispatched
+    }
+
+    /**
+     * 队列（自动/增量）的阶段性提示。
+     *
+     * ⚠️ 与旧 `runTranslate` 的口径一致：**检测/翻译阶段照常上报**（顶部状态栏要跟着当前页走），
+     * 成功/失败**只有当前页才报**（连续翻 10 页会弹 10 次"翻译完成"，太吵）。
+     */
+    private fun reportQueuePhase(page: Int, phase: ReaderTranslatePhase, message: String?) {
+        if (phase == ReaderTranslatePhase.SUCCESS || phase == ReaderTranslatePhase.FAILED) {
+            if (page == currentPageProvider()) onPhase(phase, message)
+        } else {
+            onPhase(phase, message)
+        }
+    }
 
     // ========== 章节批量翻译（应用级后台任务 · 章卡片上的「翻译本章 / 暂停 / 取消」） ==========
 
@@ -954,7 +1079,7 @@ class ReaderTranslationController(
      * 章节批量翻译的流水线：OCR 串行 + 翻译并发 + 按章暂停/取消（见 [ChapterJobRunner]）。
      *
      * ⚠️ **这是应用级后台任务**（用户口径）：控制器由 `ReaderTranslationHub` 持有、跑在应用级 scope 上，
-     * 阅读器关掉也继续翻，进度在前台服务的通知栏里（`ChapterTranslationService`）。
+     * 阅读器关掉也继续翻，进度在前台服务的通知栏里（`TranslationJobService`）。
      * 所以章节任务**不走** `lifecycleScope`，`cancelEverything()` 也不再取消它。
      */
     private val chapterRunner = ChapterJobRunner(
@@ -997,13 +1122,42 @@ class ReaderTranslationController(
 
     /** 这本书的 id / 标题（通知栏与本控制器对外汇总用）。 */
     val mangaId: Long get() = manga.id
+
+    /** 身份指纹（= `manga.addedAt`）：宿主用它判断"同一个 id 是否已经换了一本书"。 */
+    fun translationKeyOf(): String = mangaKey
     val mangaTitle: String get() = manga.title
 
     fun isChapterBatchRunning(): Boolean = chapterRunner.isBusy()
 
     fun chapterJob(chapterIndex: Int): ChapterJob? = chapterRunner.jobOf(chapterIndex)
 
-    fun isWaiting(page: Int): Boolean = page in chapterRunner.waitingPages.value
+
+    /**
+     * **正在被章节任务处理的页**（OCR 中 / 翻译中）。
+     *
+     * ⚠️ 面板必须能拿到它：在途页的库状态在"OCR 中"这段还是 IDLE（`translatePhase` 开始才写 TRANSLATING），
+     * 而面板**不显示 IDLE 行** → 不额外补这些页的话，用户会看到"正在翻译的页卡片直接消失"
+     * （2026-09-28 用户报的）。
+     */
+    fun inFlightPages(): Set<Int> = chapterRunner.inFlightPages()
+
+    /** **识别中**（OCR 阶段）的页 —— 面板与状态浮层要把它和「翻译中」分开显示（用户口径）。恒 ≤1 页。 */
+    fun ocrPages(): Set<Int> = chapterRunner.ocrPages()
+
+    /** **翻译中**（请求已发出 / 本地推理中）的页。 */
+    fun translatingPages(): Set<Int> = chapterRunner.translatingPages()
+
+    /**
+     * 面板/浮层口径的**「等待」**：队列里还没取的页 **+ 已被流水线预取、但还没轮到识别的页**。
+     *
+     * ⚠️ 两者必须合并显示：预取项（`QUEUED`）的 OCR 还没开始，对用户就是「等待」——
+     * 只用 `waitingPages` 的话这些页会掉进「在途但既非识别中、也非翻译中」的空档，
+     * 界面要么不显示它们、要么（更糟）把它们标成「识别中」（用户报的"一启动同时 3 个识别中"）。
+     */
+    fun panelWaitingPages(): Set<Int> = waitingPages.value + chapterRunner.queuedPages()
+
+    /** 在途项快照（含阶段）：状态浮层按它拼「识别中 P8 · 翻译中 P5, P6」。 */
+    val chapterInFlight: StateFlow<List<InFlightTask>> = chapterRunner.inFlightTasks
 
     /**
      * 提交一章的批量翻译。[pages] 由调用方按状态筛好（默认「未成功」的页）。
@@ -1015,6 +1169,19 @@ class ReaderTranslationController(
         val targets = pages.filter { it >= 0 }
         if (targets.isEmpty()) return
         cancelEverything()
+        // ⚠️⚠️ **必须把 cancelFlag 复位**（2026-09-28 定位到的致命 bug）：
+        // `cancelEverything()` 会把队列取消标志置 true，而这个标志是**手动/增量队列**的取消信号；
+        // 章节批量任务以前**没人复位它**（只有 `runTranslate` 开头会复位），于是：
+        //   启动 → cancelFlag=true → `translatePhase` → 管线第一句
+        //   `if (host.isCancelled()) throw TranslationCancelledException()` 立刻抛出
+        //   → 这一页既不调 API、也不记失败、**连日志都没有**（该 catch 分支静默）→ 退回 IDLE。
+        // 表现就是用户报的那一串：「进度在涨但阅读器毫无变化、没有译文、没有成功卡片、
+        // 进行中的卡片一翻完就消失、取消后什么都没有」——**章节翻译 100% 无效**。
+        // 章节任务自己的取消走协程取消（`ChapterJobRunner.cancel/shutdown`），不靠这个标志。
+        // ⚠️ 这里**不重置任何取消标志**：分支的取消是每页一个新 flag，
+        //    章节任务的取消判据恒为 `{ false }`（由 ChapterJobRunner 用协程取消来停）。
+        //    master 侧那行「把队列取消标志复位」随旧字段一起作废 —— 当年正是"读同一个字段"
+        //    让 startChapterJob 把整章打成已取消（章节翻译 100% 无效）。
         chapterRunner.submit(chapterIndex, targets, label, startPage)
     }
 
@@ -1053,13 +1220,44 @@ class ReaderTranslationController(
      * 所以两页之间不可能重叠。这里锁只覆盖 OCR —— 翻译请求不碰 OCR 引擎单例，
      * 放开之后「第 1 页发出请求」与「第 2 页开始 OCR」才能并行（用户要的提速）。
      */
+    /**
+     * 等 OCR 引擎锁（带超时）。拿到 true；超时 false。
+     *
+     * ⚠️ 超时**必须**由调用方如实记账（记失败 + 日志）：静默跳过会让"进度在涨但什么都没翻"
+     * 且完全没有线索（见 [ocrPhase] 的注释）。
+     */
+    private suspend fun acquireOcrLockWithWait(page: Int): Long {
+        OcrLock.acquire().let { if (it != 0L) return it }
+        var waited = 0L
+        while (waited < OCR_LOCK_WAIT_TIMEOUT_MS) {
+            delay(OCR_LOCK_POLL_MS)
+            waited += OCR_LOCK_POLL_MS
+            OcrLock.acquire().let { if (it != 0L) return it }
+            if (waited % 5_000L < OCR_LOCK_POLL_MS) {
+                LogCollector.d(TAG, "OCR 阶段：等待引擎锁 ${waited}ms（page=$page，持有 ${OcrLock.heldMs()}ms）")
+            }
+        }
+        return 0L
+    }
     private suspend fun ocrPhase(page: Int): PreparedPage? {
-        // 引擎被截屏翻译占用时原地等（与队列同一套理由：拿不到锁这一页就白跑了）
-        while (OcrLock.isRunning) delay(QUEUE_IDLE_TICK_MS)
-        if (!OcrLock.tryAcquire()) return null
+        // ⚠️ **等锁必须有超时，且超时要如实记账**（2026-09-28 用户报的"进度在涨、什么都没翻、
+        // 正在翻译的卡片直接消失"就是这个静默 return null 造成的）：
+        // 以前 `while (isRunning) delay()` 之后 `tryAcquire()` 一旦被别人抢先就**静默返回 null** ——
+        // 这一页于是既不翻、也不记失败、连日志都没有，而流水线照样把它算作"已结算"（done+1）
+        // → 面板上那一行消失、进度在涨、取消后"什么都没留下"。
+        val ocrToken = acquireOcrLockWithWait(page)
+        if (ocrToken == 0L) {
+            val msg = context.getString(R.string.reader_translate_ocr_busy)
+            LogCollector.w(TAG, "OCR 阶段：等待引擎锁超时 page=$page（别的翻译一直占着）→ 本页记为失败")
+            withContext(kotlinx.coroutines.NonCancellable) { runCatching { fail(page, "PROCESS_EXCEPTION", msg) } }
+            return null
+        }
         try {
             val (det, ocr) = try {
-                TranslationEngineInit.ensureReady(context)
+                // ⚠️ 持锁期间**必须打心跳**：OcrLock 有 30s 无心跳就判定"持有者已死"并强制释放，
+                // 而引擎就绪（模型加载）可能很久 —— 误放会让两个线程同时用单例 ONNX 引擎。
+                OcrLock.heartbeat(ocrToken)
+                TranslationEngineInit.ensureReady(context).also { OcrLock.heartbeat(ocrToken) }
             } catch (e: Exception) {
                 LogCollector.e(TAG, "engine init failed page=$page", e)
                 val msg = context.getString(R.string.reader_translate_model_missing, e.message.orEmpty())
@@ -1103,22 +1301,42 @@ class ReaderTranslationController(
                 null
             }
         } finally {
-            OcrLock.release()
+            OcrLock.release(ocrToken)
         }
     }
 
     /**
      * 翻译阶段：文本缓存 → 调翻译 API（**并发，不持 OcrLock**）→（当前页才）渲染 → 写库。
      *
+     * ⚠️ **本阶段绝不受手动/队列的 `cancelFlag` 影响**（见 [ReaderBatchHost] 的取消判据）：
+     * 章节任务由 `ChapterJobRunner` 用协程取消来停，抢用同一个标志会让**整章翻译直接报废**
+     * （2026-09-28 的致命 bug，注释见 [startChapterJob]）。
+     *
      * @return true = 这一页真的翻出来了（用于任务面板上的成功计数）
      */
-    private suspend fun translatePhase(page: Int, prep: PreparedPage): Boolean {
-        // ⚠️ 声明在 try 之外：`finally` 里要 `join()` 它再回收 prep.bitmap（并行超分时它还在用那张图）
+    private suspend fun translatePhase(
+        page: Int,
+        prep: PreparedPage,
+        /** 日志前缀（"章节" / "增量"）——两条路径共用这一段，日志要能分清是谁在翻。 */
+        label: String = "章节",
+    ): Boolean {
+        // ⚠️ 声明在 try 之外：`finally` 里要 `join()` 它再回收 prep.bitmap
+        //    （并行超分时那张图还在用）。—— 分支的超分接线，合并时保留
         var srJob: Job? = null
+        val startedAt = System.currentTimeMillis()
+        // ⚠️ **进入/离开翻译阶段各留一条日志**：这段以前只有"成功"才打日志，
+        // 于是"进没进来、是不是卡住了"完全看不出来（排查 2026-09-28 那个 bug 时吃了大亏）。
+        LogCollector.d(
+            TAG,
+            "$label 翻译 page=$page 开始：气泡=${prep.bubbles.size}，引擎=${prep.det}/${prep.ocr}，" +
+                "${prep.srcLang}->${prep.tgtLang}"
+        )
+        var result = "未完成"
         try {
             if (prep.bubbles.isEmpty()) {
                 val msg = context.getString(R.string.reader_translate_ocr_empty)
                 fail(page, "OCR_EMPTY", msg)
+                result = "失败(OCR 空)"
                 return false
             }
             upsertState(page, ImportedPageTranslation.STATE_TRANSLATING)
@@ -1128,6 +1346,7 @@ class ReaderTranslationController(
                 TranslatorFactory.create(context, customPrefs, TranslatorFactory.Mode.MANGA)
             if (translator == null) {
                 fail(page, "TRANSLATION_API_NOT_CONFIGURED", context.getString(R.string.reader_translate_api_not_configured))
+                result = "失败(翻译引擎未配置)"
                 return false
             }
             // ── 超分（v2）：OCR 已完成 → 此刻才是启动点 ──
@@ -1168,6 +1387,7 @@ class ReaderTranslationController(
             //    写进实例字段只会污染前台手动翻译那一路的数字（跨页串号）。
             if (translated.isEmpty()) {
                 fail(page, "TRANSLATE_EMPTY", context.getString(R.string.reader_translate_empty))
+                result = "失败(译文空)"
                 return false
             }
             // 只有"用户正在看的那一页"才渲染上屏（后台页只写库）
@@ -1196,23 +1416,35 @@ class ReaderTranslationController(
             version.value += 1
             onVisual()
             LogCollector.d(TAG, "批量翻译完成 page=$page bubbles=${translated.size}")
+            result = "成功(译文 ${translated.size} 条)"
             return true
         } catch (e: TranslationCancelledException) {
+            // ⚠️ 这个分支以前**完全静默**（只有它会让整章翻译悄无声息地作废：进度在涨、
+            // 没有译文、没有成功卡片、日志空白）。现在必须留下痕迹。
+            LogCollector.w(TAG, "$label 翻译 page=$page 被判为「已取消」→ 本页作废（退回未翻译）")
             withContext(NonCancellable) { runCatching { upsertState(page, ImportedPageTranslation.STATE_IDLE) } }
+            result = "取消"
             return false
         } catch (e: kotlinx.coroutines.CancellationException) {
             // 任务被整体取消：状态退回未翻译（在 NonCancellable 里写库，否则写不进去）
+            LogCollector.d(TAG, "$label 翻译 page=$page 协程被取消（强制退出，不入库）")
             withContext(NonCancellable) { runCatching { upsertState(page, ImportedPageTranslation.STATE_IDLE) } }
+            result = "任务取消"
             throw e
         } catch (e: Exception) {
             LogCollector.e(TAG, "批量翻译失败 page=$page", e)
             fail(page, "PROCESS_EXCEPTION", e.message ?: "Unknown error")
+            result = "异常(${e.message})"
             return false
         } finally {
             // ⚠️ 超分任务可能还在用 prep.bitmap（它与翻译请求**并行**跑）——
             //    必须先等它结束再回收，否则就是 use-after-recycle（native 崩溃，Java 层抓不到）。
             srJob?.join()
             if (!prep.bitmap.isRecycled) prep.bitmap.recycle()
+            LogCollector.d(
+                TAG,
+                "$label 翻译 page=$page 结束：$result，耗时 ${System.currentTimeMillis() - startedAt}ms"
+            )
         }
     }
 
@@ -1505,32 +1737,41 @@ class ReaderTranslationController(
     // ========== 单页翻译（手动 / 队列共用） ==========
 
     /**
-     * 翻译一页。全程在 [OcrLock] 互斥下（与截屏翻译共用同一把锁）。
+     * 翻译一页（**手动**与**自动**模式共用；增量模式走 [runWindow] 的并发窗口）。
      *
-     * [fromQueue] = true 时表示这是后台排队的页：**只有该页恰好是用户正在看的那页才渲染上屏** ——
+     * 全程在 [OcrLock] 互斥下（与截屏翻译共用同一把锁）。
+     *
+     * [fromQueue] = true 时表示这是自动模式排队的页：**只有该页恰好是用户正在看的那页才渲染上屏** ——
      * 后台预翻的页面渲染出来没人看，纯烧 CPU 和 100MB 渲染缓存。
-     *
-     * [suppressPhase] = true 时**完全不推进度浮层**（本章批量翻译用，见 [startChapterBatch]）：
-     * 状态浮层的阶段性文案（检测中/翻译中）由宿主按 [chapterBatchDone] 统一拼，
-     * 否则连翻 20 页会把浮层刷成走马灯，反而看不出整体进度。**失败记录照常写库**。
      */
-    private suspend fun runTranslate(page: Int, fromQueue: Boolean, suppressPhase: Boolean = false) {
-        if (!OcrLock.tryAcquire()) {
+    private suspend fun runTranslate(page: Int, fromQueue: Boolean) {
+        val ocrToken = OcrLock.acquire()
+        if (ocrToken == 0L) {
             LogCollector.d(TAG, "runTranslate: OcrLock 被占用，跳过 page=$page")
             return
         }
-        // ⚠️ 取消标志**按页新建**（不是共用一个标志、每页开头把它置回 false）：
-        // 共用一份时后一页的 `set(false)` 会**抹掉**前一页刚收到的取消，
-        // 而 `finally` 的注销又必须与登记配对（见 ReaderCancelSignals）。
+        // ⚠️ 分支的取消语义是**每页一个新 flag**（`readerCancel.newFlag()`，配对注销），
+        //    没有可重置的队列取消标志字段 —— master 侧那行复位随旧字段一起作废。
         val cancel = readerCancel.newFlag()
-        // ⚠️ 两个"锁还在不在我手上 / 超分是不是已经启动过"的标志必须声明在 try 之外：
-        // `onOcrDone` 回调会把锁提前放掉（[translatePlain] 的放锁点），`finally` 里不能再放第二次。
+        // ⚠️ 两个标志必须声明在 try 之外：
+        //   · `lockHeld`：`onOcrDone` 会把锁提前放掉，`finally` 里不能再放第二次
+        //     （放两把会让别的任务以为锁空着冲进来，与 native OCR 并发）；
+        //   · `srStarted`：判断"超分是否已启动过"，收尾时才决定要不要兜底启动。
         var lockHeld = true
         var srStarted = false
+        // ⚠️ 本方法**从 OCR 一直持锁到翻译结束**（自动模式要页内分批+流式），一次最长可达分钟级，
+        // 而 OcrLock 的 30s 无心跳自愈会把仍活着的持有者误判成死锁 → 强制释放 → 单例引擎被并发调用。
+        // 这里整段持锁期间后台打心跳（5s 一次），把这个误判的窗口堵死。
+        val heartbeatJob = scope.launch(Dispatchers.IO) {
+            while (isActive) {
+                OcrLock.heartbeat(ocrToken)
+                delay(OCR_LOCK_POLL_MS * 100)
+            }
+        }
 
         // ⚠️ 必须在 try 之外定义：catch 分支也要用它上报失败阶段
         val shouldRender = { page == currentPageProvider() }
-        val rawPhase: (ReaderTranslatePhase, String?) -> Unit = { p, msg ->
+        val phase: (ReaderTranslatePhase, String?) -> Unit = { p, msg ->
             // 队列页的**检测/翻译阶段照常上报**（用户要求顶部状态栏实时跟随当前页数），
             // 但成功/失败不弹 —— 连续翻 10 页会弹 10 次"翻译完成"，太吵。
             if (fromQueue && (p == ReaderTranslatePhase.SUCCESS || p == ReaderTranslatePhase.FAILED)) {
@@ -1538,9 +1779,6 @@ class ReaderTranslationController(
             } else {
                 onPhase(p, msg)
             }
-        }
-        val phase: (ReaderTranslatePhase, String?) -> Unit = { p, msg ->
-            if (!suppressPhase) rawPhase(p, msg)
         }
 
         // 引擎组与语言先解析出来：逐气泡日志的「来源/引擎」字段要它们，失败记录也要它们兜底
@@ -1553,8 +1791,11 @@ class ReaderTranslationController(
                 runCatching { fail(page, "OCR_MODEL_MISSING", msg) }
             }
             phase(ReaderTranslatePhase.FAILED, msg)
-            OcrLock.release()
-            readerCancel.retire(cancel)
+            // ⚠️ 这条提前 return **在下面那个 try/finally 之外**：不在这里停掉心跳，
+            // ticker 会以 5s 一次永远活在应用级 scope 上（`OcrLock.heartbeat()` 一直有人打
+            // → 30s 自愈永远不触发，漏放锁的路径再也没人兜底）。
+            heartbeatJob.cancel()
+            OcrLock.release(ocrToken)
             return
         }
         // ⚠️ 这两个只作为**兜底**（渲染历史行时 `visualBitmap` 拿不到本次引擎，见 [lastDet] 注释）；
@@ -1629,9 +1870,11 @@ class ReaderTranslationController(
 
                         // ① 放锁：往下只剩翻译请求，不碰 OCR 引擎单例
                         if (lockHeld) {
-                            OcrLock.release()
-                            lockHeld = false
-                        }
+                                // ⚠️ 必须带 token：无参 release 会把**别人的**锁放掉
+                                //（30s 自愈强释后旧持有者 finally 再放一次 → 第三个调用方闯进单例引擎）
+                                OcrLock.release(ocrToken)
+                                lockHeld = false
+                            }
                         // ② 启动超分（可与下面的翻译请求并行）
                         val job = startAutoSr(page)
                         srStarted = job != null
@@ -1702,12 +1945,16 @@ class ReaderTranslationController(
             fail(page, "PROCESS_EXCEPTION", msg)
             phase(ReaderTranslatePhase.FAILED, msg)
         } finally {
+            // ⚠️ 心跳必须停：这条 finally 是唯一兜底点，漏停会让 ticker 以 5s 一次**永远**活在
+            // 应用级 scope 上（heartbeat 一直有人打 → 30s 自愈永不触发 → 漏放锁的路径再没人兜底）。
+            heartbeatJob.cancel()
             // ⚠️ **注销与登记必须配对**：不注销的话 `readerCancel` 集合会一直涨
             //    （每页一个永不回收的 AtomicBoolean，一本 200 页的书翻一遍就多 200 个）。
             readerCancel.retire(cancel)
             // ⚠️ **条件释放**：`onOcrDone` 可能已经把锁提前放掉了（非分批路线），
-            //    无条件 release 会变成"放两把"→ 别的任务以为锁空着就冲进来，与 native OCR 并发。
-            if (lockHeld) OcrLock.release()
+            //    无条件 release 会"放两把" → 别的任务以为锁空着就冲进来，与 native OCR 并发。
+            //    带 token 释放：无参 release 会把**别人的**锁放掉（30s 自愈强释后旧持有者再放一次）。
+            if (lockHeld) OcrLock.release(ocrToken)
             // 「翻译时自动超分」的**兜底**落点：只在刚才那条路线没能提前启动超分时才跑
             // （分批路线拆不开锁；或者 OCR 为空/模型缺失等中途返回）。
             // 此刻锁已确定不在手上 —— 超分自己也抢同一把锁，放在锁内只会白等。
@@ -2124,6 +2371,9 @@ class ReaderTranslationController(
      * 不该因为"这台机器开过超分"就换一套分辨率；而且 2x 底图会让导出体积翻几倍。
      *
      * ⚠️ **必须在 IO 线程调用**（全尺寸解码 + 全页渲染）；调用方负责 `recycle()` 返回值。
+     *
+     * ⚠️ 渲染倍率固定 **1f**（导出不上屏、不吃屏幕分辨率）：按 2f 栅格化会把导出图放大 4 倍像素
+     * （内存/时间白花，见 manga/CLAUDE.md 的「低分辨率漫画译文模糊」一节里"导出/查看器一律传 1f"）。
      */
     fun renderForExport(pageIndex: Int): Bitmap? {
         val row = rows.value[pageIndex] ?: return null
@@ -2442,11 +2692,11 @@ class ReaderTranslationController(
 
     // ========== UI 回调（由 Activity 注入） ==========
 
-    /** 页面显示需要刷新（三态切换 / 翻译完成）。 */
-    var onVisual: () -> Unit = {}
+    /** 页面显示需要刷新（三态切换 / 翻译完成）。主线程写、应用级任务读 → @Volatile。 */
+    @Volatile var onVisual: () -> Unit = {}
 
-    /** 翻译阶段变化（检测中/翻译中/完成/失败/队列耗尽）。 */
-    var onPhase: (ReaderTranslatePhase, String?) -> Unit = { _, _ -> }
+    /** 翻译阶段变化（检测中/翻译中/完成/失败/队列耗尽）。同上。 */
+    @Volatile var onPhase: (ReaderTranslatePhase, String?) -> Unit = { _, _ -> }
 
     /**
      * **超分提示**（失败原因 / 进度 / 完成）：宿主负责呈现。

@@ -58,7 +58,7 @@
             android:layout_height="wrap_content"
             android:paddingStart="10dp"
             android:paddingEnd="2dp"
-            android:textSize="13sp"/>
+            android:textSize="18sp"/>
     </LinearLayout>
 
     <!-- 两个动作按钮：**等宽**（文案长短不同没关系，宽度必须一致） -->

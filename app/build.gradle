@@ -30,7 +30,16 @@ android {
     }
 
     defaultConfig {
-        // 超分真机基准（自定义 Instrumentation，零额外依赖）见 src/androidTest/java/com/moe/starflow/bench
+        // 超分真机基准 + 标准仪器化测试**共用一个 runner**（2026-09-30 合并两条分支时改写）。
+        //
+        // 历史上两条线各注册了一个：
+        //   · 超分基准线 → SrBenchmarkRunner（直接继承 Instrumentation，为的是零依赖）
+        //   · ncnn 适配线 → androidx.test.runner.AndroidJUnitRunner（跑 NcnnSrEngineDeviceTest）
+        // 而 manifest 里只能声明一个 instrumentation，所以把 SrBenchmarkRunner 改成**继承标准 runner**
+        // 并按参数分流：`-e bench true` 跑基准，否则走正常测试。两个能力都保住。
+        //
+        //   am instrument -w -e bench true com.moe.starflow.test/com.moe.starflow.bench.SrBenchmarkRunner
+        //   ./gradlew connectedAndroidTest        # 跑 NcnnSrEngineDeviceTest
         testInstrumentationRunner "com.moe.starflow.bench.SrBenchmarkRunner"
         applicationId "com.moe.starflow"
         minSdk 29
@@ -176,8 +185,15 @@ dependencies {
     // 本地 GGUF 推理（llama.cpp 源码自编，含 minja 对话模板）
     implementation project(':llamacpp')
 
+    // 超分原生引擎（ncnn + Vulkan，waifu2x / SRMD）。模型走下载，不内置。
+    implementation project(':sr')
+
     // 单元测试
     testImplementation 'junit:junit:4.13.2'
+    
+    // 仪器化测试：用于验证 :sr 的原生超分引擎（真机 Vulkan 路径，JVM 单测覆盖不到）
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
     testImplementation 'org.robolectric:robolectric:4.11.1'
     testImplementation 'org.mockito:mockito-core:5.11.0'
     testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.0'

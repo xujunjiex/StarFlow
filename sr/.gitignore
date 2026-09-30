@@ -1,0 +1,4 @@
+# ncnn 源码（由 setup-ncnn.ps1 克隆，含 glslang 子模块）—— 体积大，不入库
+/src/main/cpp/ncnn-src/
+/build/
+/.cxx/

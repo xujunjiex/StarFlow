@@ -630,10 +630,60 @@
     <string name="sr_model_animejanai_sharp1_balanced">AnimeJaNai HD V3.1 · 锐化·均衡档</string>
     <string name="sr_model_animejanai_sharp1_performance">AnimeJaNai HD V3.1 · 锐化·性能档</string>
     <string name="sr_model_animejanai_sd_compact">AnimeJaNai SD · 紧凑档</string>
+    <string name="sr_group_w2x_up7_anime">waifu2x upconv_7 动漫（2x，ncnn GPU）</string>
+    <string name="sr_group_w2x_up7_anime_desc">waifu2x 官方 upconv_7 动漫模型，ncnn + Vulkan 在手机上跑。实测最快的一族：约 2 秒/页、单档仅 1.1MB、画质与 cunet 同级。档位是降噪强度，这个模型加了降噪会明显变差，除非图源很脏，一般用「不降噪」。</string>
+    <string name="sr_group_w2x_up7_photo">waifu2x upconv_7 照片（2x，ncnn GPU）</string>
+    <string name="sr_group_w2x_up7_photo_desc">upconv_7 的写实照片权重。比动漫版权重更保真但线条更软 —— 漫画/线稿请用动漫版，这一族适合照片、彩页、封面这类连续色调的图。</string>
+    <string name="sr_group_waifu2x_cunet">waifu2x cunet（2x，ncnn GPU）</string>
+    <string name="sr_group_waifu2x_cunet_desc">waifu2x 官方 cunet 架构（59 层，含 4 组 SE 模块）。比 upconv_7 更耐脏：加了降噪也不掉画质，实测在「中度降噪」达到峰值 —— 扫描噪点、JPEG 块效应重的图源选它。纯 CPU 跑要 10~37 秒，必须走 GPU。</string>
+    <string name="sr_group_srmd">SRMD（2x，ncnn GPU）</string>
+    <string name="sr_group_srmd_desc">SRMD 是「多退化」模型：降噪强度是运行时参数，一个模型覆盖多种退化程度。实测保真度全场最高，但比 upconv_7 慢约 3 倍 —— 追求极限画质时才选。</string>
+    <string name="sr_group_realcugan">Real-CUGAN（2x，ncnn GPU）</string>
+    <string name="sr_group_realcugan_desc">B 站 Real-CUGAN，另一款阅读器 koto 在用的模型。主观上线条较锐、观感鲜明，但它对原图改动较大 —— 我们的 PSNR 实测偏低，那正是「重画」而非「还原」的代价。⚠️ PSNR 衡量的是「像不像原图」，不代表「好不好看」，请自己对比样张后再决定。</string>
+    <string name="sr_group_realesrgan">Real-ESRGAN（4x，ncnn GPU）</string>
+    <string name="sr_group_realesrgan_desc">Real-ESRGAN 的动漫 6B 权重，4 倍放大（比其它族多一倍）。体积 17MB、对原图改动最大 —— 实测保真度垫底，仅在确实需要 4x 尺寸时使用。</string>
+
+    <string name="sr_model_w2x_up7_anime_m1">waifu2x upconv_7 动漫 · 不降噪</string>
+    <string name="sr_model_w2x_up7_anime_n0">waifu2x upconv_7 动漫 · 轻度降噪</string>
+    <string name="sr_model_w2x_up7_anime_n1">waifu2x upconv_7 动漫 · 中度降噪</string>
+    <string name="sr_model_w2x_up7_anime_n2">waifu2x upconv_7 动漫 · 强力降噪</string>
+    <string name="sr_model_w2x_up7_anime_n3">waifu2x upconv_7 动漫 · 极强降噪</string>
+    <string name="sr_model_w2x_up7_photo_m1">waifu2x upconv_7 照片 · 不降噪</string>
+    <string name="sr_model_w2x_up7_photo_n0">waifu2x upconv_7 照片 · 轻度降噪</string>
+    <string name="sr_model_w2x_up7_photo_n1">waifu2x upconv_7 照片 · 中度降噪</string>
+    <string name="sr_model_w2x_up7_photo_n2">waifu2x upconv_7 照片 · 强力降噪</string>
+    <string name="sr_model_w2x_up7_photo_n3">waifu2x upconv_7 照片 · 极强降噪</string>
+    <string name="sr_model_w2x_cunet_m1">waifu2x cunet · 不降噪</string>
+    <string name="sr_model_w2x_cunet_n0">waifu2x cunet · 轻度降噪</string>
+    <string name="sr_model_w2x_cunet_n1">waifu2x cunet · 中度降噪</string>
+    <string name="sr_model_w2x_cunet_n2">waifu2x cunet · 强力降噪</string>
+    <string name="sr_model_w2x_cunet_n3">waifu2x cunet · 极强降噪</string>
+    <string name="sr_model_srmd_x2">SRMD · 2x 带降噪</string>
+    <string name="sr_model_srmd_nf_x2">SRMD · 2x 不降噪</string>
+    <string name="sr_model_cugan_cons">Real-CUGAN · 2x 保守</string>
+    <string name="sr_model_cugan_d1">Real-CUGAN · 2x 降噪1x</string>
+    <string name="sr_model_cugan_d2">Real-CUGAN · 2x 降噪2x</string>
+    <string name="sr_model_cugan_d3">Real-CUGAN · 2x 降噪3x</string>
+    <string name="sr_model_cugan_dn">Real-CUGAN · 2x 不降噪</string>
+    <string name="sr_model_rsrgan_a6b">Real-ESRGAN · 动漫 6B（4x）</string>
+
     <string name="sr_low_res_tip">💡 超分只对真正低分辨率的图源有明显效果。宽度 1000px 以上的页面几乎看不出变化，网点重的页还可能被重新绘制。图源不小就别开。</string>
     <string name="sr_storage_note">📁 模型存放位置：Android/data/com.moe.starflow/files/sr/（删掉这里的文件就等于卸载模型，设备端会显示为「未下载」）。\n🎯 超分只对「漫画阅读器」生效：截屏翻译、录屏翻译、小说阅读都不做超分，OCR 也始终识别原图。\n🗂 超分结果是 2x 图片，按页缓存在 files/sr_cache/；换模型会覆盖同一页，删除漫画时会连它一起删掉。</string>
     <string name="sr_no_model_selected">尚未选择超分模型——请在下方下载</string>
+    <string name="sr_w2xa_group">waifu2x upconv_7 · 动漫</string>
+    <string name="sr_w2xa_group_desc">体积最小（1.06MB）、速度最快（0.9s@632×912），画质并列第一。</string>
+    <string name="sr_w2xp_group">waifu2x upconv_7 · 照片</string>
+    <string name="sr_w2xp_group_desc">彩色/照片类图源用这一族。</string>
+    <string name="sr_w2xc_group">waifu2x cunet</string>
+    <string name="sr_w2xc_group_desc">59 层，比 upconv_7 更耐噪点/JPEG 伪影；实测峰值在中度降噪。</string>
+    <string name="sr_srmd_group">SRMD（2x）</string>
+    <string name="sr_srmd_group_desc">保真度最高（实测 PSNR 第一），但慢约 3 倍。</string>
+    <string name="sr_cugan_group">Real-CUGAN（2x）</string>
+    <string name="sr_cugan_group_desc">B 站模型，观感更锐、改动更激进。</string>
+    <string name="sr_rsrgan_group">Real-ESRGAN 动漫 6B（4x）</string>
+    <string name="sr_rsrgan_group_desc">**4 倍**放大（其它族都是 2x），17MB，画风改动最激进。</string>
     <string name="sr_active_switched">已切换到 %1$s</string>
+    <string name="sr_need_download">该模型还没下载，请先点该行的「下载」</string>
     <!-- 个性化设置 · 超分分类 -->
     <string name="sr_settings_category">超分（AI 放大）</string>
     <string name="sr_model_manage_title">超分模型管理</string>
@@ -1062,6 +1112,10 @@
     <string name="reader_translate_retranslate_current">重新翻译当前页</string>
     <string name="reader_translate_state_idle">未翻译</string>
     <string name="reader_translate_state_translating">翻译中</string>
+    <!-- 「识别中」= OCR 阶段（恒串行，屏幕上最多 1 页）；它与「翻译中」（并发请求）是两个不同的进行中状态 -->
+    <string name="reader_translate_state_ocr">识别中</string>
+    <!-- 状态浮层里的一段：%1$s=阶段名（识别中/翻译中），%2$s=页码列表（P3, P4） -->
+    <string name="reader_translate_stage_entry">%1$s %2$s</string>
     <string name="reader_translate_state_success">✓ 已完成</string>
     <string name="reader_translate_state_failed">失败</string>
     <string name="reader_translate_row_detail">详情</string>
@@ -1096,8 +1150,6 @@
     <string name="reader_chapter_toc">章节目录</string>
     <string name="reader_chapter_count">共 %1$d 章</string>
     <string name="reader_page_indicator_chapter">%1$s · %2$d/%3$d</string>
-    <string name="reader_chapter_prev">上一章</string>
-    <string name="reader_chapter_next">下一章</string>
     <string name="reader_chapter_first">当前已是第一章</string>
     <string name="reader_chapter_last">当前已是最后一章</string>
     <string name="reader_chapter_badge">已译 %1$d/%2$d</string>
@@ -1122,20 +1174,17 @@
     <string name="chapter_translate_notify_title">%1$s · %2$s</string>
     <string name="chapter_translate_notify_progress">正在翻译 %1$d/%2$d 页</string>
     <string name="chapter_translate_notify_paused">已暂停 · %1$d/%2$d 页</string>
-    <string name="chapter_translate_notify_cancelled">已取消</string>
-    <string name="chapter_translate_notify_resume">继续</string>
     <string name="chapter_translate_notify_summary_title">章节翻译</string>
     <string name="chapter_translate_notify_summary">%1$d 个章节正在后台翻译</string>
     <string name="reader_translate_chapter_clear">清空</string>
     <string name="reader_translate_chapter_running">正在翻译本章 %1$d/%2$d</string>
     <!-- 章节批量翻译的并发度（漫画：OCR 串行，调高主要加快翻译请求） -->
     <string name="reader_translate_concurrency">翻译模型最大同时请求数</string>
-    <string name="reader_translate_concurrency_hint">只对整章翻译生效，不含本地模型（本地固定串行）。每页 OCR 一结束就发出它的翻译请求、不等上一个返回；同时最多 N 个在跑，多的排队。</string>
+    <string name="reader_translate_concurrency_hint">整章/增量翻译同时发出的请求上限；本地模型固定为 1。OCR 始终逐页串行。</string>
     <string name="reader_translate_state_waiting">等待</string>
     <string name="reader_translate_chapter_hint">正在翻译本章 %1$d/%2$d，双击暂停</string>
     <string name="reader_translate_chapter_finished">本章完成 %1$d/%2$d</string>
     <string name="reader_translate_chapter_nothing">本章没有待翻译的页面</string>
-    <string name="reader_translate_chapter_summary">%1$s · 已译 %2$d/%3$d · 翻译中 %4$d · 失败 %5$d</string>
     <string name="reader_translate_chapter_confirm_title">翻译本章</string>
     <string name="reader_translate_chapter_confirm_msg">本章共 %1$d 页：未翻译 %2$d 页、失败 %3$d 页、已成功 %4$d 页。</string>
     <string name="reader_translate_chapter_only_pending">只翻未完成</string>
@@ -1149,10 +1198,10 @@
     <string name="reader_translate_filter_ongoing">进行中</string>
     <string name="reader_translate_all_cached">翻译完成（%1$d 条全部命中缓存）</string>
     <string name="reader_translate_partial_cached">翻译完成（%1$d/%2$d 命中缓存，%3$d 条调用 API）</string>
-    <string name="reader_translate_paused_to_manual">翻译已暂停，回退到手动翻译</string>
-    <string name="reader_translate_cancelled">已停止，退回手动翻译</string>
+    <string name="reader_translate_force_stopped">翻译进程已强制退出</string>
+    <string name="reader_translate_force_stopped_to_manual">翻译进程已强制退出，回退到手动模式</string>
     <string name="reader_translate_debounce">启动延迟</string>
-    <string name="reader_translate_debounce_hint">翻页后停留这么久才开始翻（防抖），自动与增量共用；调小更跟手，但连翻几页时会白翻。</string>
+    <string name="reader_translate_debounce_hint">翻页停止后延迟该时长开始翻译（自动/增量共用）。值越小响应越快，翻页途中的无效翻译越多。</string>
     <string name="reader_translate_ahead_pages">向后翻译页数</string>
     <string name="reader_translate_failed_badge">本页翻译失败</string>
     <string name="reader_translate_disabled_mode">连续滚动模式下暂不支持翻译</string>
@@ -1587,7 +1636,7 @@
     <string name="novel_translate_ahead">启动增量翻译向后</string>
     <string name="novel_translate_batch_group">批次处理</string>
     <string name="reader_translate_font_size_label">字体大小</string>
-    <string name="reader_translate_font_size_hint">拖动滑块 = 固定字号；点「自动」= 按气泡大小自适应</string>
+    <string name="reader_translate_font_size_hint">滑块 = 固定字号；「自动」按气泡尺寸自适应。</string>
     <string name="novel_chapter_label">第 %1$d 章</string>
     <string name="novel_chapter_unread">未翻译</string>
     <string name="novel_chapter_partial">%1$d/%2$d</string>
@@ -1613,7 +1662,7 @@
     <string name="novel_translate_oversize_skipped">已跳过这一批（内容超长）</string>
     <!-- ===== 同时 API 请求数（文本翻译；本地引擎固定 1） ===== -->
     <string name="novel_translate_concurrency">翻译模型最大同时请求数</string>
-    <string name="novel_translate_concurrency_hint">只对增量与整章翻译生效，不含本地模型（本地固定串行）。按文章顺序连续提交、不等上一批返回；同时最多 N 个在跑，多的排队。调高更快，也更费额度。</string>
+    <string name="novel_translate_concurrency_hint">整章/增量翻译同时发出的请求上限；本地模型固定为 1。超出的按阅读顺序排队。</string>
     <!-- ===== 章卡片：后台章节任务的进度（单位是**批**，不是页） ===== -->
     <string name="novel_chapter_running_batches">翻译中 %1$d/%2$d 批</string>
     <string name="novel_chapter_paused_batches">已暂停 %1$d/%2$d 批</string>
@@ -1673,21 +1722,15 @@
     <string name="reader_clear_page_confirm_title">清除本页译文？</string>
     <string name="reader_clear_page_confirm_msg">将删除第 %1$d 页的译文（原文与气泡数据一并删除），该页回到原图显示。此操作不可撤销。</string>
     <string name="reader_clear_page_confirm_ok">清除</string>
-    <string name="reader_clear_row_confirm_msg">将删除第 %1$d 页的译文记录，该页回到原图显示。此操作不可撤销。</string>
 
     <!-- waifu2x 模型族（2026-10，deepghs/waifu2x_onnx 的官方 ONNX 版） -->
-    <string name="sr_group_waifu2x_cunet">waifu2x cunet（2x，ONNX）</string>
-    <string name="sr_group_waifu2x_cunet_desc">waifu2x 官方模型集的 cunet 架构。四个等级是**降噪强度**：n0 不降噪（最忠实原图，只做线条修复与放大）、n3 强力降噪（适合扫描噪点/JPEG 块效应很重的图源）。⚠️ 实测这一族质量最高，但**手机上非常慢**：一页(640×960→2x)要 **35 秒**左右，是 AnimeJaNai 的 20 倍。除非你愿意每页等半分钟，否则优先用 AnimeJaNai。</string>
     <string name="sr_group_waifu2x_swin">waifu2x swin_unet（2x，ONNX）</string>
     <string name="sr_group_waifu2x_swin_desc">waifu2x 的 SwinIR 架构（16.8MB/档）。⚠️ **实测在手机上非常慢**（Transformer 结构跑 CPU），而且体积是 cunet 的 3 倍 —— 除非你确定它对你的图源画质明显更好，否则优先用 cunet。</string>
-    <string name="sr_model_w2x_cunet_n0">cunet · 不降噪（n0）</string>
-    <string name="sr_model_w2x_cunet_n1">cunet · 轻度降噪（n1）</string>
-    <string name="sr_model_w2x_cunet_n2">cunet · 中度降噪（n2）</string>
-    <string name="sr_model_w2x_cunet_n3">cunet · 强力降噪（n3）</string>
     <string name="sr_model_w2x_swin_n0">swin_unet · 不降噪（n0）</string>
     <string name="sr_model_w2x_swin_n1">swin_unet · 轻度降噪（n1）</string>
 
     <!-- 画质增强（调色面板，2026-10） -->
     <string name="reader_sr_switch_label">超分放大</string>
     <string name="reader_chapter_badge_waiting">等待 %1$d 页</string>
+    <string name="reader_translate_ocr_busy">OCR 引擎被占用太久（可能有其它翻译在跑），本页跳过。请稍后重试或清除后重翻。</string>
 </resources>

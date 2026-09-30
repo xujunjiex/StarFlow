@@ -39,9 +39,25 @@ data class ActiveChapterJob(
     val state: ChapterJobState,
     val startPage: Int = 0,
 ) {
-    /** 通知 id 的稳定来源（同一本书同一章恒等；kind 参与哈希避免漫画/小说撞 id）。 */
+    /**
+     * 通知 id 的稳定来源（同一本书同一章恒等）。
+     *
+     * ⚠️ 两点硬要求（2026-09-28 审查实测）：
+     * ① **不能落在前台服务汇总通知那一段**（`NOTIFICATION_ID_SERVICE = 9998`）：旧公式下
+     *    bookId=322/ch=16 正好是 9998 → 章通知会把汇总通知顶掉；
+     * ② **跨书不能撞**：旧公式 `bookId*31 + chapterIndex` 让 book1/ch31 与 book2/ch0 都得 62
+     *    → 两条章通知互相覆盖 / 服务的 `shown - alive` 差集把别人的通知 cancel 掉。
+     * 现在用 64 位混合 + 高位掩码，并把结果整体挪出汇总 id 附近的小数值区。
+     */
     val notificationId: Int
-        get() = ((kind.ordinal * 7919 + bookId.hashCode()) * 31 + chapterIndex) and 0x7FFFFFFF
+        get() {
+            // ⚠️ 不能用"乘以同一个基数再相加"的线性公式：bookId 每 +1 等于 chapterIndex +31，
+            // 于是 book1/ch31 与 book2/ch0 必然同 id（审查实测撞了）。这里用**互质权重 + 显式区间**
+            // 构造：bookId 权重 10_000 > chapterIndex 的上限 → 在 bookId < 100_000、chapterIndex < 10_000
+            // 这个真实取值域内是**单射**；再统一挪到 10000 以上，避开汇总通知 9998 与系统常用小 id。
+            val base = bookId.coerceIn(0L, 99_999L) * 10_000L + chapterIndex.coerceIn(0, 9_999)
+            return (10_000L + base * 2L + kind.ordinal).toInt()
+        }
 }
 
 /**
