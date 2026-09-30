@@ -786,6 +786,14 @@
     <string name="model_overall_label">Overall</string>
     <string name="model_overall_progress">%1$d%% · %2$s / %3$s</string>
     <string name="model_download_success">Model downloaded successfully</string>
+    <string name="model_download_err_unknown">Unknown error</string>
+    <string name="model_download_err_network">Network unreachable (%s). Check your connection or enable a VPN</string>
+    <string name="model_download_err_timeout">Connection timed out (%s)</string>
+    <string name="model_download_err_connect">Cannot connect to server (%s)</string>
+    <string name="model_download_err_ssl">TLS/SSL error (%s)</string>
+    <string name="model_download_err_no_entry">No download entry for this model (downloadinfo.json has no such key)</string>
+    <string name="model_download_err_file_invalid">File failed verification: %s</string>
+    <string name="model_download_err_incomplete">Incomplete after download, missing/damaged: %s</string>
     <string name="model_download_failed">Download failed: %s</string>
     <string name="model_delete_confirm">Delete %s model?</string>
     <string name="model_delete_success">Model deleted</string>

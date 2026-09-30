@@ -286,6 +286,7 @@ class ModelDownloadService : LifecycleService() {
         try {
             val modelInfo = repo.getModelInfo(modelKey) ?: run {
                 LogCollector.e(TAG, "ModelInfo not found: $modelKey")
+            reportDownloadFailure(modelKey, getString(R.string.model_download_err_no_entry))
                 return
             }
             if (modelInfo.files.size == 1) {
@@ -294,7 +295,10 @@ class ModelDownloadService : LifecycleService() {
                 downloadMultiFile(modelKey, modelInfo.files)
             }
         } catch (e: CancellationException) {
-            // propagate
+            // propagate（用户主动取消不算失败，不给提示）
+        } catch (e: Throwable) {
+            // ⚠️ 兜底：编排层任何未预期异常也要让用户看见，不能只进日志
+            reportDownloadFailure(modelKey, reasonOf(e))
         } finally {
             activeJobs.remove(modelKey)
             clearNotification(modelKey)
@@ -304,6 +308,49 @@ class ModelDownloadService : LifecycleService() {
                 startDownload(modelKey = next, isResume = true)
             }
             checkStopSelf()
+        }
+    }
+
+    // -- Failure Reporting -- //
+
+    /**
+     * 下载失败的**唯一出口** —— 必须让用户看得见。
+     *
+     * ⚠️ **不允许静默失败**（用户硬要求）。这里统一做三件事：
+     *   ① 底部 Toast，**带具体原因**（网络不通 / HTTP 404 / MD5 不匹配 / 磁盘满 / 模型条目缺失…）；
+     *   ② 状态回落到 `Partial`，行内文案变成可重试的「未下载」，不会卡在「下载中 x%」；
+     *   ③ 通知栏同步（服务在前台时用户可能不在模型页）。
+     *
+     * ⚠️ 之所以把原因拼进文案：用户口径「不要搞这么模糊的提示信息，到底是什么原因写清楚」——
+     * 只说"下载失败"用户没法判断是自己网络问题还是链接失效。
+     */
+    private suspend fun reportDownloadFailure(modelKey: ModelKey, reason: String) {
+        val name = modelKey.displayName()
+        LogCollector.e(TAG, "下载失败: $name — $reason")
+        runCatching { repo.markPartial(modelKey) }   // suspend：本函数也是 suspend
+        runCatching { updateNotification(modelKey, repo.getState(modelKey)) }
+        // UiUtils.showToast 内部会自动切主线程（Service 的协程不在主线程上）
+        runCatching {
+            UiUtils.showToast(
+                this,
+                getString(R.string.model_download_failed, "$name：$reason"),
+                isShort = false,
+            )
+        }.onFailure { LogCollector.w(TAG, "失败提示弹不出来: ${it.message}") }
+    }
+
+    /** 把异常转成一句人话（尽量保留 HTTP 码 / 服务器说明），别把整段堆栈丢给用户。 */
+    private fun reasonOf(t: Throwable?): String {
+        if (t == null) return getString(R.string.model_download_err_unknown)
+        val m = t.message?.takeIf { it.isNotBlank() }
+        val base = m ?: (t.javaClass.simpleName)
+        return when {
+            // 常见网络异常给一句更可行动的说明（用户知道要开 VPN / 换网络）
+            t is java.net.UnknownHostException -> getString(R.string.model_download_err_network, base)
+            t is java.net.SocketTimeoutException -> getString(R.string.model_download_err_timeout, base)
+            t is java.net.ConnectException -> getString(R.string.model_download_err_connect, base)
+            t is javax.net.ssl.SSLException -> getString(R.string.model_download_err_ssl, base)
+            else -> base
         }
     }
 
@@ -382,8 +429,8 @@ class ModelDownloadService : LifecycleService() {
             }
             // 多文件模型由 downloadMultiFile 在全部文件完成后统一 markDone
         } else {
-            repo.markPartial(modelKey)
-            updateNotification(modelKey, repo.getState(modelKey))
+            // ⚠️ 以前这里只 markPartial，**界面上什么都不显示** —— 用户只知道"点了没反应"
+            reportDownloadFailure(modelKey, reasonOf(result.exceptionOrNull()))
         }
     }
 
@@ -422,6 +469,11 @@ class ModelDownloadService : LifecycleService() {
             if (verifyFile(destFile, fileInfo) == VerifyResult.COMPLETE) {
                 completedBytes += destFile.length()
             } else {
+                // ⚠️ 直接 return 会让下载**静默中断**（用户看不到任何反馈）
+                reportDownloadFailure(
+                    modelKey,
+                    getString(R.string.model_download_err_file_invalid, fileInfo.fileName),
+                )
                 return
             }
         }
@@ -432,9 +484,13 @@ class ModelDownloadService : LifecycleService() {
             updateNotification(modelKey, repo.getState(modelKey))
             UiUtils.showToast(this, getString(R.string.model_download_success), isShort = false)
         } else {
-            LogCollector.e(TAG, "整体完整性检查失败：部分文件损坏")
-            repo.markPartial(modelKey)
-            updateNotification(modelKey, repo.getState(modelKey))
+            val missing = files
+                .filter { verifyFile(targetFileFor(modelKey, it.fileName), it) != VerifyResult.COMPLETE }
+                .joinToString("、") { it.fileName }
+            reportDownloadFailure(
+                modelKey,
+                getString(R.string.model_download_err_incomplete, missing),
+            )
         }
     }
 
