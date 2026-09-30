@@ -26,6 +26,15 @@ enum class SrFailReason(@StringRes val messageRes: Int) {
     /** 既没有可用的超分模型，Anime4K 也没开 —— 一条路都走不通 */
     NOTHING_ENABLED(R.string.sr_fail_nothing_enabled),
 
+    /**
+     * 产物**没有放大**（只跑到了 Anime4K，它刻意不放大）→ 不成其为"超分结果"，不落盘。
+     *
+     * 起因：`resolveSteps` 在「超分开关开着 + 模型不可用 + Anime4K 开着」时只给出 ANIME4K 一步，
+     * 产物与原图同尺寸；无条件落盘会造出「界面显示已超分、画面毫无变化」的幽灵状态
+     * （三枚超分按钮都在、点切换也没区别），用户只能靠「删除」退出这个假状态。
+     */
+    NOT_UPSCALED(R.string.sr_fail_not_upscaled),
+
     /** 一次都没选过模型（`sr_active_model_key` 为空） */
     NO_MODEL_SELECTED(R.string.sr_fail_no_model),
 
@@ -63,7 +72,9 @@ enum class SrFailReason(@StringRes val messageRes: Int) {
 /**
  * 一次超分尝试的结果：**成功给图，失败必给原因**。
  *
- * @property bitmap 成功时的产物（2x 或 1x，见引擎的 `scale`）
+ * @property bitmap 成功时**由本对象交出的**产物（1x 或 2x，见引擎的 `scale`）。
+ *   只在使用 [Companion.ok] 时非空；[Companion.stored] 表示"已落盘、图已不再外传"。
+ *   凡是非空，**调用方拥有它、用完必须自己回收**。
  * @property reason 失败原因（成功时 null）
  * @property detail 技术细节（**ASCII 短句**，例如 `output 100x100, expected 120x120`）。
  *   刻意不做本地化：它是给日志和"复制后发给我"用的，保持原样最好定位。
@@ -72,9 +83,16 @@ class SrOutcome private constructor(
     val bitmap: android.graphics.Bitmap?,
     val reason: SrFailReason?,
     val detail: String?,
+    private val succeeded: Boolean,
 ) {
 
-    val ok: Boolean get() = bitmap != null
+    /**
+     * 是否真的产出了可用结果。
+     *
+     * ⚠️ 用显式标志而不是 `bitmap != null`：落盘成功那条路径**刻意不交回位图**
+     * （见 [Companion.stored]），但语义上仍是成功。
+     */
+    val ok: Boolean get() = succeeded
 
     /**
      * 给用户看的完整文案：**具体原因 + 可选的参数说明**（例如实际像素数与上限）。
@@ -87,9 +105,20 @@ class SrOutcome private constructor(
     }
 
     companion object {
-        fun ok(bitmap: android.graphics.Bitmap): SrOutcome = SrOutcome(bitmap, null, null)
+        /** 成功**并交出产物**：调用方拥有这张图，用完必须自己回收。 */
+        fun ok(bitmap: android.graphics.Bitmap): SrOutcome = SrOutcome(bitmap, null, null, true)
+
+        /**
+         * 成功**且产物已落盘**：不交回任何 bitmap（[bitmap] 为 null，**别再读它**）。
+         *
+         * ⚠️ 为什么需要它：超分的显示路径是**从磁盘重读**的（`SrStore.load`），全项目
+         * 没有任何调用方需要这张图。以前把它交回去，结果是每个调用点都漏掉一次 recycle ——
+         * 2x 一页最大 ~40MB，整章批量翻译等于每页丢一块。所有权留在 [SrProcessor]，
+         * 由它的 `finally` 回收。
+         */
+        fun stored(): SrOutcome = SrOutcome(null, null, null, true)
 
         fun fail(reason: SrFailReason, detail: String? = null): SrOutcome =
-            SrOutcome(null, reason, detail)
+            SrOutcome(null, reason, detail, false)
     }
 }

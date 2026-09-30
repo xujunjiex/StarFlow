@@ -103,7 +103,7 @@
                     android:layout_height="22dp"
                     android:layout_gravity="center"
                     android:src="@drawable/ic_close"
-                    android:tint="@color/text_primary"
+                    app:tint="@color/text_primary"
                     android:contentDescription="@string/import_close_selection"/>
             </FrameLayout>
 

@@ -14,6 +14,7 @@ import android.widget.SeekBar
 import android.widget.Switch
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
+import androidx.lifecycle.lifecycleScope
 import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.bottomsheet.BottomSheetDialog
@@ -37,6 +38,10 @@ import com.moe.starflow.sr.SuperResolutionEngines
 import com.moe.starflow.sr.anime4k.Anime4kMode
 import com.moe.starflow.utils.OcrEngineManager
 import com.moe.starflow.utils.ReaderDialogs
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /** 阅读器底部工具栏初始状态。mode:0=LTR 1=RTL 2=竖排 3=Webtoon；animation:0无 1默认 2高级 3仿真；bg:0默认 1浅 2深 3白 4黑 5自动。 */
 class ReaderMenuState(
@@ -56,6 +61,16 @@ class ReaderMenuState(
      * ⚠️ 必须由宿主在 **IO 线程**准备好：预览格是主线程渲染的，不能在面板里读盘/跑推理。
      */
     val srPreviewBitmap: Bitmap? = null,
+    /**
+     * 「处理后」预览格要用的 **Anime4K 增强**结果（宿主在 IO 侧算好，与 [previewBitmap] 同宽）。
+     *
+     * ⚠️ 为什么单独要它：超分关着 / 没下载模型时**没有任何已落盘的超分图**，
+     * [srPreviewBitmap] 恒为 null → 右侧格子一直显示原图、**切 Anime4K 档位看不到任何变化**
+     * （与「切档 / 开超分都要在预览里看到变化」的目标不符，也回归了旧实现会实时跑增强的行为）。
+     * ⚠️ 面板内切档时由 [ReaderMenuSheet] 自己在后台重算（见 `refreshEnhancedPreviewAsync`）——
+     * 绝不能在这里或主线程跑推理。
+     */
+    val anime4kPreviewBitmap: Bitmap? = null,
     /** Webtoon（连续滑动）的显示态：false=原图，true=译文（默认）。决定模式图标上是否带「译」角标。 */
     val webtoonTranslated: Boolean = true,
     val translateMode: Int = 0,                 // 0 手动 1 自动 2 增量
@@ -624,7 +639,7 @@ class ReaderMenuSheet(
         //    之前 Anime4K 被超分开关闸住（而那个开关默认还关着）→ 用户在调色面板开了它却毫无反应，
         //    这正是「切了档、预览和阅读器都没任何效果」的根因。
         /**
-         * 让调色面板右侧「处理后」立刻反映当前的增强设置。
+         * 让调色面板右侧「处理后」立刻反映当前的增强设置（用**已有**的增强图）。
          *
          * ⚠️ 不能调下面那个 `refreshProc()`：Kotlin 的局部函数**不允许前向引用**，
          * 而它定义在更后面 —— 这里就地套一遍同一份调色滤镜（`cur()` 与 `ivProc` 此刻已可用）。
@@ -633,6 +648,47 @@ class ReaderMenuSheet(
             val raw = state.previewBitmap ?: return
             ivProc.setImageBitmap(enhancedPreview(raw) ?: raw)
             ivProc.colorFilter = cur().toColorFilter()
+        }
+
+        // 切档时异步重算预览用的代次 + 在途任务（后到的旧档位结果必须丢弃）
+        var previewJob: Job? = null
+        var previewGen = 0
+
+        /**
+         * 按**当前** Anime4K 档位在后台重算「处理后」预览。
+         *
+         * ⚠️ **必须异步**：`enhanceWithAnime4k` 要建 EGL 上下文 + 编译着色器 + 最多 49 趟 pass，
+         * 放主线程就是"点一下卡住"（历史上"一开调色面板就卡死"就是这个原因）。
+         * ⚠️ 有超分结果时**不跑**：那条路径预览的是已落盘的超分底图，与 Anime4K 无关（两者互斥）。
+         * ⚠️ 用代次丢弃过期结果：连点几下切档，先发的慢请求不能把后发的覆盖掉。
+         */
+        fun refreshEnhancedPreviewAsync() {
+            val raw = state.previewBitmap ?: return
+            val p = CustomPreference.getInstance(requireContext()).getSharedPreferences()
+            // ⚠️ 超分开着**且确实有已落盘的结果**时，预览就该是那张图，不该被 Anime4K 覆盖
+            //    （两者互斥）。开关关掉之后则必须重算 Anime4K —— 否则关掉超分后面板还举着旧超分图。
+            if (SrSettings.isEnabledForReader(p) && state.srPreviewBitmap != null) return
+            if (!Anime4kMode.isEnabled(p)) {
+                // Anime4K 关掉 → 直接回落原图，不必等异步
+                refreshEnhancedPreview()
+                return
+            }
+            val gen = ++previewGen
+            previewJob?.cancel()
+            // ⚠️ 先把 applicationContext 取出来：协程里再 `requireContext()` 会在面板已 detach 时抛
+            val appCtx = requireContext().applicationContext
+            previewJob = viewLifecycleOwner.lifecycleScope.launch {
+                val out = withContext(Dispatchers.IO) {
+                    val r = SuperResolutionEngines.enhanceWithAnime4k(appCtx, p, raw)
+                    r.bitmap
+                }
+                // 过期结果直接丢掉（别 recycle：可能已被上屏引用）
+                if (gen != previewGen || !isAdded) return@launch
+                if (out != null) {
+                    ivProc.setImageBitmap(out)
+                    ivProc.colorFilter = cur().toColorFilter()
+                }
+            }
         }
 
         val srPrefs = CustomPreference.getInstance(requireContext()).getSharedPreferences()
@@ -663,7 +719,9 @@ class ReaderMenuSheet(
             // 换档 = 之前那份增强结果全部作废（引擎缓存 + 设置指纹都会跟着变）
             SuperResolutionEngines.releaseAnime4k()
             refreshAnime4kRow()
+            // 先用已有那张画一帧（动画/关档时立刻回原图），再在后台按新档位重算回填
             refreshEnhancedPreview()
+            refreshEnhancedPreviewAsync()
             cb.onAnime4kModeChanged()
         }
         view.findViewById<View>(R.id.btn_anime4k).setOnClickListener {
@@ -724,7 +782,10 @@ class ReaderMenuSheet(
             SrSettings.setReaderEnabled(srPrefs, checked)
             // 关掉时把已加载的超分引擎放掉（2x 模型几百 MB）；打开时不预热 —— 首翻再建
             if (!checked) SuperResolutionEngines.releaseSrModel()
+            // 关掉超分 = 预览不再应是那张超分图（`state.srPreviewBitmap` 只是打开面板时的快照），
+            // 所以这里除了一帧同步刷新，还要按当前 Anime4K 设置异步重算一次
             refreshEnhancedPreview()
+            refreshEnhancedPreviewAsync()
             refreshSrGroup()
         // 宿主从「超分模型管理」/ 设置返回时靠它重读（面板是打开那一刻的快照）
         refreshSrRows = {
@@ -732,7 +793,9 @@ class ReaderMenuSheet(
             view.findViewById<TextView>(R.id.tv_sr_model_row).text =
                 getString(R.string.reader_sr_model_row, srModelLabel(p2))
             refreshSrGroup()
+            // 换了模型 → 预览也要跟着重算（同步那帧用的是快照，异步这帧按新设置来）
             refreshEnhancedPreview()
+            refreshEnhancedPreviewAsync()
         }
             cb.onReaderSrChanged(checked)
         }
@@ -817,17 +880,28 @@ class ReaderMenuSheet(
     }
 
     /**
-     * 调色面板右侧「处理后」预览格用的增强 —— **暂时返回 null（= 回退原图）**。
+     * 调色面板右侧「处理后」预览格用的增强图。
      *
-     * ⚠️ 2026-10 v2 架构把超分移出了「喂 OCR」的位置，改成 OCR **之后**的**显示底图**：
-     * 超分产物是 2x 的，而之前的 `SrPageEnhancer.enhanceForReader`（超分→缩回原尺寸）
-     * 已随架构删除。显示底图那条路径（`SrDisplaySource`）接完后，这里改成
-     * 「取该页的超分底图并按预览格缩放」，**并且必须在后台线程**（不能在主线程跑推理）。
+     * 取值顺序（两者**互斥**，超分优先，与 `resolveSteps` 同一口径）：
+     * 1. [ReaderMenuState.srPreviewBitmap] —— 该页**已落盘的超分底图**（宿主在 IO 侧缩放好），
+     *    且**仅在超分开关此刻是开着的时候**才算数
+     * 2. [ReaderMenuState.anime4kPreviewBitmap] —— Anime4K 增强（同样由宿主/面板算好）
+     * 3. null → 调用方回落原图
      *
-     * ⚠️ 预览格是**主线程**渲染的（`state.previewBitmap` 就在面板构建里用），
-     * 所以这里绝不能同步跑 ONNX —— 那正是"一开调色面板就卡死"的原因之一。
+     * ⚠️ 第 1 条为什么要看**当前**开关：`state.srPreviewBitmap` 是**打开面板那一刻**的快照，
+     *    而用户在面板里就能把超分关掉 —— 关掉后屏幕上已经不再显示超分底图，预览却还举着那张，
+     *    就又变成"预览和实际不一致"（与"切 Anime4K 档看不到变化"同一类问题）。
+     *
+     * ⚠️ 这里只做**取值**，不跑推理：预览格是主线程渲染的。按新设置重算走
+     *    `refreshEnhancedPreviewAsync()`。
      */
-    private fun enhancedPreview(src: android.graphics.Bitmap): android.graphics.Bitmap? = state.srPreviewBitmap
+    private fun enhancedPreview(src: android.graphics.Bitmap): android.graphics.Bitmap? {
+        val srOn = SrSettings.isEnabledForReader(
+            CustomPreference.getInstance(requireContext()).getSharedPreferences()
+        )
+        val srPreview = if (srOn) state.srPreviewBitmap else null
+        return srPreview ?: state.anime4kPreviewBitmap
+    }
 
     /**
      * 面板主题的**标题色**控件（浅色 `#333333` / 深色 `#E2E2E4`）。

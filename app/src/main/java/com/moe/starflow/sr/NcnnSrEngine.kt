@@ -79,7 +79,9 @@ class NcnnSrEngine(
     fun initialize(): Boolean {
         if (handle != 0L) return true
         return try {
-            val h = SrNcnnNative.create(family, paramFile.absolutePath, binFile.absolutePath, GPU_ID)
+            val h = SrNcnnNative.create(
+                family, paramFile.absolutePath, binFile.absolutePath, GPU_ID, srThreads()
+            )
             if (h == 0L) {
                 LogCollector.e(TAG, "原生引擎创建失败: ${paramFile.name} (family=$family)")
                 false

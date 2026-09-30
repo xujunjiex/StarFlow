@@ -90,4 +90,48 @@ class ImportedMangaStoreTest {
         assertNull(loaded.importPhase)
         assertEquals(-1, loaded.importPercent)
     }
+
+    /**
+     * **页序迁移标记必须能落盘**（2026-10 审查发现的真 bug）。
+     *
+     * 原来 `toJson` 没写 `pageOrderVersion`、`toManga` 也没读 → 读回恒为 0 →
+     * `MangaPageOrderMigrator` 的「已经迁过就跳过」判据永远为假 → **每次打开阅读器都会
+     * 再跑一次页序置换**，而置换并不幂等 → 译文被一次次挪到别的图上。
+     *
+     * ⚠️ 这个用例必须用**非 0 的版本号**：全用默认值 0 的话 `0 == 0` 恒真，
+     * 跟没测一样（原样本用的是默认值，所以这个 bug 一直在）。
+     */
+    @Test
+    fun saveThenLoad_keepsPageOrderMigrationMarkers() {
+        val migrated = sample(1).copy(pageOrderVersion = 1, pageOrderPlan = "1,2,0")
+        ImportedMangaStore.save(context, listOf(migrated))
+
+        val loaded = ImportedMangaStore.load(context).single()
+        assertEquals("页序版本没落盘 → 每次打开都会重跑迁移", 1, loaded.pageOrderVersion)
+        assertEquals("置换记录没落盘 → 中断后无法判断是否已施加过", "1,2,0", loaded.pageOrderPlan)
+    }
+
+    /**
+     * `setChapters` 只改章节字段，**不能顺手把别的字段回滚**。
+     *
+     * 章节回填与阅读器自愈都是秒级长循环，用的是循环开始时的清单快照；以前它们走
+     * `update(manga.copy(...))` 整条替换，会把这段时间里用户翻页写的 `lastReadPage`、
+     * 改过的书名一起回滚（表现是「翻了几页后进度自己退回去」）。
+     */
+    @Test
+    fun setChapters_onlyTouchesTheChaptersField() {
+        ImportedMangaStore.save(context, listOf(sample(1).copy(title = "旧名", lastReadPage = 3)))
+
+        // 模拟"回填进行中，用户翻了页并改了名"
+        val live = ImportedMangaStore.load(context).single().copy(title = "新名", lastReadPage = 9)
+        ImportedMangaStore.update(context, live)
+
+        val chapters = listOf(MangaChapter(number = 1, title = "ch1", startPage = 0, pageCount = 5))
+        ImportedMangaStore.setChapters(context, 1L, chapters)
+
+        val loaded = ImportedMangaStore.load(context).single()
+        assertEquals("阅读进度不能被章节回填回滚", 9, loaded.lastReadPage)
+        assertEquals("书名不能被章节回填回滚", "新名", loaded.title)
+        assertEquals(chapters, loaded.chapters)
+    }
 }

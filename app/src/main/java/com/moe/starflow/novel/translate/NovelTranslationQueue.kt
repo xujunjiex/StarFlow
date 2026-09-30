@@ -5,6 +5,7 @@ import com.moe.starflow.novel.data.ImportedNovel
 import com.moe.starflow.utils.LogCollector
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -118,6 +119,12 @@ class NovelTranslationQueue(
         /** `OcrLock` 没有 await，只能轮询。 */
         const val LOCK_POLL_MS = 200L
         const val LOCK_WAIT_TIMEOUT_MS = 30_000L
+
+        /**
+         * 持锁期间的心跳间隔。必须**远小于** `OcrLock.STALE_TIMEOUT_MS`(30s) ——
+         * 本地引擎整批几分钟，不打心跳会被自愈机制误判成"持有者已死"（见 [withLockHeartbeat]）。
+         */
+        const val LOCK_HEARTBEAT_MS = 5_000L
 
         /** 停下之后的空转间隔（等用户翻页/切模式）。 */
         const val DRAINED_POLL_MS = 800L
@@ -354,15 +361,17 @@ class NovelTranslationQueue(
                 _state.value = NovelQueueState(NovelQueuePhase.TRANSLATING, chapterIndex, batch)
             }
             settled(
-                translator.translateBatch(
-                    book = book,
-                    chapterIndex = chapterIndex,
-                    paragraphs = paragraphsOf(book, chapterIndex),
-                    paraIndexes = batch,
-                    sourceLang = sourceLang(),
-                    targetLang = targetLang(),
-                    translatorName = translatorName(),
-                ),
+                withLockHeartbeat(lockToken) {
+                    translator.translateBatch(
+                        book = book,
+                        chapterIndex = chapterIndex,
+                        paragraphs = paragraphsOf(book, chapterIndex),
+                        paraIndexes = batch,
+                        sourceLang = sourceLang(),
+                        targetLang = targetLang(),
+                        translatorName = translatorName(),
+                    )
+                },
             )
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
@@ -474,18 +483,50 @@ class NovelTranslationQueue(
         if (lockToken == 0L) return NovelBatchResult(emptyMap(), "翻译引擎被占用（别的翻译正在跑）")
         try {
             _state.value = NovelQueueState(NovelQueuePhase.TRANSLATING, chapterIndex, batch)
-            return translator.translateBatch(
-                book = book,
-                chapterIndex = chapterIndex,
-                paragraphs = paragraphsOf(book, chapterIndex),
-                paraIndexes = batch,
-                sourceLang = sourceLang(),
-                targetLang = targetLang(),
-                translatorName = translatorName(),
-            )
+            return withLockHeartbeat(lockToken) {
+                translator.translateBatch(
+                    book = book,
+                    chapterIndex = chapterIndex,
+                    paragraphs = paragraphsOf(book, chapterIndex),
+                    paraIndexes = batch,
+                    sourceLang = sourceLang(),
+                    targetLang = targetLang(),
+                    translatorName = translatorName(),
+                )
+            }
         } finally {
             OcrLock.release(lockToken)
             _state.value = NovelQueueState()
+        }
+    }
+
+    /**
+     * 持锁跑 [block]，整段期间在后台打心跳（[token] 为 0 = 没持锁，直接跑）。
+     *
+     * ⚠️ **心跳是必须的**：本地引擎（LlamaCpp / NLLB）一整批可以跑几分钟，而 `OcrLock` 的
+     * `STALE_TIMEOUT_MS`(30s) 无心跳自愈会把**仍活着**的持有者判成死锁 → 强制放锁 →
+     * 另一个翻译任务（另一本书的章节任务 / 漫画阅读器 OCR / 超分）随即拿到锁，
+     * 两个线程同时用同一个本地引擎。漫画侧 `ReaderTranslationController.runTranslate`
+     * 一直在这么打，小说侧这两处一直漏。
+     */
+    private suspend fun <T> withLockHeartbeat(token: Long, block: suspend () -> T): T {
+        if (token == 0L) return block()
+        return coroutineScope {
+            // ⚠️ **不要写 `launch(Dispatchers.IO)`**：本 queue 的 scope 在宿主那边就是应用级
+            //    `Dispatchers.IO`，继承即可；显式指定真实派发器会把「跑到真实线程池上」
+            //    这个非确定性带进用 `runTest` 虚拟时钟写的单测里（实测让 `NovelTranslationQueueTest`
+            //    多挑一轮批次而挂掉）。心跳本身只是一次赋值，不需要专门换线程。
+            val ticker = launch {
+                while (isActive) {
+                    OcrLock.heartbeat(token)
+                    delay(LOCK_HEARTBEAT_MS)
+                }
+            }
+            try {
+                block()
+            } finally {
+                ticker.cancel()
+            }
         }
     }
 

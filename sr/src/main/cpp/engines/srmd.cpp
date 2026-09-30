@@ -10,9 +10,13 @@
 #include "srmd_preproc_tta.comp.hex.h"
 #include "srmd_postproc_tta.comp.hex.h"
 
-SRMD::SRMD(int gpuid, bool _tta_mode)
+SRMD::SRMD(int gpuid, bool _tta_mode, int num_threads)
 {
     vkdev = gpuid == -1 ? 0 : ncnn::get_gpu_device(gpuid);
+
+    // 与 Waifu2x / RealCUGAN 对齐：线程数由调用方（Kotlin 侧 SrThreads）决定。
+    // 上游原版没有这个参数，会用 ncnn 默认值（全核）—— 手机上和别的重活抢核反而更慢。
+    net.opt.num_threads = num_threads;
 
     srmd_preproc = 0;
     srmd_postproc = 0;

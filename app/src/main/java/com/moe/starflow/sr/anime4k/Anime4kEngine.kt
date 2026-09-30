@@ -109,7 +109,10 @@ void main() {
                 val program = GlUtil.createProgram(VERTEX_SHADER, Anime4kCompiler.compileToFragmentShader(pass))
                 if (program == 0) {
                     LogCollector.e(TAG, "pass 编译失败: ${pass.desc} (${mode.id})")
-                    release()
+                    // ⚠️ 这里**已经在 GL 线程上**（整个 initialize 体都在 runOnGl 里），
+                    // 必须直接 releaseOnGl() —— 调 release() 会再 submit 回同一个单线程
+                    // executor 并 .get() → 自己等自己，死锁（与下面 catch 分支同一条规矩）。
+                    releaseOnGl()
                     return@runOnGl false
                 }
                 programs.add(program)
@@ -278,6 +281,10 @@ void main() {
 
     override fun release() {
         runOnGl { releaseOnGl() }
+        // ⚠️ 必须关掉 executor：它是**非 daemon** 线程，只清 GL 资源的话它会永远 park 在
+        // 工作队列上。`obtainAnime4k` 每次换档位都 releaseAnime4k() + 新建一个引擎
+        // （面板上循环切档 = 每点一次泄漏一条线程）。
+        glThread.shutdown()
     }
 
     /**

@@ -103,8 +103,16 @@ sealed interface TranslateClick {
  * 队列每轮都**重新读取当前页**并重算窗口，因此翻页不需要重启队列；正在翻译的那页不会被重复挑中，
  * 也不会被打断（翻完当前页才进下一轮）。
  */
-/** 阅读器上屏译图的超采样倍率 */
-private const val READER_RENDER_SCALE = 2f
+/**
+ * 阅读器上屏译图的**超采样倍率上限**。
+ *
+ * 实际倍率 = 显示宽度 / 页图宽度（见 `ReaderTranslationController.renderScaleFor`），
+ * 夹在 `[1f, MAX_RENDER_SCALE]`。
+ * ⚠️ **不要写死成 2f**：输出位图是 `页宽 × renderScale`，×2 就是 **4 倍像素**
+ * （1080×2400 的页 → 41.5MB/张），而多数漫画页本身就比屏幕宽（倍率会夹到 1）
+ * —— 无条件按 2 栅格化等于白占 4 倍内存，100MB 的 renderLru 从"装 8 张"掉到"装 2 张"。
+ */
+private const val MAX_RENDER_SCALE = 2f
 
 class ReaderTranslationController(
     private val context: Context,
@@ -352,7 +360,7 @@ class ReaderTranslationController(
                 // ⚠️ 模型名取自**标记文件**（这份超分图到底是哪个模型超的），不是"当前选中的模型"：
                 //    换模型但没重超时文件内容没变、渲染缓存仍有效；重超完成后标记换成新模型 →
                 //    签名变 → 旧渲染自动作废（不依赖任何手工 remove）。
-                val stored = SrStore.storedModelOrNull(context, manga.id, pageIndex)
+                val stored = SrStore.storedModelOrNull(context, manga.id, pageIndex, manga.translationKey)
                 SrDisplayBase.baseSignature(
                     kind = kind,
                     srModelName = stored,
@@ -384,7 +392,9 @@ class ReaderTranslationController(
         //    一并 `srModelByPage.remove(...)` → `hasSrResult` 变 false → 右下角整个超分组消失，
         //    于是**再也切不回超分图**（按钮没了）。
         //    现在：结果的存在性只看**文件**（IO 一次 stat+读标记），显示态由 `isSrVisualOn` 单独管。
-        val storedModel = withContext(Dispatchers.IO) { SrStore.storedModelOrNull(context, manga.id, pageIndex) }
+        val storedModel = withContext(Dispatchers.IO) {
+            SrStore.storedModelOrNull(context, manga.id, pageIndex, manga.translationKey)
+        }
         if (storedModel == null) {
             srModelByPage.remove(pageIndex)
             srBaseLru.remove(pageIndex)
@@ -403,7 +413,9 @@ class ReaderTranslationController(
         srBaseLru.get(pageIndex)?.let { if (it.sig == sig) return it }
 
         if (sig.startsWith("s:")) {
-            val stored = withContext(Dispatchers.IO) { SrStore.load(context, manga.id, pageIndex) }
+            val stored = withContext(Dispatchers.IO) {
+                SrStore.load(context, manga.id, pageIndex, manga.translationKey)
+            }
             // ⚠️ 记的是**标记文件里的模型**（不是 sig 里那个）：换模型后 `srActionOf` 要能看出
             //    "这一页是别的模型超的 → 该重新超分"，拿 sig 当答案永远等于"已经是当前模型"。
             if (stored == null) {
@@ -446,7 +458,13 @@ class ReaderTranslationController(
     suspend fun warmSrBase(pageIndex: Int) {
         val sig = baseSig(pageIndex)
         srBaseLru.get(pageIndex)?.let { if (it.sig == sig) return }
-        if (sig == "o") return
+        if (sig == "o") {
+            // ⚠️ 与 [srBaseFor] 的同名分支**必须一致**：签名退化成 "o"（超分关了 / 文件被删 /
+            //    Anime4K 让位）时要把旧签名那份**清掉**。只 return 不清的话，
+            //    `cachedDisplayBitmap` 会一直取到这份过期底图 → 屏幕上挂着早已失效的超分图。
+            srBaseLru.remove(pageIndex)
+            return
+        }
         withContext(Dispatchers.IO) {
             val src = loadFull(pageIndex) ?: return@withContext
             try {
@@ -469,18 +487,22 @@ class ReaderTranslationController(
      */
     suspend fun srPreviewFor(pageIndex: Int, targetWidth: Int): Bitmap? = withContext(Dispatchers.IO) {
         if (targetWidth <= 0 || !isSrVisualOn(pageIndex)) return@withContext null
-        if (SrStore.storedModelOrNull(context, manga.id, pageIndex) == null) return@withContext null
+        if (SrStore.storedModelOrNull(context, manga.id, pageIndex, manga.translationKey) == null) return@withContext null
         // 已经预热过就直接缩它（省一次解码）
         val cached = srBaseLru.get(pageIndex)?.bitmap
-        val full = cached ?: SrStore.load(context, manga.id, pageIndex) ?: return@withContext null
-        try {
-            if (full.width <= targetWidth) return@withContext full
-            val h = (full.height.toLong() * targetWidth / full.width).toInt().coerceAtLeast(1)
-            Bitmap.createScaledBitmap(full, targetWidth, h, true)
-        } finally {
-            // 只有"本次现解码的"才回收（缓存里那份归缓存）
-            if (cached == null && !full.isRecycled) full.recycle()
-        }
+        val full = cached ?: SrStore.load(context, manga.id, pageIndex, manga.translationKey)
+            ?: return@withContext null
+        // ⚠️ 早退这条**返回的就是 full 本身**，所以回收**不能**塞在 finally 里 ——
+        //    finally 先于 return 执行，`cached == null`（本次现解码）时会把要交出去的位图
+        //    回收掉，调用方（调色面板预览格）`setImageBitmap` 后下一帧就崩
+        //    `Canvas: trying to use a recycled bitmap`。
+        //    改为显式回收「被替换掉的那份」，早退那份的所有权交给调用方。
+        if (full.width <= targetWidth) return@withContext full
+        val h = (full.height.toLong() * targetWidth / full.width).toInt().coerceAtLeast(1)
+        val scaled = Bitmap.createScaledBitmap(full, targetWidth, h, true)
+        // 只有"本次现解码的、且确实被换掉的那份"才回收（缓存里那份归缓存）
+        if (scaled !== full && cached == null && !full.isRecycled) full.recycle()
+        return@withContext scaled
     }
 
     /** 底图变了（超分完成 / 二态切换 / 换模型）：作废该页渲染缓存并刷新上屏。 */
@@ -617,7 +639,7 @@ class ReaderTranslationController(
         val src = withContext(Dispatchers.IO) { loadFull(pageIndex) }
             ?: return SrOutcome.fail(SrFailReason.PAGE_LOAD_FAILED, context.getString(R.string.sr_fail_page_load))
         val outcome = try {
-            SrProcessor.enhanceAndStore(context, manga.id, pageIndex, src)
+            SrProcessor.enhanceAndStore(context, manga.id, pageIndex, src, manga.translationKey)
         } finally {
             // 原图是本次现解码的（`loadFull` 纯解码）→ 用完必须回收
             if (!src.isRecycled) src.recycle()
@@ -736,17 +758,41 @@ class ReaderTranslationController(
      */
     private val ownSource: ReaderPageSource by lazy { ReaderPageSource(manga.isArchive, manga.localRoot) }
 
+    /**
+     * 阅读区宽度（px）。**0 = 未知**（未绑定 / 已解绑）→ [renderScaleFor] 退化成 1f。
+     *
+     * 用途：算上屏译图的超采样倍率（显示宽 / 页图宽）。解绑后必须归零，
+     * 否则后台任务会按已销毁 Activity 的宽度去渲染。
+     */
+    @Volatile
+    private var displayWidthProvider: () -> Int = { 0 }
+
     /** 页图 / 当前页 / 总页数 由 Activity 注入。 */
     fun bind(
         loadFull: (Int) -> Bitmap?,
         currentPage: () -> Int,
         pageCount: () -> Int,
+        displayWidth: () -> Int = { 0 },
     ) {
         this.loadFull = loadFull
         this.currentPageProvider = currentPage
         this.pageCount = pageCount
+        this.displayWidthProvider = displayWidth
         this.uiAttached = true
         this.everAttached = true
+    }
+
+    /**
+     * 上屏译图的超采样倍率 = **显示宽度 / 坐标空间宽度**，夹在 `[1f, MAX_RENDER_SCALE]`。
+     *
+     * 为什么要按显示宽度算（而不是恒定 2f）：倍率的意义是"译文最终会在屏幕上被放大多少"。
+     * 页图本来就比屏幕宽 → 只缩不放 → 1f 就够（按 2f 渲染纯属白占 4 倍像素）；
+     * 低分辨率页（800px 显示在 1080px 屏上）→ 1.35 → 文字按最终分辨率栅格化才不糊。
+     */
+    private fun renderScaleFor(spaceWidth: Int): Float {
+        val dw = displayWidthProvider()
+        if (dw <= 0 || spaceWidth <= 0) return 1f
+        return (dw.toFloat() / spaceWidth).coerceIn(1f, MAX_RENDER_SCALE)
     }
 
     /**
@@ -760,6 +806,7 @@ class ReaderTranslationController(
         loadFull = { ownSource.loadFull(it) }
         loadWebtoon = null
         originalWidthOf = null
+        displayWidthProvider = { 0 }
         currentPageProvider = { -1 }
         pageCount = { ownSource.size }
         onVisual = {}
@@ -1439,7 +1486,10 @@ class ReaderTranslationController(
         } finally {
             // ⚠️ 超分任务可能还在用 prep.bitmap（它与翻译请求**并行**跑）——
             //    必须先等它结束再回收，否则就是 use-after-recycle（native 崩溃，Java 层抓不到）。
-            srJob?.join()
+            //    ⚠️ join 必须在 NonCancellable 里：本 finally 也可能跑在**协程已被取消**的路径上
+            //    （上面 catch CancellationException 分支），此时 join() 会立刻抛 CancellationException
+            //    → 后面那行 recycle 永不执行（取消一整批页时留下可观的 native 堆峰值）。
+            withContext(NonCancellable) { runCatching { srJob?.join() } }
             if (!prep.bitmap.isRecycled) prep.bitmap.recycle()
             LogCollector.d(
                 TAG,
@@ -1478,7 +1528,7 @@ class ReaderTranslationController(
         // ⚠️ 这里**不再自己预判**"模型下没下载/选没选"：判断集中在 `SuperResolutionEngines`，
         //    它才能给出**具体原因**。预判成 return null 的话用户什么都看不到。
         return scope.launch(Dispatchers.IO) {
-            val outcome = SrProcessor.enhanceAndStore(context, manga.id, page, prep.bitmap)
+            val outcome = SrProcessor.enhanceAndStore(context, manga.id, page, prep.bitmap, manga.translationKey)
             if (outcome.ok) {
                 // 超分完成后默认显示在超分底图上（用户口径）
                 srVisualByPage[page] = true
@@ -1796,6 +1846,10 @@ class ReaderTranslationController(
             // → 30s 自愈永远不触发，漏放锁的路径再也没人兜底）。
             heartbeatJob.cancel()
             OcrLock.release(ocrToken)
+            // ⚠️ 注销取消标志 —— 这条 return 在下面那个 try/finally **之外**，漏掉的话每失败
+            //     一轮就在 `readerCancel.live` 里留一个永不回收的 AtomicBoolean（队列每
+            //     debounceMs 重试一次 → 集合一直涨，`cancelAll()` 也跟着越来越慢）。
+            readerCancel.retire(cancel)
             return
         }
         // ⚠️ 这两个只作为**兜底**（渲染历史行时 `visualBitmap` 拿不到本次引擎，见 [lastDet] 注释）；
@@ -2291,7 +2345,11 @@ class ReaderTranslationController(
         }
         if (rendered != null) return rendered
         // 没有译图（未翻译 / 纯原图态）→ 有超分/增强底图就用它，否则 null（适配器显示源图）
-        return srBaseLru.get(pageIndex)?.bitmap
+        // ⚠️ 必须**校验签名**（另两处读取都校验，只有这里原来没有）：缓存里可能还留着旧签名的
+        //    那一份（超分已关 / 文件已删 / 换了模型），直接返回会让屏幕一直显示过期底图 ——
+        //    属于「不崩不报错、只是显示不对」那类最难查的问题。
+        val base = srBaseLru.get(pageIndex) ?: return null
+        return if (base.sig == baseSig(pageIndex)) base.bitmap else null
     }
 
     /** 在途的半成品渲染（每页只允许一个，见 [showPartial]）。 */
@@ -2485,6 +2543,12 @@ class ReaderTranslationController(
         cfg: TranslationCacheManager.OverlayConfig,
         base: SrBase?,
         det: DetEngine,
+        /**
+         * 上屏超采样倍率，由 [renderScaleFor] 按显示宽度算出。
+         * ⚠️ 导出（不上屏、且结果进 BitmapLruCache）与 Webtoon 预热（源图已按屏宽采样解码，
+         * 文字本来就在最终分辨率上）都必须传 **1f**。
+         */
+        renderScale: Float = 1f,
     ): Bitmap = OverlayRenderer.renderOverlay(
         original = base?.bitmap ?: original,
         regions = bubbles,
@@ -2507,12 +2571,13 @@ class ReaderTranslationController(
         // 用户译文替换表（渲染时套用 → 改完规则返回阅读器即生效，见 refreshIfRulesChanged）
         replacementRules = cfg.replacementRules,
         density = context.resources.displayMetrics.density,
-        // 超采样渲染（2026-10）：阅读器上屏的译图按 2 倍栅格化，让**文字**在低分辨率页上也清晰。
-        // 底图不变（该多糊还多糊，那是图源决定的）；只有文字从"插值放大的像素"变成"按最终分辨率栅格化"。
-        // ⚠️ 只在这一处传 >1：导出/查看器/历史都传默认 1f（它们不吃屏幕分辨率，且结果进 BitmapLruCache）。
-        renderScale = READER_RENDER_SCALE,
-        // 超分底图的倍率（v2）：底图 2x、renderScale 也是 2 → 恰好 1:1 落上去，零重采样。
-        // ⚠️ 输出尺寸恒为 `原图宽 × renderScale`，**与底图倍率无关** → renderLru 的内存占用不变。
+        // 超采样渲染（2026-10）：上屏译图按「显示宽 / 页图宽」栅格化，让**文字**在低分辨率
+        // 页上也清晰。底图不变（该多糊还多糊，那是图源决定的）；只有文字从"插值放大的像素"
+        // 变成"按最终分辨率栅格化"。
+        // ⚠️ 只有**上屏**这一条路径传 >1：导出 / Webtoon 预热都传默认 1f（见参数说明）。
+        renderScale = renderScale,
+        // 超分底图的倍率（v2）：底图 2x 时把 overlay 坐标空间反算回去。
+        // ⚠️ `resetScale` 与底图倍率无关，输出尺寸恒为 `坐标空间宽 × renderScale`。
         baseScale = base?.scale ?: 1f,
     )
 
@@ -2529,6 +2594,8 @@ class ReaderTranslationController(
         original = original, bubbles = bubbles, mode = mode, cfg = cfg,
         base = srBaseFor(pageIndex, original, original.width),
         det = det,
+        // 上屏路径：按「显示宽 / 页图宽」决定超采样倍率（见 renderScaleFor）
+        renderScale = renderScaleFor(original.width),
     )
 
     /**
@@ -2708,7 +2775,11 @@ class ReaderTranslationController(
      * 会往已销毁的 Activity 上贴东西。
      *
      * @param isError true = 失败原因（浮层用红色、可点复制，方便用户把原文发出来）
+     * ⚠️ `@Volatile` 与 [onVisual] / [onPhase] 同理：主线程写（宿主注入）、
+     * `unbindUi()` 也可能在 hub 的 IO 收集协程里调 → 没有 happens-before 的话超分任务
+     * 可能读到旧 lambda，仍然调用已销毁 Activity 的回调。
      */
+    @Volatile
     var onSrNotice: (text: String, isError: Boolean) -> Unit = { _, _ -> }
 
     // ========== 私有：写记录 ==========

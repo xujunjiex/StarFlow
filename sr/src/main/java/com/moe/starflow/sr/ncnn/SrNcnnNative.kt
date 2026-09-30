@@ -19,7 +19,7 @@ import java.nio.ByteBuffer
  *
  * ## 生命周期
  * ```
- * val handle = SrNcnnNative.create(family, paramPath, binPath, gpuId)   // 0 = 失败
+ * val handle = SrNcnnNative.create(family, paramPath, binPath, gpuId, numThreads)  // 0 = 失败
  * ...      SrNcnnNative.process(handle, in, out, w, h, scale, noise, prepad, tile)
  * finally  SrNcnnNative.release(handle)
  * ```
@@ -48,10 +48,20 @@ object SrNcnnNative {
      * 建引擎实例（含加载模型）。
      *
      * @param gpuId `0` 起为 Vulkan 设备号；**-1 = CPU**（慢 6~8 倍，只作兜底）。
-     *   设备无 Vulkan 时会自动降级到 CPU 并在日志里说明。
-     * @return handle；**0 表示失败**（调用方必须当作"超分不可用"处理，不要重试轰炸）
+     *   ⚠️ 只有 Waifu2x / RealCUGAN 有 CPU 路径：SRMD 与 Real-ESRGAN 是纯 Vulkan，
+     *   设备无 Vulkan 时对这两族直接返回 0（否则原生侧空 vkdev 解引用 → SIGSEGV）。
+     * @param numThreads 推理线程数（Kotlin 侧 `SrThreads` = 核数-2 夹 2..8）。≤0 = 原生侧按 2 兜底。
+     * @return handle；**0 表示失败**（调用方必须当作"超分不可用"处理，不要重试轰炸）。
+     *   ⚠️ 原生侧会先校验 `param` 有 ncnn 魔数、`bin` 非空 —— vendored 引擎的 `load()`
+     *   返回值不可用（恒定 `return 0`），不这样查的话这里永远不会拿到 0。
      */
-    external fun create(family: Int, paramPath: String, binPath: String, gpuId: Int): Long
+    external fun create(
+        family: Int,
+        paramPath: String,
+        binPath: String,
+        gpuId: Int,
+        numThreads: Int
+    ): Long
 
     /**
      * 跑一次超分。

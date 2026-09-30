@@ -13,7 +13,7 @@
 #include "realesrgan_postproc_tta.comp.hex.h"
 
 
-RealESRGAN::RealESRGAN(int gpuid, bool _tta_mode)
+RealESRGAN::RealESRGAN(int gpuid, bool _tta_mode, int num_threads)
 {
     net.opt.use_vulkan_compute = true;
     net.opt.use_fp16_packed = true;
@@ -21,6 +21,10 @@ RealESRGAN::RealESRGAN(int gpuid, bool _tta_mode)
     net.opt.use_fp16_arithmetic = false;
     net.opt.use_int8_storage = true;
     net.opt.use_int8_arithmetic = false;
+
+    // 与 Waifu2x / RealCUGAN 对齐：线程数由调用方（Kotlin 侧 SrThreads）决定。
+    // 上游原版没有这个参数，会用 ncnn 默认值（全核）。
+    net.opt.num_threads = num_threads;
 
     net.set_vulkan_device(gpuid);
 

@@ -44,6 +44,15 @@ data class ImportedManga(
      * 默认 0；老清单没有这个字段，反序列化后即 0。
      */
     val pageOrderVersion: Int = 0,
+    /**
+     * **已施加过的页序置换**（`MangaPageOrder.legacyToNewPlan` 的结果，逗号分隔）。
+     *
+     * 幂等用的：`legacyToNewPlan` 是**文件的纯函数**，同一本书每次算出来都一样，
+     * 所以"这份置换到底施加过没有"只能靠记录。没有它的话，一旦进程在
+     * 「DB 事务已提交、清单还没落盘」之间被杀，下次打开会把**同一个置换再施加一次**
+     * （置换不是幂等的）→ 译文整体挪到别的图上，而且用户完全无从察觉。
+     */
+    val pageOrderPlan: String = "",
 ) {
     /** 章数（至少 1：单章漫画也算一章）。 */
     val chapterCount: Int get() = chapters.size.coerceAtLeast(1)

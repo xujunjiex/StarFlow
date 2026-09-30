@@ -13,7 +13,7 @@
 class RealESRGAN
 {
 public:
-    RealESRGAN(int gpuid, bool tta_mode = false);
+    RealESRGAN(int gpuid, bool tta_mode = false, int num_threads = 1);
     ~RealESRGAN();
 
 #if _WIN32

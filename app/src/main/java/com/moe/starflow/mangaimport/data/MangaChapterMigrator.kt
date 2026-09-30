@@ -36,7 +36,11 @@ object MangaChapterMigrator {
                 emptyList()
             }
             if (raw.isEmpty()) continue
-            ImportedMangaStore.update(context, manga.copy(chapters = MangaChapterSplitter.split(raw).chapters))
+            // ⚠️ 用 setChapters（锁内**只改 chapters 一个字段**），不要 update(manga.copy(...))：
+            //    本循环是秒级的长任务（每条都要列目录/读 zip 中央目录），而 `list` 是循环开始时的
+            //    快照 —— 整条替换会把这段时间里用户翻页写的 lastReadPage、改的书名回滚掉
+            //    （表现是「翻了几页后进度自己退回去」）。
+            ImportedMangaStore.setChapters(context, manga.id, MangaChapterSplitter.split(raw).chapters)
             changed = true
         }
         if (changed) {

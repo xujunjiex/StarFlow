@@ -456,14 +456,21 @@ object SuperResolutionEngines {
         }
     }
 
-    /** 释放 Anime4K（持有 EGL 上下文与 GL 资源） */
+    /**
+     * 释放 Anime4K（持有 EGL 上下文与 GL 资源）。
+     *
+     * ⚠️ 与 [releaseSrModel] **同一条理由必须丢到后台线程**：`Anime4kEngine.release()` 要把
+     * 清理任务 submit 到 GL 线程并 `.get()` 等它跑完，而 GL 线程此刻完全可能正在为某一页
+     * 跑那 49 趟 pass —— 调用点包含**阅读器面板的开关回调（主线程）**，同步做就是卡 UI
+     * 一整帧（最大一页的渲染时长）。以前只有 releaseSrModel 做了这件事，这里漏了。
+     */
     @Synchronized
     fun releaseAnime4k() {
-        cachedAnime4k?.let {
-            runCatching { it.release() }.onFailure { e -> LogCollector.w(TAG, "releaseAnime4k: ${e.message}") }
-        }
+        val old = cachedAnime4k
         cachedAnime4k = null
         cachedAnime4kMode = null
+        if (old == null) return
+        enqueueRelease(old)
     }
 
     /** 全部释放 */

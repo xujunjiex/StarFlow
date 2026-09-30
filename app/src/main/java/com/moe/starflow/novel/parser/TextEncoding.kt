@@ -84,7 +84,7 @@ object TextEncoding {
      * 解码并**去掉 BOM**。
      *
      * ⚠️ BOM 必须去掉：留在正文开头会变成一个不可见字符，切章正则的 `^\s*第` 会因此失配、
-     * 正文首字符也会多出一个 `﻿` —— 表现为「第一章没被判成章节」这种极难查的问题。
+     * 正文首字符也会多出一个 `U+FEFF` —— 表现为「第一章没被判成章节」这种极难查的问题。
      */
     fun decode(bytes: ByteArray): String {
         val bom = bomCharset(bytes)

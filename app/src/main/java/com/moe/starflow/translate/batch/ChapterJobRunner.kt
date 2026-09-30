@@ -505,7 +505,13 @@ class ChapterJobRunner<T>(
         block: suspend () -> R,
     ): TaskOutcome<R> {
         if (task.cancelled) return TaskOutcome.Aborted
-        val job = scope.async { block() }
+        // ⚠️ 产物槽位。**不能用 `job.getCompleted()` 取产物**：这一项被 `cancel()` 强制结束时，
+        //    它**必然抛** —— body 还在跑 → `IllegalStateException`（state 仍是 Incomplete）；
+        //    body 已结束 → `CancellationException`。两条都被 runCatching 吞掉 →
+        //    `onAbort` 从不执行 → 漫画那一页的全尺寸位图（`discard` 回调存在的唯一理由）
+        //    无人回收。改成 block 自己把产物写进槽位，取消分支直接读槽位。
+        val productSlot = java.util.concurrent.atomic.AtomicReference<R>()
+        val job = scope.async { block().also { productSlot.set(it) } }
         synchronized(lock) {
             // 提交与取消的竞态：进锁前刚被取消 → 当场掐掉，一秒都不多跑
             if (task.cancelled) job.cancel() else taskJobs[task.id] = job
@@ -516,7 +522,7 @@ class ChapterJobRunner<T>(
             // 工人自己也已被取消 → 这是"整条流水线在停"，让调用方的循环退出
             if (!currentCoroutineContext().isActive) throw e
             // 只是这一项被强制结束：产物可能已经出来了，必须回收（否则整页 bitmap 内存悬着）
-            runCatching { onAbort(job.getCompleted()) }
+            productSlot.get()?.let { product -> runCatching { onAbort(product) } }
             TaskOutcome.Aborted
         } catch (e: Exception) {
             TaskOutcome.Failed(e)

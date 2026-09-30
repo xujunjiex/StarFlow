@@ -7,6 +7,7 @@
   没有可编辑的来源。其余（已读/未读/删除/重命名/全选/显示选项）一一对应。
 -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/surface_variant">
@@ -62,7 +63,7 @@
                     android:layout_height="22dp"
                     android:layout_gravity="center"
                     android:src="@drawable/ic_select_all"
-                    android:tint="@color/text_primary"
+                    app:tint="@color/text_primary"
                     android:contentDescription="@string/select_all"/>
             </FrameLayout>
 
@@ -91,7 +92,7 @@
                     android:layout_height="22dp"
                     android:layout_gravity="center"
                     android:src="@drawable/ic_close"
-                    android:tint="@color/text_primary"
+                    app:tint="@color/text_primary"
                     android:contentDescription="@string/import_close_selection"/>
             </FrameLayout>
 

@@ -48,6 +48,18 @@ object SrStore {
     /** 用户可在设置里关掉上限（传负数） */
     const val UNLIMITED = -1
 
+    /**
+     * 目录占用的**累计字节数**。`-1` = 未知（首次 [manageCache] 会扫一次并回填）。
+     *
+     * ⚠️ 为什么需要：`save()` 每写一页都会调一次 [manageCache]，而它会 `listFiles()` +
+     * 逐文件 `length()` —— 默认 512MB 上限下约 2000 个文件，外部存储走 FUSE 就是约 4000 次
+     * stat，整章批量翻译等于**每页白扫一遍目录**。上限本身是软预算（不是正确性约束），
+     * 用累计值短路即可。外部改动（系统清缓存 / 用户手动删）只会让累计值**偏大** →
+     * 更早触发一次真实扫描并自行纠正，方向是安全的。
+     */
+    @Volatile
+    private var cachedTotalBytes: Long = -1L
+
     private fun dir(ctx: Context): File =
         File(ctx.applicationContext.getExternalFilesDir(null), DIR_NAME).apply { mkdirs() }
 
@@ -57,17 +69,49 @@ object SrStore {
     private fun markerFile(ctx: Context, mangaId: Long, page: Int): File =
         File(dir(ctx), "${mangaId}_$page.json")
 
-    /** 该页是否已有超分结果（**以文件为准**，不看标记） */
-    fun exists(ctx: Context, mangaId: Long, page: Int): Boolean =
-        imageFile(ctx, mangaId, page).let { it.isFile && it.length() > 0L }
+    /**
+     * 标记里记的**归属指纹**字段名。配合 [ImportedManga.translationKey] 用。
+     *
+     * ⚠️ **为什么必须有指纹**：漫画 id = 书架最大 id + 1，**删书后重新导入会复用同一个 id**
+     * （与 `imported_page_translation` 那边是同一个坑）。只按 `mangaId_page` 命名的话，
+     * 删书的异步清理一旦丢失或还在途中，新书就会把**旧书的放大页**当成自己的底图渲染出来 ——
+     * 用户看到的是完全不相干的图，且没有任何报错。
+     */
+    private const val KEY_FIELD = "key"
 
-    /** 该页超分结果用的模型名（没有/标记损坏 → null） */
-    fun modelOf(ctx: Context, mangaId: Long, page: Int): String? = try {
+    /**
+     * 该页是否有**属于这本书**的超分结果。
+     *
+     * 真值口径：图片文件在且非空 **且** 标记里的指纹与 [mangaKey] 相符。
+     * ⚠️ 标记缺失/损坏一律算"不是这本书的"（宁可回落原图，也不冒渲染别人页面的风险）——
+     * 与 `srBaseFor` 里"尺寸异常就宁可回落原图"同一条取舍。
+     */
+    fun exists(ctx: Context, mangaId: Long, page: Int, mangaKey: String): Boolean {
+        if (mangaKey.isEmpty()) return false
+        val img = imageFile(ctx, mangaId, page)
+        if (!img.isFile || img.length() <= 0L) return false
+        return readMarker(ctx, mangaId, page)?.optString(KEY_FIELD) == mangaKey
+    }
+
+    /** 标记内容（文件不在/解析失败 → null）。 */
+    private fun readMarker(ctx: Context, mangaId: Long, page: Int): JSONObject? = try {
         val f = markerFile(ctx, mangaId, page)
-        if (!f.isFile) null else JSONObject(f.readText()).optString("model").takeIf { it.isNotEmpty() }
+        if (!f.isFile) null else JSONObject(f.readText())
     } catch (e: Throwable) {
         LogCollector.w(TAG, "读超分标记失败: ${e.message}")
         null
+    }
+
+    /**
+     * 该页超分结果用的模型名。**必须属于 [mangaKey] 这本书**，否则 null。
+     *
+     * 指纹对但 `model` 字段为空 → 返回 [UNKNOWN_MODEL]（文件确实是超分图，只是不知道谁超的）。
+     */
+    fun modelOf(ctx: Context, mangaId: Long, page: Int, mangaKey: String): String? {
+        if (mangaKey.isEmpty()) return null
+        val m = readMarker(ctx, mangaId, page) ?: return null
+        if (m.optString(KEY_FIELD) != mangaKey) return null
+        return m.optString("model").takeIf { it.isNotEmpty() }
     }
 
     /**
@@ -79,21 +123,21 @@ object SrStore {
      * - 换了模型但还没重超 → 签名跟着变 → 白作废一次渲染缓存（内容其实没变）
      * - 反过来更糟：重超完成、文件已换，若签名还跟着"当前选中"走就可能**不变** →
      *   旧的渲染被别人当成新结果返回
-     *
-     * 标记缺失/损坏时返回 [UNKNOWN_MODEL]（**文件确实是超分图**，只是不知道谁超的 —— 不能当成"没超分"）。
      */
-    fun storedModelOrNull(ctx: Context, mangaId: Long, page: Int): String? {
-        if (!exists(ctx, mangaId, page)) return null
-        return modelOf(ctx, mangaId, page) ?: UNKNOWN_MODEL
+    fun storedModelOrNull(ctx: Context, mangaId: Long, page: Int, mangaKey: String): String? {
+        if (!exists(ctx, mangaId, page, mangaKey)) return null
+        return modelOf(ctx, mangaId, page, mangaKey) ?: UNKNOWN_MODEL
     }
 
-    /** 超分图存在但标记丢了时的占位模型名 */
+    /** 超分图存在但标记里没有模型名时的占位模型名 */
     const val UNKNOWN_MODEL = "-"
 
     /**
      * 写入一页的超分结果（**覆盖**已有文件 —— 用户口径"只保留一份"）。
      *
      * @param bitmaps 传进来的 2x 底图；本函数**不回收**它（归调用方）。
+     * @param mangaKey 这本书的身份指纹（`ImportedManga.translationKey`）。**必填**：
+     *   id 会被复用（见 [exists]），标记里没有它就无法证伪"这是别人书的放大页"。
      * @return 落盘成功
      */
     fun save(
@@ -102,11 +146,19 @@ object SrStore {
         page: Int,
         bitmap: Bitmap,
         modelName: String,
+        mangaKey: String,
         limitMb: Int = DEFAULT_LIMIT_MB
     ): Boolean {
         if (bitmap.width <= 0 || bitmap.height <= 0) return false
+        if (mangaKey.isEmpty()) {
+            // 没有指纹就写不出可被认领的结果 —— 与其留一个没人能用/可能被别人认领的孤儿文件，不如不写
+            LogCollector.e(TAG, "超分落盘被拒：缺少身份指纹 (mangaId=$mangaId page=$page)")
+            return false
+        }
         val img = imageFile(ctx, mangaId, page)
         return try {
+            // 同一页是**覆盖写**（文件名不含模型 id）→ 算增量时要把旧的那份扣掉
+            val prevLen = if (img.isFile) img.length() else 0L
             // ⚠️ `CompressFormat.WEBP` 在 API 30+ 已废弃，但它的语义就是"有损 WEBP"（quality 生效）。
             //    新常量只在 30+ 存在，所以按版本分流 —— 写死 WEBP_LOSSY 会让 minSdk 29 崩。
             @Suppress("DEPRECATION")
@@ -121,10 +173,14 @@ object SrStore {
                 img.delete()
                 return false
             }
-            // 标记：只记"是哪个模型超的"，不参与真值判断
-            runCatching {
+            // 标记：**归属指纹 + 是哪个模型超的**。
+            // ⚠️ 指纹现在是**真值的一部分**（见 [exists]），不再只是"参考信息" ——
+            //    所以这次写失败不能像以前那样只记个 W 就算落盘成功：那份图将永远认领不了，
+            //    留着只会占缓存额度。写失败就把图一起删掉，如实返回 false（上层会提示保存失败）。
+            val markerWritten = runCatching {
                 markerFile(ctx, mangaId, page).writeText(
                     JSONObject()
+                        .put(KEY_FIELD, mangaKey)
                         .put("model", modelName)
                         .put("scale", 2)
                         .put("w", bitmap.width)
@@ -132,7 +188,13 @@ object SrStore {
                         .put("ts", System.currentTimeMillis())
                         .toString()
                 )
-            }.onFailure { LogCollector.w(TAG, "写超分标记失败: ${it.message}") }
+            }.onFailure { LogCollector.e(TAG, "写超分标记失败: ${it.message}") }.isSuccess
+            if (!markerWritten) {
+                img.delete()
+                return false
+            }
+            // 维护累计值（未知时保持 -1：首次 manageCache 会扫一次并回填），再决定要不要淘汰
+            if (cachedTotalBytes >= 0) cachedTotalBytes += img.length() - prevLen
             manageCache(ctx, limitMb)
             LogCollector.d(TAG, "超分落盘: ${img.name} ${bitmap.width}x${bitmap.height} " +
                     "${img.length() / 1024}KB model=$modelName")
@@ -144,10 +206,14 @@ object SrStore {
         }
     }
 
-    /** 读取一页的超分底图（失败 → null，调用方回退原图） */
-    fun load(ctx: Context, mangaId: Long, page: Int): Bitmap? {
+    /**
+     * 读取一页的超分底图（失败 / 不属于这本书 → null，调用方回退原图）。
+     *
+     * ⚠️ 先校验归属再解码：只按 id 取图正是"删书后 id 被复用 → 新书渲染出旧书放大页"的入口。
+     */
+    fun load(ctx: Context, mangaId: Long, page: Int, mangaKey: String): Bitmap? {
+        if (!exists(ctx, mangaId, page, mangaKey)) return null
         val f = imageFile(ctx, mangaId, page)
-        if (!f.isFile || f.length() <= 0L) return null
         return try {
             // 刷新 LRU 时间戳：读过的文件不该先被淘汰
             f.setLastModified(System.currentTimeMillis())
@@ -207,6 +273,9 @@ object SrStore {
     fun manageCache(ctx: Context, limitMb: Int) {
         if (limitMb < 0) return
         val limit = limitMb.toLong() * 1024L * 1024L
+        // 已知占用明显低于上限（留 10% 余量吸收并发写入）→ 不必扫目录（见 [cachedTotalBytes]）
+        val known = cachedTotalBytes
+        if (known >= 0 && known <= limit - limit / 10) return
         val files = dir(ctx).listFiles()?.sortedBy { it.lastModified() } ?: return
         var total = files.sumOf { it.length() }
         for (f in files) {
@@ -222,5 +291,6 @@ object SrStore {
                 }
             }
         }
+        cachedTotalBytes = total
     }
 }

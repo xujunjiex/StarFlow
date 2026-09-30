@@ -39,6 +39,22 @@ object LibArchiveExtractor {
     private const val REPORT_INTERVAL_MS = 80L
 
     /**
+     * **解压炸弹防线**（包是用户从第三方拿来的，不能假定善意）。
+     *
+     * 之前这里**什么上限都没有**：不数条目、不累计字节、也不看剩余空间 ——
+     * 一个精心构造的 rar/7z 能把 `/data` 直接填满（失败路径虽然会 `deleteRecursively`，
+     * 但填满那一刻系统已经卡死了），而"几百万个空条目"也能把导入无限拖住。
+     */
+    /** 累计解压字节上限 = max(包大小 × 本系数, [MIN_TOTAL_BUDGET_BYTES])。正常漫画包倍率≈1。 */
+    private const val MAX_EXPANSION_RATIO = 200L
+    /** 上限的下限：小包也要给足空间，避免正常漫画被误拦。 */
+    private const val MIN_TOTAL_BUDGET_BYTES = 512L * 1024 * 1024
+    /** 条目数上限。 */
+    private const val MAX_ENTRIES = 200_000
+    /** 开工前要求的最小剩余空间（不足就直接拒绝，别等写满盘）。 */
+    private const val MIN_FREE_BYTES = 50L * 1024 * 1024
+
+    /**
      * 把 [archive] 解压到 [destDir]（保留包内相对路径），返回解压出的文件数。
      *
      * @param filter 只解压返回 true 的条目（漫画只取图片，缩略图/说明文本一律跳过省磁盘）
@@ -52,9 +68,24 @@ object LibArchiveExtractor {
     ): Int = withContext(Dispatchers.IO) {
         val totalBytes = archive.length()
         destDir.mkdirs()
+        // ⚠️ 先看剩余空间（见上面的「解压炸弹防线」）：不够就当面拒绝，
+        //    而不是写到一半把 /data 填满（那时系统层面已经很难恢复了）
+        val freeBytes = runCatching { destDir.usableSpace }.getOrDefault(0L)
+        val freeNeeded = maxOf(totalBytes, MIN_FREE_BYTES)
+        if (freeBytes in 1 until freeNeeded) {
+            LogCollector.e(
+                TAG,
+                "剩余空间不足，拒绝解压: 可用 ${freeBytes / 1024 / 1024}MB，" +
+                    "需要至少 ${freeNeeded / 1024 / 1024}MB（${archive.name}）",
+            )
+            error("存储空间不足，无法解压 ${archive.name}")
+        }
+        val expansionBudget = maxOf(totalBytes * MAX_EXPANSION_RATIO, MIN_TOTAL_BUDGET_BYTES)
         val rootPath = destDir.canonicalPath
         val counting = CountingInputStream(archive.inputStream().buffered())
         var extracted = 0
+        var entryCount = 0
+        var writtenBytes = 0L
         var lastReport = 0L
         var handle = 0L
         try {
@@ -62,6 +93,10 @@ object LibArchiveExtractor {
             var entry: Long
             while (Archive.readNextHeader(handle).also { entry = it } != 0L) {
                 coroutineContext.ensureActive()
+                if (++entryCount > MAX_ENTRIES) {
+                    LogCollector.e(TAG, "条目数超过上限 $MAX_ENTRIES，判定为异常包: ${archive.name}")
+                    error("压缩包条目过多，已中止（${archive.name}）")
+                }
                 val name = entryName(entry) ?: continue
                 val relative = name.replace('\\', '/').trimStart('/')
                 if (relative.isEmpty()) continue
@@ -84,7 +119,16 @@ object LibArchiveExtractor {
                     continue
                 }
                 target.parentFile?.mkdirs()
-                FileOutputStream(target).use { output -> drainData(handle, output) }
+                val written = FileOutputStream(target).use { output -> drainData(handle, output) }
+                writtenBytes += written
+                if (writtenBytes > expansionBudget) {
+                    LogCollector.e(
+                        TAG,
+                        "解压总量超过上限 ${expansionBudget / 1024 / 1024}MB" +
+                            "（包 ${totalBytes / 1024 / 1024}MB），判定为解压炸弹: ${archive.name}",
+                    )
+                    error("解压后体积异常，已中止（${archive.name}）")
+                }
                 extracted++
                 val now = System.currentTimeMillis()
                 if (now - lastReport >= REPORT_INTERVAL_MS) {
@@ -133,8 +177,11 @@ object LibArchiveExtractor {
     /**
      * 读干一个条目的数据段。[output] 为 null 时只丢弃（跳过的条目也必须读完，
      * 否则下一个 `readNextHeader` 会读到上一个条目的数据里）。
+     *
+     * @return 实际写出去的字节数（调用方累计它来防解压炸弹）
      */
-    private suspend fun drainData(handle: Long, output: java.io.OutputStream?) {
+    private suspend fun drainData(handle: Long, output: java.io.OutputStream?): Long {
+        var written = 0L
         val buffer = ByteBuffer.allocateDirect(BUFFER_SIZE)
         while (true) {
             coroutineContext.ensureActive()
@@ -145,9 +192,11 @@ object LibArchiveExtractor {
                 val bytes = ByteArray(buffer.remaining())
                 buffer.get(bytes)
                 output.write(bytes)
+                written += bytes.size
             }
             buffer.clear()
         }
+        return written
     }
 
     private fun stat(entry: Long) = ArchiveEntry.stat(entry)

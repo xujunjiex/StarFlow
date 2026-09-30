@@ -272,10 +272,13 @@ class ModelDownloadService : LifecycleService() {
     }
 
     internal suspend fun downloadModelInternal(modelKey: ModelKey, isResume: Boolean) {
+        // 本次是否**报过失败**。决定 finally 里要不要保留通知（见下）。
+        var failed = false
         try {
             val modelInfo = repo.getModelInfo(modelKey) ?: run {
                 LogCollector.e(TAG, "ModelInfo not found: $modelKey")
-            reportDownloadFailure(modelKey, getString(R.string.model_download_err_no_entry))
+                failed = true
+                reportDownloadFailure(modelKey, getString(R.string.model_download_err_no_entry))
                 return
             }
             if (modelInfo.files.size == 1) {
@@ -287,10 +290,15 @@ class ModelDownloadService : LifecycleService() {
             // propagate（用户主动取消不算失败，不给提示）
         } catch (e: Throwable) {
             // ⚠️ 兜底：编排层任何未预期异常也要让用户看见，不能只进日志
+            failed = true
             reportDownloadFailure(modelKey, reasonOf(e))
         } finally {
             activeJobs.remove(modelKey)
-            clearNotification(modelKey)
+            // ⚠️ **失败时保留通知**：`reportDownloadFailure` 刚把失败通知 post 出去，这里再无条件
+            //    `clearNotification` 会在几微秒后把它抹掉（同一个 notification id）——
+            //    「③ 通知栏同步」这条渠道等于空操作，用户切到别的 app / 熄屏就只剩一条错过的
+            //    Toast。而这正是「下载失败一律给提示、杜绝静默失败」那次要消灭的场景。
+            if (!failed) clearNotification(modelKey)
             val next = repo.dequeueNext()
             if (next != null) {
                 LogCollector.d(TAG, "启动队列中的下一个下载: $next")
@@ -308,7 +316,7 @@ class ModelDownloadService : LifecycleService() {
      * ⚠️ **不允许静默失败**（用户硬要求）。这里统一做三件事：
      *   ① 底部 Toast，**带具体原因**（网络不通 / HTTP 404 / MD5 不匹配 / 磁盘满 / 模型条目缺失…）；
      *   ② 状态回落到 `Partial`，行内文案变成可重试的「未下载」，不会卡在「下载中 x%」；
-     *   ③ 通知栏同步（服务在前台时用户可能不在模型页）。
+     *   ③ **失败专用通知**（服务在前台时用户可能不在模型页）。
      *
      * ⚠️ 之所以把原因拼进文案：用户口径「不要搞这么模糊的提示信息，到底是什么原因写清楚」——
      * 只说"下载失败"用户没法判断是自己网络问题还是链接失效。
@@ -317,7 +325,10 @@ class ModelDownloadService : LifecycleService() {
         val name = modelKey.displayName()
         LogCollector.e(TAG, "下载失败: $name — $reason")
         runCatching { repo.markPartial(modelKey) }   // suspend：本函数也是 suspend
-        runCatching { updateNotification(modelKey, repo.getState(modelKey)) }
+        // ⚠️ 走**失败专用**通知，不要走 `updateNotification(state)`：那时状态已回落成 `Partial`，
+        //    那条通知写的是「未下载完整」—— 既没说"失败"、也不含原因，而失败恰恰是用户
+        //    唯一需要知道原因的场景。
+        runCatching { notifyDownloadFailed(modelKey, reason) }
         // UiUtils.showToast 内部会自动切主线程（Service 的协程不在主线程上）
         runCatching {
             UiUtils.showToast(
@@ -326,6 +337,30 @@ class ModelDownloadService : LifecycleService() {
                 isShort = false,
             )
         }.onFailure { LogCollector.w(TAG, "失败提示弹不出来: ${it.message}") }
+    }
+
+    /**
+     * 下载失败的**通知栏**呈现（[reportDownloadFailure] 的第 ③ 条渠道）。
+     *
+     * ⚠️ 用同一个 `NOTIFICATION_ID_BASE + stableId`（下次下载会自然覆盖），但内容与进度通知
+     * 不同：标题就是「下载失败」，正文带**具体原因**。调用方必须保证失败后**不要**再
+     * `clearNotification(modelKey)` 把它抹掉（见 `downloadModelInternal` 的 finally）。
+     */
+    private fun notifyDownloadFailed(modelKey: ModelKey, reason: String) {
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_download)
+            .setContentTitle(getString(R.string.model_download_failed, modelKey.displayName()))
+            .setContentText(reason)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(reason))
+            .setOngoing(false)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+        try {
+            androidx.core.app.NotificationManagerCompat.from(this)
+                .notify(NOTIFICATION_ID_BASE + modelKey.stableId, builder.build())
+        } catch (e: SecurityException) {
+            LogCollector.w(TAG, "通知权限缺失，无法更新通知: ${e.message}")
+        }
     }
 
     /** 把异常转成一句人话（尽量保留 HTTP 码 / 服务器说明），别把整段堆栈丢给用户。 */

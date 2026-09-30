@@ -63,6 +63,24 @@ object ImportedMangaStore {
         }
     }
 
+    /**
+     * **只改 `chapters` 一个字段**（锁内读-改-写）。
+     *
+     * ⚠️ 需要它的原因：章节回填（[MangaChapterMigrator]）与阅读器侧自愈都是**秒级长循环**，
+     * 而 [update] 收的是**整条实体**且实现是 `list[idx] = manga` —— 拿循环开始时的快照去写，
+     * 会把这段时间里用户翻页写的 `lastReadPage`、改过的书名**整条回滚**
+     * （表现是「翻了几页后进度自己退回去」，而且怎么复现都说不清）。
+     * 凡是只改某一个字段的写入，都走这里，不要再 `update(manga.copy(...))`。
+     */
+    @Synchronized
+    fun setChapters(context: Context, id: Long, chapters: List<MangaChapter>) {
+        val list = load(context).toMutableList()
+        val idx = list.indexOfFirst { it.id == id }
+        if (idx < 0) return
+        list[idx] = list[idx].copy(chapters = chapters)
+        save(context, list)
+    }
+
     private fun ImportedManga.toJson(): JSONObject = JSONObject().apply {
         put("id", id)
         put("title", title)
@@ -75,6 +93,13 @@ object ImportedMangaStore {
         put("description", description)
         put("translatedPath", translatedPath ?: JSONObject.NULL)
         put("lastReadPage", lastReadPage)
+        // ⚠️ 页序迁移标记**必须持久化**：不写的话读回恒为默认 0，`MangaPageOrderMigrator`
+        // 的 "已经迁过就跳过" 判据永远为假 → **每次打开阅读器都再跑一次页序置换**
+        // （置换不是幂等的，译文会被一次次挪到别的图上）。
+        // 只在非 0 时写，保持与旧清单的兼容（老条目读回 0 = 还没迁移，正是想要的语义）。
+        if (pageOrderVersion != 0) put("pageOrderVersion", pageOrderVersion)
+        // 已施加过的置换（幂等判据，见 ImportedManga.pageOrderPlan）；空串 = 没施加过
+        if (pageOrderPlan.isNotEmpty()) put("pageOrderPlan", pageOrderPlan)
         // 章节表存成 JSON 串（空串 = 无章节信息，与旧版清单二进制兼容：读回空表）
         put("chapters", MangaChapter.listToJson(chapters))
     }
@@ -91,6 +116,9 @@ object ImportedMangaStore {
         description = optString("description", ""),
         translatedPath = if (isNull("translatedPath")) null else getString("translatedPath"),
         lastReadPage = optInt("lastReadPage", 0),
+        // 缺失 = 0 = 还没迁移（老条目语义），与 toJson 的「非 0 才写」配对
+        pageOrderVersion = optInt("pageOrderVersion", 0),
+        pageOrderPlan = optString("pageOrderPlan", ""),
         chapters = MangaChapter.listFromJson(optString("chapters", ""))
     )
 }

@@ -277,10 +277,18 @@ class SrReaderWiringTest {
         val ctl = controller()
         val i = ctl.indexOf("private suspend fun srBaseFor(")
         assertTrue("找不到 srBaseFor", i > 0)
-        val body = ctl.substring(i, i + 3500)   // 只看 srBaseFor 这一段的固定窗口（~50 行）
+        // ⚠️ 按**函数边界**截取，不要用魔法窗口：`srBaseFor` 已经 3000+ 字符，
+        //    写死 `i + 3500` 只剩 14% 余量 —— 函数一变长，后半段断言就静默不再覆盖，
+        //    而"再加一处 srModelByPage.remove"恰恰最可能出现在那里
+        //    （ChapterTranslationCancelGuardTest 里记着同一个教训）。
+        val end = ctl.indexOf("\n    private suspend fun ", i + 1)
+        assertTrue("取不到 srBaseFor 的下一个函数边界（截取逻辑失效）", end > i)
+        val body = ctl.substring(i, end)
         assertTrue(
-            "结果的存在性必须只由**文件**决定（storedModelOrNull）",
-            body.contains("SrStore.storedModelOrNull(context, manga.id, pageIndex)"),
+            "结果的存在性必须只由**本书的文件**决定（storedModelOrNull）",
+            // ⚠️ 必须带上身份指纹（`manga.translationKey`）：漫画 id 会被复用（删书后重导），
+            //    只按 id 取图就是"新书渲染出旧书放大页"的入口。ArgsGuard 见 SrStoreOwnershipTest。
+            body.contains("SrStore.storedModelOrNull(context, manga.id, pageIndex, manga.translationKey)"),
         )
         // 清除只允许发生在「文件确实不存在」那一支里，且必须排在「切回原图」早退**之前**
         val nullBranch = body.indexOf("if (storedModel == null) {")
@@ -367,14 +375,33 @@ class SrReaderWiringTest {
         val sheet = menuSheet()
         val act = activity()
         val ctl = controller()
-        assertTrue("预览格要优先用超分预览", sheet.contains("= state.srPreviewBitmap"))
-        assertTrue("state 要有这一格", sheet.contains("val srPreviewBitmap: Bitmap? = null"))
-        assertTrue("宿主必须准备它", act.contains("translationController?.srPreviewFor(currentPage, bmp.width)"))
+        // ⚠️ 取值**有优先级**：先超分结果、再 Anime4K 增强（两者互斥，与 resolveSteps 同一口径）。
+        //    以前只取 `state.srPreviewBitmap` —— 超分关着时它恒为 null，于是只开 Anime4K 的用户
+        //    右侧格子一直是原图、**切档位看不到任何变化**（2026-10 阶段性审查 P2）。
+        assertTrue(
+            "预览格要先取超分结果、再回落 Anime4K 增强",
+            sheet.contains("srPreview ?: state.anime4kPreviewBitmap"),
+        )
+        assertTrue(
+            "超分那一份只在**开关此刻是开的**时候才算数（面板里就能关掉它）",
+            sheet.contains("if (srOn) state.srPreviewBitmap else null"),
+        )
+        assertTrue("state 要有超分那一格", sheet.contains("val srPreviewBitmap: Bitmap? = null"))
+        assertTrue("state 要有 Anime4K 那一格", sheet.contains("val anime4kPreviewBitmap: Bitmap? = null"))
+        assertTrue("宿主必须准备超分预览", act.contains("translationController?.srPreviewFor(currentPage, bmp.width)"))
         assertTrue("要传给面板", act.contains("srPreviewBitmap = srPreview,"))
+        assertTrue("Anime4K 预览也要传给面板", act.contains("anime4kPreviewBitmap = anime4kPreview,"))
         assertTrue("控制器提供按目标宽度缩放的入口", ctl.contains("suspend fun srPreviewFor(pageIndex: Int, targetWidth: Int): Bitmap?"))
         // ⚠️ 必须在 IO 侧做（预览格是主线程渲染的）
         assertTrue("缩放必须在 IO 线程", ctl.contains("= withContext(Dispatchers.IO) {"))
         assertFalse("不许在面板里读盘/缩放", sheet.contains("SrStore"))
+        // ⚠️ 切 Anime4K 档位时面板要**自己异步重算**，且绝不能在主线程跑推理
+        assertTrue("切档要触发异步重算", sheet.contains("refreshEnhancedPreviewAsync()"))
+        assertTrue(
+            "Anime4K 推理必须在 IO 线程",
+            Regex("withContext\\(Dispatchers\\.IO\\)\\s*\\{[^}]*enhanceWithAnime4k").containsMatchIn(sheet),
+        )
+        assertTrue("宿主也要在 IO 侧算 Anime4K 预览", act.contains("anime4kPreviewFor(previewBmp)"))
     }
     @Test
     fun perPageSrButtonHasThreeSemanticsAndHidesWhenOff() {

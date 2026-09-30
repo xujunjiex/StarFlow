@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 
@@ -64,7 +65,9 @@ object SrProcessor {
         context: Context,
         mangaId: Long,
         page: Int,
-        src: Bitmap
+        src: Bitmap,
+        /** 这本书的身份指纹（`ImportedManga.translationKey`）；id 会被复用，落盘必须带上它 */
+        mangaKey: String,
     ): SrOutcome = withContext(Dispatchers.IO) {
         val app = context.applicationContext
         val prefs = PreferenceManager.getDefaultSharedPreferences(app)
@@ -93,31 +96,63 @@ object SrProcessor {
                 if (!currentCoroutineContext().isActive) return@withContext SrOutcome.fail(SrFailReason.EXCEPTION, "cancelled while waiting for OcrLock")
                 delay(LOCK_POLL_MS)
             }
-            if (!OcrLock.tryAcquire()) {
+            // ⚠️ 必须用**带令牌**的 acquire/release，并在锁内持续打心跳。
+            //    `tryAcquire()` 丢掉令牌、`release()` 是无令牌版（无条件清零）—— 而超分推理
+            //    （ncnn/Vulkan，重档位分钟级）远超 `OcrLock.STALE_TIMEOUT_MS`(30s)，于是：
+            //    ① `maybeRecoverStale()` 判定持有者已死 → 强制放锁 → OCR 与超分同时在跑
+            //       （正是这把锁要防的事：单例 ONNX 引擎被并发调用）；
+            //    ② 本协程收尾的无令牌 release 会把**新持有者**的锁一起放掉 → 第三个任务再进来。
+            //    `OcrLock` 的 KDoc 明写「长临界区必须用令牌版」，这里是全项目最后一处漏改。
+            val lockToken = OcrLock.acquire()
+            if (lockToken == 0L) {
                 LogCollector.d(TAG, "超分等锁失败（OCR 正忙），本次跳过: $k")
                 return@withContext SrOutcome.fail(SrFailReason.BUSY, "OcrLock busy")
+            }
+            // ⚠️ 继承当前派发器（本函数体已经在 `withContext(Dispatchers.IO)` 里）——
+            //    写死 `launch(Dispatchers.IO)` 等于在已有 IO 上下文里再往真实线程池扔一个任务，
+            //    对单测（`runTest` 虚拟时钟）是非确定性的。
+            val heartbeatJob = launch {
+                while (isActive) {
+                    OcrLock.heartbeat(lockToken)
+                    delay(LOCK_HEARTBEAT_MS)
+                }
             }
             val attempt: SrOutcome
             try {
                 attempt = SuperResolutionEngines.upscaleForReader(app, prefs, src)
             } finally {
-                OcrLock.release()
+                heartbeatJob.cancel()
+                OcrLock.release(lockToken)
             }
             if (!attempt.ok) {
                 LogCollector.d(TAG, "超分未产出: ${attempt.reason} ${attempt.detail ?: ""} ($k)")
                 return@withContext attempt
             }
-            out = attempt.bitmap
+            // `attempt.ok` 为真但 bitmap 为空只可能来自 `SrOutcome.stored()`（本函数不用它），兜底当失败
+            val product: Bitmap = attempt.bitmap
+                ?: return@withContext SrOutcome.fail(SrFailReason.INFERENCE_FAILED)
+            // 先交出所有权：下面任何一条提前 return 都由 finally 负责回收
+            out = product
+            // ⚠️ 产物**没放大**就不是"超分结果"：`resolveSteps` 在「超分开着 + 模型不可用 +
+            //    Anime4K 开着」时只给出 ANIME4K 一步，而 Anime4K 刻意不放大 → 落盘会造出
+            //    「界面显示已超分、画面毫无变化」的幽灵状态（三枚按钮都在、切换也没区别），
+            //    而且这个 1x 文件正是 `srPreviewFor` 早退分支（返回被回收的位图）的触发条件。
+            //    返回明确原因，让用户看到"去选/去下载模型"，Anime4K 只作即时显示底图。
+            if (product.width <= src.width) {
+                LogCollector.d(TAG, "超分产物未放大（${product.width}px <= 源 ${src.width}px），不落盘: $k")
+                return@withContext SrOutcome.fail(SrFailReason.NOT_UPSCALED)
+            }
             val model = SrModelManager.getActiveKey(prefs)?.name ?: "-"
-            val saved = out != null && SrStore.save(app, mangaId, page, out!!, model, cacheLimitMb(prefs))
+            val saved = SrStore.save(app, mangaId, page, product, model, mangaKey, cacheLimitMb(prefs))
             if (!saved) {
                 LogCollector.e(TAG, "超分落盘失败: $k")
                 SrOutcome.fail(SrFailReason.SAVE_FAILED)
             } else {
-                // 产物已写盘 → 把图交回给调用方（下面 finally 不再回收它）
-                val produced = out!!
-                out = null
-                SrOutcome.ok(produced)
+                // ⚠️ 产物**已写盘**，显示路径是 `SrStore.load` 从磁盘重读的 —— 没有任何
+                //    调用方需要这张图（全项目零处读 `outcome.bitmap`）。以前把它交回去，
+                //    结果是每个调用点都漏一次 recycle：2x 一页最大 ~40MB，整章批量 =
+                //    每页丢一块。所有权留在本函数，由下面 finally 回收。
+                SrOutcome.stored()
             }
         } catch (e: Throwable) {
             // 超分失败必须静默降级：用户看到的还是原图，绝不因为它翻不了页
@@ -132,6 +167,13 @@ object SrProcessor {
 
     /** 等 OCR 锁的轮询间隔 */
     private const val LOCK_POLL_MS = 50L
+
+    /**
+     * 持锁期间的心跳间隔。
+     * 必须**远小于** [OcrLock.STALE_TIMEOUT_MS]（30s）—— 超分单页推理可达分钟级，
+     * 不打心跳就会被自愈机制误判成"持有者已死"。
+     */
+    private const val LOCK_HEARTBEAT_MS = 5_000L
 
     /** 缓存上限（MB）；用户没设过 → [SrStore.DEFAULT_LIMIT_MB] */
     private fun cacheLimitMb(prefs: SharedPreferences): Int =

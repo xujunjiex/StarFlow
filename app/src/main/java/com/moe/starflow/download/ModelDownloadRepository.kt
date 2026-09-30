@@ -297,17 +297,25 @@ class ModelDownloadRepository private constructor(private val context: Context) 
         stateMutex.withLock {
             val info = getModelInfo(modelKey) ?: return@withContext
             queuedKeys.remove(modelKey)
+            // ⚠️ 必须看 delete() 的返回值：删不掉（文件被占用 / 外部目录异常）却无条件写成 Idle，
+            //    结果是「界面说没下载、磁盘上文件还在」—— 超分照样能用（`SrModelManager.isDownloaded`
+            //    直接查文件），重进页面 `computeStateFromDisk` 又会把它翻回「已下载」，前后矛盾且零反馈。
+            var failed = false
             for (fileInfo in info.files) {
                 val target = File(targetFileFor(modelKey).parentFile, fileInfo.fileName)
-                if (target.exists()) target.delete()
+                if (target.exists() && !target.delete()) failed = true
                 val part = File(targetFileFor(modelKey).parentFile, fileInfo.fileName + ".part")
-                if (part.exists()) part.delete()
+                if (part.exists() && !part.delete()) failed = true
                 // ⚠️ 必须一并删掉重打标标记 `<file>.retagged`：它记的是**重打标后**的 MD5，
                 //    留着的话下次下载完 verifyFile 会拿它校验刚下好的官方原件 → 判损坏 → 删 →
                 //    重下 → 死循环；即便侥幸过了，ensureRetagged 也会以为文件已改好而跳过改写。
                 com.moe.starflow.llamacpp.LlamaCppPaths.retagMarker(target).delete()
             }
-            stateMap[modelKey] = DownloadState.Idle
+            if (failed) {
+                LogCollector.e(TAG, "删除模型文件失败（文件被占用或目录异常）: $modelKey")
+            }
+            // 状态取**磁盘真值**而不是无条件 Idle：真删干净才是 Idle，没删掉就仍是「未下载完整」可重试
+            stateMap[modelKey] = computeStateFromDisk(modelKey)
             emitSnapshot()
         }
     }

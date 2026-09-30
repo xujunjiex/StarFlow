@@ -190,9 +190,12 @@ object TranslateUtils {
         val currentContextBudget = ContextBudget.budgetOf(prefs)
 
         // 更新 AI 上下文（唯一入口；NLLB 等纯机器翻译不实现 ContextAwareTranslation，会被跳过）
+        // ⚠️ `contextHistory` 可能是**跨页共享**的同一份（阅读器的 N 个并发翻译工人共用
+        //    `ReaderTranslationController.readerContextHistory`）→ 读也要在同一把锁里做快照，
+        //    否则「A 迭代读」与「B addLast」并发就是 ConcurrentModificationException。
         ContextBudget.applyTo(
             translator,
-            contextHistory.toList(),
+            synchronized(contextHistory) { contextHistory.toList() },
             currentContextEnabled,
             prefs
         )
@@ -323,11 +326,15 @@ object TranslateUtils {
         LogCollector.d(TAG, "translateBubblesBatch: parsed ${translations.size} translations")
 
         // 更新 AI 上下文历史（仅支持上下文的引擎；按 token 预算裁剪，唯一实现在 ContextBudget）
+        // ⚠️ 写入必须与上面的快照读**共用同一把锁**（对象锁）：`addLast` + `trimInPlace`
+        //    是两步结构性修改，N 个并发工人同时做会丢轮次并掀翻别的工人的迭代。
         if (currentContextEnabled && translations.isNotEmpty()) {
             val sourceText = bubbles.map { it.second }.joinToString("\n")
             val translatedText = translations.joinToString("\n")
-            contextHistory.addLast(Pair(sourceText, translatedText))
-            val kept = ContextBudget.trimInPlace(contextHistory, currentContextBudget)
+            val kept = synchronized(contextHistory) {
+                contextHistory.addLast(Pair(sourceText, translatedText))
+                ContextBudget.trimInPlace(contextHistory, currentContextBudget)
+            }
             LogCollector.d(TAG, "上下文已更新: $kept 轮（预算 $currentContextBudget tok）")
         }
 

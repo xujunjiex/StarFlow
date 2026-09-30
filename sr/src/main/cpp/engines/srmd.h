@@ -13,7 +13,7 @@
 class SRMD
 {
 public:
-    SRMD(int gpuid, bool tta_mode = false);
+    SRMD(int gpuid, bool tta_mode = false, int num_threads = 1);
     ~SRMD();
 
 #if _WIN32

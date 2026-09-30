@@ -6,6 +6,7 @@ import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
 import android.content.Intent
 import android.content.res.Configuration
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
@@ -36,6 +37,9 @@ import com.moe.starflow.data.TranslationCacheManager
 import com.moe.starflow.mangaimport.data.ImportedManga
 import com.moe.starflow.mangaimport.data.ImportedMangaStore
 import com.moe.starflow.mangaimport.data.MangaPageOrderMigrator
+import com.moe.starflow.sr.SuperResolutionEngines
+import com.moe.starflow.sr.anime4k.Anime4kMode
+import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.mangaimport.data.MangaChapter
 import com.moe.starflow.mangaimport.data.chapterIndexOf
 import com.moe.starflow.mangaimport.data.mangaChapterLabel
@@ -218,10 +222,13 @@ class MangaReaderActivity : AppCompatActivity() {
         // 这样书架的「共N章 / 第x章」不会长期显示旧数据。写清单是「读-改-写」，
         // 放在 IO 线程做，别卡住开阅读器
         if (chapters.isNotEmpty() && chapters != manga.chapters) {
-            val updated = manga.copy(chapters = chapters)
-            manga = updated
+            val latest = chapters
+            manga = manga.copy(chapters = latest)
             lifecycleScope.launch(Dispatchers.IO) {
-                runCatching { ImportedMangaStore.update(applicationContext, updated) }
+                // ⚠️ 用 setChapters（锁内只改这一个字段），**不要** update(manga.copy(...))：
+                //    那会拿"进入阅读器那一刻的整条快照"整条替换，把这期间写进去的
+                //    lastReadPage（翻页即写）回滚掉 —— 表现是「翻了几页后进度自己退回去」。
+                runCatching { ImportedMangaStore.setChapters(applicationContext, manga.id, latest) }
             }
         }
 
@@ -256,6 +263,12 @@ class MangaReaderActivity : AppCompatActivity() {
                 loadFull = { source.loadFull(it) },
                 currentPage = { currentPage },
                 pageCount = { source.size },
+                // 上屏超采样倍率 = 显示宽 / 页图宽（见 ReaderTranslationController.renderScaleFor）。
+                // 取实际阅读区宽度；未布局时退回屏幕宽（两者在这套全屏布局里一致）。
+                displayWidth = {
+                    binding.viewPager.width.takeIf { it > 0 }
+                        ?: resources.displayMetrics.widthPixels
+                },
             )
             // Webtoon 译图走采样解码（超长页直接全解析会 OOM），气泡坐标按采样比例缩放
             c.bindWebtoonSource(
@@ -389,6 +402,21 @@ class MangaReaderActivity : AppCompatActivity() {
 
     /** 打开面板 / 退出阅读器：把在途翻译**强制退出**并回退手动 → 提示带"回退到手动模式"。 */
     private fun showPausedToManualNotice() = showForceStoppedNotice(toManual = true)
+
+    /**
+     * ⚠️ **少了它，点第二条章节通知「点了没反应」**：`TranslationJobService.openReaderIntent`
+     * 用 `FLAG_ACTIVITY_NEW_TASK or FLAG_ACTIVITY_SINGLE_TOP` 发起，阅读器已经在前台时
+     * 走的是本回调，**不再走 `onCreate` 里那段读 `EXTRA_START_PAGE` 的逻辑** → 页面不跳转。
+     * 小说阅读器为同一个功能实现了它（`NovelReaderActivity.onNewIntent`），漫画侧此前漏了。
+     */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val target = intent.getIntExtra(EXTRA_START_PAGE, -1)
+        if (target < 0 || target >= source.size) return
+        if (target == currentPage) return
+        goToPage(target)
+    }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
@@ -1349,6 +1377,23 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun onFontSizeChangedFromPanel() = invalidateRenderInputsAndReRender()
 
     /** Anime4K 档位变更（阅读器调色面板）：与字号同一条链路 */
+    /**
+     * 调色面板「处理后」格子用的 **Anime4K** 增强图（超分**没有**产出时走的那条路）。
+     *
+     * ⚠️ **必须在 IO 线程调**：`enhanceWithAnime4k` 要建 EGL 上下文 + 编译着色器 +
+     * 跑最多 49 趟 pass，放主线程就是"一开面板就卡死"。
+     * ⚠️ 关着 / 失败 → null（面板回落原图）。失败**只记日志**：这是被动预览，用户没主动要求什么。
+     * ⚠️ 开关一律读 `CustomPreference` 的默认 prefs —— 本 Activity 自持的 `prefs` 是**另一个
+     * 命名文件**，读它永远看不到用户在调色面板改的 Anime4K 档位。
+     */
+    private suspend fun anime4kPreviewFor(src: Bitmap): Bitmap? = withContext(Dispatchers.IO) {
+        val p = CustomPreference.getInstance(applicationContext).getSharedPreferences()
+        if (!Anime4kMode.isEnabled(p)) return@withContext null
+        val r = SuperResolutionEngines.enhanceWithAnime4k(applicationContext, p, src)
+        if (!r.ok) LogCollector.d("MangaReader", "面板 Anime4K 预览未产出: ${r.reason} ${r.detail ?: ""}")
+        r.bitmap
+    }
+
     private fun onAnime4kModeChangedFromPanel() = invalidateRenderInputsAndReRender()
     /** 清除本章译文（二次确认，防误删；用户口径：**只清当前章**，不做整本清理入口）。 */
     private fun confirmClearChapter(chapterIndex: Int = currentChapterIndex()) {
@@ -1542,6 +1587,11 @@ class MangaReaderActivity : AppCompatActivity() {
         // ⚠️ 必须在 controller 判空之前：否则控制器未就绪时整组会留在屏幕上没人收。
         if (chromeHidden || mode == 3) {
             binding.translateGroup.visibility = View.GONE
+            // ⚠️ 超分组必须**一起**收起：`refreshSrButtons` 里那句 `mode == 3 → srGroup GONE`
+            //    在这个早退分支下永远执行不到（它在本函数末尾才被调）→ 从分页模式切到
+            //    连续滑动后，左下角的「超分/切换/删除」三件套会一直压在 Webtoon 上，
+            //    而且点它作用的是 currentPage（Webtoon 没有单页语义）→ 用户看到"点了没反应"。
+            binding.srGroup.visibility = View.GONE
             return
         }
         binding.translateGroup.visibility = View.VISIBLE
@@ -1763,6 +1813,15 @@ class MangaReaderActivity : AppCompatActivity() {
                     translationController?.srPreviewFor(currentPage, bmp.width)
                 }
             }
+            // ⚠️ 超分没有产出时（超分关着 / 没下载模型 → 没有已落盘的超分图），「处理后」预览格
+            //    必须自己跑一遍 **Anime4K**：否则右侧永远等于原图，切 Anime4K 档位看不到任何变化
+            //    （用户报的"切了档预览没反应"）。而在面板里跑推理就是"一点就卡"，
+            //    所以和 srPreview 一样**在 IO 侧算好**再交给面板。
+            val anime4kPreview = if (previewBmp != null && srPreview == null) {
+                withContext(Dispatchers.IO) { anime4kPreviewFor(previewBmp) }
+            } else {
+                null
+            }
 
             // ⚠️ **顺序敏感**：面板一打开，控制器就会回退到手动模式（setPanelOpen → pauseToManual），
             // 所以必须在这里、回退发生**之前**记下模式：
@@ -1785,6 +1844,7 @@ class MangaReaderActivity : AppCompatActivity() {
                     isDarkPanel = dark,
                     previewBitmap = previewBmp,
                     srPreviewBitmap = srPreview,
+                    anime4kPreviewBitmap = anime4kPreview,
                     webtoonTranslated = webtoonTranslated,
                     translateMode = modeBeforeOpen,
                     debounceMs = translationController?.debounceMs?.value ?: 500,

@@ -34,7 +34,9 @@ set(NCNN_DISABLE_RTTI OFF CACHE BOOL "" FORCE)      # 引擎用了多态/异常
 set(NCNN_DISABLE_EXCEPTION OFF CACHE BOOL "" FORCE)
 set(NCNN_SIMPLEOCV OFF CACHE BOOL "" FORCE)
 set(NCNN_PLATFORM_API ON CACHE BOOL "" FORCE)       # Android AAsset / 硬件信息
-set(NCNN_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE) # 静态链进 libstarflow_sr.so
+set(NCNN_SHARED_LIB OFF CACHE BOOL "" FORCE)        # 静态链进 libstarflow_sr.so
+# ⚠️ 变量名必须是 NCNN_SHARED_LIB：原来写的 NCNN_BUILD_SHARED_LIBS 在 ncnn 里**不存在**，
+#    是个静默空操作（碰巧 NCNN_SHARED_LIB 默认就是 OFF 才没出事，改名后才是真的锁住）。
 add_subdirectory(ncnn-src)
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/engines)

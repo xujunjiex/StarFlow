@@ -35,6 +35,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -60,6 +61,21 @@ constexpr int kFamilyWaifu2x = 0;
 constexpr int kFamilySrmd = 1;
 constexpr int kFamilyRealCugan = 2;
 constexpr int kFamilyRealEsrgan = 3;
+
+/**
+ * 输出字节数上限。Kotlin 侧已按 10MP 卡过一次（约 30MB），这里再设一道宽松的硬顶：
+ * 只为了挡住「调用方算错 scale / w×scale 溢出」这类 bug，正常路径永远碰不到。
+ */
+constexpr jlong kMaxOutBytes = 256LL << 20;   // 256MB
+
+/**
+ * 这两族**没有 CPU 路径**（纯 Vulkan），无 GPU 设备时必须判「不可用」而不是回退。
+ * 依据：srmd.cpp:15 `vkdev = gpuid == -1 ? 0 : ncnn::get_gpu_device(gpuid)` 且 :180
+ * `vkdev->acquire_blob_allocator()` 无判空；realesrgan.cpp:191 `net.vulkan_device()->…` 同理。
+ */
+bool familyHasCpuPath(int family) {
+    return family == kFamilyWaifu2x || family == kFamilyRealCugan;
+}
 
 /** 一个引擎实例。family 决定用哪个成员。 */
 struct SrHandle {
@@ -150,8 +166,8 @@ std::string jstr(JNIEnv* env, jstring s) {
     return out;
 }
 
-/** 引擎产出统一是紧凑 uchar RGB；校验布局再拷，避免布局变化后静默出错图 */
-bool copyOut(const ncnn::Mat& out, unsigned char* dst, size_t need) {
+/** 只校验产物布局/尺寸（不拷贝）：引擎产出统一是紧凑 uchar RGB，布局变了要立刻发现 */
+bool checkOutFormat(const ncnn::Mat& out, size_t need) {
     if (!out.data || out.elembits() != 8 || out.elemsize != 3 || out.elempack != 3) {
         LOGE("unexpected out format: bits=%d size=%zu pack=%d data=%p",
              out.elembits(), out.elemsize, out.elempack, out.data);
@@ -162,7 +178,37 @@ bool copyOut(const ncnn::Mat& out, unsigned char* dst, size_t need) {
         LOGE("out too small: have=%zu need=%zu", have, need);
         return false;
     }
-    memcpy(dst, out.data, need);
+    return true;
+}
+
+/**
+ * ncnn 模型文件的基本健全性检查（建引擎**之前**做）。
+ *
+ * ⚠️ **为什么必须自己查**：vendored 四个引擎的 `load()` **都忽略 ncnn 的返回值**、
+ * 且唯一出口是 `return 0`（waifu2x.cpp:142 / srmd.cpp:167 / realcugan.cpp:239 /
+ * realesrgan.cpp:178）→ `if (e->load(...) != 0)` 那四个失败分支**永远不成立**，
+ * `create()` 从不返回 0。于是 Kotlin 侧 `SrNcnnNative.create` 文档里那句
+ * 「0 表示失败（调用方必须当作"超分不可用"处理）」形同虚设：模型缺失/下载残缺时照样
+ * 拿到一个"可用"的引擎，每页白跑一遍 Vulkan 初始化再在 `process()` 里报错。
+ *
+ * 两道廉价检查：param 开头有 ncnn 文本魔数 `7767517`、bin 非空。
+ */
+bool filesLookLoadable(const std::string& paramPath, const std::string& binPath) {
+    FILE* fp = fopen(paramPath.c_str(), "rb");
+    if (!fp) { LOGE("param 打不开: %s", paramPath.c_str()); return false; }
+    char magic[8] = {0};
+    const size_t n = fread(magic, 1, sizeof(magic) - 1, fp);
+    fclose(fp);
+    if (n < 7 || strncmp(magic, "7767517", 7) != 0) {
+        LOGE("param 不是 ncnn 文本模型（缺 7767517 魔数，读到 %zu 字节）: %s", n, paramPath.c_str());
+        return false;
+    }
+    FILE* fb = fopen(binPath.c_str(), "rb");
+    if (!fb) { LOGE("bin 打不开: %s", binPath.c_str()); return false; }
+    fseek(fb, 0, SEEK_END);
+    const long size = ftell(fb);
+    fclose(fb);
+    if (size <= 0) { LOGE("bin 为空(%ld): %s", size, binPath.c_str()); return false; }
     return true;
 }
 
@@ -195,13 +241,26 @@ extern "C" {
 /** 建实例。成功返回 handle（非 0），失败返回 0。 */
 JNIEXPORT jlong JNICALL
 Java_com_moe_starflow_sr_ncnn_SrNcnnNative_create(
-        JNIEnv* env, jclass, jint family, jstring paramPath, jstring binPath, jint gpuId) {
+        JNIEnv* env, jclass, jint family, jstring paramPath, jstring binPath,
+        jint gpuId, jint numThreads) {
     ensureGpu();
     const std::string param = jstr(env, paramPath);
     const std::string bin = jstr(env, binPath);
 
+    // 线程数由 Kotlin 侧 `SrThreads`（核数-2 夹 2..8）决定，不在原生里写死。
+    // 以前 Waifu2x/RealCUGAN 恒为 2、SRMD/RealESRGAN 干脆没设（ncnn 默认全核），
+    // 于是「按核数自动决定」那条策略在 ncnn 路线（目前唯一可达的路线）上完全没生效。
+    if (numThreads <= 0) numThreads = 2;
+
+    // ⚠️ 无 Vulkan 设备时**不能**一律回退 CPU：只有 Waifu2x / RealCUGAN 有 CPU 路径，
+    //    SRMD 与 RealESRGAN 是纯 Vulkan —— 给它们 gpuid = -1 会拿到空 vkdev，
+    //    在 process() 里 `vkdev->acquire_blob_allocator()` 直接 SIGSEGV（Kotlin 层捕获不到）。
     int gpuid = gpuId;
     if (gpuid >= 0 && g_gpuCount == 0) {
+        if (!familyHasCpuPath(family)) {
+            LOGE("no vulkan device and family=%d has no CPU path — unavailable", family);
+            return 0;
+        }
         LOGI("no vulkan device, fallback to CPU");
         gpuid = -1;
     }
@@ -209,28 +268,35 @@ Java_com_moe_starflow_sr_ncnn_SrNcnnNative_create(
     auto* h = new SrHandle();
     h->family = family;
 
+    // ⚠️ 模型文件健全性先查：vendored 引擎的 load() 返回值不可用（恒定 return 0），
+    //    不查的话下面那四个失败分支永远不会命中，create() 永远返回"成功"。
+    if (!filesLookLoadable(param, bin)) {
+        delete h;
+        return 0;
+    }
+
     switch (family) {
         case kFamilyWaifu2x: {
-            auto* e = new Waifu2x(gpuid, /*tta*/ false, /*num_threads*/ 2);
-            if (e->load(param, bin) != 0) { LOGE("waifu2x load failed: %s", param.c_str()); delete e; delete h; return 0; }
+            auto* e = new Waifu2x(gpuid, /*tta*/ false, numThreads);
+            e->load(param, bin);
             h->w2x = e;
             break;
         }
         case kFamilySrmd: {
-            auto* e = new SRMD(gpuid, /*tta*/ false);
-            if (e->load(param, bin) != 0) { LOGE("srmd load failed: %s", param.c_str()); delete e; delete h; return 0; }
+            auto* e = new SRMD(gpuid, /*tta*/ false, numThreads);
+            e->load(param, bin);
             h->srmd = e;
             break;
         }
         case kFamilyRealCugan: {
-            auto* e = new RealCUGAN(gpuid, /*tta*/ false, /*num_threads*/ 2);
-            if (e->load(param, bin) != 0) { LOGE("realcugan load failed: %s", param.c_str()); delete e; delete h; return 0; }
+            auto* e = new RealCUGAN(gpuid, /*tta*/ false, numThreads);
+            e->load(param, bin);
             h->cugan = e;
             break;
         }
         case kFamilyRealEsrgan: {
-            auto* e = new RealESRGAN(gpuid, /*tta*/ false);
-            if (e->load(param, bin) != 0) { LOGE("realesrgan load failed: %s", param.c_str()); delete e; delete h; return 0; }
+            auto* e = new RealESRGAN(gpuid, /*tta*/ false, numThreads);
+            e->load(param, bin);
             h->esrgan = e;
             break;
         }
@@ -266,6 +332,30 @@ Java_com_moe_starflow_sr_ncnn_SrNcnnNative_process(
         jint w, jint ht, jint scale, jint noise, jint prepadding, jint tileSize) {
     if (handle == 0 || w <= 0 || ht <= 0 || scale <= 0) return JNI_FALSE;
 
+    // ── 尺寸与 buffer 容量守卫（在碰任何 native 内存之前） ──
+    // ⚠️ 两条以前都没有：
+    //   ① `w * scale` 用 int 相乘会溢出（→ 负数 → size_t 巨大 → std::bad_alloc 逃出
+    //      JNI 方法 → std::terminate 闪退）；
+    //   ② 引擎要写的字节数必须由调用方的 DirectByteBuffer **真的装得下**，否则就是堆溢出。
+    //      正常路径（NcnnSrEngine）尺寸是对的，但边界上必须自己兜住。
+    const jlong owL = (jlong)w * (jlong)scale;
+    const jlong ohL = (jlong)ht * (jlong)scale;
+    const jlong inNeed = (jlong)w * (jlong)ht * 3;
+    const jlong outNeed = owL * ohL * 3;
+    if (owL <= 0 || ohL <= 0 || outNeed <= 0 || outNeed > kMaxOutBytes) {
+        LOGE("输出尺寸不合法: w=%d h=%d scale=%d -> %lldx%lld",
+             w, ht, scale, (long long)owL, (long long)ohL);
+        return JNI_FALSE;
+    }
+    const jlong inCap = env->GetDirectBufferCapacity(inBuf);
+    const jlong outCap = env->GetDirectBufferCapacity(outBuf);
+    // 非 DirectByteBuffer 时这两个返回 -1 → 这里一并拦下（下面的地址检查只是兜底）
+    if (inCap < inNeed || outCap < outNeed) {
+        LOGE("DirectBuffer 容量不足: in=%lld/%lld out=%lld/%lld",
+             (long long)inCap, (long long)inNeed, (long long)outCap, (long long)outNeed);
+        return JNI_FALSE;
+    }
+
     // ── 生命周期：**必须在全局锁内**完成「存活判定 + 在途登记」 ──
     // 不能先 fetch_add 再判存活：那时句柄可能已被 release 释放，自增本身就踩了野内存。
     auto* h = acquireHandle(handle);
@@ -281,16 +371,17 @@ Java_com_moe_starflow_sr_ncnn_SrNcnnNative_process(
 
     std::lock_guard<std::mutex> engineLock(h->lock);
 
-    const int ow = w * scale;
-    const int oh = ht * scale;
-    const size_t need = (size_t)ow * (size_t)oh * 3u;
+    const int ow = (int)owL;
+    const int oh = (int)ohL;
+    const size_t need = (size_t)outNeed;
     if (tileSize <= 0) tileSize = autoTile();
 
     ncnn::Mat inMat(w, ht, in, (size_t)3u, 3);
-    // 引擎直接往 outimage.data 写（用完即弃），所以给一块自己的缓冲，
-    // process() 之后再校验并拷进 Java 的 DirectBuffer。
-    std::vector<unsigned char> tmp(need, 0);
-    ncnn::Mat outMat(ow, oh, tmp.data(), (size_t)3u, 3);
+    // ⚠️ 直接把输出 Mat 架在调用方的 DirectByteBuffer 上。以前这里额外 `vector<unsigned char>
+    //    tmp(need, 0)` —— 先 memset 30MB、再让引擎整个覆写、最后又整块 memcpy 30MB 到 Java
+    //    buffer，两趟纯白费。引擎如果把 outimage 换成自己的内存（outMat.data != out），
+    //    下面再回拷一次（那条分支本来就有）。
+    ncnn::Mat outMat(ow, oh, out, (size_t)3u, 3);
 
     int rc = -1;
     switch (h->family) {
@@ -328,11 +419,12 @@ Java_com_moe_starflow_sr_ncnn_SrNcnnNative_process(
 
     if (rc != 0) { LOGE("process failed rc=%d family=%d", rc, h->family); return JNI_FALSE; }
 
-    // ⚠️ 先把产物拷出来再校验：outMat.data 可能已被引擎换成自己的内存
-    if (outMat.data && outMat.data != tmp.data()) {
-        LOGE("engine replaced outimage buffer — 校验前先取样");
+    // 校验产物布局/尺寸；引擎若换过 outimage 的内存则回拷一次（正常路径零拷贝）
+    if (!checkOutFormat(outMat, need)) return JNI_FALSE;
+    if (outMat.data != out) {
+        LOGE("engine replaced outimage buffer — 回拷一次");
+        memcpy(out, outMat.data, need);
     }
-    if (!copyOut(outMat, out, need)) return JNI_FALSE;
     if (!looksValid(out, need)) return JNI_FALSE;
     return JNI_TRUE;
 }

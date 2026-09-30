@@ -92,6 +92,11 @@ class AnimeJaNaiEngineTensorTypeTest {
         val s = src()
         val nullReturns = Regex("return null").findAll(s).count()
         val detailWrites = Regex("failDetail = ").findAll(s).count()
-        assertTrue("failDetail 至少每处失败都要写（return null=$nullReturns, 写入=$detailWrites）", detailWrites >= 5)
+        // ⚠️ 断言的是**真实的不变式**（写入 ≥ 失败出口数），不是随手挑的阈值 5 ——
+        //    写死 5 的话删掉任意几处 detail 写入用例照样绿，等于没锁（2026-10 审查发现）。
+        assertTrue(
+            "failDetail 至少每处失败出口都要写一次（return null=$nullReturns, 写入=$detailWrites）",
+            detailWrites >= nullReturns,
+        )
     }
 }

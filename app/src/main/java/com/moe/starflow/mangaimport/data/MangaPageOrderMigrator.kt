@@ -28,8 +28,14 @@ object MangaPageOrderMigrator {
     suspend fun migrateIfNeeded(context: Context, manga: ImportedManga, source: ReaderPageSource): Boolean {
         if (manga.pageOrderVersion >= MangaPageOrder.CURRENT_VERSION) return false
         val plan = MangaPageOrder.legacyToNewPlan(source.rawPageKeys(), source.orderedPageKeys())
+        // ⚠️ **幂等判据**：`legacyToNewPlan` 是"页文件集合"的纯函数，重复调用得到**同一个**置换，
+        //    所以"这份置换施加过没有"只能靠记录（[ImportedManga.pageOrderPlan]）。没有它的话，
+        //    一旦进程在「DB 事务已提交、清单还没落盘」之间被杀（窗口极小但真实存在），
+        //    下次打开会把同一个置换**再施加一次** —— 置换不是幂等的，译文会被整体挪到别的图上。
+        val planKey = plan?.joinToString(",") ?: ""
+        val alreadyApplied = plan != null && manga.pageOrderPlan == planKey
         var rekeyed = false
-        if (plan != null) {
+        if (plan != null && !alreadyApplied) {
             val db = TranslationHistoryDatabase.getInstance(context)
             val dao = db.importedPageTranslationDao()
             val rows = runCatching { dao.countFor(manga.id, manga.translationKey) }.getOrDefault(0)
@@ -42,12 +48,17 @@ object MangaPageOrderMigrator {
                         "（章节系统之前的「根散图 + 子目录混放」书：不改就是把译文挂到别的图上）",
                 )
             }
+        } else if (alreadyApplied) {
+            LogCollector.w(TAG, "页序迁移：mangaId=${manga.id} 该置换已施加过（上次只差回写清单），跳过")
         }
         // 断点续读也在旧序空间里 → 一起搬（超出范围就夹回 0）
-        val mappedPage = MangaPageOrder.mapPage(plan, manga.lastReadPage)
+        // ⚠️ 已经施加过的话 lastReadPage **已经在新序空间里**了，不能再映射一次
+        val mappedPage =
+            if (alreadyApplied) manga.lastReadPage else MangaPageOrder.mapPage(plan, manga.lastReadPage)
         val updated = manga.copy(
             pageOrderVersion = MangaPageOrder.CURRENT_VERSION,
             lastReadPage = mappedPage.coerceIn(0, (source.size - 1).coerceAtLeast(0)),
+            pageOrderPlan = planKey,
         )
         runCatching { ImportedMangaStore.update(context, updated) }
             .onFailure { LogCollector.w(TAG, "页序迁移：回写清单失败（下次打开会再试一次）", it) }
