@@ -36,9 +36,7 @@ object SrModelManager {
      */
     val allKeys: List<ModelKey> = listOf(
         ModelKey.SR_W2X_UP7_ANIME_M1,
-        ModelKey.SR_W2X_UP7_ANIME_N3,
-        ModelKey.SR_W2X_UP7_PHOTO_M1,
-        ModelKey.SR_W2X_UP7_PHOTO_N3,
+        ModelKey.SR_W2X_UP7_ANIME_N2,
         ModelKey.SR_W2X_CUNET_M1,
         ModelKey.SR_W2X_CUNET_N1,
         ModelKey.SR_W2X_CUNET_N2,
@@ -50,10 +48,24 @@ object SrModelManager {
         ModelKey.SR_REALESRGAN_ANIME6B,
     )
 
-    /** 当前启用的模型；未选 / 存了非法值 → null */
+    /**
+     * 老版本存过的档位名 → 现行档位（sr_active_model_key 里存的是 [ModelKey.name]）。
+     *
+     * upconv_7 在 2026-10 精简为「不降噪 + 强力降噪（N2）」：旧的极强降噪 N3 与照片族
+     * 都已下架。用户存的是被删掉的档位名时不能直接算「未选择」（超分开着却没有模型 =
+     * 功能看起来坏了），按语义就近映射到现行档位。
+     */
+    private val LEGACY_KEY_MAP = mapOf(
+        "SR_W2X_UP7_ANIME_N3" to ModelKey.SR_W2X_UP7_ANIME_N2,
+        "SR_W2X_UP7_PHOTO_M1" to ModelKey.SR_W2X_UP7_ANIME_M1,
+        "SR_W2X_UP7_PHOTO_N3" to ModelKey.SR_W2X_UP7_ANIME_N2,
+    )
+
+    /** 当前启用的模型；未选 / 存了非法值 → null（旧档位名先按 [LEGACY_KEY_MAP] 迁移并回写）。 */
     fun getActiveKey(prefs: SharedPreferences): ModelKey? {
         val raw = prefs.getString(PREF_ACTIVE_KEY, null) ?: return null
-        return runCatching { ModelKey.valueOf(raw) }.getOrNull()?.takeIf { it in allKeys }
+        runCatching { ModelKey.valueOf(raw) }.getOrNull()?.takeIf { it in allKeys }?.let { return it }
+        return LEGACY_KEY_MAP[raw]?.takeIf { it in allKeys }?.also { setActive(prefs, it) }
     }
 
     /**
@@ -64,9 +76,7 @@ object SrModelManager {
      */
     fun nameResOf(key: ModelKey): Int = when (key) {
         ModelKey.SR_W2X_UP7_ANIME_M1 -> R.string.sr_model_w2x_up7_anime_m1
-        ModelKey.SR_W2X_UP7_ANIME_N3 -> R.string.sr_model_w2x_up7_anime_n3
-        ModelKey.SR_W2X_UP7_PHOTO_M1 -> R.string.sr_model_w2x_up7_photo_m1
-        ModelKey.SR_W2X_UP7_PHOTO_N3 -> R.string.sr_model_w2x_up7_photo_n3
+        ModelKey.SR_W2X_UP7_ANIME_N2 -> R.string.sr_model_w2x_up7_anime_n2
         ModelKey.SR_W2X_CUNET_M1 -> R.string.sr_model_w2x_cunet_m1
         ModelKey.SR_W2X_CUNET_N1 -> R.string.sr_model_w2x_cunet_n1
         ModelKey.SR_W2X_CUNET_N2 -> R.string.sr_model_w2x_cunet_n2

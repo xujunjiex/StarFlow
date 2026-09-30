@@ -153,7 +153,7 @@ class ModelManagementLayoutTest {
      * inflate 的，那时的断言是「sr_content 必须为空」—— 已随改版反转）。
      * 这里锁三件事：
      * ① 两个 ScrollView + TabLayout 都在；
-     * ② 5 个族的「组标题 / 当前使用」与 13 个模型行都在，行根唯一、作用域查找能拿到本行控件；
+     * ② 5 个族的「组标题 / 当前使用」与 11 个模型行都在，行根唯一、作用域查找能拿到本行控件；
      * ③ **Fragment 里写的 id 与 XML 里的 id 一一对应**（两边各写一份清单，错位了
      *    「当前使用」会标到别的族上，而这种错在 UI 上是"看着有点怪"、极难归因）。
      */
@@ -174,7 +174,7 @@ class ModelManagementLayoutTest {
     fun superResolutionGroupsAndRowsAreComplete() {
         val root = inflate()
 
-        // 5 个族（2026-10 精简后：upconv_7 动漫+照片并入同一族、cunet、SRMD、Real-CUGAN、Real-ESRGAN）。
+        // 5 个族（2026-10 精简后：upconv_7、cunet、SRMD、Real-CUGAN、Real-ESRGAN）。
         // AnimeJaNai（ONNX）与 swin 族已整体移除 —— 前者体积/画质都不划算，后者 16MB/档、15-19 秒/页且转不了 ncnn。
         val titles = listOf(
             R.id.sr_w2x_group_title, R.id.sr_cunet_group_title,
@@ -189,7 +189,7 @@ class ModelManagementLayoutTest {
         for (id in selecteds) assertNotNull("缺超分组「当前使用」$id", root.findViewById<View>(id))
 
         val rows = srRowIds()
-        assertEquals("超分行数应为 13（5 族逐档展开）", 13, rows.size)
+        assertEquals("超分行数应为 11（5 族逐档展开）", 11, rows.size)
         val roots = rows.map { root.findViewById<View>(it) }
         rows.forEachIndexed { i, id -> assertNotNull("超分行根缺失: $id", roots[i]) }
         assertEquals("超分行根 id 必须唯一", rows.size, roots.toSet().size)
@@ -285,7 +285,7 @@ class ModelManagementLayoutTest {
         // 每一行都要有 title id（置灰要用），缺一个那行就不置灰
         val layout = java.io.File("src/main/res/layout/fragment_model_management.xml").readText()
         for (base in listOf(
-            "sr_w2x_anime_m1", "sr_w2x_anime_n3", "sr_w2x_photo_m1", "sr_w2x_photo_n3", "sr_cunet_m1",
+            "sr_w2x_anime_m1", "sr_w2x_anime_n2", "sr_cunet_m1",
             "sr_cunet_n1", "sr_cunet_n2", "sr_srmd_x2", "sr_srmd_nf_x2", "sr_cugan_dn",
             "sr_cugan_cons", "sr_cugan_d3", "sr_rsrgan_a6b"
         )) {
@@ -297,16 +297,14 @@ class ModelManagementLayoutTest {
      * 超分模型行的行根 id（顺序同 `ModelManagementFragment.srFamilies`）。
      *
      * ⚠️ 这份清单是**唯一**的模型页 id 副本，2026-10 精简掉了 AnimeJaNai（5 档）与
-     * upconv_7 的多余档位、swin 族。改族/档位时，XML、`srFamilies`、本清单三处要一起改；
+     * upconv_7 的多余档位（照片族 / N3）、swin 族。改族/档位时，XML、`srFamilies`、本清单三处要一起改；
      * 漏改这里会直接**编译不过**（`R.id.sr_aji_*` 这类常量已不存在）——
      * 上一轮就是这样把单元测试留在了编译不通过的状态（只跑了 assembleDebug，没编译测试）。
      */
     private fun srRowIds() = listOf(
-        // upconv_7：动漫 2 档 + 照片 2 档（同一族的 4 行）
+        // upconv_7：2 档（不降噪 + 强力降噪 N2）
         R.id.sr_w2x_anime_m1_row,
-        R.id.sr_w2x_anime_n3_row,
-        R.id.sr_w2x_photo_m1_row,
-        R.id.sr_w2x_photo_n3_row,
+        R.id.sr_w2x_anime_n2_row,
         // cunet 3 档
         R.id.sr_cunet_m1_row,
         R.id.sr_cunet_n1_row,

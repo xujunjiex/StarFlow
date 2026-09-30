@@ -61,15 +61,13 @@ enum class ModelKey(val stableId: Int) {
 
     // ── ncnn + Vulkan 超分（waifu2x / SRMD / Real-CUGAN / Real-ESRGAN）──
     // 模型全部走下载；引擎参数取自 downloadinfo.json，不在这里硬编码。
-    // 2026-10 精简：AnimeJaNai 与 upconv_7 照片族已并入/删除，每族只留必要档位。
-    /** 不降噪 */
+    // 2026-10 精简：upconv_7 只留「不降噪 + 强力降噪（N2）」两档；AnimeJaNai 与 swin 族整体删除。
+    // 降噪档用 N2 而不是 N3：官方 README（ncnn 版）全部示例都是 -n 2，N3 是最激进的档，
+    // 容易把线条当噪点抹掉。
+    /** 不降噪（noise = -1） */
     SR_W2X_UP7_ANIME_M1(3040),
-    /** 极强降噪 */
-    SR_W2X_UP7_ANIME_N3(3043),
-    /** 不降噪 */
-    SR_W2X_UP7_PHOTO_M1(3050),
-    /** 极强降噪 */
-    SR_W2X_UP7_PHOTO_N3(3053),
+    /** 强力降噪（noise = 2） */
+    SR_W2X_UP7_ANIME_N2(3043),
     /** 不降噪 */
     SR_W2X_CUNET_M1(3020),
     /** 中度降噪 */

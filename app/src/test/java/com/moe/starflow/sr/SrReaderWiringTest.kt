@@ -169,7 +169,7 @@ class SrReaderWiringTest {
         //    行根必须在同时包住「标题/选中圈」与「下载行」的那一层上。
         val layout = read("src/main/res/layout/fragment_model_management.xml")
         for (base in listOf(
-            "sr_w2x_anime_m1", "sr_w2x_anime_n3", "sr_w2x_photo_m1", "sr_w2x_photo_n3", "sr_cunet_m1",
+            "sr_w2x_anime_m1", "sr_w2x_anime_n2", "sr_cunet_m1",
             "sr_cunet_n1", "sr_cunet_n2", "sr_srmd_x2", "sr_srmd_nf_x2", "sr_cugan_dn",
             "sr_cugan_cons", "sr_cugan_d3", "sr_rsrgan_a6b"
         )) {
@@ -194,12 +194,15 @@ class SrReaderWiringTest {
     fun srNoticesGoThroughTheInAppOverlayNotToast() {
         val act = activity()
         // 用户口径：「超分的提示信息应该也用 app 系统提示，不要用手机底部 Toast」
+        // 2026-10 起提示出口收敛到 AppNotice（阅读器/书架共用，唯一允许兜底 Toast 的地方）
         assertTrue("必须有一个统一的超分提示出口", act.contains("private fun showSrNotice(text: String, isError: Boolean)"))
         assertTrue("进行中的提示要常驻（autoDismiss=false），直到被结果替换", act.contains("private fun showSrProgress(text: String)"))
-        assertTrue("失败要用红色可复制的 chip", act.contains("overlay.showError(text)"))
+        assertFalse("阅读器里不许再直接弹 Toast（必须走 AppNotice）", act.contains("UiUtils.showToast("))
+        val notice = read("src/main/java/com/moe/starflow/utils/AppNotice.kt")
+        assertTrue("失败要用红色可复制的 chip（AppNotice.Style.ERROR）", notice.contains("overlay.showError(text)"))
         assertTrue(
-            "拿不到悬浮窗权限 / 浮层被关掉时必须退回 Toast（否则点了毫无反馈）",
-            act.contains("UiUtils.showToast(this, text)"),
+            "拿不到悬浮窗权限 / 浮层被关掉时由 AppNotice 退回 Toast（否则点了毫无反馈）",
+            notice.contains("UiUtils.showToast(app, text)"),
         )
         // 控制器侧：失败原因必须经宿主回调送出去（控制器不直接碰 UI）
         val ctl = controller()

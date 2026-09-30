@@ -139,7 +139,7 @@ class ModelManagementFragment : Fragment() {
      * 一行 = 一个超分模型。
      *
      * @param radioId 行内那个**不可点**的 RadioButton（只用来显示"这一档是当前使用"）。
-     *   ⚠️ 为什么必须有它：组的「当前使用」只标到**族**上，同一个族的四个等级看起来一模一样 ——
+     *   ⚠️ 为什么必须有它：组的「当前使用」只标到**族**上，同一个族里几个档位看起来一模一样 ——
      *   用户选完 cunet n2 之后，界面上没有任何地方能看出"到底哪一档生效了"。
      *
      * @param titleId 模型名那个 TextView —— **未下载时只把它与选中圈置灰**，
@@ -157,9 +157,7 @@ class ModelManagementFragment : Fragment() {
     private val srFamilies: List<SrFamily> = listOf(
         SrFamily(R.id.sr_w2x_group_title, R.id.sr_w2x_group_selected, listOf(
             SrRow(ModelKey.SR_W2X_UP7_ANIME_M1, R.id.sr_w2x_anime_m1_row, R.id.sr_w2x_anime_m1_radio, R.id.sr_w2x_anime_m1_title),
-            SrRow(ModelKey.SR_W2X_UP7_ANIME_N3, R.id.sr_w2x_anime_n3_row, R.id.sr_w2x_anime_n3_radio, R.id.sr_w2x_anime_n3_title),
-            SrRow(ModelKey.SR_W2X_UP7_PHOTO_M1, R.id.sr_w2x_photo_m1_row, R.id.sr_w2x_photo_m1_radio, R.id.sr_w2x_photo_m1_title),
-            SrRow(ModelKey.SR_W2X_UP7_PHOTO_N3, R.id.sr_w2x_photo_n3_row, R.id.sr_w2x_photo_n3_radio, R.id.sr_w2x_photo_n3_title),
+            SrRow(ModelKey.SR_W2X_UP7_ANIME_N2, R.id.sr_w2x_anime_n2_row, R.id.sr_w2x_anime_n2_radio, R.id.sr_w2x_anime_n2_title),
         )),
         SrFamily(R.id.sr_cunet_group_title, R.id.sr_cunet_group_selected, listOf(
             SrRow(ModelKey.SR_W2X_CUNET_M1, R.id.sr_cunet_m1_row, R.id.sr_cunet_m1_radio, R.id.sr_cunet_m1_title),
@@ -186,9 +184,7 @@ class ModelManagementFragment : Fragment() {
     /** 每个超分模型的预估体积文案（仅展示用；真实值以 downloadinfo.json 为准） */
     private fun srExpectedSize(key: ModelKey): String = when (key) {
         ModelKey.SR_W2X_UP7_ANIME_M1 -> "~1.1MB"
-        ModelKey.SR_W2X_UP7_ANIME_N3 -> "~1.1MB"
-        ModelKey.SR_W2X_UP7_PHOTO_M1 -> "~1.1MB"
-        ModelKey.SR_W2X_UP7_PHOTO_N3 -> "~1.1MB"
+        ModelKey.SR_W2X_UP7_ANIME_N2 -> "~1.1MB"
         ModelKey.SR_W2X_CUNET_M1 -> "~2.7MB"
         ModelKey.SR_W2X_CUNET_N1 -> "~2.7MB"
         ModelKey.SR_W2X_CUNET_N2 -> "~2.7MB"

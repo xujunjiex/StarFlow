@@ -625,8 +625,7 @@
     <string name="model_tab_sr">超分模型</string>
 
     <string name="sr_model_w2x_up7_anime_m1">waifu2x upconv_7 动漫 · 不降噪</string>
-    <string name="sr_model_w2x_up7_photo_m1">waifu2x upconv_7 照片 · 不降噪</string>
-    <string name="sr_model_w2x_up7_photo_n3">waifu2x upconv_7 照片 · 极强降噪</string>
+    <string name="sr_model_w2x_up7_anime_n2">waifu2x upconv_7 动漫 · 强力降噪</string>
     <string name="sr_model_w2x_cunet_m1">waifu2x cunet · 不降噪</string>
     <string name="sr_model_w2x_cunet_n1">waifu2x cunet · 中度降噪</string>
     <string name="sr_model_w2x_cunet_n2">waifu2x cunet · 强力降噪</string>
@@ -647,10 +646,9 @@
     <string name="sr_rsrgan_group">Real-ESRGAN 动漫 6B（4x）</string>
     <string name="sr_rsrgan_group_desc">4 倍放大（其它族都是 2x），17MB，画风改动最激进。</string>
     <string name="sr_w2x_group">waifu2x upconv_7</string>
-    <string name="sr_w2x_group_desc">体积最小（1.06MB）、速度最快，画质并列第一。动漫与照片是两套权重，按图源选。极强降噪非常激进，除非源图很脏，否则建议用「不降噪」。</string>
+    <string name="sr_w2x_group_desc">体积最小（1.06MB）、速度最快。干净图源选「不降噪」；噪点多/扫描件选「强力降噪」——官方示例用的就是这一档。</string>
     <string name="sr_cunet_group">waifu2x cunet</string>
     <string name="sr_cunet_group_desc">59 层，比 upconv_7 更耐噪点与 JPEG 伪影；实测峰值在「强力降噪」。</string>
-    <string name="sr_model_w2x_up7_anime_n3">动漫 · 极强降噪</string>
     <string name="sr_fail_exception">引擎异常</string>
     <string name="sr_active_switched">已切换到 %1$s</string>
     <!-- 个性化设置 · 超分分类 -->

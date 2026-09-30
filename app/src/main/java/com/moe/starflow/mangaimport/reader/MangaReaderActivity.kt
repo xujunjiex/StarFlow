@@ -49,11 +49,11 @@ import com.moe.starflow.mangaimport.translate.ReaderTranslationController
 import com.moe.starflow.mangaimport.translate.TranslateClick
 import com.moe.starflow.me.settings.SettingPageActivity
 import com.moe.starflow.translate.TranslationStatusOverlay
+import com.moe.starflow.utils.AppNotice
 import com.moe.starflow.utils.LogCollector
 import androidx.preference.PreferenceManager
 import com.moe.starflow.utils.TranslationConcurrency
 import com.moe.starflow.utils.ReaderDialogs
-import com.moe.starflow.utils.UiUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
@@ -108,14 +108,6 @@ class MangaReaderActivity : AppCompatActivity() {
         /** 上下 UI 显隐的淡入淡出时长（短促，跟随系统「动画时长」缩放）。 */
         private const val CHROME_FADE_MS = 160L
 
-        /**
-         * 「短时报错」的驻留时长（[ReaderNotice.ERROR_BRIEF]）。
-         *
-         * 用于**说完就关掉页面**的报错（本地文件丢失）：那条芯片是系统窗口，
-         * 没人给它计时就会跟着挂到别的应用上；比普通提示（默认 2s，用户可调）长一点，
-         * 让它够读完、又不至于赖在屏幕上。
-         */
-        private const val BRIEF_NOTICE_MS = 3200L
 
         /** 重建时恢复现场用（见 [onSaveInstanceState]）。 */
         private const val STATE_CURRENT_PAGE = "reader_state_page"
@@ -217,7 +209,7 @@ class MangaReaderActivity : AppCompatActivity() {
             // 本地文件已丢失/损坏（可能被手动删除）：不再展示空白阅读器。
             // ⚠️ 走「短时报错」：这里紧跟着就 finish()，`onDestroy` 那次浮层清屏会吃掉普通提示，
             //    而底部 Toast 在 Activity 收尾时也常被系统吞掉 —— 那就是用户报的「点了没反应」。
-            notifyUser(getString(R.string.reader_file_lost), ReaderNotice.ERROR_BRIEF)
+            notifyUser(getString(R.string.reader_file_lost), AppNotice.Style.BRIEF_ERROR)
             finish()
             return
         }
@@ -971,7 +963,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 is TranslateClick.Hint -> {
                     // 提示走「替换顶部芯片」的进度样式（与截屏翻译同一套）。浮层开关被关掉、
                     // 或没有悬浮窗权限时，[notifyUser] 会退回 Toast —— 否则点翻译「毫无反馈」。
-                    notifyUser(r.text, ReaderNotice.PROGRESS)
+                    notifyUser(r.text, AppNotice.Style.PROGRESS)
                 }
                 TranslateClick.CancelledToManual -> {
                     setTranslatingPulse(false)
@@ -1422,56 +1414,23 @@ class MangaReaderActivity : AppCompatActivity() {
         PreferenceManager.getDefaultSharedPreferences(this)
             .getBoolean("status_overlay_enabled", true)
 
-    /** 阅读器提示样式（唯一消费者是 [notifyUser]）。 */
-    private enum class ReaderNotice {
-        /** 进度/状态：**替换**最顶部那条芯片（截屏翻译的「检测中… / 翻译中…」同款用法）。 */
-        PROGRESS,
-
-        /** 普通提示：堆叠一条，到点自动消失。 */
-        INFO,
-
-        /** 报错：红底芯片，可点击复制；默认常驻到被下一次提示替换（翻译失败就是它）。 */
-        ERROR,
-
-        /**
-         * 报错 + 限时自动消失 + 扛得住 `dismiss()` 清屏：用于**说完就关闭页面**的报错
-         * （本地文件丢失）。用普通 [ERROR] 的话，`onDestroy` 那次清屏会把刚发的芯片吃掉，
-         * 用户就再也看不到「为什么打不开」。
-         */
-        ERROR_BRIEF,
-    }
-
     /**
      * **阅读器所有用户提示的唯一出口**（用户口径 2026-10：「阅读器所有的提示报错信息全部使用
      * 顶部系统弹窗」，即截屏翻译那套 `TranslationStatusOverlay` —— 显示位置 / 时长走个性化设置，
      * 见 `Status_Position` / `Status_Duration`）。
      *
-     * ⚠️ 两条兜底**必须保留**，否则用户点了按钮「毫无反馈」：
-     * ① `status_overlay_enabled` 开关被关掉 → 浮层里所有 `show*` 第一句就 return；
-     * ② 没给「显示在其他应用上层」权限 → 浮层画不出来，而且**不报错**（静默失败）。
-     * 任一成立就退回系统 Toast（本方法是阅读器里**唯一**允许出现 `UiUtils.showToast` 的地方）。
+     * 判断与兜底只剩一份：[AppNotice]（全应用共用，书架也用同一套）。它内部判两条 ——
+     * ① `status_overlay_enabled` 开关被关掉；② 没有「显示在其他应用上层」权限（浮层**静默失败**）
+     * —— 任一成立就退回系统 Toast，否则用户点了按钮「毫无反馈」。
      *
-     * @param autoDismiss 只有 [ReaderNotice.PROGRESS] 用得上：false = 常驻到被替换
+     * @param autoDismiss 只有 [AppNotice.Style.PROGRESS] 用得上：false = 常驻到被替换
      *   （「正在超分…」这类进行中状态）。
      */
     private fun notifyUser(
         text: String,
-        style: ReaderNotice = ReaderNotice.INFO,
+        style: AppNotice.Style = AppNotice.Style.INFO,
         autoDismiss: Boolean = true,
-    ) {
-        if (!statusOverlayEnabled() || !TranslationStatusOverlay.canDraw(this)) {
-            UiUtils.showToast(this, text)
-            return
-        }
-        val overlay = TranslationStatusOverlay.getInstance(this)
-        when (style) {
-            ReaderNotice.PROGRESS -> overlay.showImmediate(text, autoDismiss = autoDismiss)
-            ReaderNotice.INFO -> overlay.show(text)
-            ReaderNotice.ERROR -> overlay.showError(text)
-            ReaderNotice.ERROR_BRIEF ->
-                overlay.showError(text, autoDismissMs = BRIEF_NOTICE_MS, sticky = true)
-        }
-    }
+    ) = AppNotice.show(this, text, style, autoDismiss = autoDismiss)
 
     /**
      * **超分提示统一出口**（用户口径：超分也要用 app 的「系统提示」，不要用手机底部 Toast）。
@@ -1483,11 +1442,11 @@ class MangaReaderActivity : AppCompatActivity() {
         //    不 dismiss 的话那条「正在超分…」常驻芯片（autoDismiss=false）会永远挂着
         //    （真机反馈「然后一直卡在那」）。与翻译成功/失败的处理完全一致。
         //    （守卫 `SrReaderWiringTest.everySrNoticeReplacesThePersistentChip` 盯的就是这一句）
-        if (statusOverlayEnabled() && TranslationStatusOverlay.canDraw(this)) {
+        if (AppNotice.canUseOverlay(this)) {
             val overlay = TranslationStatusOverlay.getInstance(this)
             overlay.dismiss()
         }
-        notifyUser(text, if (isError) ReaderNotice.ERROR else ReaderNotice.INFO)
+        notifyUser(text, if (isError) AppNotice.Style.ERROR else AppNotice.Style.INFO)
     }
 
     /**
@@ -1495,7 +1454,7 @@ class MangaReaderActivity : AppCompatActivity() {
      * （与翻译的"检测中…/翻译中…"同一套用法）。
      */
     private fun showSrProgress(text: String) =
-        notifyUser(text, ReaderNotice.PROGRESS, autoDismiss = false)
+        notifyUser(text, AppNotice.Style.PROGRESS, autoDismiss = false)
 
     /** 注入「页图提供者」：适配器绑定页时优先取译文/原文渲染图（无则原图），
      *  避免 RecyclerView 重绑/复用把已显示的译图覆盖回原图。 */
@@ -1548,7 +1507,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 ReaderTranslatePhase.FAILED -> {
                     setTranslatingPulse(false)
                     TranslationStatusOverlay.getInstance(this).dismiss()
-                    notifyUser(message ?: getString(R.string.reader_translate_failed), ReaderNotice.ERROR)
+                    notifyUser(message ?: getString(R.string.reader_translate_failed), AppNotice.Style.ERROR)
                     refreshProgressTranslation()
                     // ⚠️ 必须刷新：失败感叹号只在 refreshTranslationChrome 里被置 VISIBLE，
                     // 而错误 chip 几秒后就自动消失 —— 不刷的话用户此后再也没有入口看失败原因
@@ -2133,7 +2092,7 @@ class MangaReaderActivity : AppCompatActivity() {
             if (name != null) {
                 notifyUser(getString(R.string.reader_download_done, name))
             } else {
-                notifyUser(getString(R.string.reader_download_failed), ReaderNotice.ERROR)
+                notifyUser(getString(R.string.reader_download_failed), AppNotice.Style.ERROR)
             }
         }
     }
@@ -2191,7 +2150,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 if (progressShown) overlay.dismiss()
                 // 结果同样走 app 顶部浮层（用户口径：阅读器的提示全部用它），失败 = 红底芯片
                 val notice = exportMessage(outcome, both, tmp)
-                notifyUser(notice.text, if (notice.isError) ReaderNotice.ERROR else ReaderNotice.INFO)
+                notifyUser(notice.text, if (notice.isError) AppNotice.Style.ERROR else AppNotice.Style.INFO)
             } finally {
                 // ⚠️ 清理必须在 finally：导出中途退出阅读器会取消 lifecycleScope，上面所有
                 // delete 都跑不到 —— 几百 MB 的临时包会一直躺在 cacheDir 里没人清

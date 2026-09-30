@@ -35,7 +35,7 @@ import com.moe.starflow.mangaimport.ui.ImportDialog
 import com.moe.starflow.mangaimport.ui.MangaGridAdapter
 import com.moe.starflow.novel.shelf.NovelShelfFragment
 import com.moe.starflow.utils.LogCollector
-import com.moe.starflow.utils.UiUtils
+import com.moe.starflow.utils.AppNotice
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -354,7 +354,7 @@ class ImportMangaFragment : Fragment() {
     private fun openReader(manga: ImportedManga) {
         // 本地文件可能已被手动删除：先拦下，避免进阅读器读到「文件丢失」又退回
         if (!File(manga.localRoot).exists()) {
-            UiUtils.showToast(requireContext(), getString(R.string.reader_file_lost))
+            AppNotice.show(requireContext(), getString(R.string.reader_file_lost), AppNotice.Style.BRIEF_ERROR)
             return
         }
         val intent = Intent(requireContext(), MangaReaderActivity::class.java)
@@ -390,7 +390,7 @@ class ImportMangaFragment : Fragment() {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 val name = editText.text.toString().trim()
                 if (name.isEmpty()) {
-                    UiUtils.showToast(requireContext(), getString(R.string.import_rename_empty))
+                    AppNotice.show(requireContext(), getString(R.string.import_rename_empty))
                     return@setOnClickListener
                 }
                 ImportedMangaStore.update(requireContext(), manga.copy(title = name))
@@ -537,7 +537,7 @@ class ImportMangaFragment : Fragment() {
         }
         adapter.exitSelection()
         refresh()
-        UiUtils.showToast(requireContext(), getString(R.string.import_manga_deleted))
+        AppNotice.show(requireContext(), getString(R.string.import_manga_deleted))
         // ⚠️ 翻译记录不能放 lifecycleScope：确认后立刻切页/旋转会把协程取消掉，DELETE 就永不执行
         // （清单已同步删，书架上看不出来 → 静默孤儿行）。走进程级作用域；
         // 且必须把整条条目传过去：删除按 (id, 指纹) 成对进行，见 ShelfCleanup.purgeTranslations。
@@ -615,7 +615,7 @@ class ImportMangaFragment : Fragment() {
             .setPositiveButton(R.string.confirm) { _, _ ->
                 if (!ImportManager.cancel(id)) {
                     // 点确认的瞬间刚好导入完成：不能报「已取消」（那是假话），如实提示已完成
-                    UiUtils.showToast(requireContext(), getString(R.string.import_cancel_too_late))
+                    AppNotice.show(requireContext(), getString(R.string.import_cancel_too_late))
                 }
             }
             .setNegativeButton(R.string.cancel, null)

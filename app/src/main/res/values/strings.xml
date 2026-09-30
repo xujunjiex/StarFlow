@@ -691,8 +691,7 @@
     <string name="model_tab_sr">Super Resolution</string>
 
     <string name="sr_model_w2x_up7_anime_m1">waifu2x upconv_7 Anime · No denoise</string>
-    <string name="sr_model_w2x_up7_photo_m1">waifu2x upconv_7 Photo · No denoise</string>
-    <string name="sr_model_w2x_up7_photo_n3">waifu2x upconv_7 Photo · Max denoise</string>
+    <string name="sr_model_w2x_up7_anime_n2">waifu2x upconv_7 Anime · Strong denoise</string>
     <string name="sr_model_w2x_cunet_m1">waifu2x cunet · No denoise</string>
     <string name="sr_model_w2x_cunet_n1">waifu2x cunet · Medium denoise</string>
     <string name="sr_model_w2x_cunet_n2">waifu2x cunet · Strong denoise</string>
@@ -713,10 +712,9 @@
     <string name="sr_rsrgan_group">Real-ESRGAN anime 6B (4x)</string>
     <string name="sr_rsrgan_group_desc">4x upscale (other families are 2x), 17MB, the most aggressive style change.</string>
     <string name="sr_w2x_group">waifu2x upconv_7</string>
-    <string name="sr_w2x_group_desc">Smallest (1.06MB) and fastest, tied for best quality. Anime and photo are separate weight sets — pick by source. Max denoise is very aggressive; prefer No denoise unless the source is noisy.</string>
+    <string name="sr_w2x_group_desc">Smallest (1.06MB) and fastest. Use No denoise for clean sources; use Strong denoise — the level used in the official examples — for noisy or scanned pages.</string>
     <string name="sr_cunet_group">waifu2x cunet</string>
     <string name="sr_cunet_group_desc">59 layers; more tolerant of noise and JPEG artifacts. Peaks at Strong denoise.</string>
-    <string name="sr_model_w2x_up7_anime_n3">Anime · Max denoise</string>
     <string name="sr_active_switched">Switched to %1$s</string>
     <!-- Personalization · Super resolution -->
     <string name="sr_settings_category">Super resolution (AI upscaling)</string>
