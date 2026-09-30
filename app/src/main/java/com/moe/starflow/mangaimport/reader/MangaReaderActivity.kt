@@ -1227,6 +1227,12 @@ class MangaReaderActivity : AppCompatActivity() {
         lifecycleScope.launch {
             controller.srChapterJob.collect { pushPanelNow() }
         }
+        // 超分**记录**的变化（手动超分单页 / 面板里删除 / 清空本章）也要推面板 ——
+        // 只跟 srChapterJob 的话，手动超一页后面板上的那一行不会出现，要重开面板才看得到。
+        // ⚠️ 走**节流版**：整章批量时每页写两次记录（开始 + 收尾），不节流就是每页两次整表重建。
+        lifecycleScope.launch {
+            controller.srVersion.collect { refreshProgressTranslation() }
+        }
         // 进度浮层同时跟**任务进度**与**在途阶段**（识别中 / 翻译中）走：
         // 只跟 jobs 的话，阶段变化（OCR → 翻译）不改 done，用户会看到「明明在调 API，还写着识别中」。
         lifecycleScope.launch {

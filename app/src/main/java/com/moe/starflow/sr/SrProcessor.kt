@@ -129,16 +129,21 @@ object SrProcessor {
             // ⚠️ 压缩目标要**同时**满足「短边 1080」与「引擎的输入像素上限」——
             //    前者是用户口径，后者是硬约束（2x 档 2.5MP / Real-ESRGAN 4x 0.625MP）：
             //    2000x3000 的页在改这一版之前就是**直接超限失败**的，用户只看到一句"图太大"。
+            // ⚠️ 上限取不到（0 = 引擎压根建不起来：没选模型 / 文件缺失 / 初始化失败）→
+            //    **跳过压缩**：`upscaleForReader` 马上就会带着**具体原因**失败（"没选模型"和
+            //    "图太大"用户要做的事完全不同），先花几百毫秒压一遍纯属白干。
             val feedPixels = SuperResolutionEngines.inputPixelLimitForReader(app, prefs)
-            val feed: Bitmap = SrDownscale.plan(src.width, src.height, feedPixels)?.let { plan ->
-                SrDownscale.apply(src, plan).also {
-                    LogCollector.d(
-                        TAG,
-                        "超分前压缩: ${src.width}x${src.height} → ${it.width}x${it.height}" +
-                            "（引擎上限 ${if (feedPixels > 0) feedPixels else SrDownscale.DEFAULT_MAX_FEED_PIXELS} px，$k）"
-                    )
-                }
-            } ?: src
+            val feed: Bitmap = if (feedPixels > 0) {
+                SrDownscale.plan(src.width, src.height, feedPixels)?.let { plan ->
+                    SrDownscale.apply(src, plan).also {
+                        LogCollector.d(
+                            TAG,
+                            "超分前压缩: ${src.width}x${src.height} → ${it.width}x${it.height}" +
+                                "（引擎上限 ${feedPixels}px，$k）"
+                        )
+                    }
+                } ?: src
+            } else src
             val attempt: SrOutcome
             try {
                 attempt = SuperResolutionEngines.upscaleForReader(app, prefs, feed)

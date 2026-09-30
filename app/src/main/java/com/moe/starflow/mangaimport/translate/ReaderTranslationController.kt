@@ -1340,6 +1340,20 @@ class ReaderTranslationController(
     private var srChapterJobTask: Job? = null
 
     /**
+     * 超分本章的任务**代次**：每次启动 / 取消各 +1，循环里比对，不等就立刻退出。
+     *
+     * ⚠️ 为什么需要它：取消是**异步**的（协程要在恢复点才停），而 [cancelSrChapterJob] 会立刻把
+     * `_srChapterJob` 置 null → 用户马上重点一次「超分本章」时**上一轮那个协程可能还在跑**。
+     * 两个协程同时对同一页调 `runSr` 时，`SrProcessor.inFlight` 会把后到的判成 `BUSY`，
+     * 面板上就凭空多出一条「超分失败」。代次让旧循环在下一轮开头立刻收手
+     * （在途那一页打不断，但不会再往下走）。
+     *
+     * 主线程写（点击）、IO 协程读 → `@Volatile`。
+     */
+    @Volatile
+    private var srChapterGeneration = 0
+
+    /**
      * **超分本章**：从 [pages] 里逐页跑一次超分（[runSr]），产物落盘 + 写记录。
      *
      * ## 为什么不用 `ChapterJobRunner`
@@ -1363,11 +1377,13 @@ class ReaderTranslationController(
         if (_srChapterJob.value != null) return
         if (srBatchBlockedByTranslate()) return     // 互斥：宿主已经给过提示
         _srChapterJob.value = SrChapterJob(chapterIndex, done = 0, total = targets.size, page = 0)
+        val gen = ++srChapterGeneration
         srChapterJobTask = scope.launch(Dispatchers.IO) {
             var done = 0
             try {
                 for (p in targets) {
-                    if (!isActive) break
+                    // 代次对不上 = 已经被取消过（可能又开了一轮）→ 立刻收手，别和新的那轮抢同一页
+                    if (!isActive || gen != srChapterGeneration) break
                     // ⚠️ 一页一张全尺寸位图：**逐页取、逐页还**，绝不整章装进内存
                     //    （2x 一页就 40MB，整章必 OOM）。
                     val src = loadFull(p)
@@ -1386,8 +1402,10 @@ class ReaderTranslationController(
             } finally {
                 // ⚠️ 收尾必须 `NonCancellable`：取消时普通 finally 里的挂起会被再次取消，
                 //    任务状态就会永久停在「超分中」（面板上那章再也点不动）。
+                // ⚠️ 并且**只有当代次仍是自己那一轮**才清状态：取消后用户立刻重开一轮时，
+                //    旧协程的 finally 会把**新任务**的状态清掉（面板上"刚点就开始"变回没在跑）。
                 withContext(NonCancellable) {
-                    _srChapterJob.value = null
+                    if (gen == srChapterGeneration) _srChapterJob.value = null
                     srVersion.value += 1
                 }
             }
@@ -1396,6 +1414,7 @@ class ReaderTranslationController(
 
     /** 取消「超分本章」（丢还没跑的页，**已超好的产物保留** —— 与取消章节翻译同一口径）。 */
     fun cancelSrChapterJob() {
+        srChapterGeneration++      // 先掐代次：旧循环下一轮立刻收手（见 srChapterGeneration）
         srChapterJobTask?.cancel()
         srChapterJobTask = null
         _srChapterJob.value = null

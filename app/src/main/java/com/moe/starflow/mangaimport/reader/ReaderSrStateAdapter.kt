@@ -1,6 +1,5 @@
 package com.moe.starflow.mangaimport.reader
 
-import android.content.Context
 import android.graphics.drawable.GradientDrawable
 import android.view.LayoutInflater
 import android.view.View

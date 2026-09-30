@@ -59,7 +59,12 @@ class TranslateUtilsPassthroughTest {
 
     /** 记录收到的每段原文，用于断言「哪些气泡被送去翻译了」。 */
     private class RecordingTranslator : TranslationTextAPI {
-        val received = mutableListOf<String>()
+        /**
+         * ⚠️ **必须线程安全**：`translateBubbles` 给每个气泡起一个 `async(Dispatchers.IO)`，
+         * 裸 `mutableListOf` 会被多线程并发 `add` —— 除了顺序不定，还可能真把 ArrayList 写坏。
+         */
+        val received: MutableList<String> =
+            java.util.Collections.synchronizedList(mutableListOf())
 
         override fun getTranslation(
             text: String, sourceLanguage: String, targetLanguage: String,
@@ -98,7 +103,18 @@ class TranslateUtilsPassthroughTest {
             prefs = CustomPreference.getInstance(RuntimeEnvironment.getApplication()),
         )
 
-        assertEquals("只有正文两句该被送去翻译", listOf("HELLO", "WORLD"), translator.received)
+        assertEquals(
+            "只有正文两句该被送去翻译",
+            // ⚠️ **必须按集合比，不能按顺序比**：`translateBubbles` 是
+            // `async(Dispatchers.IO) { … }.awaitAll()` —— 每个气泡一个 IO 协程，
+            // 而 `RecordingTranslator.received += text` 是**多线程写同一个 list** →
+            // 记录顺序**本来就不确定**（实测：同一份代码三次全量跑挂两次）。
+            // 断言的本意是"哪些气泡被送出去了"，不是"按什么顺序送"（结果列表 `out` 才是保序的，
+            // 下面几条断言继续钉它）。
+            listOf("HELLO", "WORLD").sorted(),
+            translator.received.sorted(),
+        )
+        assertEquals("送出去的两条，一条不多一条不少", 2, translator.received.size)
         assertEquals(4, out.size)
         // ⚠️ 顺序沿用既有实现：短路气泡（纯符号/纯数字）整体排在译文前面，不与原页顺序交错。
         // 渲染按各自 rect 落位、存库三列（sourceText/translatedText/bubbleRects）平行写入，顺序无影响。
