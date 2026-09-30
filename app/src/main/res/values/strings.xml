@@ -736,6 +736,7 @@
     <string name="sr_low_res_tip">💡 Super resolution can only help genuinely low-resolution sources. Pages already 1000px+ wide barely change, and heavy screentone may be re-drawn. Keep it off unless the source is small.</string>
     <string name="sr_no_model_selected">No super-resolution model selected — download one below</string>
     <string name="sr_active_switched">Switched to %1$s</string>
+    <string name="sr_need_download">This model isn\'t downloaded yet — tap Download on its row first</string>
     <!-- Personalization · Super resolution -->
     <string name="sr_settings_category">Super resolution (AI upscaling)</string>
     <string name="sr_enabled_title">Enable super resolution</string>

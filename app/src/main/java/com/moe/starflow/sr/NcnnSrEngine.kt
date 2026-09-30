@@ -40,11 +40,19 @@ class NcnnSrEngine(
     private val tileSize: Int = 0,
 ) : SuperResolutionEngine {
 
+    /**
+     * 原生实例句柄。**跨线程读写**：`initialize()` 在创建线程写，`upscale()` 在推理线程读，
+     * `release()` 在释放线程清零 —— 必须 `@Volatile`，否则可能读到过期值。
+     * （读到过期值不会崩：原生侧有存活登记表兜底，只是白跑一次注定失败的 process。）
+     */
+    @Volatile
     private var handle: Long = 0L
 
     /** 输出像素上限：10 MP（与 AnimeJaNaiEngine 的 2.5MP@2x 等价） */
     private val maxOutputPixels: Long = 10_000_000L
 
+    /** ⚠️ `@Synchronized`：并发调用会各建一个原生实例，后者覆盖前者 → 泄漏一个 net。 */
+    @Synchronized
     fun initialize(): Boolean {
         if (handle != 0L) return true
         return try {

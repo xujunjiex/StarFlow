@@ -6,6 +6,7 @@
 // **四个引擎族共用同一个 handle**，用 `family` 区分：
 //   WAIFU2X / SRMD / REALCUGAN / REALESRGAN
 // 调用序列：create → process* → release。
+// ⚠️ handle 是**永不复用的递增 ID**，不是指针（防 ABA，见 g_live 的说明）。
 //
 // ## 像素契约（⚠️ 改动前必读）
 //   · 输入：**紧凑 RGB8**，长度 w*h*3，由 Kotlin 侧从 Bitmap 拆出来
@@ -35,6 +36,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstring>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -73,19 +75,54 @@ struct SrHandle {
      *
      * `release()` 可能在与 `process()` 并发时被调用（用户切模型 / 退出阅读器）。
      * 若直接 `delete h`，在途的 `process()` 会解引用已释放的内存 → **native 段错误**。
-     * 这里用「在途计数 + dead 标记」：
-     *   · process 先 `users++`，再双检 `dead`，用完 `users--`
-     *   · release 置 `dead`，短等 `users` 归零；等不到就**故意泄漏**（记日志）
-     * 宁可泄漏一个几 MB 的 net，也不制造野指针 —— 泄漏只会发生在「正好在推理时切模型」，
-     * 属于罕见路径。
+     *
+     * 完整机制在文件下方（[g_live] / [acquireHandle]）：**全局锁内的「ID 存活查表 + 在途计数」**。
+     * 这里只是计数本身：
+     *   · process 经 acquireHandle 登记（`users++`），用完 `users--`
+     *   · release 先摘牌，再短等 `users` 归零；等不到就**故意泄漏**（记日志）
+     * 宁可泄漏一个几 MB 的 net，也不制造野指针 —— 泄漏只发生在「正好在推理时切模型」，属罕见路径。
      */
     std::atomic<int> users{0};
-    std::atomic<bool> dead{false};
 };
 
 std::once_flag g_gpuOnce;
 int g_gpuCount = 0;
 int g_heapMb = 0;
+
+/**
+ * ⚠️ **存活登记表 + 在途计数**（改动前必读，这里有两个不同的问题）
+ *
+ * **问题一：野指针。** 只有 `users` 计数不够 —— `process()` 拿到的是地址，
+ * 它要做的第一件事就是 `h->users.fetch_add(...)`，而此刻 `release()` 可能已经
+ * `delete h` 了。「读个 dead 标记」同样得先碰那块内存，所以**标记救不了自己**。
+ * （Kotlin 侧 `handle = 0L` 也挡不住：在途的 upscale 可能早已把非零 handle 读进局部变量。）
+ * ⇒ 把「还在世吗」与「登记在途」放进**同一把锁**里做。
+ *
+ * **问题二：ABA。** 若 handle 就是裸指针，`delete` 后下一次 `new` **可能复用同一地址**：
+ *      T1 读到 handle=X 后被切走 → T2 release(X) 摘牌并 delete → T3 create 的 new 又落在 X 并登牌
+ *      → T1 调 process(X) **命中新引擎**，拿 T1 的图去跑 T3 的模型 = 静默跑错模型。
+ * ⇒ handle 改成**永不复用的递增 ID**，调用方拿到的从来不是地址，ABA 从根上不存在。
+ *
+ * 于是调用序列是：create 返回 ID（ID → SrHandle*）→ process(ID) 锁内查表 + 在途登记
+ * → release(ID) 锁内摘牌，等在途归零再 delete。摘牌后不可能再有新的登记，
+ * 因此「归零 → delete」是安全的。
+ */
+std::mutex g_liveLock;
+std::map<jlong, SrHandle*> g_live;
+jlong g_nextHandleId = 0;
+
+/**
+ * 锁内按 ID 查表并登记在途。
+ * @return 存活则返回句柄且已 `users++`（调用方务必配对 `users--`）；否则返回 nullptr，
+ *         此时**绝不可**再碰任何句柄内存。
+ */
+SrHandle* acquireHandle(jlong id) {
+    std::lock_guard<std::mutex> g(g_liveLock);
+    auto it = g_live.find(id);
+    if (it == g_live.end()) return nullptr;
+    it->second->users.fetch_add(1, std::memory_order_acq_rel);
+    return it->second;
+}
 
 void ensureGpu() {
     std::call_once(g_gpuOnce, [] {
@@ -135,17 +172,20 @@ bool copyOut(const ncnn::Mat& out, unsigned char* dst, size_t need) {
  * 结果 13 个模型都"成功"跑出假数据。这里至少拦掉「全空」和「只有一两个灰度值」两种。
  */
 bool looksValid(const unsigned char* p, size_t n) {
-    size_t nonzero = 0;
     bool seen[256] = {false};
     int distinct = 0;
     for (size_t i = 0; i < n; i++) {
         unsigned char v = p[i];
-        if (v) nonzero++;
-        if (!seen[v]) { seen[v] = true; distinct++; }
+        if (!seen[v]) {
+            seen[v] = true;
+            // 提前退出：正常图扫几十~几百字节就凑够 3 个灰度级，没必要扫满整张（最大 30MB）。
+            // `distinct > 2` 必然蕴含「存在非零值」，所以它就是原判据的等价充分条件。
+            if (++distinct > 2) return true;
+        }
     }
-    if (nonzero == 0) { LOGE("output is all zero — wrong network branch?"); return false; }
-    if (distinct <= 2) { LOGE("output is near-constant (%d levels) — wrong branch?", distinct); return false; }
-    return true;
+    if (distinct <= 1) { LOGE("output is all zero — wrong network branch?"); return false; }
+    LOGE("output is near-constant (%d levels) — wrong branch?", distinct);
+    return false;
 }
 
 }  // namespace
@@ -200,8 +240,16 @@ Java_com_moe_starflow_sr_ncnn_SrNcnnNative_create(
             return 0;
     }
 
-    LOGI("engine ready family=%d gpu=%d heap=%dMB (%s)", family, gpuid, g_heapMb, param.c_str());
-    return reinterpret_cast<jlong>(h);
+    // 登牌：分配一个**永不复用**的 ID，调用方拿到的是 ID 而不是地址（消 ABA）
+    jlong id;
+    {
+        std::lock_guard<std::mutex> g(g_liveLock);
+        id = ++g_nextHandleId;
+        g_live[id] = h;
+    }
+    LOGI("engine ready family=%d gpu=%d heap=%dMB id=%lld (%s)",
+         family, gpuid, g_heapMb, (long long)id, param.c_str());
+    return id;
 }
 
 /**
@@ -216,15 +264,12 @@ JNIEXPORT jboolean JNICALL
 Java_com_moe_starflow_sr_ncnn_SrNcnnNative_process(
         JNIEnv* env, jclass, jlong handle, jobject inBuf, jobject outBuf,
         jint w, jint ht, jint scale, jint noise, jint prepadding, jint tileSize) {
-    auto* h = reinterpret_cast<SrHandle*>(handle);
-    if (!h || w <= 0 || ht <= 0 || scale <= 0) return JNI_FALSE;
+    if (handle == 0 || w <= 0 || ht <= 0 || scale <= 0) return JNI_FALSE;
 
-    // ── 生命周期：登记在途，双检 dead（与 release 竞争时让 release 赢）──
-    h->users.fetch_add(1, std::memory_order_acq_rel);
-    if (h->dead.load(std::memory_order_acquire)) {
-        h->users.fetch_sub(1, std::memory_order_acq_rel);
-        return JNI_FALSE;
-    }
+    // ── 生命周期：**必须在全局锁内**完成「存活判定 + 在途登记」 ──
+    // 不能先 fetch_add 再判存活：那时句柄可能已被 release 释放，自增本身就踩了野内存。
+    auto* h = acquireHandle(handle);
+    if (!h) return JNI_FALSE;
     struct UserGuard {
         SrHandle* h;
         ~UserGuard() { h->users.fetch_sub(1, std::memory_order_acq_rel); }
@@ -294,16 +339,25 @@ Java_com_moe_starflow_sr_ncnn_SrNcnnNative_process(
 
 JNIEXPORT void JNICALL
 Java_com_moe_starflow_sr_ncnn_SrNcnnNative_release(JNIEnv*, jclass, jlong handle) {
-    auto* h = reinterpret_cast<SrHandle*>(handle);
-    if (!h) return;
-    if (h->dead.exchange(true)) return;   // 重复释放：直接忽略
+    if (handle == 0) return;
+
+    // 先「摘牌」：erase 之后 acquireHandle 一律失败，不可能再有新的在途登记
+    SrHandle* h;
+    {
+        std::lock_guard<std::mutex> g(g_liveLock);
+        auto it = g_live.find(handle);
+        if (it == g_live.end()) return;   // 不在世 = 重复释放，直接忽略
+        h = it->second;
+        g_live.erase(it);
+    }
 
     // 等在途推理退出（最多 ~3s）。等不到就**泄漏**，绝不 delete 一个可能还在用的实例。
     for (int i = 0; i < 300 && h->users.load(std::memory_order_acquire) > 0; ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     if (h->users.load(std::memory_order_acquire) > 0) {
-        LOGE("release 时仍有推理在途，**故意泄漏** handle 以避免 use-after-free");
+        LOGE("release 时仍有推理在途，**故意泄漏** handle(id=%lld) 以避免 use-after-free",
+             (long long)handle);
         return;
     }
     {

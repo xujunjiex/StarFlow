@@ -670,6 +670,7 @@
     <string name="sr_low_res_tip">💡 超分只对真正低分辨率的图源有明显效果。宽度 1000px 以上的页面几乎看不出变化，网点重的页还可能被重新绘制。图源不小就别开。</string>
     <string name="sr_no_model_selected">尚未选择超分模型——请在下方下载</string>
     <string name="sr_active_switched">已切换到 %1$s</string>
+    <string name="sr_need_download">该模型还没下载，请先点该行的「下载」</string>
     <!-- 个性化设置 · 超分分类 -->
     <string name="sr_settings_category">超分（AI 放大）</string>
     <string name="sr_enabled_title">启用超分</string>

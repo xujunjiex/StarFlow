@@ -11,6 +11,7 @@ import com.moe.starflow.sr.anime4k.Anime4kEngine
 import com.moe.starflow.sr.anime4k.Anime4kMode
 import com.moe.starflow.utils.LogCollector
 import java.io.File
+import java.util.concurrent.Executors
 
 /**
  * 超分/增强引擎抽象。
@@ -81,6 +82,14 @@ object SuperResolutionEngines {
     @Volatile private var cachedEngine: SuperResolutionEngine? = null
     @Volatile private var cachedAnime4kMode: Anime4kMode? = null
     @Volatile private var cachedAnime4k: SuperResolutionEngine? = null
+
+    /**
+     * 引擎释放专用单线程 executor（理由见 [releaseSrModel]）。
+     * 单线程 = 释放串行；daemon = 进程退出时不拖住。
+     */
+    private val RELEASE_EXECUTOR = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "sr-engine-release").apply { isDaemon = true }
+    }
 
     /**
      * 算出这一轮要跑的工序（**纯函数**，单测直接调）。
@@ -305,14 +314,42 @@ object SuperResolutionEngines {
         return SrModelManager.isDownloaded(context, key)
     }
 
-    /** 释放超分模型引擎 */
+    /**
+     * 释放超分模型引擎。
+     *
+     * ⚠️ **真正的释放在后台线程做**，不要在调用线程上同步做 ——
+     * 与 `LlamaCppSharedHolder.detachAndRelease()` 同一条理由：
+     * 原生 `release()` 会**等在途推理退出**（最长 3s）再释放 Vulkan 资源，
+     * 而本函数的调用点包含**阅读器面板的开关回调（主线程）** ——
+     * 用户「边超分边把开关关掉」正是最自然的操作，同步做就是卡 UI 最长 3 秒。
+     *
+     * 做法：先摘掉引用（后续 `obtain()` 会重建），把释放丢给单线程 executor。
+     * 代价是换模型期间旧、新引擎短暂同时占内存 —— 这是刻意的权衡（UI 响应 > 瞬时内存）。
+     */
     @Synchronized
     fun releaseSrModel() {
-        cachedEngine?.let {
-            runCatching { it.release() }.onFailure { e -> LogCollector.w(TAG, "releaseSrModel: ${e.message}") }
-        }
+        val old = cachedEngine
         cachedEngine = null
         cachedKey = null
+        if (old == null) return
+        enqueueRelease(old)
+    }
+
+    /**
+     * 把一次引擎释放排到后台。单线程 = 释放串行，避免多个原生 release 互相叠加。
+     * 线程是 daemon：进程退出时不会拖住。
+     */
+    private fun enqueueRelease(engine: SuperResolutionEngine) {
+        runCatching {
+            RELEASE_EXECUTOR.execute {
+                runCatching { engine.release() }
+                    .onFailure { e -> LogCollector.w(TAG, "releaseSrModel: ${e.message}") }
+            }
+        }.onFailure {
+            // executor 都提交不进去（几乎不可能），退化成当前线程释放，至少不泄漏
+            LogCollector.w(TAG, "releaseSrModel: 无法投递到后台，改为同步释放 (${it.message})")
+            runCatching { engine.release() }
+        }
     }
 
     /** 释放 Anime4K（持有 EGL 上下文与 GL 资源） */

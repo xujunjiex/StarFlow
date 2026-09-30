@@ -330,6 +330,7 @@ class ModelManagementFragment : Fragment() {
                 getString(SrModelManager.nameResOf(row.modelKey)), srExpectedSize(row.modelKey)
             )
         }
+        refreshSrAvailability()
         refreshSrSelection()
         updateV6TierVisibility()
     }
@@ -598,16 +599,58 @@ class ModelManagementFragment : Fragment() {
      */
     private fun bindSrGroups() {
         for (family in srFamilies) {
+            // 族标题 = 「用这一族的默认档」。全族都没下载时与 OCR 侧同款：置灰 + 弹提示，不切换
             rootView.findViewById<View>(family.titleId).setOnClickListener {
-                family.rows.firstOrNull()?.let { selectSrModel(it.modelKey) }
+                val first = family.rows.firstOrNull { SrModelManager.isDownloaded(requireContext(), it.modelKey) }
+                if (first != null) selectSrModel(first.modelKey) else showSrNeedDownload()
             }
             for (row in family.rows) {
+                // ⚠️ 行根**不能**设 isEnabled=false：它同时托管「下载」按钮，
+                //    锁掉行根会让未下载的模型**永远下不了**。所以只在点击处拦。
                 rootView.findViewById<View>(row.rowRootId).setOnClickListener {
-                    selectSrModel(row.modelKey)
+                    if (SrModelManager.isDownloaded(requireContext(), row.modelKey)) {
+                        selectSrModel(row.modelKey)
+                    } else {
+                        showSrNeedDownload()
+                    }
                 }
             }
         }
         refreshSrSelection()
+    }
+
+    /**
+     * 未下载的模型**不允许切换过去** —— 与 OCR 侧 [refreshOcrGroupSelection] 同一条规矩。
+     *
+     * ⚠️ 这条以前是缺的：未下载也能点成「当前使用」，而引擎侧 `isSrModelUsable` 会因文件不在
+     * 而回落到不超分 —— 用户看到的是「**选了但完全没效果，也不说为什么**」。
+     */
+    private fun showSrNeedDownload() {
+        AlertDialog.Builder(requireContext())
+            .setMessage(getString(R.string.sr_need_download))
+            .setPositiveButton(R.string.user_known, null)
+            .create()
+            .also { it.window?.setBackgroundDrawableResource(R.drawable.dialog_background) }
+            .show()
+    }
+
+    /**
+     * 按「是否已下载」刷新族的可点状态与视觉。
+     *
+     * 只对**族标题**做置灰（标题下没有按钮，安全）；行的下载按钮必须保持可用，
+     * 所以行只做点击拦截、不改 isEnabled/alpha。
+     */
+    private fun refreshSrAvailability() {
+        val ctx = requireContext()
+        for (family in srFamilies) {
+            val anyDownloaded = family.rows.any { SrModelManager.isDownloaded(ctx, it.modelKey) }
+            // ⚠️ **只调 alpha，绝不设 isEnabled=false**：
+            //    Android 的 disabled View 会「吞掉点击但不触发 onClick」——
+            //    设了 isEnabled=false，点击处那个「弹窗说明缺什么模型」的分支就**永远不可达**，
+            //    用户点上去毫无反应（OCR 那侧的 `else { AlertDialog(...) }` 正是踩了这个，
+            //    见 refreshOcrGroupSelection；这里不重复那个坑）。
+            rootView.findViewById<View>(family.titleId)?.alpha = if (anyDownloaded) 1f else 0.4f
+        }
     }
 
     /** 选中某个超分模型（写 prefs + 刷新「当前使用」+ 提示） */

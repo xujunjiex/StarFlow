@@ -5,9 +5,9 @@
  * Kotlin 侧的引擎实现（NcnnSrEngine）、模型路径解析、Bitmap 拆装都在 :app 里。
  *
  * ⚠️ 不内置任何模型：模型一律走 download/ 的下载流水线，落到 getExternalFilesDir("sr")。
- *    本模块只带**引擎**（libstarflow_sr.so ≈ 9 MB），不带权重。
+ *    本模块只带**引擎**（libstarflow_sr.so ≈ 7.4 MB，strip 后），不带权重。
  *
- * 构建前需要 ncnn SDK：`pwsh sr/setup-ncnn.ps1`（见 sr/.gitignore，ncnn/ 不入库）。
+ * 构建前需要 ncnn SDK：`pwsh sr/setup-ncnn.ps1`（见 sr/.gitignore，ncnn-src/ 不入库，约 95 MB）。
  */
 plugins {
     id 'com.android.library'
