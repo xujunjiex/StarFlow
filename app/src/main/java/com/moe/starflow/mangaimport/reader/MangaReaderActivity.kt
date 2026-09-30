@@ -108,6 +108,15 @@ class MangaReaderActivity : AppCompatActivity() {
         /** 上下 UI 显隐的淡入淡出时长（短促，跟随系统「动画时长」缩放）。 */
         private const val CHROME_FADE_MS = 160L
 
+        /**
+         * 「短时报错」的驻留时长（[ReaderNotice.ERROR_BRIEF]）。
+         *
+         * 用于**说完就关掉页面**的报错（本地文件丢失）：那条芯片是系统窗口，
+         * 没人给它计时就会跟着挂到别的应用上；比普通提示（默认 2s，用户可调）长一点，
+         * 让它够读完、又不至于赖在屏幕上。
+         */
+        private const val BRIEF_NOTICE_MS = 3200L
+
         /** 重建时恢复现场用（见 [onSaveInstanceState]）。 */
         private const val STATE_CURRENT_PAGE = "reader_state_page"
         private const val STATE_FROM_SETTINGS = "reader_state_from_settings"
@@ -205,8 +214,10 @@ class MangaReaderActivity : AppCompatActivity() {
             ?: run { finish(); return }
         source = ReaderPageSource(manga.isArchive, manga.localRoot)
         if (source.size == 0) {
-            // 本地文件已丢失/损坏（可能被手动删除）：不再展示空白阅读器
-            UiUtils.showToast(this, getString(R.string.reader_file_lost))
+            // 本地文件已丢失/损坏（可能被手动删除）：不再展示空白阅读器。
+            // ⚠️ 走「短时报错」：这里紧跟着就 finish()，`onDestroy` 那次浮层清屏会吃掉普通提示，
+            //    而底部 Toast 在 Activity 收尾时也常被系统吞掉 —— 那就是用户报的「点了没反应」。
+            notifyUser(getString(R.string.reader_file_lost), ReaderNotice.ERROR_BRIEF)
             finish()
             return
         }
@@ -373,20 +384,15 @@ class MangaReaderActivity : AppCompatActivity() {
      * （整章任务本来就跑在手动模式下 → 只报前半句）。
      *
      * 状态浮层开着时优先用它（**系统窗口，阅读器正在关闭也看得见**），
-     * 关闭时退回 Toast（与 `setupTranslationUi` 的 Hint 同一套判断）。
+     * 画不出来时由 [notifyUser] 统一退回 Toast。
      */
     private fun showForceStoppedNotice(toManual: Boolean) {
-        val text = getString(
-            if (toManual) R.string.reader_translate_force_stopped_to_manual
-            else R.string.reader_translate_force_stopped
+        notifyUser(
+            getString(
+                if (toManual) R.string.reader_translate_force_stopped_to_manual
+                else R.string.reader_translate_force_stopped
+            )
         )
-        // ⚠️ 两个条件都要判：开关关掉、或**没有悬浮窗权限**（画不出来且不报错）→ 退回 Toast。
-        // 只判开关的话，权限缺失时提示会凭空消失（用户报"什么提示都没有"就是这个）。
-        if (statusOverlayEnabled() && TranslationStatusOverlay.canDraw(this)) {
-            TranslationStatusOverlay.getInstance(this).show(text)
-        } else {
-            UiUtils.showToast(this, text)
-        }
     }
 
     /** 打开面板 / 退出阅读器：把在途翻译**强制退出**并回退手动 → 提示带"回退到手动模式"。 */
@@ -570,7 +576,7 @@ class MangaReaderActivity : AppCompatActivity() {
         TranslationStatusOverlay.getInstance(this@MangaReaderActivity).dismiss()
         // 兜底：onStop 没发过（进程被杀/未走 onStop 的路径）而当时确实在自动翻 → 补一次
         if (wasActive && !pausedToManualNotified) {
-            UiUtils.showToast(this, getString(R.string.reader_translate_force_stopped_to_manual))
+            notifyUser(getString(R.string.reader_translate_force_stopped_to_manual))
         }
         super.onDestroy()
     }
@@ -953,7 +959,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 binding.ivTranslate.animate().rotationBy(360f).setDuration(420).start()
             }
             if (isTranslateDisabledByMode()) {
-                UiUtils.showToast(this, getString(R.string.reader_translate_disabled_mode))
+                notifyUser(getString(R.string.reader_translate_disabled_mode))
                 return@setOnClickListener
             }
             // 单击 = **只提示，绝不打断**；快速双击 = 取消并回退手动（用户明确要求）
@@ -963,26 +969,21 @@ class MangaReaderActivity : AppCompatActivity() {
 
             when (val r = controller.onTranslateButtonClick(isDouble)) {
                 is TranslateClick.Hint -> {
-                    // ⚠️ 状态浮层受 status_overlay_enabled 开关控制，关掉后 showImmediate 直接 return；
-                    // **没有悬浮窗权限时同样画不出来**（且不报错）—— 两种情况都必须退回系统 Toast，
-                    // 否则用户点翻译"毫无反馈"（连提示都看不到）。
-                    if (statusOverlayEnabled() && TranslationStatusOverlay.canDraw(this)) {
-                        TranslationStatusOverlay.getInstance(this).showImmediate(r.text, autoDismiss = true)
-                    } else {
-                        UiUtils.showToast(this, r.text)
-                    }
+                    // 提示走「替换顶部芯片」的进度样式（与截屏翻译同一套）。浮层开关被关掉、
+                    // 或没有悬浮窗权限时，[notifyUser] 会退回 Toast —— 否则点翻译「毫无反馈」。
+                    notifyUser(r.text, ReaderNotice.PROGRESS)
                 }
                 TranslateClick.CancelledToManual -> {
                     setTranslatingPulse(false)
-                    val overlay = TranslationStatusOverlay.getInstance(this)
-                    overlay.dismiss()
-                    // 双击强制取消 = 强制退出 + 回退手动（用户口径：提示前一句固定，后一句只在真回退时才接）
-                    overlay.show(getString(R.string.reader_translate_force_stopped_to_manual))
+                    TranslationStatusOverlay.getInstance(this).dismiss()
+                    // 双击强制取消 = 强制退出 + 回退手动（用户口径：提示前一句固定，后一句只在真回退时才接）。
+                    // 走统一出口：浮层画不出来时至少还有 Toast，否则"双击了但什么都没说"
+                    notifyUser(getString(R.string.reader_translate_force_stopped_to_manual))
                     refreshTranslationChrome()
                     refreshProgressTranslation()
                 }
                 TranslateClick.Busy -> {
-                    UiUtils.showToast(this, getString(R.string.reader_translate_busy))
+                    notifyUser(getString(R.string.reader_translate_busy))
                     refreshTranslationChrome()
                 }
                 TranslateClick.StartedManual, TranslateClick.Ignored -> Unit
@@ -1094,8 +1095,7 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun switchChapter(delta: Int) {
         val target = currentChapterIndex() + delta
         if (chapters.isEmpty() || target !in chapters.indices) {
-            UiUtils.showToast(
-                this,
+            notifyUser(
                 getString(if (delta < 0) R.string.reader_chapter_first else R.string.reader_chapter_last)
             )
             return
@@ -1171,9 +1171,9 @@ class MangaReaderActivity : AppCompatActivity() {
         // ⚠️ 监听器式而不是单个回调：hub（通知栏）也要收这个事件，单个 var 会被后设的覆盖
         val finished: (Int, Int, Int, Boolean) -> Unit = { _, ok, total, cancelled ->
             runOnUiThread {
-                val overlay = TranslationStatusOverlay.getInstance(this@MangaReaderActivity)
-                overlay.dismiss()
-                if (!cancelled) overlay.show(getString(R.string.reader_translate_chapter_finished, ok, total))
+                TranslationStatusOverlay.getInstance(this@MangaReaderActivity).dismiss()
+                // 整章翻完是「结果」，走统一出口（浮层不可用时退 Toast），不能静默
+                if (!cancelled) notifyUser(getString(R.string.reader_translate_chapter_finished, ok, total))
                 refreshProgressTranslation()
                 refreshTranslationChrome()
             }
@@ -1314,7 +1314,7 @@ class MangaReaderActivity : AppCompatActivity() {
         val controller = translationController ?: return
         val chapter = chapters.getOrNull(chapterIndex) ?: return
         if (pages.isEmpty()) {
-            UiUtils.showToast(this, getString(R.string.reader_translate_chapter_nothing))
+            notifyUser(getString(R.string.reader_translate_chapter_nothing))
             return
         }
         // 章标题一起带过去：后台任务要靠它显示通知栏文案（阅读器关掉后拿不到 chapters）
@@ -1366,7 +1366,7 @@ class MangaReaderActivity : AppCompatActivity() {
             controller.stateOf(it) != ImportedPageTranslation.STATE_IDLE
         }
         if (affected == 0) {
-            UiUtils.showToast(this, getString(R.string.reader_translate_chapter_nothing))
+            notifyUser(getString(R.string.reader_translate_chapter_nothing))
             return
         }
         // 清空本章也要跟阅读背景（用户口径：所有弹窗都要适配主题配色）
@@ -1380,7 +1380,7 @@ class MangaReaderActivity : AppCompatActivity() {
                     refreshTranslationChrome()
                     applyPageVisual(currentPage)
                     if (removed > 0) {
-                        UiUtils.showToast(this@MangaReaderActivity, getString(R.string.reader_translate_chapter_cleared))
+                        notifyUser(getString(R.string.reader_translate_chapter_cleared))
                     }
                 }
             }
@@ -1413,48 +1413,89 @@ class MangaReaderActivity : AppCompatActivity() {
             refreshProgressTranslation()
             refreshTranslationChrome()
             applyPageVisual(currentPage)
-            UiUtils.showToast(this@MangaReaderActivity, getString(R.string.reader_translate_page_deleted))
+            notifyUser(getString(R.string.reader_translate_page_deleted))
         }
     }
 
-    /** 状态浮层总开关（关闭后所有 Hint 必须改走 Toast，否则用户点按钮毫无反馈）。 */
+    /** 状态浮层总开关（关闭后所有提示必须改走 Toast，否则用户点按钮毫无反馈）。 */
     private fun statusOverlayEnabled(): Boolean =
         PreferenceManager.getDefaultSharedPreferences(this)
             .getBoolean("status_overlay_enabled", true)
 
+    /** 阅读器提示样式（唯一消费者是 [notifyUser]）。 */
+    private enum class ReaderNotice {
+        /** 进度/状态：**替换**最顶部那条芯片（截屏翻译的「检测中… / 翻译中…」同款用法）。 */
+        PROGRESS,
+
+        /** 普通提示：堆叠一条，到点自动消失。 */
+        INFO,
+
+        /** 报错：红底芯片，可点击复制；默认常驻到被下一次提示替换（翻译失败就是它）。 */
+        ERROR,
+
+        /**
+         * 报错 + 限时自动消失 + 扛得住 `dismiss()` 清屏：用于**说完就关闭页面**的报错
+         * （本地文件丢失）。用普通 [ERROR] 的话，`onDestroy` 那次清屏会把刚发的芯片吃掉，
+         * 用户就再也看不到「为什么打不开」。
+         */
+        ERROR_BRIEF,
+    }
+
+    /**
+     * **阅读器所有用户提示的唯一出口**（用户口径 2026-10：「阅读器所有的提示报错信息全部使用
+     * 顶部系统弹窗」，即截屏翻译那套 `TranslationStatusOverlay` —— 显示位置 / 时长走个性化设置，
+     * 见 `Status_Position` / `Status_Duration`）。
+     *
+     * ⚠️ 两条兜底**必须保留**，否则用户点了按钮「毫无反馈」：
+     * ① `status_overlay_enabled` 开关被关掉 → 浮层里所有 `show*` 第一句就 return；
+     * ② 没给「显示在其他应用上层」权限 → 浮层画不出来，而且**不报错**（静默失败）。
+     * 任一成立就退回系统 Toast（本方法是阅读器里**唯一**允许出现 `UiUtils.showToast` 的地方）。
+     *
+     * @param autoDismiss 只有 [ReaderNotice.PROGRESS] 用得上：false = 常驻到被替换
+     *   （「正在超分…」这类进行中状态）。
+     */
+    private fun notifyUser(
+        text: String,
+        style: ReaderNotice = ReaderNotice.INFO,
+        autoDismiss: Boolean = true,
+    ) {
+        if (!statusOverlayEnabled() || !TranslationStatusOverlay.canDraw(this)) {
+            UiUtils.showToast(this, text)
+            return
+        }
+        val overlay = TranslationStatusOverlay.getInstance(this)
+        when (style) {
+            ReaderNotice.PROGRESS -> overlay.showImmediate(text, autoDismiss = autoDismiss)
+            ReaderNotice.INFO -> overlay.show(text)
+            ReaderNotice.ERROR -> overlay.showError(text)
+            ReaderNotice.ERROR_BRIEF ->
+                overlay.showError(text, autoDismissMs = BRIEF_NOTICE_MS, sticky = true)
+        }
+    }
+
     /**
      * **超分提示统一出口**（用户口径：超分也要用 app 的「系统提示」，不要用手机底部 Toast）。
-     *
-     * 与翻译按钮的同一条约定：状态浮层受 `status_overlay_enabled` 开关控制、
-     * **没有悬浮窗权限时同样画不出来**（且不报错）→ 两种情况都必须退回系统 Toast，
-     * 否则用户点了超分"毫无反馈"。
      *
      * @param isError 失败原因 → 红色 chip（可点复制，方便用户把原文发出来）；普通提示 → 黑底 chip
      */
     private fun showSrNotice(text: String, isError: Boolean) {
+        // ⚠️ **必须先 dismiss**：`show()` 是**追加**一条芯片，不替换顶部 ——
+        //    不 dismiss 的话那条「正在超分…」常驻芯片（autoDismiss=false）会永远挂着
+        //    （真机反馈「然后一直卡在那」）。与翻译成功/失败的处理完全一致。
+        //    （守卫 `SrReaderWiringTest.everySrNoticeReplacesThePersistentChip` 盯的就是这一句）
         if (statusOverlayEnabled() && TranslationStatusOverlay.canDraw(this)) {
             val overlay = TranslationStatusOverlay.getInstance(this)
-            // ⚠️ **必须先 dismiss**：`show()` 是**追加**一条芯片，不替换顶部 ——
-            //    不 dismiss 的话那条「正在超分…」常驻芯片（autoDismiss=false）会永远挂着
-            //    （真机反馈「然后一直卡在那」）。与翻译成功/失败的处理完全一致。
             overlay.dismiss()
-            if (isError) overlay.showError(text) else overlay.show(text)
-        } else {
-            UiUtils.showToast(this, text)
         }
+        notifyUser(text, if (isError) ReaderNotice.ERROR else ReaderNotice.INFO)
     }
 
     /**
      * 超分「进行中」的常驻提示：`autoDismiss = false` → 一直挂着，直到被结果 / 失败替换
      * （与翻译的"检测中…/翻译中…"同一套用法）。
      */
-    private fun showSrProgress(text: String) {
-        if (statusOverlayEnabled() && TranslationStatusOverlay.canDraw(this)) {
-            TranslationStatusOverlay.getInstance(this).showImmediate(text, autoDismiss = false)
-        } else {
-            UiUtils.showToast(this, text)
-        }
-    }
+    private fun showSrProgress(text: String) =
+        notifyUser(text, ReaderNotice.PROGRESS, autoDismiss = false)
 
     /** 注入「页图提供者」：适配器绑定页时优先取译文/原文渲染图（无则原图），
      *  避免 RecyclerView 重绑/复用把已显示的译图覆盖回原图。 */
@@ -1464,44 +1505,50 @@ class MangaReaderActivity : AppCompatActivity() {
         pageAdapter?.setPageImageProvider(provider)
     }
 
-    /** 状态浮层（与截屏翻译路线一致）：检测中 / 翻译中 / 完成 / 失败。
-     *  成功/失败必须 dismiss 掉常驻的「翻译中」进度芯片，否则一直挂着（还会跨场景残留）。 */
+    /**
+     * 状态浮层（与截屏翻译路线一致）：检测中 / 翻译中 / 完成 / 失败。
+     *
+     * ⚠️ 两类消息的口径不同：
+     * - **进行中**（DETECTING/TRANSLATING）是**连续状态**，直接走浮层的常驻芯片：
+     *   浮层开关关掉时保持静默是那个设置本身的语义，不能退化成每页两条 Toast 刷屏。
+     * - **结果/报错**（完成 / 失败 / 队列耗尽）走 [notifyUser] 统一出口，
+     *   浮层画不出来（没权限）时至少还有 Toast，不会「翻完什么都没说」。
+     * 成功/失败必须 dismiss 掉常驻的「翻译中」进度芯片，否则一直挂着（还会跨场景残留）。
+     */
     private fun onTranslatePhase(phase: ReaderTranslatePhase, message: String?) {
         runOnUiThread {
-            val overlay = TranslationStatusOverlay.getInstance(this)
             val p = translationController?.queuePage?.value ?: -1
             // 带页码：增量连续翻页时用户要看得出进度走到哪一页
             fun withPage(base: String) =
                 if (p >= 0) getString(R.string.reader_translate_status_page, base, p + 1) else base
+            // 进行中的常驻芯片：唯一一处**有意**不走 notifyUser 的浮层用法（见上面的口径）
+            fun progress(text: String) =
+                TranslationStatusOverlay.getInstance(this).showImmediate(text, autoDismiss = false)
 
             when (phase) {
                 // message 优先：分批时管线会给出「识别中（1/2）…」这类带批次的文案（与截屏翻译对齐）
                 ReaderTranslatePhase.DETECTING -> {
                     setTranslatingPulse(true)
-                    overlay.showImmediate(
-                        withPage(message ?: getString(R.string.reader_translate_detecting)), autoDismiss = false
-                    )
+                    progress(withPage(message ?: getString(R.string.reader_translate_detecting)))
                 }
                 ReaderTranslatePhase.TRANSLATING -> {
                     setTranslatingPulse(true)
-                    overlay.showImmediate(
-                        withPage(message ?: getString(R.string.reader_translate_in_progress)), autoDismiss = false
-                    )
+                    progress(withPage(message ?: getString(R.string.reader_translate_in_progress)))
                 }
                 ReaderTranslatePhase.SUCCESS -> {
                     setTranslatingPulse(false)
-                    overlay.dismiss()
+                    TranslationStatusOverlay.getInstance(this).dismiss()
                     // message 携带缓存说明（「12 条里命中 3 条」）；无缓存命中时它是 null，走原文案。
                     // 用户必须能分辨「真的调了 API」和「全部命中缓存」——否则同页重翻会像凭空成功。
-                    overlay.show(message ?: getString(R.string.reader_translate_done))
+                    notifyUser(message ?: getString(R.string.reader_translate_done))
                     refreshProgressTranslation()
                     // 成功页要立刻出现三态按钮（此前要等下一次 onVisual 重绑才出现）
                     refreshTranslationChrome()
                 }
                 ReaderTranslatePhase.FAILED -> {
                     setTranslatingPulse(false)
-                    overlay.dismiss()
-                    overlay.showError(message ?: getString(R.string.reader_translate_failed))
+                    TranslationStatusOverlay.getInstance(this).dismiss()
+                    notifyUser(message ?: getString(R.string.reader_translate_failed), ReaderNotice.ERROR)
                     refreshProgressTranslation()
                     // ⚠️ 必须刷新：失败感叹号只在 refreshTranslationChrome 里被置 VISIBLE，
                     // 而错误 chip 几秒后就自动消失 —— 不刷的话用户此后再也没有入口看失败原因
@@ -1511,8 +1558,8 @@ class MangaReaderActivity : AppCompatActivity() {
                 // 队列跑完：提示一下随即消失，翻页后队列会自动重启
                 ReaderTranslatePhase.QUEUE_DRAINED -> {
                     setTranslatingPulse(false)
-                    overlay.dismiss()
-                    overlay.show(getString(R.string.reader_translate_queue_drained))
+                    TranslationStatusOverlay.getInstance(this).dismiss()
+                    notifyUser(getString(R.string.reader_translate_queue_drained))
                     refreshProgressTranslation()
                 }
             }
@@ -1523,8 +1570,9 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun showFailBubble() {
         val controller = translationController ?: return
         val reason = controller.failMessageOf(currentPage) ?: getString(R.string.reader_translate_failed)
-        TranslationStatusOverlay.getInstance(this)
-            .show(getString(R.string.reader_translate_failed_page_hint, currentPage + 1, reason))
+        // 走统一出口：浮层画不出来时（开关关掉 / 没悬浮窗权限）至少还有 Toast，
+        // 否则用户点了红色感叹号「什么都没发生」，而失败原因是他唯一能自查的东西
+        notifyUser(getString(R.string.reader_translate_failed_page_hint, currentPage + 1, reason))
     }
 
     /** 同步翻译浮层组：成功页显示三态按钮、失败页显示感叹号；隐藏态 / Webtoon 整组隐藏。 */
@@ -1641,15 +1689,15 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun onSrToggleClicked() {
         val controller = translationController ?: return
         lifecycleScope.launch {
-            val action = controller.toggleSrBase(currentPage)
+            controller.toggleSrBase(currentPage)
             refreshTranslationChrome()
+            // ⚠️ 文案按**切换后的真实显示态**取，不要用 `toggleSrBase` 返回的 `SrAction`：
+            // 那个枚举描述的是"按钮的下一个动作"（SHOW_ORIGINAL = 当前正显示超分底图），
+            // 而且这一页正在超分（BUSY）时它返回的根本不是二态值 → 文案会张冠李戴。
             showSrNotice(
                 getString(
-                    if (action == ReaderTranslationController.SrAction.SHOW_ORIGINAL) {
-                        R.string.sr_show_sr_page
-                    } else {
-                        R.string.sr_show_original_page
-                    },
+                    if (controller.srBaseOn(currentPage)) R.string.sr_show_sr_page
+                    else R.string.sr_show_original_page,
                     currentPage + 1,
                 ),
                 isError = false,
@@ -2076,15 +2124,17 @@ class MangaReaderActivity : AppCompatActivity() {
 
     private fun exportOriginal() {
         if (exportJob?.isActive == true) {
-            UiUtils.showToast(this, getString(R.string.reader_download_busy))
+            notifyUser(getString(R.string.reader_download_busy))
             return
         }
-        UiUtils.showToast(this, getString(R.string.reader_download_started))
+        notifyUser(getString(R.string.reader_download_started))
         exportJob = lifecycleScope.launch {
             val name = withContext(Dispatchers.IO) { exportOriginalZip() }
-            UiUtils.showToast(this@MangaReaderActivity,
-                if (name != null) getString(R.string.reader_download_done, name)
-                else getString(R.string.reader_download_failed))
+            if (name != null) {
+                notifyUser(getString(R.string.reader_download_done, name))
+            } else {
+                notifyUser(getString(R.string.reader_download_failed), ReaderNotice.ERROR)
+            }
         }
     }
 
@@ -2097,15 +2147,15 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun exportTranslated(both: Boolean) {
         val controller = translationController ?: return
         if (exportJob?.isActive == true) {
-            UiUtils.showToast(this, getString(R.string.reader_download_busy))
+            notifyUser(getString(R.string.reader_download_busy))
             return
         }
         val total = controller.translatedPages().size
         if (total == 0) {
-            UiUtils.showToast(this, getString(R.string.reader_download_nothing))
+            notifyUser(getString(R.string.reader_download_nothing))
             return
         }
-        UiUtils.showToast(this, getString(R.string.reader_download_started))
+        notifyUser(getString(R.string.reader_download_started))
         exportJob = lifecycleScope.launch {
             val tmp = File(cacheDir, "manga_export_${System.currentTimeMillis()}.zip")
             val overlay = TranslationStatusOverlay.getInstance(this@MangaReaderActivity)
@@ -2139,7 +2189,9 @@ class MangaReaderActivity : AppCompatActivity() {
                 // ⚠️ 只在自己显示过时才 dismiss（progressShown，不是开关）：浮层是共享单例且
                 // dismiss() 清空**全部**堆叠消息，开关开着但没显示过时静默收尾会误伤别的芯片
                 if (progressShown) overlay.dismiss()
-                UiUtils.showToast(this@MangaReaderActivity, exportMessage(outcome, both, tmp))
+                // 结果同样走 app 顶部浮层（用户口径：阅读器的提示全部用它），失败 = 红底芯片
+                val notice = exportMessage(outcome, both, tmp)
+                notifyUser(notice.text, if (notice.isError) ReaderNotice.ERROR else ReaderNotice.INFO)
             } finally {
                 // ⚠️ 清理必须在 finally：导出中途退出阅读器会取消 lifecycleScope，上面所有
                 // delete 都跑不到 —— 几百 MB 的临时包会一直躺在 cacheDir 里没人清
@@ -2148,22 +2200,32 @@ class MangaReaderActivity : AppCompatActivity() {
         }
     }
 
-    /** 导出结束后的用户可见结果：区分「没得导」「失败」「成功但跳过了页」。 */
-    private suspend fun exportMessage(outcome: ExportOutcome, both: Boolean, tmp: File): String = when (outcome) {
-        ExportOutcome.Empty -> getString(R.string.reader_download_nothing)
-        ExportOutcome.Failed -> getString(R.string.reader_download_failed)
+    /**
+     * 导出结束后的用户可见结果：区分「没得导」「失败」「成功但跳过了页」。
+     *
+     * 文案带上「是不是报错」：调用方要据此选红底芯片还是普通芯片（阅读器的提示全部走
+     * [notifyUser]）。别在调用方拿文案去和 `reader_download_failed` 比字符串 ——
+     * 那样一改文案就静默退化成普通提示。
+     */
+    private data class ExportNotice(val text: String, val isError: Boolean)
+
+    private suspend fun exportMessage(outcome: ExportOutcome, both: Boolean, tmp: File): ExportNotice = when (outcome) {
+        ExportOutcome.Empty -> ExportNotice(getString(R.string.reader_download_nothing), false)
+        ExportOutcome.Failed -> ExportNotice(getString(R.string.reader_download_failed), true)
         is ExportOutcome.Done -> {
             if (outcome.written == 0) {
                 // 一页都没成功 → 不能把空包当成功交付（跳过的页已在日志里）
-                getString(R.string.reader_download_failed)
+                ExportNotice(getString(R.string.reader_download_failed), true)
             } else {
                 val display = displayNameFor(both)
                 val saved = withContext(Dispatchers.IO) { writeToDownloads(display, tmp) }
                 when {
-                    !saved -> getString(R.string.reader_download_failed)
+                    !saved -> ExportNotice(getString(R.string.reader_download_failed), true)
                     // 跳过的页必须说出来：包不完整时用户得知道
-                    outcome.skipped > 0 -> getString(R.string.reader_download_done_skipped, display, outcome.skipped)
-                    else -> getString(R.string.reader_download_done, display)
+                    outcome.skipped > 0 -> ExportNotice(
+                        getString(R.string.reader_download_done_skipped, display, outcome.skipped), false
+                    )
+                    else -> ExportNotice(getString(R.string.reader_download_done, display), false)
                 }
             }
         }

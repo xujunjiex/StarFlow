@@ -158,8 +158,15 @@ class TranslationStatusOverlay private constructor(private val context: Context)
 
     /**
      * 显示错误提示（红色背景，可点击复制）。替换最顶部一条。
+     *
+     * @param autoDismissMs 到点自动消失（毫秒）。**默认 null = 一直挂着**，直到被下一次
+     *   `dismiss()` / 别的提示替换 —— 翻译失败这类「等用户读完、点一下复制」的错误就用这个默认值。
+     *   阅读器里「说完就关掉页面」的报错（本地文件丢失）必须传值：不传的话那条红芯片是
+     *   `TYPE_APPLICATION_OVERLAY` 系统窗口，页面关掉后它会挂在别的应用上，没有任何入口能消掉。
+     * @param sticky 登记进 [stickyChips]：`dismiss()` 清屏时**保留**它。阅读器 `onDestroy`
+     *   会清一次浮层（防止「检测中…」残留到桌面），不登记的话刚发出去的报错会被那次清屏吃掉。
      */
-    fun showError(message: String) {
+    fun showError(message: String, autoDismissMs: Long? = null, sticky: Boolean = false) {
         if (!isEnabled()) return
         LogCollector.e(TAG, message)
         runOnMainThread {
@@ -170,6 +177,7 @@ class TranslationStatusOverlay private constructor(private val context: Context)
             } else {
                 addChip(message, isError = true, autoDismiss = false)
             }
+            if (sticky) stickyChips.add(chip)
             chip.background = createRoundedBackground(Color.argb(150, 180, 0, 0))
             chip.isClickable = true
             chip.setOnClickListener {
@@ -181,6 +189,9 @@ class TranslationStatusOverlay private constructor(private val context: Context)
             }
             // 确保窗口已附着（与 showImmediate 同理）
             addToWindowIfNeeded()
+            // 传了时长就排消失任务：`addChip(autoDismiss = false)` / 复用在顶部的那条都没有计时器，
+            // 不补这一句就是「说好 3 秒消失，实际永远挂着」
+            if (autoDismissMs != null) rescheduleDismiss(chip, true, autoDismissMs)
         }
     }
 
