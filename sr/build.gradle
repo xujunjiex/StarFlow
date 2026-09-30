@@ -1,0 +1,80 @@
+/*
+ * :sr —— 超分原生引擎模块（ncnn + Vulkan）
+ *
+ * 纯 native 模块：只暴露 `com.moe.starflow.sr.ncnn.SrNcnnNative` 对应的 JNI 桥。
+ * Kotlin 侧的引擎实现（NcnnSrEngine）、模型路径解析、Bitmap 拆装都在 :app 里。
+ *
+ * ⚠️ 不内置任何模型：模型一律走 download/ 的下载流水线，落到 getExternalFilesDir("sr")。
+ *    本模块只带**引擎**（libstarflow_sr.so ≈ 9 MB），不带权重。
+ *
+ * 构建前需要 ncnn SDK：`pwsh sr/setup-ncnn.ps1`（见 sr/.gitignore，ncnn/ 不入库）。
+ */
+plugins {
+    id 'com.android.library'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.moe.starflow.sr.ncnn'
+    compileSdk 35
+
+    defaultConfig {
+        minSdk 29
+        // ⚠️ consumerProguardFiles 必须在 defaultConfig 里：放 buildTypes.release 会被静默忽略，
+        //    后果是 release 包把 SrNcnnNative 的 JNI 绑定混淆掉 → UnsatisfiedLinkError。
+        consumerProguardFiles 'consumer-rules.pro'
+        // ncnn 的 Vulkan 后端只对 arm64 有意义（与项目其它 native 库一致）
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+
+        externalNativeBuild {
+            cmake {
+                // ncnn 与两个引擎都要求 C++17
+                cppFlags '-std=c++17 -fexceptions -frtti'
+                arguments '-DANDROID_STL=c++_shared',
+                          '-DCMAKE_BUILD_TYPE=Release'
+            }
+        }
+    }
+
+    // 与 :app / :llamacpp 同一个 NDK，避免三套工具链产物混用
+    ndkVersion "25.2.9519653"
+
+    externalNativeBuild {
+        cmake {
+            path file('src/main/cpp/CMakeLists.txt')
+            version '3.22.1'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    buildFeatures {
+        buildConfig false
+    }
+
+    packagingOptions {
+        jniLibs {
+            // ⚠️ false = .so 不压缩进 APK（现代 AGP 默认）。实测本 APK 全部 .so
+            //    都是 100% 未压缩存储 → libstarflow_sr.so 的体积就是 APK 的增量。
+            useLegacyPackaging false
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.15.0'
+}

@@ -630,6 +630,43 @@
     <string name="sr_model_animejanai_sharp1_balanced">AnimeJaNai HD V3.1 · 锐化·均衡档</string>
     <string name="sr_model_animejanai_sharp1_performance">AnimeJaNai HD V3.1 · 锐化·性能档</string>
     <string name="sr_model_animejanai_sd_compact">AnimeJaNai SD · 紧凑档</string>
+    <string name="sr_group_w2x_up7_anime">waifu2x upconv_7 动漫（2x，ncnn GPU）</string>
+    <string name="sr_group_w2x_up7_anime_desc">waifu2x 官方 upconv_7 动漫模型，ncnn + Vulkan 在手机上跑。实测最快的一族：约 2 秒/页、单档仅 1.1MB、画质与 cunet 同级。档位是降噪强度，这个模型加了降噪会明显变差，除非图源很脏，一般用「不降噪」。</string>
+    <string name="sr_group_w2x_up7_photo">waifu2x upconv_7 照片（2x，ncnn GPU）</string>
+    <string name="sr_group_w2x_up7_photo_desc">upconv_7 的写实照片权重。比动漫版权重更保真但线条更软 —— 漫画/线稿请用动漫版，这一族适合照片、彩页、封面这类连续色调的图。</string>
+    <string name="sr_group_waifu2x_cunet">waifu2x cunet（2x，ncnn GPU）</string>
+    <string name="sr_group_waifu2x_cunet_desc">waifu2x 官方 cunet 架构（59 层，含 4 组 SE 模块）。比 upconv_7 更耐脏：加了降噪也不掉画质，实测在「中度降噪」达到峰值 —— 扫描噪点、JPEG 块效应重的图源选它。纯 CPU 跑要 10~37 秒，必须走 GPU。</string>
+    <string name="sr_group_srmd">SRMD（2x，ncnn GPU）</string>
+    <string name="sr_group_srmd_desc">SRMD 是「多退化」模型：降噪强度是运行时参数，一个模型覆盖多种退化程度。实测保真度全场最高，但比 upconv_7 慢约 3 倍 —— 追求极限画质时才选。</string>
+    <string name="sr_group_realcugan">Real-CUGAN（2x，ncnn GPU）</string>
+    <string name="sr_group_realcugan_desc">B 站 Real-CUGAN，另一款阅读器 koto 在用的模型。主观上线条较锐、观感鲜明，但它对原图改动较大 —— 我们的 PSNR 实测偏低，那正是「重画」而非「还原」的代价。⚠️ PSNR 衡量的是「像不像原图」，不代表「好不好看」，请自己对比样张后再决定。</string>
+    <string name="sr_group_realesrgan">Real-ESRGAN（4x，ncnn GPU）</string>
+    <string name="sr_group_realesrgan_desc">Real-ESRGAN 的动漫 6B 权重，4 倍放大（比其它族多一倍）。体积 17MB、对原图改动最大 —— 实测保真度垫底，仅在确实需要 4x 尺寸时使用。</string>
+
+    <string name="sr_model_w2x_up7_anime_m1">waifu2x upconv_7 动漫 · 不降噪</string>
+    <string name="sr_model_w2x_up7_anime_n0">waifu2x upconv_7 动漫 · 轻度降噪</string>
+    <string name="sr_model_w2x_up7_anime_n1">waifu2x upconv_7 动漫 · 中度降噪</string>
+    <string name="sr_model_w2x_up7_anime_n2">waifu2x upconv_7 动漫 · 强力降噪</string>
+    <string name="sr_model_w2x_up7_anime_n3">waifu2x upconv_7 动漫 · 极强降噪</string>
+    <string name="sr_model_w2x_up7_photo_m1">waifu2x upconv_7 照片 · 不降噪</string>
+    <string name="sr_model_w2x_up7_photo_n0">waifu2x upconv_7 照片 · 轻度降噪</string>
+    <string name="sr_model_w2x_up7_photo_n1">waifu2x upconv_7 照片 · 中度降噪</string>
+    <string name="sr_model_w2x_up7_photo_n2">waifu2x upconv_7 照片 · 强力降噪</string>
+    <string name="sr_model_w2x_up7_photo_n3">waifu2x upconv_7 照片 · 极强降噪</string>
+    <string name="sr_model_w2x_cunet_m1">waifu2x cunet · 不降噪</string>
+    <string name="sr_model_w2x_cunet_n0">waifu2x cunet · 轻度降噪</string>
+    <string name="sr_model_w2x_cunet_n1">waifu2x cunet · 中度降噪</string>
+    <string name="sr_model_w2x_cunet_n2">waifu2x cunet · 强力降噪</string>
+    <string name="sr_model_w2x_cunet_n3">waifu2x cunet · 极强降噪</string>
+    <string name="sr_model_srmd_x2">SRMD · 2x 带降噪</string>
+    <string name="sr_model_srmd_nf_x2">SRMD · 2x 不降噪</string>
+    <string name="sr_model_cugan_cons">Real-CUGAN · 2x 保守</string>
+    <string name="sr_model_cugan_d1">Real-CUGAN · 2x 降噪1x</string>
+    <string name="sr_model_cugan_d2">Real-CUGAN · 2x 降噪2x</string>
+    <string name="sr_model_cugan_d3">Real-CUGAN · 2x 降噪3x</string>
+    <string name="sr_model_cugan_dn">Real-CUGAN · 2x 不降噪</string>
+    <string name="sr_model_rsrgan_a6b">Real-ESRGAN · 动漫 6B（4x）</string>
+
     <string name="sr_low_res_tip">💡 超分只对真正低分辨率的图源有明显效果。宽度 1000px 以上的页面几乎看不出变化，网点重的页还可能被重新绘制。图源不小就别开。</string>
     <string name="sr_no_model_selected">尚未选择超分模型——请在下方下载</string>
     <string name="sr_active_switched">已切换到 %1$s</string>
@@ -1647,16 +1684,6 @@
     <string name="reader_clear_page_confirm_ok">清除</string>
 
     <!-- waifu2x 模型族（2026-10，deepghs/waifu2x_onnx 的官方 ONNX 版） -->
-    <string name="sr_group_waifu2x_cunet">waifu2x cunet（2x，ONNX）</string>
-    <string name="sr_group_waifu2x_cunet_desc">waifu2x 官方模型集的 cunet 架构。四个等级是降噪强度：n0 不降噪（最忠实原图，只做线条修复与放大）、n3 强力降噪（适合扫描噪点/JPEG 块效应很重的图源）。实测这一族质量最高。</string>
-    <string name="sr_group_waifu2x_swin">waifu2x swin_unet（2x，ONNX）</string>
-    <string name="sr_group_waifu2x_swin_desc">waifu2x 的 SwinIR 架构，质量最高但体积大（16.8MB/档）、速度更慢。适合追求画质、不介意等待的彩页与封面。</string>
-    <string name="sr_model_w2x_cunet_n0">cunet · 不降噪（n0）</string>
-    <string name="sr_model_w2x_cunet_n1">cunet · 轻度降噪（n1）</string>
-    <string name="sr_model_w2x_cunet_n2">cunet · 中度降噪（n2）</string>
-    <string name="sr_model_w2x_cunet_n3">cunet · 强力降噪（n3）</string>
-    <string name="sr_model_w2x_swin_n0">swin_unet · 不降噪（n0）</string>
-    <string name="sr_model_w2x_swin_n1">swin_unet · 轻度降噪（n1）</string>
 
     <!-- 画质增强（调色面板，2026-10） -->
     <string name="reader_sr_switch_label">超分放大</string>

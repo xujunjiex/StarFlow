@@ -79,21 +79,65 @@ enum class ModelKey(val stableId: Int) {
     // 「等级」这一维在这里是**降噪强度**（n0 不降噪 → n3 强力降噪），不是画质档。
     // 本地实测：cunet 一族是质量最高的（缩回 PSNR ≈ 41，比 AnimeJaNai 的 34 高 7 分）。
 
-    /** waifu2x cunet · 不降噪（2x，opset 14，~5.2MB） */
-    SR_WAIFU2X_CUNET_N0(3020),
+    // ── ncnn + Vulkan 超分（waifu2x / SRMD / Real-CUGAN / Real-ESRGAN）──────────
+    // 引擎在 :sr 模块（ncnn 源码自编），模型走下载、不内置；
+    // 引擎参数（family/scale/noise/prepad）取自 downloadinfo.json，不在这里硬编码。
 
-    /** waifu2x cunet · 轻度降噪（2x） */
-    SR_WAIFU2X_CUNET_N1(3021),
+    // waifu2x upconv_7 · 动漫（waifu2x，共 5 档）
+    /** waifu2x upconv_7 · 动漫 · 不降噪 · 2x，1.06MB */
+    SR_W2X_UP7_ANIME_M1(3040),
+    /** waifu2x upconv_7 · 动漫 · 轻度降噪 · 2x，1.06MB */
+    SR_W2X_UP7_ANIME_N0(3041),
+    /** waifu2x upconv_7 · 动漫 · 中度降噪 · 2x，1.06MB */
+    SR_W2X_UP7_ANIME_N1(3042),
+    /** waifu2x upconv_7 · 动漫 · 强力降噪 · 2x，1.06MB */
+    SR_W2X_UP7_ANIME_N2(3043),
+    /** waifu2x upconv_7 · 动漫 · 极强降噪 · 2x，1.06MB */
+    SR_W2X_UP7_ANIME_N3(3044),
 
-    /** waifu2x cunet · 中度降噪（2x） */
-    SR_WAIFU2X_CUNET_N2(3022),
+    // waifu2x upconv_7 · 照片（waifu2x，共 5 档）
+    /** waifu2x upconv_7 · 照片 · 不降噪 · 2x，1.06MB */
+    SR_W2X_UP7_PHOTO_M1(3050),
+    /** waifu2x upconv_7 · 照片 · 轻度降噪 · 2x，1.06MB */
+    SR_W2X_UP7_PHOTO_N0(3051),
+    /** waifu2x upconv_7 · 照片 · 中度降噪 · 2x，1.06MB */
+    SR_W2X_UP7_PHOTO_N1(3052),
+    /** waifu2x upconv_7 · 照片 · 强力降噪 · 2x，1.06MB */
+    SR_W2X_UP7_PHOTO_N2(3053),
+    /** waifu2x upconv_7 · 照片 · 极强降噪 · 2x，1.06MB */
+    SR_W2X_UP7_PHOTO_N3(3054),
 
-    /** waifu2x cunet · 强力降噪（2x） */
-    SR_WAIFU2X_CUNET_N3(3023),
+    // waifu2x cunet（waifu2x，共 5 档）
+    /** waifu2x cunet · 不降噪 · 2x，2.65MB */
+    SR_W2X_CUNET_M1(3020),
+    /** waifu2x cunet · 轻度降噪 · 2x，2.65MB */
+    SR_W2X_CUNET_N0(3021),
+    /** waifu2x cunet · 中度降噪 · 2x，2.65MB */
+    SR_W2X_CUNET_N1(3022),
+    /** waifu2x cunet · 强力降噪 · 2x，2.65MB */
+    SR_W2X_CUNET_N2(3023),
+    /** waifu2x cunet · 极强降噪 · 2x，2.65MB */
+    SR_W2X_CUNET_N3(3024),
 
-    /** waifu2x swin_unet · 不降噪（2x，SwinIR，质量最高档，~16.8MB） */
-    SR_WAIFU2X_SWIN_N0(3030),
+    // SRMD（srmd，共 2 档）
+    /** SRMD · 2x，2.89MB */
+    SR_SRMD_X2(3060),
+    /** SRMD · 2x，2.89MB */
+    SR_SRMD_NF_X2(3061),
 
-    /** waifu2x swin_unet · 轻度降噪（2x，~16.8MB） */
-    SR_WAIFU2X_SWIN_N1(3031);
+    // Real-CUGAN（realcugan，共 5 档）
+    /** Real-CUGAN · 2x，2.46MB */
+    SR_REALCUGAN_CONSERVATIVE(3070),
+    /** Real-CUGAN · 2x，2.46MB */
+    SR_REALCUGAN_DENOISE1X(3071),
+    /** Real-CUGAN · 2x，2.46MB */
+    SR_REALCUGAN_DENOISE2X(3072),
+    /** Real-CUGAN · 2x，2.46MB */
+    SR_REALCUGAN_DENOISE3X(3073),
+    /** Real-CUGAN · 2x，2.46MB */
+    SR_REALCUGAN_NODENOISE(3074),
+
+    // Real-ESRGAN（realesrgan，共 1 档）
+    /** Real-ESRGAN · 4x，17.09MB */
+    SR_REALESRGAN_ANIME6B(3080);
 }

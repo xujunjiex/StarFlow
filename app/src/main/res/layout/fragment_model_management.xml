@@ -675,7 +675,267 @@
 
             </LinearLayout>
 
-            <!-- ── 族 2 ── -->
+            <!-- ── 族 2 · waifu2x upconv_7 动漫（ncnn） ── -->
+            <TextView
+                android:id="@+id/sr_w2xa_group_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/sr_group_w2x_up7_anime"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:padding="4dp"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/ocr_group_selector"
+                android:clickable="true"/>
+            <TextView
+                android:id="@+id/sr_w2xa_group_selected"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/ocr_group_selected"
+                android:textColor="@color/success"
+                android:textSize="12sp"
+                android:visibility="gone"/>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/setting_shape"
+                android:padding="12dp"
+                android:layout_marginTop="8dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_group_w2x_up7_anime_desc"
+                    android:textSize="11sp"
+                    android:textColor="#888"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_w2x_up7_anime_m1"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_w2xa_m1_row"/>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/divider"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_w2x_up7_anime_n0"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_w2xa_n0_row"/>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/divider"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_w2x_up7_anime_n1"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_w2xa_n1_row"/>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/divider"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_w2x_up7_anime_n2"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_w2xa_n2_row"/>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/divider"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_w2x_up7_anime_n3"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_w2xa_n3_row"/>
+
+            </LinearLayout>
+
+            <!-- ── 族 3 · waifu2x upconv_7 照片（ncnn） ── -->
+            <TextView
+                android:id="@+id/sr_w2xp_group_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/sr_group_w2x_up7_photo"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:padding="4dp"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/ocr_group_selector"
+                android:clickable="true"/>
+            <TextView
+                android:id="@+id/sr_w2xp_group_selected"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/ocr_group_selected"
+                android:textColor="@color/success"
+                android:textSize="12sp"
+                android:visibility="gone"/>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/setting_shape"
+                android:padding="12dp"
+                android:layout_marginTop="8dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_group_w2x_up7_photo_desc"
+                    android:textSize="11sp"
+                    android:textColor="#888"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_w2x_up7_photo_m1"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_w2xp_m1_row"/>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/divider"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_w2x_up7_photo_n0"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_w2xp_n0_row"/>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/divider"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_w2x_up7_photo_n1"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_w2xp_n1_row"/>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/divider"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_w2x_up7_photo_n2"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_w2xp_n2_row"/>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/divider"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_w2x_up7_photo_n3"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_w2xp_n3_row"/>
+
+            </LinearLayout>
+
+            <!-- ── 族 4 · waifu2x cunet（ncnn，替换原 ONNX 版） ── -->
             <TextView
                 android:id="@+id/sr_w2xc_group_title"
                 android:layout_width="wrap_content"
@@ -684,7 +944,7 @@
                 android:textSize="14sp"
                 android:textStyle="bold"
                 android:padding="4dp"
-                android:layout_marginTop="16dp"
+                android:layout_marginTop="8dp"
                 android:background="@drawable/ocr_group_selector"
                 android:clickable="true"/>
             <TextView
@@ -710,6 +970,26 @@
                     android:text="@string/sr_group_waifu2x_cunet_desc"
                     android:textSize="11sp"
                     android:textColor="#888"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_w2x_cunet_m1"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_w2xc_m1_row"/>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/divider"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_marginTop="8dp"
                     android:layout_marginBottom="8dp"/>
 
                 <TextView
@@ -785,20 +1065,20 @@
 
             </LinearLayout>
 
-            <!-- ── 族 3 ── -->
+            <!-- ── 族 5 · SRMD（ncnn） ── -->
             <TextView
-                android:id="@+id/sr_w2xs_group_title"
+                android:id="@+id/sr_srmd_group_title"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/sr_group_waifu2x_swin"
+                android:text="@string/sr_group_srmd"
                 android:textSize="14sp"
                 android:textStyle="bold"
                 android:padding="4dp"
-                android:layout_marginTop="16dp"
+                android:layout_marginTop="8dp"
                 android:background="@drawable/ocr_group_selector"
                 android:clickable="true"/>
             <TextView
-                android:id="@+id/sr_w2xs_group_selected"
+                android:id="@+id/sr_srmd_group_selected"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="@string/ocr_group_selected"
@@ -817,7 +1097,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="@string/sr_group_waifu2x_swin_desc"
+                    android:text="@string/sr_group_srmd_desc"
                     android:textSize="11sp"
                     android:textColor="#888"
                     android:layout_marginBottom="8dp"/>
@@ -825,13 +1105,13 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="@string/sr_model_w2x_swin_n0"
+                    android:text="@string/sr_model_srmd_x2"
                     android:textSize="14sp"
                     android:textStyle="bold"/>
 
                 <include
                     layout="@layout/item_model_row_browser"
-                    android:id="@+id/sr_w2xs_n0_row"/>
+                    android:id="@+id/sr_srmd_x2_row"/>
 
                 <View
                     android:layout_width="match_parent"
@@ -845,15 +1125,196 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="@string/sr_model_w2x_swin_n1"
+                    android:text="@string/sr_model_srmd_nf_x2"
                     android:textSize="14sp"
                     android:textStyle="bold"/>
 
                 <include
                     layout="@layout/item_model_row_browser"
-                    android:id="@+id/sr_w2xs_n1_row"/>
+                    android:id="@+id/sr_srmd_nf_x2_row"/>
 
             </LinearLayout>
+
+            <!-- ── 族 6 · Real-CUGAN（ncnn，koto 在用） ── -->
+            <TextView
+                android:id="@+id/sr_cugan_group_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/sr_group_realcugan"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:padding="4dp"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/ocr_group_selector"
+                android:clickable="true"/>
+            <TextView
+                android:id="@+id/sr_cugan_group_selected"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/ocr_group_selected"
+                android:textColor="@color/success"
+                android:textSize="12sp"
+                android:visibility="gone"/>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/setting_shape"
+                android:padding="12dp"
+                android:layout_marginTop="8dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_group_realcugan_desc"
+                    android:textSize="11sp"
+                    android:textColor="#888"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_cugan_cons"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_cugan_cons_row"/>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/divider"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_cugan_d1"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_cugan_d1_row"/>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/divider"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_cugan_d2"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_cugan_d2_row"/>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/divider"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_cugan_d3"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_cugan_d3_row"/>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/divider"
+                    android:layout_marginStart="4dp"
+                    android:layout_marginEnd="4dp"
+                    android:layout_marginTop="8dp"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_cugan_dn"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_cugan_dn_row"/>
+
+            </LinearLayout>
+
+            <!-- ── 族 7 · Real-ESRGAN（ncnn，4x） ── -->
+            <TextView
+                android:id="@+id/sr_rsrgan_group_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/sr_group_realesrgan"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:padding="4dp"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/ocr_group_selector"
+                android:clickable="true"/>
+            <TextView
+                android:id="@+id/sr_rsrgan_group_selected"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/ocr_group_selected"
+                android:textColor="@color/success"
+                android:textSize="12sp"
+                android:visibility="gone"/>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="@drawable/setting_shape"
+                android:padding="12dp"
+                android:layout_marginTop="8dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_group_realesrgan_desc"
+                    android:textSize="11sp"
+                    android:textColor="#888"
+                    android:layout_marginBottom="8dp"/>
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/sr_model_rsrgan_a6b"
+                    android:textSize="14sp"
+                    android:textStyle="bold"/>
+
+                <include
+                    layout="@layout/item_model_row_browser"
+                    android:id="@+id/sr_rsrgan_a6b_row"/>
+
+            </LinearLayout>
+
 
             <!-- 底部提示（与 OCR 页 model_hint_need_both 同版式） -->
             <TextView

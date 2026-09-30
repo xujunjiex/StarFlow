@@ -152,16 +152,41 @@ class ModelManagementFragment : Fragment() {
             SrRow(ModelKey.SR_ANIMEJANAI_HD_SHARP1_PERFORMANCE, R.id.sr_aji_sharp1_perf_row),
             SrRow(ModelKey.SR_ANIMEJANAI_SD_COMPACT, R.id.sr_aji_sd_row),
         )),
-        SrFamily(R.id.sr_w2xc_group_title, R.id.sr_w2xc_group_selected, listOf(
-            SrRow(ModelKey.SR_WAIFU2X_CUNET_N0, R.id.sr_w2xc_n0_row),
-            SrRow(ModelKey.SR_WAIFU2X_CUNET_N1, R.id.sr_w2xc_n1_row),
-            SrRow(ModelKey.SR_WAIFU2X_CUNET_N2, R.id.sr_w2xc_n2_row),
-            SrRow(ModelKey.SR_WAIFU2X_CUNET_N3, R.id.sr_w2xc_n3_row),
+        SrFamily(R.id.sr_w2xa_group_title, R.id.sr_w2xa_group_selected, listOf(
+            SrRow(ModelKey.SR_W2X_UP7_ANIME_M1, R.id.sr_w2xa_m1_row),
+            SrRow(ModelKey.SR_W2X_UP7_ANIME_N0, R.id.sr_w2xa_n0_row),
+            SrRow(ModelKey.SR_W2X_UP7_ANIME_N1, R.id.sr_w2xa_n1_row),
+            SrRow(ModelKey.SR_W2X_UP7_ANIME_N2, R.id.sr_w2xa_n2_row),
+            SrRow(ModelKey.SR_W2X_UP7_ANIME_N3, R.id.sr_w2xa_n3_row),
         )),
-        SrFamily(R.id.sr_w2xs_group_title, R.id.sr_w2xs_group_selected, listOf(
-            SrRow(ModelKey.SR_WAIFU2X_SWIN_N0, R.id.sr_w2xs_n0_row),
-            SrRow(ModelKey.SR_WAIFU2X_SWIN_N1, R.id.sr_w2xs_n1_row),
-        ))
+        SrFamily(R.id.sr_w2xp_group_title, R.id.sr_w2xp_group_selected, listOf(
+            SrRow(ModelKey.SR_W2X_UP7_PHOTO_M1, R.id.sr_w2xp_m1_row),
+            SrRow(ModelKey.SR_W2X_UP7_PHOTO_N0, R.id.sr_w2xp_n0_row),
+            SrRow(ModelKey.SR_W2X_UP7_PHOTO_N1, R.id.sr_w2xp_n1_row),
+            SrRow(ModelKey.SR_W2X_UP7_PHOTO_N2, R.id.sr_w2xp_n2_row),
+            SrRow(ModelKey.SR_W2X_UP7_PHOTO_N3, R.id.sr_w2xp_n3_row),
+        )),
+        SrFamily(R.id.sr_w2xc_group_title, R.id.sr_w2xc_group_selected, listOf(
+            SrRow(ModelKey.SR_W2X_CUNET_M1, R.id.sr_w2xc_m1_row),
+            SrRow(ModelKey.SR_W2X_CUNET_N0, R.id.sr_w2xc_n0_row),
+            SrRow(ModelKey.SR_W2X_CUNET_N1, R.id.sr_w2xc_n1_row),
+            SrRow(ModelKey.SR_W2X_CUNET_N2, R.id.sr_w2xc_n2_row),
+            SrRow(ModelKey.SR_W2X_CUNET_N3, R.id.sr_w2xc_n3_row),
+        )),
+        SrFamily(R.id.sr_srmd_group_title, R.id.sr_srmd_group_selected, listOf(
+            SrRow(ModelKey.SR_SRMD_X2, R.id.sr_srmd_x2_row),
+            SrRow(ModelKey.SR_SRMD_NF_X2, R.id.sr_srmd_nf_x2_row),
+        )),
+        SrFamily(R.id.sr_cugan_group_title, R.id.sr_cugan_group_selected, listOf(
+            SrRow(ModelKey.SR_REALCUGAN_CONSERVATIVE, R.id.sr_cugan_cons_row),
+            SrRow(ModelKey.SR_REALCUGAN_DENOISE1X, R.id.sr_cugan_d1_row),
+            SrRow(ModelKey.SR_REALCUGAN_DENOISE2X, R.id.sr_cugan_d2_row),
+            SrRow(ModelKey.SR_REALCUGAN_DENOISE3X, R.id.sr_cugan_d3_row),
+            SrRow(ModelKey.SR_REALCUGAN_NODENOISE, R.id.sr_cugan_dn_row),
+        )),
+        SrFamily(R.id.sr_rsrgan_group_title, R.id.sr_rsrgan_group_selected, listOf(
+            SrRow(ModelKey.SR_REALESRGAN_ANIME6B, R.id.sr_rsrgan_a6b_row),
+        )),
     )
 
     /** 扁平化的全部超分行（磁盘刷新 / 渲染都要遍历它） */
@@ -174,12 +199,29 @@ class ModelManagementFragment : Fragment() {
         ModelKey.SR_ANIMEJANAI_HD_PERFORMANCE,
         ModelKey.SR_ANIMEJANAI_HD_SHARP1_PERFORMANCE -> "~0.7MB"
         ModelKey.SR_ANIMEJANAI_SD_COMPACT -> "~1.2MB"
-        ModelKey.SR_WAIFU2X_CUNET_N0,
-        ModelKey.SR_WAIFU2X_CUNET_N1,
-        ModelKey.SR_WAIFU2X_CUNET_N2,
-        ModelKey.SR_WAIFU2X_CUNET_N3 -> "~5.2MB"
-        ModelKey.SR_WAIFU2X_SWIN_N0,
-        ModelKey.SR_WAIFU2X_SWIN_N1 -> "~16.8MB"
+        ModelKey.SR_W2X_UP7_ANIME_M1 -> "~1.1MB"
+        ModelKey.SR_W2X_UP7_ANIME_N0 -> "~1.1MB"
+        ModelKey.SR_W2X_UP7_ANIME_N1 -> "~1.1MB"
+        ModelKey.SR_W2X_UP7_ANIME_N2 -> "~1.1MB"
+        ModelKey.SR_W2X_UP7_ANIME_N3 -> "~1.1MB"
+        ModelKey.SR_W2X_UP7_PHOTO_M1 -> "~1.1MB"
+        ModelKey.SR_W2X_UP7_PHOTO_N0 -> "~1.1MB"
+        ModelKey.SR_W2X_UP7_PHOTO_N1 -> "~1.1MB"
+        ModelKey.SR_W2X_UP7_PHOTO_N2 -> "~1.1MB"
+        ModelKey.SR_W2X_UP7_PHOTO_N3 -> "~1.1MB"
+        ModelKey.SR_W2X_CUNET_M1 -> "~2.7MB"
+        ModelKey.SR_W2X_CUNET_N0 -> "~2.7MB"
+        ModelKey.SR_W2X_CUNET_N1 -> "~2.7MB"
+        ModelKey.SR_W2X_CUNET_N2 -> "~2.7MB"
+        ModelKey.SR_W2X_CUNET_N3 -> "~2.7MB"
+        ModelKey.SR_SRMD_X2 -> "~2.9MB"
+        ModelKey.SR_SRMD_NF_X2 -> "~2.9MB"
+        ModelKey.SR_REALCUGAN_CONSERVATIVE -> "~2.5MB"
+        ModelKey.SR_REALCUGAN_DENOISE1X -> "~2.5MB"
+        ModelKey.SR_REALCUGAN_DENOISE2X -> "~2.5MB"
+        ModelKey.SR_REALCUGAN_DENOISE3X -> "~2.5MB"
+        ModelKey.SR_REALCUGAN_NODENOISE -> "~2.5MB"
+        ModelKey.SR_REALESRGAN_ANIME6B -> "~17.1MB"
         else -> ""
     }
 

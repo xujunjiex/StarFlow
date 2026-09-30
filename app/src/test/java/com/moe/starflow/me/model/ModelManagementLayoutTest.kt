@@ -173,14 +173,24 @@ class ModelManagementLayoutTest {
     fun superResolutionGroupsAndRowsAreComplete() {
         val root = inflate()
 
-        for (id in listOf(R.id.sr_aji_group_title, R.id.sr_w2xc_group_title, R.id.sr_w2xs_group_title)) {
-            assertNotNull("缺超分组标题 $id", root.findViewById<View>(id))
-        }
-        for (id in listOf(R.id.sr_aji_group_selected, R.id.sr_w2xc_group_selected, R.id.sr_w2xs_group_selected)) {
-            assertNotNull("缺超分组「当前使用」$id", root.findViewById<View>(id))
-        }
+        // 7 个族：AnimeJaNai（ONNX）+ 6 个 ncnn 族（waifu2x upconv_7 动漫/照片、cunet、SRMD、
+        // Real-CUGAN、Real-ESRGAN）。swin 已移除（16MB/档、15-19 秒/页、且无法转 ncnn）。
+        val titles = listOf(
+            R.id.sr_aji_group_title, R.id.sr_w2xa_group_title, R.id.sr_w2xp_group_title,
+            R.id.sr_w2xc_group_title, R.id.sr_srmd_group_title, R.id.sr_cugan_group_title,
+            R.id.sr_rsrgan_group_title
+        )
+        for (id in titles) assertNotNull("缺超分组标题 $id", root.findViewById<View>(id))
+
+        val selecteds = listOf(
+            R.id.sr_aji_group_selected, R.id.sr_w2xa_group_selected, R.id.sr_w2xp_group_selected,
+            R.id.sr_w2xc_group_selected, R.id.sr_srmd_group_selected, R.id.sr_cugan_group_selected,
+            R.id.sr_rsrgan_group_selected
+        )
+        for (id in selecteds) assertNotNull("缺超分组「当前使用」$id", root.findViewById<View>(id))
 
         val rows = srRowIds()
+        assertEquals("超分行数应为 28（5 AnimeJaNai + 23 ncnn）", 28, rows.size)
         val roots = rows.map { root.findViewById<View>(it) }
         rows.forEachIndexed { i, id -> assertNotNull("超分行根缺失: $id", roots[i]) }
         assertEquals("超分行根 id 必须唯一", rows.size, roots.toSet().size)
@@ -213,18 +223,47 @@ class ModelManagementLayoutTest {
         assertTrue("Fragment 引用了布局里不存在的 id: $missing", missing.isEmpty())
     }
 
-    /** 超分模型行的行根 id（顺序同 ModelManagementFragment.srFamilies） */
+    /**
+     * 超分模型行的行根 id（顺序同 ModelManagementFragment.srFamilies）。
+     *
+     * ⚠️ 加/删模型时这里**必须同步** —— 它和布局 XML、Fragment、downloadinfo.json
+     * 是同一份清单的四个副本，任一处漏改都由本测试或 `verify_sr_wiring.py` 抓出来。
+     */
     private fun srRowIds() = listOf(
+        // AnimeJaNai（ONNX，CPU）
         R.id.sr_aji_balanced_row,
         R.id.sr_aji_perf_row,
         R.id.sr_aji_sharp1_balanced_row,
         R.id.sr_aji_sharp1_perf_row,
         R.id.sr_aji_sd_row,
+        // waifu2x upconv_7 动漫（ncnn，5 档）
+        R.id.sr_w2xa_m1_row,
+        R.id.sr_w2xa_n0_row,
+        R.id.sr_w2xa_n1_row,
+        R.id.sr_w2xa_n2_row,
+        R.id.sr_w2xa_n3_row,
+        // waifu2x upconv_7 照片（ncnn，5 档）
+        R.id.sr_w2xp_m1_row,
+        R.id.sr_w2xp_n0_row,
+        R.id.sr_w2xp_n1_row,
+        R.id.sr_w2xp_n2_row,
+        R.id.sr_w2xp_n3_row,
+        // waifu2x cunet（ncnn，5 档）
+        R.id.sr_w2xc_m1_row,
         R.id.sr_w2xc_n0_row,
         R.id.sr_w2xc_n1_row,
         R.id.sr_w2xc_n2_row,
         R.id.sr_w2xc_n3_row,
-        R.id.sr_w2xs_n0_row,
-        R.id.sr_w2xs_n1_row
+        // SRMD（ncnn，2 档）
+        R.id.sr_srmd_x2_row,
+        R.id.sr_srmd_nf_x2_row,
+        // Real-CUGAN（ncnn，5 档）
+        R.id.sr_cugan_cons_row,
+        R.id.sr_cugan_d1_row,
+        R.id.sr_cugan_d2_row,
+        R.id.sr_cugan_d3_row,
+        R.id.sr_cugan_dn_row,
+        // Real-ESRGAN（ncnn，4x）
+        R.id.sr_rsrgan_a6b_row
     )
 }

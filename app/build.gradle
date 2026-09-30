@@ -30,6 +30,8 @@ android {
     }
 
     defaultConfig {
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         applicationId "com.moe.starflow"
         minSdk 29
         targetSdk 35
@@ -174,8 +176,15 @@ dependencies {
     // 本地 GGUF 推理（llama.cpp 源码自编，含 minja 对话模板）
     implementation project(':llamacpp')
 
+    // 超分原生引擎（ncnn + Vulkan，waifu2x / SRMD）。模型走下载，不内置。
+    implementation project(':sr')
+
     // 单元测试
     testImplementation 'junit:junit:4.13.2'
+    
+    // 仪器化测试：用于验证 :sr 的原生超分引擎（真机 Vulkan 路径，JVM 单测覆盖不到）
+    androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
     testImplementation 'org.robolectric:robolectric:4.11.1'
     testImplementation 'org.mockito:mockito-core:5.11.0'
     testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.0'

@@ -12,7 +12,19 @@ import com.moe.starflow.translate.widget.*
 data class ModelInfo(
     val modelKey: ModelKey,
     val browserUrl: String,
-    val files: List<FileInfo>
+    val files: List<FileInfo>,
+    /**
+     * ncnn 超分模型的引擎族（`waifu2x` / `srmd` / `realcugan` / `realesrgan`）。
+     * **null = 不是 ncnn 模型**（走 ONNX 的 AnimeJaNai 引擎）。
+     * 这几个字段只在超分条目里出现，其它模型解析出来是默认值，不受影响。
+     */
+    val srFamily: String? = null,
+    /** 放大倍率（ncnn 模型才有；2 或 4） */
+    val srScale: Int = 0,
+    /** 降噪档：waifu2x 是 -1~3；SRMD 是 -1~10；其余族忽略 */
+    val srNoise: Int = 0,
+    /** 边框补偿（prepadding）：cunet/Real-CUGAN 18、upconv_7 7、SRMD 12、Real-ESRGAN 10 */
+    val srPrepad: Int = 0
 )
 
 /**

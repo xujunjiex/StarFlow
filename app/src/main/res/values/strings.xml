@@ -696,6 +696,43 @@
     <string name="sr_model_animejanai_sharp1_balanced">AnimeJaNai HD V3.1 · Sharp1 Balanced</string>
     <string name="sr_model_animejanai_sharp1_performance">AnimeJaNai HD V3.1 · Sharp1 Performance</string>
     <string name="sr_model_animejanai_sd_compact">AnimeJaNai SD · Compact</string>
+    <string name="sr_group_w2x_up7_anime">waifu2x upconv_7 Anime (2x, ncnn GPU)</string>
+    <string name="sr_group_w2x_up7_anime_desc">Official waifu2x upconv_7 anime model running on ncnn + Vulkan. Fastest family measured: ~2 s/page, only 1.1 MB per level, quality on par with cunet. Levels are denoise strength — this model degrades quickly with denoise, so keep it on \"No denoise\" unless the source is dirty.</string>
+    <string name="sr_group_w2x_up7_photo">waifu2x upconv_7 Photo (2x, ncnn GPU)</string>
+    <string name="sr_group_w2x_up7_photo_desc">The photographic weights of upconv_7. More faithful but softer lines than the anime variant — use the anime family for line art; this one suits photos, colour pages and covers.</string>
+    <string name="sr_group_waifu2x_cunet">waifu2x cunet (2x, ncnn GPU)</string>
+    <string name="sr_group_waifu2x_cunet_desc">Official waifu2x cunet architecture (59 layers, 4 SE blocks). More tolerant of dirty sources than upconv_7 — denoise does not hurt it, and it peaks at \"Medium denoise\". Pick this for scan noise or heavy JPEG artefacts. Needs the GPU: CPU takes 10–37 s.</string>
+    <string name="sr_group_srmd">SRMD (2x, ncnn GPU)</string>
+    <string name="sr_group_srmd_desc">SRMD is a multi-degradation model: denoise strength is a runtime parameter, so one model covers many degradation levels. Highest measured fidelity of all families, but ~3x slower than upconv_7 — pick it only when you want maximum quality.</string>
+    <string name="sr_group_realcugan">Real-CUGAN (2x, ncnn GPU)</string>
+    <string name="sr_group_realcugan_desc">Bilibili\'s Real-CUGAN, the model used by the koto reader. Subjectively sharper with more punch, but it changes the source more aggressively — our PSNR is low, which is the cost of \"redrawing\" rather than \"restoring\". ⚠️ PSNR measures resemblance, not beauty — compare samples yourself before deciding.</string>
+    <string name="sr_group_realesrgan">Real-ESRGAN (4x, ncnn GPU)</string>
+    <string name="sr_group_realesrgan_desc">Real-ESRGAN anime 6B weights, 4x upscale (double the others). 17 MB and the most aggressive re-drawing of all — lowest measured fidelity. Use only when you truly need 4x.</string>
+
+    <string name="sr_model_w2x_up7_anime_m1">waifu2x upconv_7 Anime · No denoise</string>
+    <string name="sr_model_w2x_up7_anime_n0">waifu2x upconv_7 Anime · Light denoise</string>
+    <string name="sr_model_w2x_up7_anime_n1">waifu2x upconv_7 Anime · Medium denoise</string>
+    <string name="sr_model_w2x_up7_anime_n2">waifu2x upconv_7 Anime · Strong denoise</string>
+    <string name="sr_model_w2x_up7_anime_n3">waifu2x upconv_7 Anime · Max denoise</string>
+    <string name="sr_model_w2x_up7_photo_m1">waifu2x upconv_7 Photo · No denoise</string>
+    <string name="sr_model_w2x_up7_photo_n0">waifu2x upconv_7 Photo · Light denoise</string>
+    <string name="sr_model_w2x_up7_photo_n1">waifu2x upconv_7 Photo · Medium denoise</string>
+    <string name="sr_model_w2x_up7_photo_n2">waifu2x upconv_7 Photo · Strong denoise</string>
+    <string name="sr_model_w2x_up7_photo_n3">waifu2x upconv_7 Photo · Max denoise</string>
+    <string name="sr_model_w2x_cunet_m1">waifu2x cunet · No denoise</string>
+    <string name="sr_model_w2x_cunet_n0">waifu2x cunet · Light denoise</string>
+    <string name="sr_model_w2x_cunet_n1">waifu2x cunet · Medium denoise</string>
+    <string name="sr_model_w2x_cunet_n2">waifu2x cunet · Strong denoise</string>
+    <string name="sr_model_w2x_cunet_n3">waifu2x cunet · Max denoise</string>
+    <string name="sr_model_srmd_x2">SRMD · 2x with denoise</string>
+    <string name="sr_model_srmd_nf_x2">SRMD · 2x no denoise</string>
+    <string name="sr_model_cugan_cons">Real-CUGAN · 2x Conservative</string>
+    <string name="sr_model_cugan_d1">Real-CUGAN · 2x Denoise 1x</string>
+    <string name="sr_model_cugan_d2">Real-CUGAN · 2x Denoise 2x</string>
+    <string name="sr_model_cugan_d3">Real-CUGAN · 2x Denoise 3x</string>
+    <string name="sr_model_cugan_dn">Real-CUGAN · 2x No denoise</string>
+    <string name="sr_model_rsrgan_a6b">Real-ESRGAN · Anime 6B (4x)</string>
+
     <string name="sr_low_res_tip">💡 Super resolution can only help genuinely low-resolution sources. Pages already 1000px+ wide barely change, and heavy screentone may be re-drawn. Keep it off unless the source is small.</string>
     <string name="sr_no_model_selected">No super-resolution model selected — download one below</string>
     <string name="sr_active_switched">Switched to %1$s</string>
@@ -1649,16 +1686,6 @@
     <string name="reader_clear_page_confirm_ok">Clear</string>
 
     <!-- waifu2x family (2026-10, official ONNX build from deepghs/waifu2x_onnx) -->
-    <string name="sr_group_waifu2x_cunet">waifu2x cunet (2x, ONNX)</string>
-    <string name="sr_group_waifu2x_cunet_desc">The cunet architecture from the official waifu2x model set. The four levels are denoise strengths: n0 leaves the source alone (most faithful, line restore + upscale only), n3 aggressively removes scan noise and JPEG artefacts. Highest measured quality of all families.</string>
-    <string name="sr_group_waifu2x_swin">waifu2x swin_unet (2x, ONNX)</string>
-    <string name="sr_group_waifu2x_swin_desc">the SwinIR architecture from the waifu2x model set — best quality but large (16.8MB per level) and slower. For colour pages and covers where quality matters more than waiting.</string>
-    <string name="sr_model_w2x_cunet_n0">cunet · No denoise (n0)</string>
-    <string name="sr_model_w2x_cunet_n1">cunet · Light denoise (n1)</string>
-    <string name="sr_model_w2x_cunet_n2">cunet · Medium denoise (n2)</string>
-    <string name="sr_model_w2x_cunet_n3">cunet · Strong denoise (n3)</string>
-    <string name="sr_model_w2x_swin_n0">swin_unet · No denoise (n0)</string>
-    <string name="sr_model_w2x_swin_n1">swin_unet · Light denoise (n1)</string>
 
     <!-- Image quality (colour panel, 2026-10) -->
     <string name="reader_sr_switch_label">Super resolution</string>

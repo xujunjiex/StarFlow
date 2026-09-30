@@ -3,7 +3,10 @@ package com.moe.starflow.sr
 import android.content.Context
 import android.content.SharedPreferences
 import android.graphics.Bitmap
+import com.moe.starflow.download.ModelDownloadRepository
+import com.moe.starflow.download.ModelInfo
 import com.moe.starflow.download.ModelKey
+import com.moe.starflow.sr.ncnn.SrNcnnNative
 import com.moe.starflow.sr.anime4k.Anime4kEngine
 import com.moe.starflow.sr.anime4k.Anime4kMode
 import com.moe.starflow.utils.LogCollector
@@ -102,42 +105,91 @@ object SuperResolutionEngines {
     @Synchronized
     fun obtain(context: Context, prefs: SharedPreferences): SuperResolutionEngine? {
         val key = SrModelManager.getActiveKey(prefs) ?: return null
-        val file = SrModelManager.modelFile(context, key)
-            ?.takeIf { it.isFile && it.length() > 0L } ?: return null
+        // ⚠️ 用 isDownloaded 而不是「第一个文件在不在」：ncnn 模型是 param+bin 两个文件，
+        //    只查第一个会出现「看起来下好了但加载失败」
+        if (!SrModelManager.isDownloaded(context, key)) return null
 
         cachedEngine?.let { if (cachedKey == key) return it }
         releaseSrModel()
 
-        val engine = createEngine(key, file) ?: return null
+        val engine = createEngine(context, key) ?: return null
         cachedKey = key
         cachedEngine = engine
-        LogCollector.i(TAG, "超分引擎就绪: $key (${file.name}, ${file.length() / 1024}KB)")
+        LogCollector.i(TAG, "超分引擎就绪: $key")
         return engine
     }
 
-    private fun createEngine(key: ModelKey, file: File): SuperResolutionEngine? = try {
-        when (key) {
-            ModelKey.SR_ANIMEJANAI_HD_BALANCED,
-            ModelKey.SR_ANIMEJANAI_HD_PERFORMANCE,
-            ModelKey.SR_ANIMEJANAI_HD_SHARP1_BALANCED,
-            ModelKey.SR_ANIMEJANAI_HD_SHARP1_PERFORMANCE,
-            ModelKey.SR_ANIMEJANAI_SD_COMPACT,
-            ModelKey.SR_WAIFU2X_CUNET_N0,
-            ModelKey.SR_WAIFU2X_CUNET_N1,
-            ModelKey.SR_WAIFU2X_CUNET_N2,
-            ModelKey.SR_WAIFU2X_CUNET_N3,
-            ModelKey.SR_WAIFU2X_SWIN_N0,
-            ModelKey.SR_WAIFU2X_SWIN_N1 -> AnimeJaNaiEngine(file).also {
-                if (!it.initialize()) {
-                    LogCollector.e(TAG, "超分模型初始化失败: $key")
-                    return null
-                }
-            }
-            else -> null
-        }
+    /**
+     * 造引擎。
+     *
+     * **两条路线由 `downloadinfo.json` 的 `family` 字段决定**：
+     * - 有 `family`（waifu2x / srmd / realcugan / realesrgan）→ `NcnnSrEngine`（ncnn + Vulkan GPU）
+     * - 没有（AnimeJaNai）→ `AnimeJaNaiEngine`（ONNX Runtime，CPU）
+     *
+     * ⚠️ 参数（scale/noise/prepad）**只从清单读**，不在这里写 `when(key)`：
+     * 同一个 key 换个档位就要改代码，必然漏改。
+     */
+    private fun createEngine(context: Context, key: ModelKey): SuperResolutionEngine? = try {
+        val info = ModelDownloadRepository.getInstance(context).getModelInfo(key)
+        val family = info?.srFamily
+        if (family == null) createOnnxEngine(context, key)
+        else createNcnnEngine(context, key, family, info)
     } catch (e: Throwable) {
         LogCollector.e(TAG, "超分引擎创建异常: $key", e)
         null
+    }
+
+    /** ONNX 路线（AnimeJaNai，CPU）。文件缺失 / 初始化失败 → null */
+    private fun createOnnxEngine(context: Context, key: ModelKey): SuperResolutionEngine? {
+        val file = SrModelManager.modelFile(context, key)
+        if (file == null || !file.isFile) {
+            LogCollector.e(TAG, "模型文件缺失: $key")
+            return null
+        }
+        val engine = AnimeJaNaiEngine(file)
+        if (!engine.initialize()) {
+            LogCollector.e(TAG, "超分模型初始化失败: $key")
+            return null
+        }
+        return engine
+    }
+
+    /** ncnn 路线（Vulkan GPU）。参数**全部来自清单**，不在这里写 `when(key)` */
+    private fun createNcnnEngine(
+        context: Context,
+        key: ModelKey,
+        family: String,
+        info: ModelInfo
+    ): SuperResolutionEngine? {
+        val fam = when (family) {
+            "waifu2x" -> SrNcnnNative.FAMILY_WAIFU2X
+            "srmd" -> SrNcnnNative.FAMILY_SRMD
+            "realcugan" -> SrNcnnNative.FAMILY_REALCUGAN
+            "realesrgan" -> SrNcnnNative.FAMILY_REALESRGAN
+            else -> {
+                LogCollector.e(TAG, "未知的 ncnn 引擎族: $family ($key)")
+                return null
+            }
+        }
+        val pair = SrModelManager.ncnnPair(context, key)
+        if (pair == null) {
+            LogCollector.e(TAG, "ncnn 模型文件缺失(param/bin): $key")
+            return null
+        }
+        val engine = NcnnSrEngine(
+            paramFile = pair.first,
+            binFile = pair.second,
+            family = fam,
+            scale = info.srScale.takeIf { it > 0 } ?: 2,
+            noise = info.srNoise,
+            prepadding = info.srPrepad,
+            tileSize = 0,   // 0 = 原生侧按显存自动选（与上游各工具一致）
+        )
+        if (!engine.initialize()) {
+            LogCollector.e(TAG, "ncnn 超分引擎初始化失败: $key")
+            return null
+        }
+        return engine
     }
 
     /** 按当前档位取 Anime4K 引擎（换档位重建）。初始化失败 → null */

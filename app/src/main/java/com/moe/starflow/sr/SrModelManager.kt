@@ -11,7 +11,8 @@ import java.io.File
  * 超分（SR）模型的**唯一状态来源**：当前启用哪个模型 + 模型文件在哪。
  *
  * 与 OCR 侧的 `OcrEngineManager`（4 组引擎 + prefs 选择）设计对齐：
- * 模型管理页「超分」Tab 读写选择、超分引擎按 [activeModelFile] 取文件，
+ * 模型管理页「超分」Tab 读写选择；超分引擎经 [SuperResolutionEngines] 走
+ * [isDownloaded] + [modelFile] / [ncnnPair] 取文件，
  * 两边都只经过这里，不各自读 prefs。
  *
  * ⚠️ **落盘目录必须与下载流水线一致**：`ModelDownloadRepository.baseDirFor` 与
@@ -34,17 +35,36 @@ object SrModelManager {
      * 新增模型时**同时**要加：`ModelKey`、`downloadinfo.json`、以及本列表。
      */
     val allKeys: List<ModelKey> = listOf(
+        // AnimeJaNai（ONNX，CPU）
         ModelKey.SR_ANIMEJANAI_HD_BALANCED,
         ModelKey.SR_ANIMEJANAI_HD_PERFORMANCE,
         ModelKey.SR_ANIMEJANAI_HD_SHARP1_BALANCED,
         ModelKey.SR_ANIMEJANAI_HD_SHARP1_PERFORMANCE,
         ModelKey.SR_ANIMEJANAI_SD_COMPACT,
-        ModelKey.SR_WAIFU2X_CUNET_N0,
-        ModelKey.SR_WAIFU2X_CUNET_N1,
-        ModelKey.SR_WAIFU2X_CUNET_N2,
-        ModelKey.SR_WAIFU2X_CUNET_N3,
-        ModelKey.SR_WAIFU2X_SWIN_N0,
-        ModelKey.SR_WAIFU2X_SWIN_N1,
+        // ncnn + Vulkan（GPU）—— 顺序即页面顺序，族内按档位
+        ModelKey.SR_W2X_UP7_ANIME_M1,
+        ModelKey.SR_W2X_UP7_ANIME_N0,
+        ModelKey.SR_W2X_UP7_ANIME_N1,
+        ModelKey.SR_W2X_UP7_ANIME_N2,
+        ModelKey.SR_W2X_UP7_ANIME_N3,
+        ModelKey.SR_W2X_UP7_PHOTO_M1,
+        ModelKey.SR_W2X_UP7_PHOTO_N0,
+        ModelKey.SR_W2X_UP7_PHOTO_N1,
+        ModelKey.SR_W2X_UP7_PHOTO_N2,
+        ModelKey.SR_W2X_UP7_PHOTO_N3,
+        ModelKey.SR_W2X_CUNET_M1,
+        ModelKey.SR_W2X_CUNET_N0,
+        ModelKey.SR_W2X_CUNET_N1,
+        ModelKey.SR_W2X_CUNET_N2,
+        ModelKey.SR_W2X_CUNET_N3,
+        ModelKey.SR_SRMD_X2,
+        ModelKey.SR_SRMD_NF_X2,
+        ModelKey.SR_REALCUGAN_CONSERVATIVE,
+        ModelKey.SR_REALCUGAN_DENOISE1X,
+        ModelKey.SR_REALCUGAN_DENOISE2X,
+        ModelKey.SR_REALCUGAN_DENOISE3X,
+        ModelKey.SR_REALCUGAN_NODENOISE,
+        ModelKey.SR_REALESRGAN_ANIME6B,
     )
 
     /** 当前启用的模型；未选 / 存了非法值 → null */
@@ -65,12 +85,30 @@ object SrModelManager {
         ModelKey.SR_ANIMEJANAI_HD_SHARP1_BALANCED -> R.string.sr_model_animejanai_sharp1_balanced
         ModelKey.SR_ANIMEJANAI_HD_SHARP1_PERFORMANCE -> R.string.sr_model_animejanai_sharp1_performance
         ModelKey.SR_ANIMEJANAI_SD_COMPACT -> R.string.sr_model_animejanai_sd_compact
-        ModelKey.SR_WAIFU2X_CUNET_N0 -> R.string.sr_model_w2x_cunet_n0
-        ModelKey.SR_WAIFU2X_CUNET_N1 -> R.string.sr_model_w2x_cunet_n1
-        ModelKey.SR_WAIFU2X_CUNET_N2 -> R.string.sr_model_w2x_cunet_n2
-        ModelKey.SR_WAIFU2X_CUNET_N3 -> R.string.sr_model_w2x_cunet_n3
-        ModelKey.SR_WAIFU2X_SWIN_N0 -> R.string.sr_model_w2x_swin_n0
-        ModelKey.SR_WAIFU2X_SWIN_N1 -> R.string.sr_model_w2x_swin_n1
+        // ncnn 族 —— 与 downloadinfo.json / 布局 XML 一一对应
+        ModelKey.SR_W2X_UP7_ANIME_M1 -> R.string.sr_model_w2x_up7_anime_m1
+        ModelKey.SR_W2X_UP7_ANIME_N0 -> R.string.sr_model_w2x_up7_anime_n0
+        ModelKey.SR_W2X_UP7_ANIME_N1 -> R.string.sr_model_w2x_up7_anime_n1
+        ModelKey.SR_W2X_UP7_ANIME_N2 -> R.string.sr_model_w2x_up7_anime_n2
+        ModelKey.SR_W2X_UP7_ANIME_N3 -> R.string.sr_model_w2x_up7_anime_n3
+        ModelKey.SR_W2X_UP7_PHOTO_M1 -> R.string.sr_model_w2x_up7_photo_m1
+        ModelKey.SR_W2X_UP7_PHOTO_N0 -> R.string.sr_model_w2x_up7_photo_n0
+        ModelKey.SR_W2X_UP7_PHOTO_N1 -> R.string.sr_model_w2x_up7_photo_n1
+        ModelKey.SR_W2X_UP7_PHOTO_N2 -> R.string.sr_model_w2x_up7_photo_n2
+        ModelKey.SR_W2X_UP7_PHOTO_N3 -> R.string.sr_model_w2x_up7_photo_n3
+        ModelKey.SR_W2X_CUNET_M1 -> R.string.sr_model_w2x_cunet_m1
+        ModelKey.SR_W2X_CUNET_N0 -> R.string.sr_model_w2x_cunet_n0
+        ModelKey.SR_W2X_CUNET_N1 -> R.string.sr_model_w2x_cunet_n1
+        ModelKey.SR_W2X_CUNET_N2 -> R.string.sr_model_w2x_cunet_n2
+        ModelKey.SR_W2X_CUNET_N3 -> R.string.sr_model_w2x_cunet_n3
+        ModelKey.SR_SRMD_X2 -> R.string.sr_model_srmd_x2
+        ModelKey.SR_SRMD_NF_X2 -> R.string.sr_model_srmd_nf_x2
+        ModelKey.SR_REALCUGAN_CONSERVATIVE -> R.string.sr_model_cugan_cons
+        ModelKey.SR_REALCUGAN_DENOISE1X -> R.string.sr_model_cugan_d1
+        ModelKey.SR_REALCUGAN_DENOISE2X -> R.string.sr_model_cugan_d2
+        ModelKey.SR_REALCUGAN_DENOISE3X -> R.string.sr_model_cugan_d3
+        ModelKey.SR_REALCUGAN_NODENOISE -> R.string.sr_model_cugan_dn
+        ModelKey.SR_REALESRGAN_ANIME6B -> R.string.sr_model_rsrgan_a6b
         else -> 0
     }
 
@@ -82,24 +120,36 @@ object SrModelManager {
     fun modelDir(context: Context): File? =
         context.getExternalFilesDir(null)?.let { File(it, SR_DIR) }
 
-    /** 某模型的目标文件（未下载时是期望路径；文件名取自 downloadinfo.json） */
-    fun modelFile(context: Context, key: ModelKey): File? {
-        val info = ModelDownloadRepository.getInstance(context).getModelInfo(key) ?: return null
-        val name = info.files.firstOrNull()?.fileName ?: return null
-        val dir = modelDir(context) ?: return null
-        return File(dir, name)
+    /**
+     * 某模型的**全部**目标文件（顺序与 downloadinfo.json 一致）。
+     *
+     * ⚠️ ncnn 模型是**两个文件**（`.param` + `.bin`），这里不能再只取第一个 ——
+     * 只取第一个会让「下载好了」和「能加载」两件事脱节。
+     */
+    fun modelFiles(context: Context, key: ModelKey): List<File> {
+        val info = ModelDownloadRepository.getInstance(context).getModelInfo(key) ?: return emptyList()
+        val dir = modelDir(context) ?: return emptyList()
+        return info.files.map { File(dir, it.fileName) }
     }
 
-    /** 该模型是否已下载（文件存在且非空） */
-    fun isDownloaded(context: Context, key: ModelKey): Boolean =
-        modelFile(context, key)?.let { it.isFile && it.length() > 0L } ?: false
+    /** 某模型的第一个文件（AnimeJaNai ONNX 单文件模型用；保留旧语义） */
+    fun modelFile(context: Context, key: ModelKey): File? = modelFiles(context, key).firstOrNull()
 
     /**
-     * 当前启用且**确实已下载**的模型文件。
-     * 未选模型或文件缺失 → null（调用方据此回退到不超分，绝不抛异常）。
+     * ncnn 模型的 (param, bin) 对；不是 ncnn 模型、或任一文件缺失 → null。
+     *
+     * 按**扩展名**配对而不是按下标：清单里 param 在前 bin 在后是约定，
+     * 但按下标配对一旦清单顺序变了就会静默换错文件。
      */
-    fun activeModelFile(context: Context, prefs: SharedPreferences): File? {
-        val key = getActiveKey(prefs) ?: return null
-        return modelFile(context, key)?.takeIf { it.isFile && it.length() > 0L }
+    fun ncnnPair(context: Context, key: ModelKey): Pair<File, File>? {
+        val files = modelFiles(context, key)
+        val param = files.firstOrNull { it.name.endsWith(".param") } ?: return null
+        val bin = files.firstOrNull { it.name.endsWith(".bin") } ?: return null
+        if (!param.isFile || param.length() == 0L || !bin.isFile || bin.length() == 0L) return null
+        return param to bin
     }
+
+    /** 该模型是否已下载（**所有**文件都存在且非空） */
+    fun isDownloaded(context: Context, key: ModelKey): Boolean =
+        modelFiles(context, key).let { it.isNotEmpty() && it.all { f -> f.isFile && f.length() > 0L } }
 }
