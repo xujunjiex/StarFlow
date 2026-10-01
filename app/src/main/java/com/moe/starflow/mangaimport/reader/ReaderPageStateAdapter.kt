@@ -386,11 +386,25 @@ class ReaderPageStateAdapter(
                 paused -> ctx.getString(R.string.reader_translate_chapter_resume)
                 else -> ctx.getString(R.string.reader_translate_chapter_translate)
             }
-            setTextColor(if (running || paused) amber else accent)
+            // ⚠️ **整章译完 → 置灰**（用户口径 2026-10-01：「翻译本章已经完成就按钮应该置灰，
+            //    除非用户手动删除了某张的译文，这个按钮才应该实时刷新变成可用状态」）。
+            //    可点性 = **真的有页可翻**；删任一页译文 → 记录表变化 → `success` 掉下来
+            //    → 这里自然恢复可用（删除路径会 `pushPanelNow()` 立刻重推）。
+            // ⚠️ 跑着/暂停时必须保持可点 —— 那时它是「暂停/继续」，一起禁掉就没法停了。
+            val idleAndDone = !running && !paused && allDone
+            isEnabled = !idleAndDone
+            setTextColor(
+                when {
+                    running || paused -> amber
+                    idleAndDone -> if (dark) 0xFF6E6E73.toInt() else 0xFFAAAAAA.toInt()
+                    else -> accent
+                }
+            )
             // 主按钮做成"实心药丸"：卡片上一个明确的主操作，不再是一行裸文字
             background = pill(
                 when {
                     running || paused -> if (dark) 0x33FF9F0A else 0x1AFF9F0A
+                    idleAndDone -> if (dark) 0x14FFFFFF else 0x0A000000
                     else -> if (dark) 0x332E86C9 else 0x1A2E86C9
                 }
             )

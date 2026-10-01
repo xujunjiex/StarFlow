@@ -228,8 +228,27 @@ class ReaderSrStateAdapter(
         }
 
         item.findViewById<TextView>(R.id.btn_chapter_primary).apply {
-            setTextColor(if (running) amber else accent)
-            background = pill(if (running) (if (dark) 0x33FF9F0A else 0x1AFF9F0A) else (if (dark) 0x332E86C9 else 0x1A2E86C9))
+            // ⚠️ **整章超分完 → 置灰**（用户口径 2026-10-01：「超分本章已经完成就按钮应该置灰，
+            //    除非用户手动删除了某张的超分结果，这个按钮才应该实时刷新变成可用状态」）。
+            //    可点性 = **真的有页可超**；删任一页的超分结果 → 记录表变化 → `success` 掉下来
+            //    → 这里自然恢复可用（删除路径会 `pushPanelNow()` 立刻重推，不是等下次开面板）。
+            // ⚠️ 跑着时必须保持可点 —— 那时它是「取消」，一起禁掉就停不下来了。
+            val idleAndDone = !running && allDone
+            isEnabled = !idleAndDone
+            setTextColor(
+                when {
+                    running -> amber
+                    idleAndDone -> if (dark) 0xFF6E6E73.toInt() else 0xFFAAAAAA.toInt()
+                    else -> accent
+                }
+            )
+            background = pill(
+                when {
+                    running -> if (dark) 0x33FF9F0A else 0x1AFF9F0A
+                    idleAndDone -> if (dark) 0x14FFFFFF else 0x0A000000
+                    else -> if (dark) 0x332E86C9 else 0x1A2E86C9
+                }
+            )
             text = ctx.getString(
                 if (running) R.string.cancel else R.string.reader_sr_chapter_translate
             )

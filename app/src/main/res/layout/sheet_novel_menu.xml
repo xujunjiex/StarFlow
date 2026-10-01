@@ -180,12 +180,14 @@
             </LinearLayout>
         </ScrollView>
 
-        <!-- ========== 翻译面板 ========== -->
-        <ScrollView
+        <!-- ========== 翻译面板 ==========
+             ⚠️ NestedScrollView（不是 ScrollView）：面板里嵌了 RecyclerView（章节列表），
+                 要靠 nested scroll 把「列表滚到底后继续滚面板」接起来，否则用户会觉得
+                 "上滑到底就没反应了"。与漫画的 sheet_reader_menu.xml 同一处理。 -->
+        <androidx.core.widget.NestedScrollView
             android:id="@+id/panel_translate"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:maxHeight="460dp"
             android:visibility="gone">
 
             <LinearLayout
@@ -404,7 +406,7 @@
                     android:layout_width="match_parent" android:layout_height="200dp"
                     android:layout_marginTop="6dp" android:clipToPadding="false"/>
             </LinearLayout>
-        </ScrollView>
+        </androidx.core.widget.NestedScrollView>
 
         <!-- ========== 样式面板（替代漫画的调色） ========== -->
         <ScrollView android:id="@+id/panel_style" android:layout_width="match_parent" android:layout_height="wrap_content"

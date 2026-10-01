@@ -18,6 +18,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment
 import com.moe.starflow.R
+import com.moe.starflow.mangaimport.reader.sheetRecordsHeightPx
 import com.moe.starflow.utils.ReaderDialogs
 import com.moe.starflow.data.NovelChapterStat
 import com.moe.starflow.manga.config.OcrEngineGroup
@@ -284,6 +285,11 @@ class NovelPanelSheet(
             view.findViewById<View>(R.id.tab_style) to view.findViewById<View>(R.id.panel_style),
             view.findViewById<View>(R.id.tab_more) to view.findViewById<View>(R.id.panel_more),
         )
+        // 章节列表高度 = 半屏（与漫画面板同一口径）：XML 里那个 200dp 太小，展开后继续上滑
+        // 也没内容可滚 —— 详见 `sheetRecordsHeightPx`。
+        view.findViewById<View>(R.id.rv_translate_chapters).layoutParams?.let {
+            it.height = sheetRecordsHeightPx(resources)
+        }
         fun show(selected: View, panel: View) {
             // 记下选中项：主题重喷时 [reapplyTabs] 要靠它把选中态原样重放
             currentTab = selected

@@ -419,10 +419,25 @@ class NovelChapterStateAdapter(
                 paused -> ctx.getString(R.string.reader_translate_chapter_resume)
                 else -> ctx.getString(R.string.reader_translate_chapter_translate)
             }
-            setTextColor(if (running || paused) 0xFFFF9F0A.toInt() else accent)
+            // ⚠️ **整章译完 → 置灰**（与漫画侧同一条口径，用户 2026-10-01：
+            //    「翻译本章已经完成就按钮应该置灰，除非用户手动删除了某张的译文，
+            //     这个按钮才应该实时刷新变成可用状态」）。
+            //    可点性 = **真的有批可翻**；`isDone` 是从 stats/totals 算出来的，
+            //    删掉任意一批译文后宿主重推一次就自然恢复可点。
+            // ⚠️ 跑着/暂停时必须保持可点 —— 那时它是「暂停/继续」，一起禁掉就没法停了。
+            val idleAndDone = !running && !paused && isDone(index)
+            isEnabled = !idleAndDone
+            setTextColor(
+                when {
+                    running || paused -> 0xFFFF9F0A.toInt()
+                    idleAndDone -> if (dark) 0xFF6E6E73.toInt() else 0xFFAAAAAA.toInt()
+                    else -> accent
+                }
+            )
             background = pill(
                 when {
                     running || paused -> if (dark) 0x33FF9F0A else 0x1AFF9F0A
+                    idleAndDone -> if (dark) 0x14FFFFFF else 0x0A000000
                     else -> if (dark) 0x332E86C9 else 0x1A2E86C9
                 }
             )

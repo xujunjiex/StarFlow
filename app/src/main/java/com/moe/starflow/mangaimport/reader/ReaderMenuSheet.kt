@@ -423,6 +423,14 @@ class ReaderMenuSheet(
         val tabMore = view.findViewById<View>(R.id.tab_more)
         val tabs = listOf(tabPaging to panelPaging, tabTranslate to panelTranslate, tabAppearance to panelAppearance, tabMore to panelMore)
 
+        // 两块记录列表（翻译页状态 / 超分记录）的高度都改成**半屏**（[sheetRecordsHeightPx]）。
+        // XML 里那个 200dp 只是初始值：用户口径「记录功能底部的空间太小了，展开后继续上滑
+        // 也没内容可滚」—— 200dp 时面板整体比视口还矮，外层滚动容器根本没得滚。
+        val recordsHeight = sheetRecordsHeightPx(resources)
+        for (id in listOf(R.id.rv_translate_pages, R.id.rv_sr_records)) {
+            view.findViewById<View>(id).layoutParams?.let { it.height = recordsHeight }
+        }
+
         fun show(selected: View, panel: View) {
             tabs.forEach { (tv, p) ->
                 setTab(tv, tv === selected)
@@ -1394,8 +1402,9 @@ class ReaderMenuSheet(
      *
      * ⚠️ 筛选键**独立**（[srFilterKey]）：两块面板各记各的过滤态，
      * 在超分那边选了「失败」不该影响翻译那边的列表。
-     * ⚠️ 列表在调色面板的 ScrollView 里，**必须定高**（XML 里写死 200dp）——
-     * `wrap_content` 会让 RecyclerView 量完所有条目，几百章的书直接卡死。
+     * ⚠️ 列表在调色面板的 NestedScrollView 里，高度由 `onCreateView` 设成**半屏**
+     * （`sheetRecordsHeightPx`）—— XML 里那个 200dp 只是初始值。
+     * **不能改成 `wrap_content`**：那会让 RecyclerView 量完全部条目，几百章的书直接卡死。
      */
     private fun setupSrRecords(view: View) {
         view.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rv_sr_records).apply {

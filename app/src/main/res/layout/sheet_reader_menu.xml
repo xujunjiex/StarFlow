@@ -184,12 +184,14 @@
             </LinearLayout>
         </ScrollView>
 
-        <!-- ========== 翻译面板 ========== -->
-        <ScrollView
+        <!-- ========== 翻译面板 ==========
+             ⚠️ NestedScrollView（不是 ScrollView）：面板里嵌了 RecyclerView（记录列表），
+                 要靠 nested scroll 把「列表滚到底后继续滚面板」接起来；框架 ScrollView 不参与
+                 这一套，用户就会觉得"上滑到底就没反应了"。 -->
+        <androidx.core.widget.NestedScrollView
             android:id="@+id/panel_translate"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:maxHeight="460dp"
             android:visibility="gone">
 
             <LinearLayout
@@ -387,11 +389,12 @@
                     android:layout_width="match_parent" android:layout_height="200dp"
                     android:layout_marginTop="6dp" android:clipToPadding="false"/>
             </LinearLayout>
-        </ScrollView>
+        </androidx.core.widget.NestedScrollView>
 
-        <!-- ========== 调色面板 ========== -->
-        <ScrollView android:id="@+id/panel_appearance" android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:maxHeight="400dp" android:visibility="gone">
+        <!-- ========== 调色面板 ==========
+             ⚠️ 同翻译面板：NestedScrollView + 内部 RecyclerView 靠 nested scroll 接力。 -->
+        <androidx.core.widget.NestedScrollView android:id="@+id/panel_appearance" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:visibility="gone">
             <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical">
 
                 <!-- 原图 vs 处理后 对比预览 -->
@@ -443,6 +446,14 @@
                         android:text="@string/reader_color_book" android:textSize="14sp" android:textColor="#333333"/>
                     <Switch android:id="@+id/sw_book" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
                 </LinearLayout>
+
+                <!-- 护眼（色彩开关组的最后一个）与亮度（滑杆组的第一个）之间画一条分隔线：
+                     两组都是"改画面"，但控件形态不同（开关 ⇄ 滑杆），用户口径 2026-10-01 要求分开。
+                     左右缩进 16dp 与两侧内容对齐（这两行各自带 padding，根容器没有）。 -->
+                <View android:layout_width="match_parent" android:layout_height="1dp"
+                    android:layout_marginStart="16dp" android:layout_marginEnd="16dp"
+                    android:layout_marginTop="6dp" android:layout_marginBottom="6dp"
+                    android:background="#11000000"/>
 
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingStart="16dp" android:paddingEnd="16dp">
                     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
@@ -559,7 +570,7 @@
                         android:text="@string/reader_color_hint" android:textSize="11sp" android:textColor="#BBBBBB"/>
                 </LinearLayout>
             </LinearLayout>
-        </ScrollView>
+        </androidx.core.widget.NestedScrollView>
 
         <!-- ========== 更多面板 ========== -->
         <LinearLayout android:id="@+id/panel_more" android:layout_width="match_parent" android:layout_height="wrap_content"

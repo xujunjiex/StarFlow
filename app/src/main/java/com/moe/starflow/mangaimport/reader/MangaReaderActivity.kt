@@ -1574,6 +1574,10 @@ class MangaReaderActivity : AppCompatActivity() {
                 lifecycleScope.launch {
                     val removed = controller.clearPageRange(chapter.startPage, chapter.endPage)
                     refreshProgressTranslation()
+                    // ⚠️ 显式推一次面板：主按钮的可点性由「本章已译页数」算（整章译完 = 置灰），
+                    //    清空后必须**立刻**恢复成可点 —— 只靠 `refreshProgressTranslation` 那次的
+                    //    节流推送，刚推过就被吞掉，用户会看到"删了还是灰的"。
+                    pushPanelNow()
                     refreshTranslationChrome()
                     applyPageVisual(currentPage)
                     if (removed > 0) {
@@ -1608,6 +1612,8 @@ class MangaReaderActivity : AppCompatActivity() {
         lifecycleScope.launch {
             controller.deletePage(page)
             refreshProgressTranslation()
+            // ⚠️ 同上：删一页译文要让章卡片的「翻译本章」从置灰**立刻**变回可点
+            pushPanelNow()
             refreshTranslationChrome()
             applyPageVisual(currentPage)
             notifyUser(getString(R.string.reader_translate_page_deleted))
