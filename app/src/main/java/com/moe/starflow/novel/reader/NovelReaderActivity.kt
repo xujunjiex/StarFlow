@@ -405,6 +405,9 @@ class NovelReaderActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        // 提示条让到顶部胶囊**下面**（用户口径：胶囊在提示条上面，多条堆下来也不盖住胶囊）。
+        // ⚠️ 只覆盖顶距、不动用户的 `Status_Position` 设置；离开阅读器恢复（onStop）。
+        TranslationStatusOverlay.getInstance(this).setTopOffsetDp(TranslationStatusOverlay.READER_TOP_OFFSET_DP)
         updateAutoTurn()
         // 从设置页返回必须重建：字号/字距等是在 Activity 创建时读进缓存、并已由渲染结果固化的，
         // 就地刷新既漏项又容易只改一半（与漫画同一套理由）。
@@ -448,6 +451,8 @@ class NovelReaderActivity : AppCompatActivity() {
         // ⚠️ **章批量任务（应用级宿主）不受影响**：用户要求它「除非清后台否则继续翻」，
         // 进度走前台服务通知栏，回到阅读器时译文已经写库、`refreshTranslations` 直接读到。
         TranslationStatusOverlay.getInstance(this@NovelReaderActivity).dismiss()
+        // 恢复提示条的默认顶距（进程级单例，不清的话别的页面也跟着偏移）
+        TranslationStatusOverlay.getInstance(this@NovelReaderActivity).setTopOffsetDp(null)
         // ⚠️ 提示放在 `dismiss()` **之后**：浮层是共享单例，dismiss 会清掉所有堆叠消息
         if (notifyPause) showPausedNotice(R.string.novel_translate_paused_background)
         // 离开阅读器清掉选择集：它是「长按多选」的临时状态，回到阅读器时不该还亮着

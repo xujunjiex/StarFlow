@@ -203,7 +203,9 @@ class SrReaderWiringTest {
         assertTrue("失败要用红色可复制的 chip（AppNotice.Style.ERROR）", notice.contains("overlay.showError(text)"))
         assertTrue(
             "拿不到悬浮窗权限 / 浮层被关掉时由 AppNotice 退回 Toast（否则点了毫无反馈）",
-            notice.contains("UiUtils.showToast(app, text)"),
+            // 兜底出口收敛成一个私有 toast()（普通提示 + 用户主动点的进行中提示共用）
+            notice.contains("private fun toast(context: Context, text: String)") &&
+                notice.contains("toast(app, text)"),
         )
         // 控制器侧：失败原因必须经宿主回调送出去（控制器不直接碰 UI）
         val ctl = controller()
@@ -309,6 +311,33 @@ class SrReaderWiringTest {
         // 只存一个句柄会让后一页覆盖前一页，前一页收尾时摘掉后一页的芯片
         assertTrue("宿主必须按页记句柄", act.contains("private val srRunningChipByPage = HashMap<Int, Long>()"))
     }
+
+    /**
+     * **产物原样落盘**：大图预处理只压**输入**，绝不缩**产物**。
+     *
+     * 用户口径：「短边超过 1080 的**压缩尺寸后给超分的图片**，体积不能超过原来的像素和大小」
+     * （约束的是**输入**）+「**超分后肯定比原图大啊**」。
+     * 产物的空间由两道**既有**的闸管住：引擎自己的输出上限（10MP）+ `SrStore` 的总容量 LRU（512MB）。
+     * ⚠️ 2026-10 曾在这里加过「产物 ≤ 2× 原图像素」的单页预算，结果是自相矛盾的：
+     * 小图（2x = 4 倍）被砍半、大图（压缩后 2x = 1.17 倍）一刀不砍 —— 砍的全是最需要放大的
+     * 低分辨率页。**别再加回来。**
+     */
+    @Test
+    fun theUpscaledProductIsStoredAsIs() {
+        val processor = read("src/main/java/com/moe/starflow/sr/SrProcessor.kt")
+        assertTrue("要有「压缩输入」这一步", processor.contains("SrDownscale.plan("))
+        assertTrue("压缩要真的执行", processor.contains("SrDownscale.apply("))
+        assertFalse(
+            "不许对产物做额外缩放（空间由引擎输出上限 + SrStore 总容量 LRU 管）",
+            processor.contains("clampTo") || processor.contains("outputBudget"),
+        )
+        val downscale = read("src/main/java/com/moe/starflow/sr/SrDownscale.kt")
+        assertFalse(
+            "SrDownscale 只该有「压缩输入」，不该有「收敛产物」的 API",
+            downscale.contains("fun clampTo") || downscale.contains("fun outputBudget"),
+        )
+    }
+
     @Test
     fun togglingToOriginalNeverClearsTheSrResult() {
         // 真机反馈：「点击切换回原图，整个超分的组件都没有了」。

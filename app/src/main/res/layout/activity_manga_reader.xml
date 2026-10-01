@@ -61,21 +61,20 @@
     </FrameLayout>
 
     <!-- 顶部中间页面指示。
-         ⚠️ **必须排在提示浮层下面**（用户口径 2026-10）：「提示系统顶部和阅读器的章节页码组件
-             重叠了，把章节页码组件放下面」。提示浮层（`TranslationStatusOverlay`）是
-             `Gravity.TOP + y=24dp` 的**系统窗口**，一条 12sp 芯片约 24~46dp ——
-             胶囊原来在 38dp（和返回/菜单同一行），上沿正压在芯片上，既看不清也**点不到**
-             （浮层窗口会吞掉落在它矩形内的触摸）。
-             现在下移到 62dp：让出一条芯片 + 12dp 余量。两条以上同时堆叠时上沿仍可能被蹭到，
-             这是用户明确接受的（「下移保证避开一条多一点就行」）。
-         ⚠️ 改这里要**同时**改 `activity_novel_reader.xml` 的 `top_pill`：同一个浮层、同一个 38dp，
-             只改一边等于没修（小说阅读器会照旧重叠）。守卫见 `ReaderTopPillInsetTest`。 -->
+         ⚠️ **在提示条上面**（用户口径 2026-10）：「我希望胶囊在提示条上面，这样多条信息
+             堆下来也不会盖住它」。所以胶囊贴顶（10dp，在返回/菜单按钮 34dp 之上），
+             而**提示浮层的顶距由阅读器在运行时让到胶囊下面**（`TranslationStatusOverlay
+             .setTopOffsetDp`，见 [READER_NOTICE_TOP_DP]）—— 浮层是系统窗口，会吞掉落在它
+             矩形内的触摸，压住胶囊那一段就点不动，「点胶囊开目录」正是用户报
+             "不知道怎么没有了"的那条路。
+         ⚠️ 改这里要**同时**改 `activity_novel_reader.xml` 的 `top_pill` 与两边的
+             `READER_NOTICE_TOP_DP`。守卫 `ReaderTopPillInsetTest`。 -->
     <TextView
         android:id="@+id/tv_page_indicator"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="top|center_horizontal"
-        android:layout_marginTop="62dp"
+        android:layout_marginTop="10dp"
         android:background="@drawable/bg_pill_dark"
         android:paddingStart="12dp"
         android:paddingTop="5dp"

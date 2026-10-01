@@ -132,14 +132,14 @@ object SrProcessor {
             // ⚠️ 上限取不到（0 = 引擎压根建不起来：没选模型 / 文件缺失 / 初始化失败）→
             //    **跳过压缩**：`upscaleForReader` 马上就会带着**具体原因**失败（"没选模型"和
             //    "图太大"用户要做的事完全不同），先花几百毫秒压一遍纯属白干。
-            val feedPixels = SuperResolutionEngines.inputPixelLimitForReader(app, prefs)
-            val feed: Bitmap = if (feedPixels > 0) {
-                SrDownscale.plan(src.width, src.height, feedPixels)?.let { plan ->
+            val feedLimit = SuperResolutionEngines.inputPixelLimitForReader(app, prefs)
+            val feed: Bitmap = if (feedLimit > 0) {
+                SrDownscale.plan(src.width, src.height, feedLimit)?.let { plan ->
                     SrDownscale.apply(src, plan).also {
                         LogCollector.d(
                             TAG,
                             "超分前压缩: ${src.width}x${src.height} → ${it.width}x${it.height}" +
-                                "（引擎上限 ${feedPixels}px，$k）"
+                                "（引擎输入上限 ${feedLimit}px，$k）"
                         )
                     }
                 } ?: src
@@ -176,12 +176,13 @@ object SrProcessor {
                 LogCollector.d(TAG, "超分产物未放大（${raw.width}px <= 输入 ${feed.width}px），不落盘: $k")
                 return@withContext SrOutcome.fail(SrFailReason.NOT_UPSCALED)
             }
-            // 收敛：产物**像素数不超过原图**（用户口径「体积不能超过原来的像素和大小」）。
-            // 2x 重建出来的细节保留着，净效果是"原图分辨率、超分画质"。
-            val product: Bitmap = SrDownscale.clampToOriginalPixels(raw, src.width, src.height)?.also {
-                out = it                      // 先换所有权，再回收中间产物
-                if (!raw.isRecycled) raw.recycle()
-            } ?: raw
+            // ⚠️ **产物原样落盘，不做任何额外缩放**（用户口径：「超分后肯定比原图大啊」）。
+            //    空间由两道**既有**的闸管住，不需要在这里再造一条单页预算：
+            //      ① 引擎自己的输出上限（`NcnnSrEngine.maxOutputPixels` = 10MP，超了直接不跑）；
+            //      ② `SrStore.manageCache` 的总容量上限 + LRU（默认 512MB）。
+            //    曾经在这里加过「产物 ≤ 2× 原图像素」，结果自相矛盾：小图（2x = 4 倍）被砍半、
+            //    大图（压缩后 2x = 1.17 倍）一刀不砍 —— 砍的全是最需要放大的低分辨率页。已删。
+            val product: Bitmap = raw
             val model = SrModelManager.getActiveKey(prefs)?.name ?: "-"
             val saved = SrStore.save(app, mangaId, page, product, model, mangaKey, cacheLimitMb(prefs))
             if (!saved) {

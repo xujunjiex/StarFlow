@@ -343,6 +343,9 @@ class MangaReaderActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        // 提示条让到顶部胶囊**下面**（用户口径：胶囊在提示条上面，多条堆下来也不盖住胶囊）。
+        // ⚠️ 只覆盖顶距、不动用户的 `Status_Position` 设置；离开阅读器恢复（onStop）。
+        TranslationStatusOverlay.getInstance(this).setTopOffsetDp(TranslationStatusOverlay.READER_TOP_OFFSET_DP)
         updateAutoTurn()
         // ⚠️ 从设置页返回必须**重建阅读器**：个性化里那一批参数（字号/颜色/字距行距/竖排方向/
         // 文字合并…）是在 Activity 创建时被读进缓存、并由已经渲染好的译图固化的，
@@ -394,6 +397,8 @@ class MangaReaderActivity : AppCompatActivity() {
         // 会在后台整段跑，且常驻状态芯片（系统窗口）会一直盖在别的应用上
         translationController?.pauseForBackground()
         TranslationStatusOverlay.getInstance(this@MangaReaderActivity).dismiss()
+        // 恢复提示条的默认顶距（进程级单例：不清的话别的页面也跟着偏移）
+        TranslationStatusOverlay.getInstance(this@MangaReaderActivity).setTopOffsetDp(null)
     }
 
     /**
@@ -1621,16 +1626,25 @@ class MangaReaderActivity : AppCompatActivity() {
      * 只存一个句柄的话后一页会覆盖前一页 → 前一页收尾时把**后一页**的芯片摘掉，
      * 屏幕上就是"芯片随机消失"。
      */
-    private fun showSrRunning(page: Int, running: Boolean) {
+    private fun showSrRunning(page: Int, running: Boolean, toastIfUnavailable: Boolean = false) {
         clearSrRunningChip(page)   // 同页重复进入（重试 / 重翻）先收掉上一条，避免叠成两条
         if (running) {
-            srRunningChipByPage[page] =
-                AppNotice.showRunning(this, getString(R.string.sr_enhancing_page, page + 1))
+            srRunningChipByPage[page] = AppNotice.showRunning(
+                this,
+                getString(R.string.sr_enhancing_page, page + 1),
+                toastIfUnavailable = toastIfUnavailable,
+            )
         }
     }
 
-    /** 手动点「超分 / 重新超分」时的进行中提示（与自动超分走同一条路）。 */
-    private fun showSrProgress(page: Int) = showSrRunning(page, running = true)
+    /**
+     * 手动点「超分 / 重新超分」时的进行中提示（与自动超分走同一条路）。
+     *
+     * ⚠️ 传 `toastIfUnavailable = true`：这是**一次用户点击**，只发一条 —— 浮层没权限时
+     * 退化成 Toast，而不是像批量那样静默。静默的后果用户已经反馈过：
+     * 「点了超分，屏幕上什么提示都没有」（2026-10 真机，浮层权限被拒）。
+     */
+    private fun showSrProgress(page: Int) = showSrRunning(page, running = true, toastIfUnavailable = true)
 
     private fun clearSrRunningChip(page: Int) {
         AppNotice.clearRunning(this, srRunningChipByPage.remove(page) ?: 0L)

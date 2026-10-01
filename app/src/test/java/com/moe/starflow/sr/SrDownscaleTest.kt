@@ -3,7 +3,6 @@ package com.moe.starflow.sr
 import android.graphics.Bitmap
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -11,23 +10,31 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 
 /**
- * 大图超分前的压缩计划（用户口径 2026-10：「对较大尺寸的图片进行超分，短边压缩对齐到 1080p
- * 再超分……减轻超分模型的压力，同时可以快速通过超分模型放大尺寸」）。
+ * 大图超分前的**压缩计划**（用户口径 2026-10）：
  *
- * ⚠️ Robolectric 的 Canvas **不真正栅格化**（见 `manga/CLAUDE.md` 的同名条目），
- * 所以这里只断言**尺寸与所有权**，不断言像素内容 —— 像素质量只能真机看。
- * 尺寸恰恰是这块功能唯一需要正确的东西（错一步就是 OOM 或白算）。
+ * > 「对较大尺寸的图片进行超分，短边压缩对齐到 1080p 再超分……减轻超分模型的压力，
+ * >  同时可以快速通过超分模型放大尺寸」
+ * > 「**短边超过 1080 的压缩尺寸后给超分的图片**，体积不能超过原来的像素和大小」
+ *
+ * ⚠️ 注意这条只约束**喂进引擎的那张压缩图**。**产物原样落盘、不做任何额外缩放**
+ * （「超分后肯定比原图大啊」）—— 见 `SrDownscale` 类注释与
+ * `SrReaderWiringTest.theUpscaledProductIsStoredAsIs`。
+ *
+ * ⚠️ Robolectric 的 Canvas **不真正栅格化**（见 `manga/CLAUDE.md`），所以这里只断言
+ * **尺寸与所有权**，不断言像素内容 —— 尺寸恰恰是这块功能唯一需要正确的东西。
  */
 @RunWith(RobolectricTestRunner::class)
 class SrDownscaleTest {
 
     private fun bmp(w: Int, h: Int): Bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
 
+    private fun px(w: Int, h: Int): Long = w.toLong() * h
+
     @Test
     fun smallPageNeedsNoDownscale() {
         assertNull("短边 912、0.58MP → 两个约束都满足，走原路（普通漫画页零行为变化）",
             SrDownscale.plan(632, 912))
-        assertNull("短边正好 1080、1.75MP 也吃得下（引擎上限 2.5MP）", SrDownscale.plan(1080, 1620))
+        assertNull("短边正好 1080、1.75MP 也吃得下（引擎输入上限 2.5MP）", SrDownscale.plan(1080, 1620))
         assertNull("非法尺寸不压", SrDownscale.plan(0, 100))
         assertNull("非法尺寸不压（负）", SrDownscale.plan(-5, 100))
     }
@@ -43,7 +50,11 @@ class SrDownscaleTest {
         assertEquals("长边等比缩放", 1620, p.height)
         assertTrue(
             "压缩后必须落进引擎的 2.5MP 输入上限，否则超分照样出不来",
-            p.width.toLong() * p.height <= SrDownscale.DEFAULT_MAX_FEED_PIXELS,
+            px(p.width, p.height) <= SrDownscale.DEFAULT_MAX_FEED_PIXELS,
+        )
+        assertTrue(
+            "压缩图**必须比原图小**（用户口径：给超分的压缩图不超过原来的像素）",
+            px(p.width, p.height) < px(2000, 3000),
         )
         // 横过来：按高对齐
         val q = SrDownscale.plan(3000, 2000)!!
@@ -57,18 +68,18 @@ class SrDownscaleTest {
         val p = SrDownscale.plan(1080, 2592)!!          // 2.8MP > 2.5MP
         assertTrue(
             "只对齐短边是不够的：2.8MP 仍然超引擎上限",
-            p.width.toLong() * p.height <= SrDownscale.DEFAULT_MAX_FEED_PIXELS,
+            px(p.width, p.height) <= SrDownscale.DEFAULT_MAX_FEED_PIXELS,
         )
         assertTrue("长宽比要保住", p.width < 1080 && p.height < 2592)
     }
 
-    /** Real-ESRGAN 是 4x，上限只有 0.625MP —— 同一个 plan 要按引擎上限给出不同的结果。 */
+    /** Real-ESRGAN 是 4x，输入上限只有 0.625MP —— 同一个 plan 要按引擎上限给出不同的结果。 */
     @Test
     fun thePlanFollowsTheEngineSpecificCap() {
         val p = SrDownscale.plan(2000, 3000, 625_000L)!!
         assertTrue(
             "4x 引擎的 0.625MP 上限也要满足（否则 Real-ESRGAN 永远报图太大）",
-            p.width.toLong() * p.height <= 625_000L,
+            px(p.width, p.height) <= 625_000L,
         )
         assertTrue("比 2x 引擎压得更狠", p.width < 1080)
     }
@@ -80,20 +91,20 @@ class SrDownscaleTest {
         val p = SrDownscale.plan(20000, 300)!!
         assertTrue(
             "超过引擎上限就必须压（哪怕短边很小）",
-            p.width.toLong() * p.height <= SrDownscale.DEFAULT_MAX_FEED_PIXELS,
+            px(p.width, p.height) <= SrDownscale.DEFAULT_MAX_FEED_PIXELS,
         )
         assertTrue("长宽比要保住（不能被压成正方形）", p.width > p.height * 50)
     }
 
+    /** **压缩永远是缩小**（k < 1）—— 这就是「压缩图不超过原图像素」的构造性保证。 */
     @Test
-    fun clampOnlyKicksInWhenOutputExceedsTheOriginalPixelCount() {
-        // 原图 2000x3000 = 6.0MP；产物 2160x3240 = 7.0MP → 必须收敛
-        assertTrue(SrDownscale.needsClamp(2160, 3240, 2000, 3000))
-        // 产物比原图小/相等 → 不收敛（不做无谓的一次缩放）
-        assertFalse(SrDownscale.needsClamp(1999, 2999, 2000, 3000))
-        assertFalse(SrDownscale.needsClamp(2000, 3000, 2000, 3000))
-        // 原图很小、产物很大 → 收敛
-        assertTrue(SrDownscale.needsClamp(4000, 6000, 1000, 1500))
+    fun planNeverUpscales() {
+        for ((w, h) in listOf(2000 to 3000, 1080 to 2592, 20000 to 300, 4001 to 6000)) {
+            val p = SrDownscale.plan(w, h) ?: continue
+            assertTrue("$w x $h：压出来必须更小（原 ${px(w, h)} → 现 ${px(p.width, p.height)}）",
+                px(p.width, p.height) < px(w, h))
+            assertTrue("$w x $h：两个方向都不能变大", p.width <= w && p.height <= h)
+        }
     }
 
     @Test
@@ -118,23 +129,5 @@ class SrDownscaleTest {
         assertEquals(plan.width, out.width)
         assertEquals(plan.height, out.height)
         assertFalse(out.isRecycled)
-    }
-
-    @Test
-    fun clampBringsTheProductUnderTheOriginalPixelCount() {
-        val out = bmp(2160, 3240)
-        val clamped = SrDownscale.clampToOriginalPixels(out, 2000, 3000)
-        assertNotNull("超过原图像素数时必须收敛", clamped)
-        assertTrue(
-            "收敛后像素数必须 ≤ 原图（用户口径：体积不能超过原来的像素和大小）",
-            clamped!!.width.toLong() * clamped.height <= 2000L * 3000L,
-        )
-        assertTrue(clamped.width > 0 && clamped.height > 0)
-    }
-
-    @Test
-    fun clampReturnsNullWhenNothingToDo() {
-        assertNull("产物本来就比原图小 → 不收敛（少一次缩放）", SrDownscale.clampToOriginalPixels(bmp(100, 150), 2000, 3000))
-        assertNull("相等也不收敛", SrDownscale.clampToOriginalPixels(bmp(2000, 3000), 2000, 3000))
     }
 }

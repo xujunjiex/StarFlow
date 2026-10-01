@@ -6,7 +6,6 @@ import android.graphics.Paint
 import android.graphics.Rect
 import com.moe.starflow.utils.LogCollector
 import kotlin.math.max
-import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /**
@@ -16,6 +15,19 @@ import kotlin.math.sqrt
  * 「对较大尺寸的图片进行超分，短边压缩对齐到 1080p 再超分……减轻超分模型的压力，
  * 同时可以快速通过超分模型放大尺寸」。一张 2000x3000 的页直接 2x 就是 12MP ——
  * 重档位要几十秒，超过像素上限的还会直接判失败。
+ *
+ * ## 只**压缩输入**，绝不缩产物
+ * 本对象只管「喂进引擎之前」这一步。**超分产物原样落盘，不做任何额外缩放** ——
+ * 用户口径：「压缩尺寸后给超分的图片，体积不能超过原来的像素和大小」说的是**输入**；
+ * 而「超分后肯定比原图大啊」。产物的空间由**两道既有的闸**管住，不需要在这里再造一条：
+ * 1. 引擎自己的输出上限（`NcnnSrEngine.maxOutputPixels` = 10MP，超了它直接不跑）；
+ * 2. 超分缓存的**总容量**上限 + LRU 淘汰（[SrStore.manageCache]，默认 512MB）。
+ *
+ * ⚠️ **别再给产物加"不超过原图 N 倍"这类单页预算**（2026-10 试过一版，已删）：
+ * 空间是**总容量**管的，不是单页尺寸管的；按单页倍数卡会得到自相矛盾的结果 ——
+ * 小图（0.58MP → 2x 后 2.3MP = 4 倍）被砍掉一半，而大图（6MP → 压缩 → 7MP = 1.17 倍）
+ * 反而一刀不砍。砍的全是最需要放大的低分辨率页。守卫：
+ * `SrReaderWiringTest.theUpscaledProductIsStoredAsIs`。
  *
  * ## ⚠️ 只对齐短边是**不够的**（实现时实测出来的）
  * `NcnnSrEngine.maxInputPixels = 10MP / scale²`（2x → **2.5MP**，Real-ESRGAN 4x → 0.625MP），
@@ -27,14 +39,9 @@ import kotlin.math.sqrt
  * 所以 [plan] 是**两个约束一起解**：先按用户口径把短边对齐 1080，再按引擎的
  * `maxInputPixels` 继续等比缩到能吃下为止。两个都不需要缩时返回 null（调用方走原路）。
  *
- * ## 三条约束分别怎么落
- * 1. **压缩不损失画质**：只在**内存里**用 `Canvas` + `FILTER_BITMAP_FLAG` 缩放，
- *    **不重新编码**（没有 JPEG 二次损失）；且 [apply] **分步减半**再收到目标 ——
- *    一步 2.8 倍下采样会漏采样，在网点/线条上出现摩尔纹。
- * 2. **体积不超过原来的像素**：[clampToOriginalPixels] 把产物收敛到「像素数 ≤ 原图」，
- *    所以走压缩路径的结果**永远不比原图大**（落盘体积与内存都受益）。
- * 3. **输出尺寸允许 ≤ 原图** —— 因此调用方（`SrProcessor`）判「是不是真超分」时
- *    必须拿**喂给引擎的那张图**比，不能拿原图比（见那里的注释）。
+ * ## 压缩怎么做到"不损失画质"
+ * 只在**内存里**用 `Canvas` + `FILTER_BITMAP_FLAG` 缩放，**不重新编码**（没有 JPEG 二次损失）；
+ * 且 [apply] **分步减半**再收到目标 —— 一步 2.8 倍下采样会漏采样，在网点/线条上出现摩尔纹。
  */
 object SrDownscale {
 
@@ -55,6 +62,8 @@ object SrDownscale {
 
     /**
      * 算出压缩目标。**两个约束都要满足**；本来就不用缩 → null（调用方走原路）。
+     *
+     * ⚠️ 返回的尺寸**恒小于入参**（`k < 1`）—— 这是"压缩图不超过原图像素"的构造性保证。
      *
      * @param maxFeedPixels 引擎能吃的最大输入像素数（`SuperResolutionEngine.maxInputPixels`）；
      *   ≤ 0 表示未知 → 用 [DEFAULT_MAX_FEED_PIXELS]。
@@ -84,11 +93,6 @@ object SrDownscale {
         return Plan(w, h)
     }
 
-    /** 产物是否超过原图的**像素数**（超过就要收敛）。 */
-    fun needsClamp(outW: Int, outH: Int, srcW: Int, srcH: Int): Boolean =
-        outW > 0 && outH > 0 && srcW > 0 && srcH > 0 &&
-            outW.toLong() * outH > srcW.toLong() * srcH
-
     /**
      * 缩放到 [plan]。**分步**：每步最多缩一半，避免一次大倍率下采样的漏采样。
      *
@@ -109,20 +113,6 @@ object SrDownscale {
         // 只有"这一步产出了新图"时才回收中间产物；`out === owned` 说明缩放在这一步失败了
         if (out !== owned) owned?.recycle()
         return out
-    }
-
-    /**
-     * 产物收敛：等比缩到**像素数 ≤ 原图**。
-     *
-     * @return 收敛后的新图；**不需要收敛时返回 null**（调用方保留原产物，不做无谓的一次缩放）。
-     */
-    fun clampToOriginalPixels(out: Bitmap, srcW: Int, srcH: Int): Bitmap? {
-        if (!needsClamp(out.width, out.height, srcW, srcH)) return null
-        val k = sqrt((srcW.toDouble() * srcH) / (out.width.toDouble() * out.height))
-        val w = max(1, (out.width * k).roundToInt())
-        val h = max(1, (out.height * k).roundToInt())
-        LogCollector.d(TAG, "产物收敛: ${out.width}x${out.height} → ${w}x${h}（原图 ${srcW}x${srcH}）")
-        return scaleTo(out, w, h)
     }
 
     /** 单步缩放（高质量过滤）。失败返回 null —— 超分是"锦上添花"，绝不因此抛给上层。 */

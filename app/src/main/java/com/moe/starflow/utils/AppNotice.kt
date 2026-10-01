@@ -79,7 +79,7 @@ object AppNotice {
     ) {
         val app = context.applicationContext
         if (!canUseOverlay(app)) {
-            UiUtils.showToast(app, text)
+            toast(app, text)
             return
         }
         val overlay = TranslationStatusOverlay.getInstance(app)
@@ -90,6 +90,16 @@ object AppNotice {
             Style.ERROR -> overlay.showError(text)
             Style.BRIEF_ERROR -> overlay.showError(text, autoDismissMs = BRIEF_ERROR_MS, sticky = true)
         }
+    }
+
+    /**
+     * 兜底 Toast（**全应用唯一一处** `UiUtils.showToast`，守卫 `ReaderNoticeOutletTest` 数着它）。
+     *
+     * 抽成函数是为了让"浮层画不出来"的所有分支都走同一个出口 —— 每处各写一遍
+     * `UiUtils.showToast` 会立刻把那道守卫撞红。
+     */
+    private fun toast(context: Context, text: String) {
+        UiUtils.showToast(context, text)
     }
 
     /**
@@ -104,14 +114,21 @@ object AppNotice {
      * 典型用法：任务开始 → `val id = showRunning(...)`；任务结束（含失败 / 取消）→
      * `clearRunning(context, id)`。**成对使用**，别只发不清。
      *
-     * ⚠️ **故意不做 Toast 兜底**（[canUseOverlay] 为假时直接返回 0，既不显示也不报错）：
+     * ⚠️ **默认不做 Toast 兜底**（[canUseOverlay] 为假时直接返回 0，既不显示也不报错）：
      * 这是**连续状态**（整章批量时每页都会发一条），浮层开关关掉时保持静默正是那个设置本身的
      * 语义 —— 与翻译进度芯片同一口径（退化成 Toast 就是每页刷一条）。
      * 结果/报错仍然走 [show]，那边带兜底，用户不会"毫无反馈"。
+     *
+     * @param toastIfUnavailable **用户主动点击**那一路传 true：一次点击只发一条，退化成 Toast
+     *   不会刷屏，而静默会变成用户眼里的"点了没反应"（2026-10 真机反馈：点了超分，
+     *   因为浮层权限没给，屏幕上**一句话都没有**）。批量/自动那一路保持 false。
      */
-    fun showRunning(context: Context, text: String): Long {
+    fun showRunning(context: Context, text: String, toastIfUnavailable: Boolean = false): Long {
         val app = context.applicationContext
-        if (!canUseOverlay(app)) return 0L
+        if (!canUseOverlay(app)) {
+            if (toastIfUnavailable) toast(app, text)
+            return 0L
+        }
         return TranslationStatusOverlay.getInstance(app).showRunning(text)
     }
 

@@ -123,7 +123,10 @@ class ReaderNoticeOutletTest {
         )
         assertTrue(
             "画不出来时必须退回 Toast，不能静默",
-            text.contains("UiUtils.showToast(app, text)"),
+            // ⚠️ 兜底出口收敛成一个私有 toast()：有两处要退（普通提示 / 用户主动点的进行中提示），
+            //    每处各写一遍 `UiUtils.showToast` 会把上面那条"只有一处"的断言撞红。
+            text.contains("private fun toast(context: Context, text: String)") &&
+                text.contains("toast(app, text)"),
         )
     }
 
