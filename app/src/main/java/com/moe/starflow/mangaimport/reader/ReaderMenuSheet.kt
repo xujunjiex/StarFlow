@@ -975,7 +975,10 @@ class ReaderMenuSheet(
         R.id.tv_rotate_value, R.id.tv_interval_value, R.id.tv_download_value,
         R.id.tv_source_caption, R.id.tv_target_caption,
         R.id.tv_debounce_value, R.id.tv_ahead_value,
-        R.id.tv_sr_hint, R.id.tv_anime4k_value,
+        // ⚠️ `tv_sr_hint` 已按用户要求删除（「把翻译自动超分的底下的描述删了」）——
+        //    它必须**同时**从布局与这份清单里去掉：清单留着会在 applyPanelTheme 里
+        //    `findViewById(已不存在的 id).setTextColor(...)` → NPE。
+        R.id.tv_anime4k_value, R.id.tv_ahead_hint,
         // 「同时请求数」只剩**值/说明**走次要色
         R.id.tv_concurrency_hint,
         // 字号行的值与说明（「自动」胶囊的配色在 refreshFontSizeRow 里按状态给）

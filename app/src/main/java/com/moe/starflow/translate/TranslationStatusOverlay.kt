@@ -42,15 +42,14 @@ class TranslationStatusOverlay private constructor(private val context: Context)
         private const val TOP_OFFSET_DP = 24
 
         /**
-         * 阅读器里提示条的顶距（dp）：**紧贴在顶部章节胶囊下面**。
+         * 阅读器里提示条顶距的**兜底估算值**（dp，胶囊 `marginTop 38dp` + 高约 26dp + 2dp 缝）。
          *
-         * 口径来源（用户 2026-10）：「章节胶囊不要紧贴屏幕顶部，**保证提示在章节胶囊下面**就行了；
-         * 这个位置不要动，感觉有点太靠下了」——所以是**最小让位**，不是随便往下挪。
-         * 胶囊在 `layout_marginTop=38dp`、高约 26dp → 下沿 ~64dp；提示条从 70dp 起
-         * （贴住 + 6dp 余量），三条堆叠到 130 也全在胶囊下方。
-         * ⚠️ 改胶囊的 marginTop 就要同步改这里 —— 守卫 `ReaderTopPillInsetTest`。
+         * ⚠️ 只在**胶囊还没布局**（`height == 0`，例如刚进阅读器就弹提示）时用；
+         * 布局完成后宿主会推**实测的** `tvPageIndicator.bottom + 2dp`（`setTopOffsetPx`）。
+         * 之所以要实测：用户口径是「放在胶囊下面就行，不重叠就行，**不要间隔那么大的空间**」——
+         * 固定 dp 在放大字号下会压住胶囊、在标准字号下会留缝，实测两边都不占。
          */
-        const val READER_TOP_OFFSET_DP = 70
+        const val READER_TOP_OFFSET_DP = 66
 
         /** 全局唯一实例：游戏/漫画/无障碍服务/NLLB 共用同一浮窗，避免多条消息在不同浮窗上重叠 */
         @Volatile
@@ -81,15 +80,17 @@ class TranslationStatusOverlay private constructor(private val context: Context)
     private var isShowing = false
 
     /**
-     * 顶距覆盖（dp）：阅读器用它在**不改用户设置**的前提下把提示条压到章节胶囊**下面**。
+     * 顶距覆盖（**像素**）：阅读器用它在**不改用户设置**的前提下把提示条放到章节胶囊**正下方**。
      *
-     * ⚠️ 为什么需要：阅读器顶部有章节页码胶囊，用户口径是「**胶囊在提示条上面**，这样多条信息
-     * 堆下来也不会盖住胶囊」。浮层默认顶距 24dp（截图翻译链路的口径，那边没有胶囊），
-     * 而胶囊在 10dp 附近 —— 两者必然重叠。阅读器前台时把顶距让到胶囊下面，离开时恢复，
-     * 游戏/截屏链路完全不受影响。
+     * ⚠️ 用像素而不是 dp：这个值由宿主按**实测的胶囊下沿**（`tvPageIndicator.bottom + 2dp`）
+     * 推过来 —— 用户口径是「放在当前章节胶囊的下面就行，不重叠就行，**不要间隔那么大的空间**」。
+     * 猜一个固定 dp 要么压住胶囊（大字号时）、要么留一条大缝（标准字号时），实测就没有这个取舍。
+     *
+     * 浮层默认顶距 24dp（截图翻译链路的口径，那边没有胶囊）；阅读器前台时让位，离开时恢复
+     * （`onStop` 传 null），游戏/截屏链路完全不受影响。
      */
     @Volatile
-    private var topOffsetOverrideDp: Int? = null
+    private var topOffsetOverridePx: Int? = null
 
     // 每条消息的自动消失任务
     private val dismissRunnables = HashMap<TextView, Runnable>()
@@ -293,15 +294,15 @@ class TranslationStatusOverlay private constructor(private val context: Context)
     }
 
     /**
-     * 临时覆盖「顶部贴边距离」（dp）；传 null 恢复用户设置/默认值。
+     * 临时覆盖「顶部贴边距离」（**像素**）；传 null 恢复用户设置/默认值。
      *
-     * 阅读器在 `onStart` 传一个大于胶囊下沿的值、`onStop` 传 null（见 MangaReaderActivity）。
-     * 已显示的芯片会立刻重排，不必等下一帧。
+     * 阅读器在 `onStart` 与胶囊布局完成后推实测值、`onStop` 传 null
+     * （见 `MangaReaderActivity.pushNoticeTopBelowPill`）。已显示的芯片会立刻重排。
      */
-    fun setTopOffsetDp(dp: Int?) {
+    fun setTopOffsetPx(px: Int?) {
         runOnMainThread {
-            if (topOffsetOverrideDp == dp) return@runOnMainThread
-            topOffsetOverrideDp = dp
+            if (topOffsetOverridePx == px) return@runOnMainThread
+            topOffsetOverridePx = px
             addToWindowIfNeeded()
         }
     }
@@ -523,7 +524,8 @@ class TranslationStatusOverlay private constructor(private val context: Context)
             height = WindowManager.LayoutParams.WRAP_CONTENT
             gravity = position or Gravity.CENTER_HORIZONTAL
             y = when (position) {
-                Gravity.TOP -> (((topOffsetOverrideDp ?: TOP_OFFSET_DP)) * context.resources.displayMetrics.density).toInt()
+                Gravity.TOP -> topOffsetOverridePx
+                    ?: (TOP_OFFSET_DP * context.resources.displayMetrics.density).toInt()
                 Gravity.BOTTOM -> (80 * context.resources.displayMetrics.density).toInt()
                 else -> 0
             }

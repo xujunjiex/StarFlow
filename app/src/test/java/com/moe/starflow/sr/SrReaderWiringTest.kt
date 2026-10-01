@@ -232,8 +232,10 @@ class SrReaderWiringTest {
             assertTrue("布局缺 " + id, layout.contains("android:id=\"@+id/" + id + "\""))
         }
         // ⚠️ 顺序：超分三件套必须在**翻译三件套左边**（同一 LinearLayout 里按文档序排）
+        // ⚠️ 组内顺序 = 与翻译组**逐位对称**：三态/切换在前、主按钮居中、**删除压最右**
+        //    （用户口径 2026-10：「删除按钮都在当前组件的最右边」）。超分组整体仍排在翻译组左边。
         val order = listOf(
-            "btn_sr_toggle", "btn_sr_clear", "btn_sr_page",
+            "btn_sr_toggle", "btn_sr_page", "btn_sr_clear",
             "btn_toggle_translate", "btn_fail_translate", "btn_translate", "btn_clear_translate",
         ).map { layout.indexOf("android:id=\"@+id/" + it + "\"") }
         assertTrue("超分按钮必须全部在翻译按钮左边，且顺序固定", order.all { it > 0 } && order == order.sorted())
@@ -386,48 +388,50 @@ class SrReaderWiringTest {
     }
 
     @Test
-    fun srHasItsOwnFloatingGroupAndSitsRightNextToTheTranslateOne() {
-        // 「单独设计一个组件组专门显示超分相关的东西」（2026-10 早先）
-        // + 「超分组件位置要调整，和翻译一样都在当前组件的最右边」（2026-10 最新）——
-        // 所以两组**同一行、整体贴右下角**，超分在左、翻译在右。
+    fun srGroupMirrorsTheTranslateGroupIncludingTheDeleteButtonPosition() {
         val layout = read("src/main/res/layout/activity_manga_reader.xml")
-        val wrapper = layout.indexOf("android:id=\"@+id/floating_groups\"")
         val srGroup = layout.indexOf("android:id=\"@+id/sr_group\"")
         val translateGroup = layout.indexOf("android:id=\"@+id/translate_group\"")
-        assertTrue("要有底部浮层容器 floating_groups", wrapper > 0)
         assertTrue("要有独立的超分组", srGroup > 0)
         assertTrue("要有翻译组", translateGroup > 0)
 
-        // ① 容器贴右下角（两组各自 bottom|end 会完全重叠，所以必须同一个容器）
-        val wrapperBlock = layout.substring(wrapper, layout.indexOf(">", wrapper))
-        assertTrue(
-            "容器必须贴右下角（bottom|end）",
-            wrapperBlock.contains("android:layout_gravity=\"bottom|end\""),
-        )
-        // ② 两组都在容器里，且**超分在左**（翻译组一字不动，用户不会认不出来）
-        assertTrue("超分组必须在 floating_groups 容器里", srGroup > wrapper && srGroup < translateGroup)
-        // ③ 组自己不许再写 layout_gravity —— 那会把它从那一行里拽出去
-        val srBlock = layout.substring(srGroup, layout.indexOf(">", srGroup))
+        // (1) 两组各占一侧：超分贴左下、翻译贴右下（用户口径：「超分按钮放到左边，不是右边的上面」）
+        val srHead = layout.substring(srGroup, layout.indexOf(">", srGroup))
+        assertTrue("超分组必须靠左（bottom|start）", srHead.contains("android:layout_gravity=\"bottom|start\""))
+        val trHead = layout.substring(translateGroup, layout.indexOf(">", translateGroup))
+        assertTrue("翻译组仍然靠右（bottom|end）", trHead.contains("android:layout_gravity=\"bottom|end\""))
+        // ⚠️ 曾经误读成"把整个超分组挪到右边"，套了一层 floating_groups 容器 —— 那是错的。
+        //    用户要的是**组内按钮顺序**跟翻译一致（删除放最右），整组还在左边。
+        // ⚠️ 查 **id** 而不是裸词：说明性注释里提到 "floating_groups" 不算数
         assertFalse(
-            "超分组不许再自带 layout_gravity（会被拽出 floating_groups 这一行）",
-            srBlock.contains("android:layout_gravity="),
+            "不许再套 floating_groups 之类的容器",
+            layout.contains("android:id=\"@+id/floating_groups\""),
         )
-        val trBlock = layout.substring(translateGroup, layout.indexOf(">", translateGroup))
-        assertFalse(
-            "翻译组同样不许自带 layout_gravity / 底边距（那会让它脱离那一行）",
-            trBlock.contains("android:layout_gravity=") || trBlock.contains("android:layout_marginBottom="),
-        )
-        assertTrue("两组之间要留一点缝", srBlock.contains("android:layout_marginEnd="))
 
-        // ④ 超分三枚按钮必须在 sr_group 里，而不是 translate_group 里
-        val srEnd = layout.indexOf("</LinearLayout>", srGroup)
+        // (2) **组内顺序**：删除按钮必须在**最右**，与翻译组一致
+        //     （翻译组内部最右是 btn_clear_translate：toggle -> fail -> translate -> clear）
+        val trBlock = layout.substring(translateGroup, layout.indexOf("</LinearLayout>", translateGroup))
+        assertTrue(
+            "翻译组的删除按钮在最右（这是超分要对齐的基准）",
+            trBlock.indexOf("btn_clear_translate") > trBlock.indexOf("btn_translate"),
+        )
+        val srBlock = layout.substring(srGroup, layout.indexOf("</LinearLayout>", srGroup))
         for (id in listOf("btn_sr_page", "btn_sr_toggle", "btn_sr_clear")) {
-            val p = layout.indexOf("android:id=\"@+id/" + id + "\"")
-            assertTrue("$id 必须在 sr_group 内", p in srGroup until srEnd)
+            assertTrue(
+                "$id 必须在 sr_group 内",
+                srBlock.contains("android:id=\"@+id/" + id + "\""),
+            )
         }
-        // ⑤ 整组显隐在 refreshTranslationChrome（每页每次刷新都走它）
+        assertTrue(
+            "超分组的删除按钮必须排在**最右**（用户口径：「删除按钮都在当前组件的最右边」）",
+            srBlock.indexOf("btn_sr_clear") > srBlock.indexOf("btn_sr_page") &&
+                srBlock.indexOf("btn_sr_clear") > srBlock.indexOf("btn_sr_toggle"),
+        )
+
+        // (3) 整组显隐在 refreshTranslationChrome（每页每次刷新都走它）
         assertTrue("refreshSrButtons 要能整组 GONE", activity().contains("binding.srGroup.visibility = View.GONE"))
     }
+
     @Test
     fun plainModeBaseWarmupIsAwaitedBeforeNotify() {
         // 真机反馈：「当前显示原图（纯原图态）切换底图没作用」。

@@ -405,9 +405,9 @@ class NovelReaderActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        // 提示条让到顶部胶囊**下面**（用户口径：胶囊在提示条上面，多条堆下来也不盖住胶囊）。
+        // 提示条紧贴顶部胶囊下沿（与漫画同一个口径：不重叠、也不留大缝）。
         // ⚠️ 只覆盖顶距、不动用户的 `Status_Position` 设置；离开阅读器恢复（onStop）。
-        TranslationStatusOverlay.getInstance(this).setTopOffsetDp(TranslationStatusOverlay.READER_TOP_OFFSET_DP)
+        pushNoticeTopBelowPill()
         updateAutoTurn()
         // 从设置页返回必须重建：字号/字距等是在 Activity 创建时读进缓存、并已由渲染结果固化的，
         // 就地刷新既漏项又容易只改一半（与漫画同一套理由）。
@@ -419,6 +419,18 @@ class NovelReaderActivity : AppCompatActivity() {
         // ⚠️ onStop 会把队列停掉（后台不该继续翻），回前台必须自己接回来 ——
         // 没有这一步，「自动/增量」模式切后台再回来就永久停在原地了
         restartQueueIfNeeded()
+    }
+
+    /**
+     * 把提示条推到**顶部胶囊正下方**（见 `TranslationStatusOverlay.setTopOffsetPx`）。
+     * ⚠️ 按**实测**的 `top_pill.bottom` 推，不猜固定 dp —— 章名换行会把胶囊撑高。
+     */
+    private fun pushNoticeTopBelowPill() {
+        val pill = binding.topPill
+        val density = resources.displayMetrics.density
+        val bottom = if (pill.height > 0) pill.bottom
+        else (TranslationStatusOverlay.READER_TOP_OFFSET_DP * density).toInt()
+        TranslationStatusOverlay.getInstance(this).setTopOffsetPx(bottom + (2 * density).toInt())
     }
 
     override fun onStop() {
@@ -452,7 +464,7 @@ class NovelReaderActivity : AppCompatActivity() {
         // 进度走前台服务通知栏，回到阅读器时译文已经写库、`refreshTranslations` 直接读到。
         TranslationStatusOverlay.getInstance(this@NovelReaderActivity).dismiss()
         // 恢复提示条的默认顶距（进程级单例，不清的话别的页面也跟着偏移）
-        TranslationStatusOverlay.getInstance(this@NovelReaderActivity).setTopOffsetDp(null)
+        TranslationStatusOverlay.getInstance(this@NovelReaderActivity).setTopOffsetPx(null)
         // ⚠️ 提示放在 `dismiss()` **之后**：浮层是共享单例，dismiss 会清掉所有堆叠消息
         if (notifyPause) showPausedNotice(R.string.novel_translate_paused_background)
         // 离开阅读器清掉选择集：它是「长按多选」的临时状态，回到阅读器时不该还亮着
@@ -576,6 +588,10 @@ class NovelReaderActivity : AppCompatActivity() {
         binding.btnNext.setOnClickListener { gotoChapter(chapterIndex + 1) }
         // ⚠️ 点整颗胶囊（不是只点章名那半）：页码那半也在这颗胶囊里，点上去同样该开目录
         binding.topPill.setOnClickListener { openToc() }
+        // 提示条紧贴胶囊下沿 —— 章名换行会把胶囊撑高，高度一变就重推（与漫画同一接线）。
+        binding.topPill.addOnLayoutChangeListener { _, _, _, _, b, _, _, _, ob ->
+            if (b != ob) pushNoticeTopBelowPill()
+        }
         binding.btnTranslate.setOnClickListener { onTranslateButtonClick() }
         binding.btnToggleTranslate.setOnClickListener { cycleDisplayMode() }
         binding.btnFailTranslate.setOnClickListener { showFailBubble() }

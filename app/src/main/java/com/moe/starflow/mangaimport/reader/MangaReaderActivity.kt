@@ -343,9 +343,9 @@ class MangaReaderActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        // 提示条让到顶部胶囊**下面**（用户口径：胶囊在提示条上面，多条堆下来也不盖住胶囊）。
-        // ⚠️ 只覆盖顶距、不动用户的 `Status_Position` 设置；离开阅读器恢复（onStop）。
-        TranslationStatusOverlay.getInstance(this).setTopOffsetDp(TranslationStatusOverlay.READER_TOP_OFFSET_DP)
+        // 提示条紧贴顶部胶囊下沿（用户口径：「放在当前章节胶囊的下面就行，不重叠就行，
+        // 不要间隔那么大的空间」）。⚠️ 只覆盖顶距、不动用户的 `Status_Position` 设置。
+        pushNoticeTopBelowPill()
         updateAutoTurn()
         // ⚠️ 从设置页返回必须**重建阅读器**：个性化里那一批参数（字号/颜色/字距行距/竖排方向/
         // 文字合并…）是在 Activity 创建时被读进缓存、并由已经渲染好的译图固化的，
@@ -398,7 +398,7 @@ class MangaReaderActivity : AppCompatActivity() {
         translationController?.pauseForBackground()
         TranslationStatusOverlay.getInstance(this@MangaReaderActivity).dismiss()
         // 恢复提示条的默认顶距（进程级单例：不清的话别的页面也跟着偏移）
-        TranslationStatusOverlay.getInstance(this@MangaReaderActivity).setTopOffsetDp(null)
+        TranslationStatusOverlay.getInstance(this@MangaReaderActivity).setTopOffsetPx(null)
     }
 
     /**
@@ -827,6 +827,12 @@ class MangaReaderActivity : AppCompatActivity() {
         binding.btnMenu.setOnClickListener { showMenu() }
         // 顶部页码胶囊带章节信息，点它打开章节目录（与小说阅读器的顶部章名同一个入口语义）
         binding.tvPageIndicator.setOnClickListener { openChapterDialog() }
+        // ⚠️ 提示条要**紧贴**胶囊下沿 → 按**实测**的 `pill.bottom` 推给浮层，不猜固定 dp
+        //    （猜的在小字号下留一条缝、在大字号下把胶囊压住）。胶囊自己高度变了（换章、标题换行）
+        //    也要重推 —— 只在 `bottom` 真的变了时才推，避免每帧刷窗口布局。
+        binding.tvPageIndicator.addOnLayoutChangeListener { _, _, _, _, b, _, _, _, ob ->
+            if (b != ob) pushNoticeTopBelowPill()
+        }
 
         // 分页进度：只注册一次（applyPager 会重建 adapter，但回调挂在 viewPager 上，无需重复注册）
         binding.viewPager.registerOnPageChangeCallback(pageChangeCallback)
@@ -1450,6 +1456,22 @@ class MangaReaderActivity : AppCompatActivity() {
             }
             setNegativeButton(R.string.cancel, null)
         }
+    }
+
+    /**
+     * 把提示条推到**章节胶囊正下方**（`TranslationStatusOverlay.setTopOffsetPx`，单位像素）。
+     *
+     * ⚠️ 为什么按实测推：胶囊高度随字号/章名换行变，猜一个固定 dp 要么留缝、要么压住胶囊
+     * （用户两次反馈都在这条线上：「太靠下了」→「不要间隔那么大的空间」）。
+     * 胶囊还没布局时用 [TranslationStatusOverlay.READER_TOP_OFFSET_DP] 兜底，之后由实测覆盖。
+     */
+    private fun pushNoticeTopBelowPill() {
+        if (!::binding.isInitialized) return
+        val pill = binding.tvPageIndicator
+        val density = resources.displayMetrics.density
+        val bottom = if (pill.height > 0) pill.bottom
+        else (TranslationStatusOverlay.READER_TOP_OFFSET_DP * density).toInt()
+        TranslationStatusOverlay.getInstance(this).setTopOffsetPx(bottom + (2 * density).toInt())
     }
 
     private fun startChapterBatch(chapterIndex: Int, pages: List<Int>) {

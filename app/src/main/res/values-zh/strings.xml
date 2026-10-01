@@ -1033,10 +1033,10 @@
     <string name="reader_sr_model_row">超分模型：%1$s</string>
     <string name="reader_sr_none">未选择</string>
     <string name="reader_sr_not_downloaded">%1$s（未下载）</string>
-    <string name="reader_sr_hint">开启后：点翻译会先用原图识别，识别完再自动超分（不拖慢识别）。超分结果默认为译文底图，也可切回原图。与 Anime4K 互斥（超分优先）。</string>
     <string name="reader_sr_switch_on">阅读器超分已开启</string>
     <string name="reader_sr_switch_off">阅读器超分已关闭（已生成的超分图仍留在磁盘上）</string>
     <string name="reader_sr_auto_label">翻译时自动超分</string>
+    <string name="reader_translate_ahead_hint">仅增量模式：从当前页往后自动翻多少页。翻页时窗口跟着前移。</string>
 
     <!-- ═══ 超分记录系统（2026-10）═══ -->
     <string name="reader_records_tab_translate">翻译</string>

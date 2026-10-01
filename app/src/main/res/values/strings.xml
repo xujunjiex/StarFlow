@@ -1097,10 +1097,10 @@
     <string name="reader_sr_model_row">Super resolution: %1$s</string>
     <string name="reader_sr_none">Not selected</string>
     <string name="reader_sr_not_downloaded">%1$s (not downloaded)</string>
-    <string name="reader_sr_hint">When on: tapping translate recognises the original page first, then upscales it automatically (OCR is never slowed down). The upscaled page becomes the base for translated text, and you can switch back to the original. Mutually exclusive with Anime4K (super resolution wins).</string>
     <string name="reader_sr_switch_on">Reader super resolution on</string>
     <string name="reader_sr_switch_off">Reader super resolution off (upscaled pages stay on disk)</string>
     <string name="reader_sr_auto_label">Upscale on translate</string>
+    <string name="reader_translate_ahead_hint">Only for incremental mode: how many pages past the current one to translate ahead. The window moves as you turn pages.</string>
 
     <!-- ═══ 超分记录系统（2026-10）═══ -->
     <string name="reader_records_tab_translate">Translation</string>

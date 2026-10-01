@@ -140,23 +140,10 @@
         </FrameLayout>
     </LinearLayout>
 
-    <!-- ═══════════ 底部浮层组：超分三件套 + 翻译三件套 **同一行、整体贴右下角** ═══════════
-         用户口径 2026-10：「阅读器的超分组件位置要调整，和翻译一样都在当前组件的最右边」。
-         ⚠️ 必须是**一个容器**套住两组：让两个组各自 `bottom|end` 会**完全重叠**；
-             而把超分组放到翻译组"上面"是用户更早明确否掉过的方案（「不是右边的上面」）。
-         组序 = **超分在左、翻译在右**：翻译组内部最右是「清除本页译文」，它的位置一点没变。
-         ⚠️ 两组的 id 不变（`sr_group` / `translate_group`）—— `applyChromeVisibility`
-             逐组淡入淡出、`refreshSrButtons` 只切 `sr_group` 自己的 visibility，都靠它。 -->
-    <LinearLayout
-        android:id="@+id/floating_groups"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom|end"
-        android:layout_marginEnd="20dp"
-        android:layout_marginBottom="62dp"
-        android:orientation="horizontal"
-        android:gravity="center_vertical">
-
+    <!-- ⚠️ 底部两组浮层**不共用一个容器**：超分组贴左下、翻译组贴右下（用户口径 2026-10
+         「超分按钮放到左边，不是右边的上面」）。⚠️ 后来那句「和翻译一样……删除按钮都在
+         当前组件的最右边」说的是**组内按钮顺序**（删除放最右），**不是**把整组挪到右边 ——
+         别再套 floating_groups 之类的容器。 -->
     <!-- ═══════════ 超分浮层组（**独立一组**，用户口径 2026-10）═══════════
          与翻译浮层组完全分开：自己的背景、自己的显隐、自己的三枚按钮。
          三枚按钮与翻译侧一一对应：
@@ -166,7 +153,9 @@
         android:id="@+id/sr_group"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginEnd="8dp"
+        android:layout_gravity="bottom|start"
+        android:layout_marginStart="20dp"
+        android:layout_marginBottom="62dp"
         android:orientation="horizontal"
         android:gravity="center"
         android:padding="6dp"
@@ -199,7 +188,24 @@
                 android:contentDescription="@string/reader_sr_toggle_desc"/>
         </FrameLayout>
 
-        <FrameLayout
+                <FrameLayout
+            android:id="@+id/btn_sr_page"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:gravity="center"
+            android:clickable="true"
+            android:visibility="gone"
+            android:contentDescription="@string/reader_sr_button_desc">
+            <ImageView
+                android:id="@+id/iv_sr_page"
+                android:layout_width="22dp"
+                android:layout_height="22dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_reader_sr"
+                app:tint="#FFFFFF"
+                android:contentDescription="@string/reader_sr_button_desc"/>
+        </FrameLayout>
+<FrameLayout
             android:id="@+id/btn_sr_clear"
             android:layout_width="40dp"
             android:layout_height="40dp"
@@ -217,32 +223,16 @@
                 android:contentDescription="@string/reader_sr_clear_desc"/>
         </FrameLayout>
 
-        <FrameLayout
-            android:id="@+id/btn_sr_page"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:gravity="center"
-            android:clickable="true"
-            android:visibility="gone"
-            android:contentDescription="@string/reader_sr_button_desc">
-            <ImageView
-                android:id="@+id/iv_sr_page"
-                android:layout_width="22dp"
-                android:layout_height="22dp"
-                android:layout_gravity="center"
-                android:src="@drawable/ic_reader_sr"
-                app:tint="#FFFFFF"
-                android:contentDescription="@string/reader_sr_button_desc"/>
-        </FrameLayout>
     </LinearLayout>
-    <!-- 翻译浮层组：翻译按钮 +（有翻译结果时出现）三态切换按钮，同一背景组件。
-         翻译按钮成功态图标变「重翻」（ic_refresh），点击即重新翻译；三态按钮点按循环 译文/原文/原图，长按开详情。
-         ⚠️ 它挂在 `floating_groups` 里（与超分组同一行），**不要再给自己写 layout_gravity / margin** ——
-            那会把它从那一行里拽出去、和超分组重叠。 -->
+    <!-- 右下角翻译浮层组：翻译按钮 +（有翻译结果时出现）三态切换按钮，同一背景组件。
+         翻译按钮成功态图标变「重翻」（ic_refresh），点击即重新翻译；三态按钮点按循环 译文/原文/原图，长按开详情。 -->
     <LinearLayout
         android:id="@+id/translate_group"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="20dp"
+        android:layout_marginBottom="62dp"
         android:orientation="horizontal"
         android:gravity="center"
         android:padding="6dp"
@@ -322,6 +312,5 @@
                 android:contentDescription="@string/reader_clear_page_desc"/>
         </FrameLayout>
     </LinearLayout>
-    </LinearLayout><!-- /floating_groups -->
 
 </FrameLayout>

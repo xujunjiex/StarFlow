@@ -267,8 +267,9 @@
                         android:layout_height="wrap_content" android:text="@string/reader_translate_font_size_hint"
                         android:textSize="11sp" android:textColor="#888888"/>
                 </LinearLayout>
-                <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000"/>
-                <!-- 向后翻译页数：仅增量模式显示 -->
+                <!-- 向后翻译页数：仅增量模式显示。⚠️ 与上面的「字体大小」之间**不画分隔线**
+                     （用户口径 2026-10：「字体大小跟向后翻译自己不要有横线」）—— 两者同属
+                     「翻译节奏」这一组，画线反而把它们割成两块。 -->
                 <LinearLayout android:id="@+id/row_ahead_pages" android:layout_width="match_parent"
                     android:layout_height="wrap_content" android:orientation="vertical"
                     android:layout_marginTop="2dp" android:visibility="gone">
@@ -286,6 +287,12 @@
                         android:layout_height="wrap_content" android:min="1" android:max="10"
                         android:layout_marginTop="2dp" android:thumbTint="#55AEEA"
                         android:progressTint="#55AEEA" android:progressBackgroundTint="#55AEEA"/>
+
+                    <!-- 简短说明（用户口径 2026-10：「向后翻译页数应该有简短的描述」）——
+                         与「启动延迟」那行同款 11sp 次要色，且必须登记进 panelSubIds。 -->
+                    <TextView android:id="@+id/tv_ahead_hint" android:layout_width="match_parent"
+                        android:layout_height="wrap_content" android:text="@string/reader_translate_ahead_hint"
+                        android:textSize="11sp" android:textColor="#888888"/>
                 </LinearLayout>
 
                 <!-- 模型区：OCR/翻译模型 快速跳转 -->
@@ -421,17 +428,17 @@
                         android:text="@string/reader_reset" android:textSize="12sp" android:textColor="#55AEEA" android:clickable="true"/>
                 </LinearLayout>
 
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:padding="12dp">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:paddingStart="16dp" android:paddingEnd="16dp" android:paddingTop="6dp" android:paddingBottom="6dp">
                     <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="14sp" android:autoSizeStepGranularity="1sp"  android:id="@+id/tv_color_inverted" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
                         android:text="@string/reader_color_inverted" android:textSize="14sp" android:textColor="#333333"/>
                     <Switch android:id="@+id/sw_invert" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
                 </LinearLayout>
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:padding="12dp">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:paddingStart="16dp" android:paddingEnd="16dp" android:paddingTop="6dp" android:paddingBottom="6dp">
                     <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="14sp" android:autoSizeStepGranularity="1sp"  android:id="@+id/tv_color_grayscale" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
                         android:text="@string/reader_color_grayscale" android:textSize="14sp" android:textColor="#333333"/>
                     <Switch android:id="@+id/sw_grayscale" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
                 </LinearLayout>
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:padding="12dp">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:paddingStart="16dp" android:paddingEnd="16dp" android:paddingTop="6dp" android:paddingBottom="6dp">
                     <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="14sp" android:autoSizeStepGranularity="1sp"  android:id="@+id/tv_color_book" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
                         android:text="@string/reader_color_book" android:textSize="14sp" android:textColor="#333333"/>
                     <Switch android:id="@+id/sw_book" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
@@ -439,7 +446,7 @@
 
                 <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingStart="16dp" android:paddingEnd="16dp">
                     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
-                        <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="13sp" android:autoSizeStepGranularity="1sp"  android:id="@+id/tv_brightness_label" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                        <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="14sp" android:autoSizeStepGranularity="1sp"  android:id="@+id/tv_brightness_label" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
                             android:text="@string/reader_brightness" android:textSize="14sp" android:textColor="#333333"/>
                         <TextView android:id="@+id/tv_brightness_value" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="0%" android:textSize="12sp" android:textColor="#55AEEA"/>
                     </LinearLayout>
@@ -447,7 +454,7 @@
                         android:min="-100" android:max="100" android:layout_marginTop="2dp"
                         android:thumbTint="#55AEEA" android:progressTint="#55AEEA" android:progressBackgroundTint="#55AEEA"/>
                     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:paddingTop="6dp">
-                        <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="13sp" android:autoSizeStepGranularity="1sp"  android:id="@+id/tv_contrast_label" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                        <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="14sp" android:autoSizeStepGranularity="1sp"  android:id="@+id/tv_contrast_label" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
                             android:text="@string/reader_contrast" android:textSize="14sp" android:textColor="#333333"/>
                         <TextView android:id="@+id/tv_contrast_value" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="0%" android:textSize="12sp" android:textColor="#55AEEA"/>
                     </LinearLayout>
@@ -479,7 +486,7 @@
                         android:orientation="horizontal" android:paddingTop="10dp" android:paddingBottom="8dp"
                         android:gravity="center_vertical">
                         <TextView android:id="@+id/tv_sr_switch_label" android:layout_width="0dp" android:layout_height="wrap_content"
-                            android:layout_weight="1" android:text="@string/reader_sr_switch_label" android:textSize="14sp" android:textColor="#333333"
+                            android:layout_weight="1" android:text="@string/reader_sr_switch_label" android:textSize="14sp" android:textStyle="bold" android:textColor="#333333"
                             android:ellipsize="end" android:maxLines="1"
                             android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="14sp" android:autoSizeStepGranularity="1sp"/>
                         <Switch android:id="@+id/sw_reader_sr" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
@@ -512,8 +519,6 @@
                             <Switch android:id="@+id/sw_reader_sr_auto" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
                         </LinearLayout>
 
-                        <TextView android:id="@+id/tv_sr_hint" android:layout_width="match_parent" android:layout_height="wrap_content"
-                            android:text="@string/reader_sr_hint" android:textSize="11sp" android:textColor="#BBBBBB" android:layout_marginBottom="4dp"/>
 
                         <!-- ══════ 超分记录（用户口径 2026-10：「给**超分面板**设计一个类似翻译面板
                              那样的记录系统」）。**不是翻译面板** —— 放在超分区里，紧挨着超分开关。 ══════
