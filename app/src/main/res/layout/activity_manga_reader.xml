@@ -61,20 +61,21 @@
     </FrameLayout>
 
     <!-- 顶部中间页面指示。
-         ⚠️ **在提示条上面**（用户口径 2026-10）：「我希望胶囊在提示条上面，这样多条信息
-             堆下来也不会盖住它」。所以胶囊贴顶（10dp，在返回/菜单按钮 34dp 之上），
+         ⚠️ **在提示条上面、但不要紧贴屏幕顶**（用户口径 2026-10）：「章节胶囊不要紧贴屏幕顶部，
+             保证提示在章节胶囊下面就行了」。所以胶囊留在它原本的 38dp（和返回/菜单同一行），
              而**提示浮层的顶距由阅读器在运行时让到胶囊下面**（`TranslationStatusOverlay
-             .setTopOffsetDp`，见 [READER_NOTICE_TOP_DP]）—— 浮层是系统窗口，会吞掉落在它
-             矩形内的触摸，压住胶囊那一段就点不动，「点胶囊开目录」正是用户报
+             .setTopOffsetDp(READER_TOP_OFFSET_DP)`，见那个常量的注释）。
+         ⚠️ 为什么必须让位：浮层是 `TYPE_APPLICATION_OVERLAY` **系统窗口**，会吞掉落在它矩形内的
+             触摸 —— 压住胶囊那一段就点不动，而「点胶囊开章节目录」正是用户报
              "不知道怎么没有了"的那条路。
-         ⚠️ 改这里要**同时**改 `activity_novel_reader.xml` 的 `top_pill` 与两边的
-             `READER_NOTICE_TOP_DP`。守卫 `ReaderTopPillInsetTest`。 -->
+         ⚠️ 改这里要**同时**改 `activity_novel_reader.xml` 的 `top_pill` 与
+             `TranslationStatusOverlay.READER_TOP_OFFSET_DP`。守卫 `ReaderTopPillInsetTest`。 -->
     <TextView
         android:id="@+id/tv_page_indicator"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="top|center_horizontal"
-        android:layout_marginTop="10dp"
+        android:layout_marginTop="38dp"
         android:background="@drawable/bg_pill_dark"
         android:paddingStart="12dp"
         android:paddingTop="5dp"

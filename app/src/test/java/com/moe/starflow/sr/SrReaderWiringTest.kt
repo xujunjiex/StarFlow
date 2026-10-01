@@ -126,8 +126,13 @@ class SrReaderWiringTest {
             val nextClose = text.indexOf("</LinearLayout>", i)
             if (nextClose < 0) return text.length
             if (nextOpen in 0 until nextClose) {
-                depth++
-                i = nextOpen + 13
+                // ⚠️ `<LinearLayout ... />` 是**自闭合**的，不占一层。当成 +1 会让深度永远回不到 0
+                //    → 整个分组边界判错（超分面板里新加了一个自闭合的 `sr_filter_row` 就踩到了：
+                //    表现得像"Anime4K 行跑到组里去了"，而它其实好好在外面）。
+                val tagEnd = text.indexOf('>', nextOpen)
+                val selfClosing = tagEnd > 0 && text.getOrNull(tagEnd - 1) == '/'
+                if (!selfClosing) depth++
+                i = (if (tagEnd > 0) tagEnd else nextOpen + 13) + 1
             } else {
                 depth--
                 if (depth == 0) return nextClose

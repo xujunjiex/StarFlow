@@ -136,11 +136,37 @@ class SrRecordSystemWiringTest {
         assertTrue("次按钮 = 清空本章", adapter.contains("R.string.reader_sr_chapter_clear"))
     }
 
+    /**
+     * 记录列表挂在**超分面板**（调色面板的 `sr_panel_group`）里，**不是翻译面板**。
+     *
+     * 用户口径 2026-10：「给**超分面板**设计一个类似翻译面板那样的记录系统」——
+     * 第一版做成了翻译面板里的一个「翻译 / 超分」来源页签，被用户当场否掉。
+     */
     @Test
-    fun thePanelSwitchesBetweenTranslateAndSrRecords() {
-        assertTrue("布局要有两个来源页签", layout.contains("@+id/tab_records_translate") && layout.contains("@+id/tab_records_sr"))
+    fun theRecordListLivesInsideTheSrPanel() {
+        // ① 记录列表的两块控件必须在 `sr_panel_group` 里面
+        val groupStart = layout.indexOf("android:id=\"@+id/sr_panel_group\"")
+        assertTrue("布局里必须有 sr_panel_group", groupStart > 0)
+        val groupEnd = layout.indexOf("android:id=\"@+id/btn_anime4k\"", groupStart)
+        assertTrue("找不到 sr_panel_group 的结束边界", groupEnd > groupStart)
+        for (id in listOf("sr_filter_row", "rv_sr_records")) {
+            val at = layout.indexOf("android:id=\"@+id/$id\"")
+            assertTrue("布局里必须有 $id", at > 0)
+            assertTrue("$id 必须在 sr_panel_group **里面**（超分面板，不是翻译面板）", at in groupStart until groupEnd)
+        }
+        // ② 不许再留「来源页签」那一套
+        assertFalse("超分记录不该做成翻译面板里的来源页签", layout.contains("tab_records_sr"))
+        assertFalse("同上", sheet.contains("recordsSource"))
+        assertFalse("同上", sheet.contains("refreshRecordsTabs"))
+
+        // ③ 面板要真的把超分适配器挂上去
         assertTrue("面板要接上超分适配器", sheet.contains("private val srAdapter by lazy"))
-        assertTrue("切换页签 = 换 RecyclerView 的 adapter", sheet.contains("if (recordsSource == 1) srAdapter else pageAdapter"))
+        assertTrue("要挂到 rv_sr_records", sheet.contains("R.id.rv_sr_records"))
+        assertTrue("超分筛选行要自己一套", sheet.contains("R.id.sr_filter_row"))
+        assertTrue(
+            "超分的筛选键必须与翻译那条**独立**（互相不影响）",
+            sheet.contains("private var srFilterKey = 0"),
+        )
         assertTrue(
             "宿主推送必须**同源**推给两个适配器（新增字段漏一处 = 那处 UI 停在打开那一刻）",
             sheet.contains("srAdapter.submit("),
@@ -152,6 +178,8 @@ class SrRecordSystemWiringTest {
         // 从宿主回读到面板字段
         assertTrue(sheet.contains("currentSrRecords = st.srRecords"))
         assertTrue(sheet.contains("currentSrJob = st.srJob"))
+        // 调色面板那一路也要刷新超分记录（否则用户切完超分再打开调色面板看到的是旧列表）
+        assertTrue("调色面板重建时要重新绑超分记录", sheet.contains("setupSrRecords("))
     }
 
     @Test

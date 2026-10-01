@@ -299,8 +299,8 @@ class ReaderMenuSheet(
     private var currentSrRecords: List<ImportedPageSr> = emptyList()
     private var currentSrJob: ReaderTranslationController.SrChapterJob? = null
 
-    /** 记录列表当前显示哪一路：0 = 翻译，1 = 超分。 */
-    private var recordsSource = 0
+    /** 超分记录列表的筛选键（与翻译那条**各自独立**，互不影响）。 */
+    private var srFilterKey = 0
 
     /** 面板内的章节快照（宿主推送 / 刚打开时回读）。 */
     private var chapters: List<MangaChapter> = emptyList()
@@ -618,8 +618,8 @@ class ReaderMenuSheet(
         applyAheadRowVisibility(view, translateMode)
 
         setupTranslateFilter(view)
-        // 记录来源页签（翻译 / 超分）：必须在筛选行**之后**建 —— 它要用筛选行的 currentFilterKey
-        setupRecordsTabs(view)
+        // 超分记录列表（在**调色面板**的超分区里，不是这一页）
+        setupSrRecords(view)
         setupConcurrency(view)
 
         // 模型区：OCR/翻译模型 快速跳转（保持面板打开，返回后 onStart/prefs 监听刷新模型名）
@@ -965,10 +965,6 @@ class ReaderMenuSheet(
         R.id.tv_font_size_row,
         // 「同时请求数」的**标题**和其它标题同色（用户口径 2026-09-28：改成和其他标题一样的纯黑）
         R.id.tv_concurrency_label,
-        // 记录来源页签（翻译 / 超分）。⚠️ 它们的**选中态**由 `refreshRecordsTabs()` 在这段
-        // setTextColor 之后覆盖 —— 登记在这里只是为了"不漏登记"（PanelThemeGuardTest）与
-        // 保证未选中时有一个合理的基础色。
-        R.id.tab_records_translate, R.id.tab_records_sr,
     )
     // PANEL_THEME_LABEL_IDS_END
 
@@ -1005,8 +1001,6 @@ class ReaderMenuSheet(
         // 每页状态列表行内配色（元数据/原文译文/复制）随面板深浅
         pageAdapter.dark = darkPanel
         srAdapter.dark = darkPanel
-        // 页签的选中态要在上面这段 setTextColor **之后**再覆盖一次（见 refreshRecordsTabs 的注释）
-        refreshRecordsTabs()
         // 调色/更多面板 Switch 配色（避免与面板背景重叠/看不清）
         val swTrack = if (dark) 0xFF3A4046.toInt() else 0xFFCFD8DC.toInt()
         listOf(
@@ -1378,9 +1372,8 @@ class ReaderMenuSheet(
                 tag = key
                 setOnClickListener {
                     currentFilterKey = key
-                    refreshFilterChipStyle(row)
-                    // 筛选作用于**当前显示的那一路**（翻译 / 超分），两个适配器各自保留自己的过滤态
-                    if (recordsSource == 1) srAdapter.setFilter(key) else pageAdapter.setFilter(key)
+                    refreshFilterChipStyle(row, currentFilterKey)
+                    pageAdapter.setFilter(key)
                 }
             }
             setChipStyle(chip, key == currentFilterKey)
@@ -1389,51 +1382,53 @@ class ReaderMenuSheet(
     }
 
     /**
-     * **记录来源页签：翻译 / 超分**（用户口径 2026-10：「给超分面板也设计一个类似翻译面板那样的
-     * 记录系统（直接复用相关 UI 和代码逻辑）」）。
+     * **超分记录列表**的接线（用户口径 2026-10：「给**超分面板**设计一个类似翻译面板那样的记录系统」）。
      *
-     * 切换只做一件事：把 `rv_translate_pages` 的 adapter 换成另一个 ——
-     * 列表位置、筛选行、滚动区、展开交互**全部不动**。这样两套记录系统的行为天然一致，
-     * 也不会有"超分那边的筛选和翻译那边长得不一样"这种漂移。
+     * 位置是**调色面板的超分区**（`sr_panel_group`，紧挨着超分开关 / 超分模型行）——
+     * **不是翻译面板**。形态与翻译面板的记录列表完全一致（筛选 chips + 「章卡片 → 展开页行」两段式 +
+     * 行内详情），复用同一批布局（`item_translate_chapter_row` / `item_translate_page_state`）
+     * 与 `CardBackdrop` 底色，所以两边的观感天然一致。
+     *
+     * ⚠️ 筛选键**独立**（[srFilterKey]）：两块面板各记各的过滤态，
+     * 在超分那边选了「失败」不该影响翻译那边的列表。
+     * ⚠️ 列表在调色面板的 ScrollView 里，**必须定高**（XML 里写死 200dp）——
+     * `wrap_content` 会让 RecyclerView 量完所有条目，几百章的书直接卡死。
      */
-    private fun setupRecordsTabs(view: View) {
-        view.findViewById<TextView>(R.id.tab_records_translate).setOnClickListener {
-            recordsSource = 0
-            refreshRecordsTabs()
+    private fun setupSrRecords(view: View) {
+        view.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rv_sr_records).apply {
+            layoutManager = LinearLayoutManager(requireContext())
+            adapter = srAdapter
         }
-        view.findViewById<TextView>(R.id.tab_records_sr).setOnClickListener {
-            recordsSource = 1
-            refreshRecordsTabs()
+        val row = view.findViewById<ViewGroup>(R.id.sr_filter_row)
+        row.removeAllViews()
+        val options = listOf(
+            ReaderSrStateAdapter.FILTER_ALL to R.string.reader_translate_filter_all,
+            ReaderSrStateAdapter.FILTER_DONE to R.string.reader_translate_filter_done,
+            ReaderSrStateAdapter.FILTER_ONGOING to R.string.reader_translate_filter_ongoing,
+            ReaderSrStateAdapter.FILTER_FAILED to R.string.reader_translate_filter_failed,
+        )
+        for ((key, label) in options) {
+            val chip = TextView(requireContext()).apply {
+                text = getString(label)
+                textSize = 15f
+                setPadding(dp8 * 2, dp8, dp8 * 2, dp8)
+                tag = key
+                setOnClickListener {
+                    srFilterKey = key
+                    refreshFilterChipStyle(row, srFilterKey)
+                    srAdapter.setFilter(key)
+                }
+            }
+            setChipStyle(chip, key == srFilterKey)
+            row.addView(chip)
         }
-        refreshRecordsTabs()
     }
 
-    /**
-     * 把页签配色与列表 adapter 同步到 [recordsSource]。
-     *
-     * ⚠️ 配色**不能只靠 `applyPanelTheme`**：那两个页签的选中态是高亮蓝、未选中是次要灰，
-     * 与"标题色/次要色"的静态分组不同源。所以它们仍登记进 `panelLabelIds`（否则
-     * `PanelThemeGuardTest` 判漏登记），但每次换主题后必须由本函数**再覆盖一次**选中态。
-     */
-    private fun refreshRecordsTabs() {
-        val v = view ?: return
-        val accent = 0xFF55AEEA.toInt()
-        val normal = if (darkPanel) 0xFF9A9A9F.toInt() else 0xFF888888.toInt()
-        v.findViewById<TextView>(R.id.tab_records_translate)
-            .setTextColor(if (recordsSource == 0) accent else normal)
-        v.findViewById<TextView>(R.id.tab_records_sr)
-            .setTextColor(if (recordsSource == 1) accent else normal)
-        v.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rv_translate_pages)
-            .adapter = if (recordsSource == 1) srAdapter else pageAdapter
-        // 换来源后把筛选重新套到新的那一路（两个适配器各自保留过滤态，但 chip 的视觉是同一排）
-        if (recordsSource == 1) srAdapter.setFilter(currentFilterKey) else pageAdapter.setFilter(currentFilterKey)
-        pushToAdapter()
-    }
-
-    private fun refreshFilterChipStyle(row: ViewGroup) {
+    /** 两排筛选 chips 共用：按 [selected] 刷选中态（各自的键由调用方给）。 */
+    private fun refreshFilterChipStyle(row: ViewGroup, selected: Int) {
         for (i in 0 until row.childCount) {
             val tv = row.getChildAt(i) as? TextView ?: continue
-            setChipStyle(tv, (tv.tag as? Int) == currentFilterKey)
+            setChipStyle(tv, (tv.tag as? Int) == selected)
         }
     }
 

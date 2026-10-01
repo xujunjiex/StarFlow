@@ -44,12 +44,12 @@ class TranslationStatusOverlay private constructor(private val context: Context)
         /**
          * 阅读器里提示条的顶距（dp）：**让到顶部章节胶囊下面**。
          *
-         * 口径来源（用户 2026-10）：「我希望胶囊在提示条上面，这样多条信息堆下来也不会盖住它」。
-         * 胶囊在 `layout_marginTop=10dp`、高约 26dp → 下沿 ~36dp；提示条从 44dp 起，
-         * 三条堆叠（44 / 74 / 104）全部落在胶囊下方。
+         * 口径来源（用户 2026-10）：「章节胶囊不要紧贴屏幕顶部，**保证提示在章节胶囊下面**就行了」。
+         * 胶囊在 `layout_marginTop=38dp`、高约 26dp → 下沿 ~64dp；提示条从 76dp 起，
+         * 三条堆叠（76 / 106 / 136）全部落在胶囊下方。
          * ⚠️ 改胶囊的 marginTop 就要同步改这里 —— 守卫 `ReaderTopPillInsetTest`。
          */
-        const val READER_TOP_OFFSET_DP = 44
+        const val READER_TOP_OFFSET_DP = 76
 
         /** 全局唯一实例：游戏/漫画/无障碍服务/NLLB 共用同一浮窗，避免多条消息在不同浮窗上重叠 */
         @Volatile
