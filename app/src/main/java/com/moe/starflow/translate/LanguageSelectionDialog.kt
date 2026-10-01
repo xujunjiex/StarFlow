@@ -16,19 +16,23 @@
  */
 
 package com.moe.starflow.translate
-import com.moe.starflow.translate.widget.*
-import com.moe.starflow.translate.autotranslate.*
-import com.moe.starflow.translate.screenshot.*
 
 import android.app.AlertDialog
 import android.content.Context
+import android.content.res.ColorStateList
+import android.text.Editable
+import android.text.TextWatcher
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ArrayAdapter
+import android.widget.EditText
 import android.widget.ListView
 import android.widget.TextView
 import com.moe.starflow.R
+import java.text.Collator
+import java.text.Normalizer
+import java.util.Locale
 
 class LanguageSelectionDialog(
     private val context: Context,
@@ -39,32 +43,62 @@ class LanguageSelectionDialog(
     private val dark: Boolean = false,
     private val lightBg: Int = R.drawable.dialog_background,
     private val fixedLightText: Boolean = false,
-    private val onLanguageSelected: (CustomLocale) -> Unit)
-{
+    private val onLanguageSelected: (CustomLocale) -> Unit
+) {
+    private data class LanguageEntry(val locale: CustomLocale, val enabled: Boolean)
+
     fun show() {
         val builder = AlertDialog.Builder(context)
         val inflater = LayoutInflater.from(context)
         val dialogView = inflater.inflate(R.layout.dialog_languages, null)
+        val searchInput = dialogView.findViewById<EditText>(R.id.language_search_input)
         val listView = dialogView.findViewById<ListView>(R.id.languages_list)
+        val emptyHint = dialogView.findViewById<TextView>(R.id.languages_empty)
         val density = context.resources.displayMetrics.density
 
-        val adapter = object : ArrayAdapter<CustomLocale>(context, android.R.layout.simple_list_item_1, locales) {
+        val entries = orderedEntries()
+        val adapter = object : ArrayAdapter<LanguageEntry>(
+            context,
+            android.R.layout.simple_list_item_1,
+            entries.toMutableList()
+        ) {
             override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                 val view = convertView ?: inflater.inflate(android.R.layout.simple_list_item_1, parent, false)
                 val textView = view.findViewById<TextView>(android.R.id.text1)
-                val locale = locales[position]
-                textView.text = locale.getDisplayName()
+                val entry = getItem(position) ?: return view
+                textView.text = entry.locale.getDisplayName(context)
                 if (dark) textView.setTextColor(0xFFE2E2E4.toInt())
                 else if (fixedLightText) textView.setTextColor(0xFF333333.toInt())
-                // 置灰：当前 OCR/翻译模型不支持的语言（enabled[position]=false）
-                val isEnabled = enabled?.getOrNull(position) ?: true
-                textView.isEnabled = isEnabled
-                view.alpha = if (isEnabled) 1f else 0.4f
+                textView.isEnabled = entry.enabled
+                view.alpha = if (entry.enabled) 1f else 0.4f
                 return view
             }
         }
 
         listView.adapter = adapter
+
+        fun applyFilter(keyword: CharSequence?) {
+            val query = keyword?.toString().orEmpty()
+            val filtered = entries.filter { matchesSearch(it.locale, query) }
+            adapter.setNotifyOnChange(false)
+            adapter.clear()
+            adapter.addAll(filtered)
+            adapter.setNotifyOnChange(true)
+            adapter.notifyDataSetChanged()
+            emptyHint.visibility = if (filtered.isEmpty()) View.VISIBLE else View.GONE
+
+            val rowHeightPx = (48 * density).toInt()
+            listView.layoutParams = listView.layoutParams.apply {
+                height = filtered.size.coerceAtMost(MAX_VISIBLE_ROWS) * rowHeightPx
+            }
+        }
+        applyFilter("")
+
+        searchInput.addTextChangedListener(object : TextWatcher {
+            override fun afterTextChanged(s: Editable?) = applyFilter(s)
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+        })
 
         builder.setView(dialogView)
 
@@ -86,18 +120,108 @@ class LanguageSelectionDialog(
         val dialog = builder.create()
 
         listView.setOnItemClickListener { _, _, position, _ ->
-            val locale = locales[position]
-            val isEnabled = enabled?.getOrNull(position) ?: true
-            if (isEnabled) {
-                onLanguageSelected(locale)
+            val entry = adapter.getItem(position) ?: return@setOnItemClickListener
+            if (entry.enabled) {
+                onLanguageSelected(entry.locale)
                 dialog.dismiss()
             } else {
                 // 点击置灰语言 → 弹提示（不关闭对话框）
-                onDisabledClick?.invoke(locale)
+                onDisabledClick?.invoke(entry.locale)
             }
         }
 
+        applySearchTheme(searchInput, emptyHint)
         dialog.show()
         dialog.window?.setBackgroundDrawableResource(if (dark) R.drawable.bg_dialog_dark else lightBg)
+    }
+
+    private fun orderedEntries(): List<LanguageEntry> {
+        val collator = Collator.getInstance(uiLocale()).apply { strength = Collator.PRIMARY }
+        return locales.mapIndexed { index, locale ->
+            LanguageEntry(locale, enabled?.getOrNull(index) ?: true)
+        }.sortedWith(
+            compareBy<LanguageEntry> { commonLanguageRank(it.locale.getOriCode()) }
+                .thenComparator { left, right ->
+                    collator.compare(
+                        left.locale.getDisplayName(context),
+                        right.locale.getDisplayName(context)
+                    )
+                }
+        )
+    }
+
+    private fun matchesSearch(locale: CustomLocale, query: String): Boolean {
+        if (query.isBlank()) return true
+        val needle = normalizeSearchText(query)
+        val localeObject = locale.locale
+        return sequenceOf(
+            locale.getOriCode(),
+            locale.getDisplayName(context),
+            localeObject.getDisplayLanguage(localeObject),
+            localeObject.getDisplayLanguage(Locale.ENGLISH),
+            localeObject.getDisplayLanguage(Locale.getDefault())
+        ).any { normalizeSearchText(it).contains(needle) }
+    }
+
+    private fun applySearchTheme(searchInput: EditText, emptyHint: TextView) {
+        when {
+            dark -> {
+                searchInput.setTextColor(0xFFE2E2E4.toInt())
+                searchInput.setHintTextColor(0xFF888888.toInt())
+                searchInput.backgroundTintList = ColorStateList.valueOf(0xFF2A2A2C.toInt())
+                emptyHint.setTextColor(0xFF9A9A9F.toInt())
+            }
+            fixedLightText -> {
+                searchInput.setTextColor(0xFF333333.toInt())
+                searchInput.setHintTextColor(0xFF888888.toInt())
+                searchInput.backgroundTintList = ColorStateList.valueOf(0xFFEFF7FB.toInt())
+                emptyHint.setTextColor(0xFF888888.toInt())
+            }
+        }
+    }
+
+    private fun uiLocale(): Locale {
+        val configured = context.resources.configuration.locales
+        return if (configured.isEmpty) Locale.getDefault() else configured[0]
+    }
+
+    private fun normalizeSearchText(value: String): String =
+        Normalizer.normalize(value, Normalizer.Form.NFD)
+            .replace(DIACRITICS_REGEX, "")
+            .lowercase(Locale.ROOT)
+
+    private fun commonLanguageRank(code: String): Int {
+        val normalized = code.lowercase(Locale.ROOT).replace('_', '-')
+        return COMMON_LANGUAGE_RANKS[normalized]
+            ?: COMMON_LANGUAGE_RANKS[normalized.substringBefore('-')]
+            ?: Int.MAX_VALUE
+    }
+
+    private companion object {
+        const val MAX_VISIBLE_ROWS = 10
+
+        val DIACRITICS_REGEX = "\\p{M}+".toRegex()
+
+        // 常用语言按产品习惯固定顺序；其余语言交给 Collator 按当前界面语言名称排序。
+        val COMMON_LANGUAGE_RANKS = linkedMapOf(
+            "zh" to 0,
+            "zh-cn" to 0,
+            "zh-hans" to 0,
+            "yue" to 0,
+            "zh-tw" to 1,
+            "zh-hant" to 1,
+            "zh-hk" to 1,
+            "zh-hk-hant" to 1,
+            "zh-tw-hant" to 1,
+            "en" to 2,
+            "ja" to 3,
+            "ko" to 4,
+            "fr" to 5,
+            "de" to 6,
+            "es" to 7,
+            "pt" to 8,
+            "ru" to 9,
+            "it" to 10
+        )
     }
 }

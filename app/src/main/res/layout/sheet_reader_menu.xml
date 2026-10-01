@@ -428,17 +428,17 @@
                         android:text="@string/reader_reset" android:textSize="12sp" android:textColor="#55AEEA" android:clickable="true"/>
                 </LinearLayout>
 
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:paddingStart="16dp" android:paddingEnd="16dp" android:paddingTop="6dp" android:paddingBottom="6dp">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:paddingStart="16dp" android:paddingEnd="16dp" android:paddingTop="2dp" android:paddingBottom="2dp">
                     <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="14sp" android:autoSizeStepGranularity="1sp"  android:id="@+id/tv_color_inverted" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
                         android:text="@string/reader_color_inverted" android:textSize="14sp" android:textColor="#333333"/>
                     <Switch android:id="@+id/sw_invert" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
                 </LinearLayout>
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:paddingStart="16dp" android:paddingEnd="16dp" android:paddingTop="6dp" android:paddingBottom="6dp">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:paddingStart="16dp" android:paddingEnd="16dp" android:paddingTop="2dp" android:paddingBottom="2dp">
                     <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="14sp" android:autoSizeStepGranularity="1sp"  android:id="@+id/tv_color_grayscale" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
                         android:text="@string/reader_color_grayscale" android:textSize="14sp" android:textColor="#333333"/>
                     <Switch android:id="@+id/sw_grayscale" android:layout_width="wrap_content" android:layout_height="wrap_content"/>
                 </LinearLayout>
-                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:paddingStart="16dp" android:paddingEnd="16dp" android:paddingTop="6dp" android:paddingBottom="6dp">
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical" android:paddingStart="16dp" android:paddingEnd="16dp" android:paddingTop="2dp" android:paddingBottom="2dp">
                     <TextView android:ellipsize="end" android:maxLines="1" android:autoSizeTextType="uniform" android:autoSizeMinTextSize="10sp" android:autoSizeMaxTextSize="14sp" android:autoSizeStepGranularity="1sp"  android:id="@+id/tv_color_book" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
                         android:text="@string/reader_color_book" android:textSize="14sp" android:textColor="#333333"/>
                     <Switch android:id="@+id/sw_book" android:layout_width="wrap_content" android:layout_height="wrap_content"/>

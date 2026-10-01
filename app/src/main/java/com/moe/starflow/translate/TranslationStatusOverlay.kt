@@ -38,18 +38,26 @@ class TranslationStatusOverlay private constructor(private val context: Context)
         private const val TAG = "StatusOverlay"
         private const val MAX_SLOTS = 3
 
-        /** 顶部贴边距离（dp）——**截图翻译链路**的口径；阅读器会用 [setTopOffsetDp] 覆盖它。 */
+        /** 顶部贴边距离（dp）——**截图翻译链路**的口径；阅读器会用 [setTopScreenY] 覆盖它。 */
         private const val TOP_OFFSET_DP = 24
 
         /**
          * 阅读器里提示条顶距的**兜底估算值**（dp，胶囊 `marginTop 38dp` + 高约 26dp + 2dp 缝）。
          *
          * ⚠️ 只在**胶囊还没布局**（`height == 0`，例如刚进阅读器就弹提示）时用；
-         * 布局完成后宿主会推**实测的** `tvPageIndicator.bottom + 2dp`（`setTopOffsetPx`）。
+         * 布局完成后宿主会推**实测的**胶囊下沿（`setTopScreenY`）。
          * 之所以要实测：用户口径是「放在胶囊下面就行，不重叠就行，**不要间隔那么大的空间**」——
          * 固定 dp 在放大字号下会压住胶囊、在标准字号下会留缝，实测两边都不占。
+         * ⚠️ 这个兜底值算的是**屏幕坐标**（和 [setTopScreenY] 同口径），窗口内缩由
+         * [windowTopOffsetPx] 抵消，见那里的注释。
          */
         const val READER_TOP_OFFSET_DP = 66
+
+        /** 校准重试上限：一次 `post` 一轮，每轮都能把误差吃掉，2 轮足够（留 1 轮余量）。 */
+        private const val MAX_CALIBRATION_PASSES = 3
+
+        /** 校准容差（像素）：小于它就是"已对齐"，不再重下发窗口布局。 */
+        private const val CALIBRATION_TOLERANCE_PX = 2
 
         /** 全局唯一实例：游戏/漫画/无障碍服务/NLLB 共用同一浮窗，避免多条消息在不同浮窗上重叠 */
         @Volatile
@@ -80,17 +88,37 @@ class TranslationStatusOverlay private constructor(private val context: Context)
     private var isShowing = false
 
     /**
-     * 顶距覆盖（**像素**）：阅读器用它在**不改用户设置**的前提下把提示条放到章节胶囊**正下方**。
+     * 宿主想要的「提示条顶边**屏幕坐标**」（像素）；null = 不覆盖，走默认 24dp / 用户设置。
      *
-     * ⚠️ 用像素而不是 dp：这个值由宿主按**实测的胶囊下沿**（`tvPageIndicator.bottom + 2dp`）
-     * 推过来 —— 用户口径是「放在当前章节胶囊的下面就行，不重叠就行，**不要间隔那么大的空间**」。
-     * 猜一个固定 dp 要么压住胶囊（大字号时）、要么留一条大缝（标准字号时），实测就没有这个取舍。
-     *
-     * 浮层默认顶距 24dp（截图翻译链路的口径，那边没有胶囊）；阅读器前台时让位，离开时恢复
-     * （`onStop` 传 null），游戏/截屏链路完全不受影响。
+     * ⚠️ 收的是**屏幕坐标**而不是 `LayoutParams.y` —— 两者**不是同一个坐标系**：
+     * `TYPE_APPLICATION_OVERLAY` 窗口会被 WMS 按系统栏/刘海内缩（真机实测
+     * `Frames: parent=[0,138][1220,2660]`，即 `y=0` 对应屏幕 138px），
+     * 而阅读器窗口是 `layoutInDisplayCutoutMode=always` 的**整屏**窗口（`frame=[0,0][1220,2712]`），
+     * 视图坐标 == 屏幕坐标。宿主按 `pill.bottom`（视图坐标）推、浮层按窗口坐标用，
+     * 中间差的这 138px（约 42dp）就是"提示条永远比胶囊低一大截"的根因。
+     * 所以这里统一成**屏幕坐标**，由 [windowTopOffsetPx] 换算成窗口坐标。
      */
     @Volatile
-    private var topOffsetOverridePx: Int? = null
+    private var desiredTopScreenY: Int? = null
+
+    /**
+     * 浮层窗口顶边相对**显示**的偏移量（像素）＝WMS 给窗口内缩了多少。
+     *
+     * ⚠️ **不猜、不读 `WindowInsets`**：这个内缩量在阅读器沉浸全屏时与
+     * `WindowInsets.statusBars` 并不一致（WM 用的是 stable/override insets，状态栏被藏起来后
+     * insets API 会报 0 而 parent frame 仍是 138）。唯一可靠的来源是**量**：
+     * 窗口实际在屏幕上的位置减去我们自己写进 `LayoutParams.y` 的值。
+     * 见 [calibrateTopOffset]。
+     */
+    private var windowTopOffsetPx = 0
+
+    /**
+     * 上一次真正写进 `LayoutParams.y` 的顶距（窗口坐标系）。
+     *
+     * 校准全靠它：`真实窗口顶 = 我们设的 y + 内缩量`，所以
+     * `内缩量 = getLocationOnScreen()[1] - lastRawTopPx`。
+     */
+    private var lastRawTopPx: Int? = null
 
     // 每条消息的自动消失任务
     private val dismissRunnables = HashMap<TextView, Runnable>()
@@ -294,16 +322,24 @@ class TranslationStatusOverlay private constructor(private val context: Context)
     }
 
     /**
-     * 临时覆盖「顶部贴边距离」（**像素**）；传 null 恢复用户设置/默认值。
+     * 临时把提示条的**顶边对齐到屏幕坐标** [screenY]（像素）；传 null 恢复用户设置/默认值。
      *
-     * 阅读器在 `onStart` 与胶囊布局完成后推实测值、`onStop` 传 null
+     * 阅读器在 `onStart`、胶囊每次改变高度时推实测的胶囊下沿，`onStop` 传 null
      * （见 `MangaReaderActivity.pushNoticeTopBelowPill`）。已显示的芯片会立刻重排。
+     *
+     * ⚠️ 参数是**屏幕坐标**，不是 `LayoutParams.y` —— 窗口被系统栏内缩，两者差一个
+     * [windowTopOffsetPx]（真机上 138px）。换算与自校准见 [getViewParams] / [calibrateTopOffset]。
      */
-    fun setTopOffsetPx(px: Int?) {
+    fun setTopScreenY(screenY: Int?) {
         runOnMainThread {
-            if (topOffsetOverridePx == px) return@runOnMainThread
-            topOffsetOverridePx = px
+            if (desiredTopScreenY == screenY) {
+                // 值没变也要重新校准一次：转屏 / 进出沉浸态会让内缩量变、而 screenY 不变
+                calibrateTopOffset()
+                return@runOnMainThread
+            }
+            desiredTopScreenY = screenY
             addToWindowIfNeeded()
+            calibrateTopOffset()
         }
     }
 
@@ -376,6 +412,11 @@ class TranslationStatusOverlay private constructor(private val context: Context)
         }
         container = linearLayout
         addToWindowIfNeeded()
+        // ⚠️ **建窗口这一刻就是唯一的补校准时机**：宿主推 `setTopScreenY` 时容器往往还不存在
+        //    （刚进阅读器、第一条提示还没发），那次 `addToWindowIfNeeded` 直接 return，
+        //    `lastRawTopPx` 没写、校准也就没排上。等真出第一条提示时窗口才建出来 ——
+        //    不在这里补，第一条提示就会按"内缩量 = 0"定位，低一整个系统栏（且不会自愈）。
+        calibrateTopOffset()
         return linearLayout
     }
 
@@ -524,10 +565,57 @@ class TranslationStatusOverlay private constructor(private val context: Context)
             height = WindowManager.LayoutParams.WRAP_CONTENT
             gravity = position or Gravity.CENTER_HORIZONTAL
             y = when (position) {
-                Gravity.TOP -> topOffsetOverridePx
-                    ?: (TOP_OFFSET_DP * context.resources.displayMetrics.density).toInt()
+                Gravity.TOP -> {
+                    // ⚠️ 屏幕坐标 → 窗口坐标要减去窗口内缩量，否则提示条会整体低一个系统栏
+                    //    （真机实测差 138px ≈ 42dp，用户口径「提示还是太靠下，一直在原地没动」）。
+                    //    非覆盖路径（截图翻译链路）保持原样：那边的 24dp 一直是窗口坐标口径，不动它。
+                    val want = desiredTopScreenY
+                    if (want != null) {
+                        val raw = (want - windowTopOffsetPx).coerceAtLeast(0)
+                        lastRawTopPx = raw
+                        raw
+                    } else {
+                        lastRawTopPx = null
+                        (TOP_OFFSET_DP * context.resources.displayMetrics.density).toInt()
+                    }
+                }
                 Gravity.BOTTOM -> (80 * context.resources.displayMetrics.density).toInt()
                 else -> 0
+            }
+        }
+    }
+
+    /**
+     * 自校准：量出窗口顶边相对显示的**真实**内缩量，换算准了再重下发一次。
+     *
+     * 为什么不能靠公式：这个内缩量由 WMS 按 stable insets 决定，阅读器沉浸全屏时与
+     * `WindowInsets.statusBars` **不一致**（后者会报 0，而 `Frames: parent=` 仍是 `[0,138]`），
+     * 也没有公开 API 能拿到。但「窗口实际在屏幕上的位置」可以直接量 ——
+     * `内缩量 = getLocationOnScreen()[1] − 我们上次写进 LayoutParams.y 的值`，精确、无假设、跨版本通用。
+     *
+     * 收敛性：每轮把当前误差直接吃掉（窗口 y 与屏幕 y 是 1:1 的），但 `getLocationOnScreen` 可能读到
+     * 上一轮尚未 relayout 完的旧值 → 允许 `MAX_CALIBRATION_PASSES` 轮，每轮之间 `post` 一次等布局。
+     */
+    private fun calibrateTopOffset(pass: Int = 0) {
+        if (pass >= MAX_CALIBRATION_PASSES) return
+        val layout = container ?: return
+        val applied = lastRawTopPx ?: return
+        if (!isShowing) return
+        layout.post {
+            if (container !== layout || !isShowing) return@post
+            val loc = IntArray(2)
+            layout.getLocationOnScreen(loc)
+            val measured = loc[1] - applied
+            if (measured != windowTopOffsetPx) {
+                windowTopOffsetPx = measured
+                addToWindowIfNeeded()
+                calibrateTopOffset(pass + 1)
+                return@post
+            }
+            val want = desiredTopScreenY ?: return@post
+            if (kotlin.math.abs(loc[1] - want) > CALIBRATION_TOLERANCE_PX) {
+                // 内缩量对但仍没对齐 = 上面那次 update 还没落地，再等一轮
+                calibrateTopOffset(pass + 1)
             }
         }
     }

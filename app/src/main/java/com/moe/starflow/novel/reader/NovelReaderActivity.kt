@@ -422,15 +422,22 @@ class NovelReaderActivity : AppCompatActivity() {
     }
 
     /**
-     * 把提示条推到**顶部胶囊正下方**（见 `TranslationStatusOverlay.setTopOffsetPx`）。
-     * ⚠️ 按**实测**的 `top_pill.bottom` 推，不猜固定 dp —— 章名换行会把胶囊撑高。
+     * 把提示条推到**顶部胶囊正下方**（见 `TranslationStatusOverlay.setTopScreenY`）。
+     * ⚠️ 按**实测**的胶囊下沿推，不猜固定 dp —— 章名换行会把胶囊撑高。
+     * ⚠️ 单位是**屏幕坐标**（`getLocationOnScreen` + `height`）：浮层窗口被系统栏内缩过，
+     * 用视图的 `pill.bottom` 会整体低一条系统栏（详见 `TranslationStatusOverlay.getViewParams`）。
      */
     private fun pushNoticeTopBelowPill() {
         val pill = binding.topPill
         val density = resources.displayMetrics.density
-        val bottom = if (pill.height > 0) pill.bottom
-        else (TranslationStatusOverlay.READER_TOP_OFFSET_DP * density).toInt()
-        TranslationStatusOverlay.getInstance(this).setTopOffsetPx(bottom + (2 * density).toInt())
+        val screenBottom = if (pill.height > 0) {
+            val loc = IntArray(2)
+            pill.getLocationOnScreen(loc)
+            loc[1] + pill.height
+        } else {
+            (TranslationStatusOverlay.READER_TOP_OFFSET_DP * density).toInt()
+        }
+        TranslationStatusOverlay.getInstance(this).setTopScreenY(screenBottom + (2 * density).toInt())
     }
 
     override fun onStop() {
@@ -464,7 +471,7 @@ class NovelReaderActivity : AppCompatActivity() {
         // 进度走前台服务通知栏，回到阅读器时译文已经写库、`refreshTranslations` 直接读到。
         TranslationStatusOverlay.getInstance(this@NovelReaderActivity).dismiss()
         // 恢复提示条的默认顶距（进程级单例，不清的话别的页面也跟着偏移）
-        TranslationStatusOverlay.getInstance(this@NovelReaderActivity).setTopOffsetPx(null)
+        TranslationStatusOverlay.getInstance(this@NovelReaderActivity).setTopScreenY(null)
         // ⚠️ 提示放在 `dismiss()` **之后**：浮层是共享单例，dismiss 会清掉所有堆叠消息
         if (notifyPause) showPausedNotice(R.string.novel_translate_paused_background)
         // 离开阅读器清掉选择集：它是「长按多选」的临时状态，回到阅读器时不该还亮着

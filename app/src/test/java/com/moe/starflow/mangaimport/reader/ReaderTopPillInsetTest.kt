@@ -24,9 +24,15 @@ import java.io.File
  * 而「点胶囊开章节目录」正是用户报「不知道怎么没有了」的那条路。
  *
  * ⚠️ 浮层是进程级单例、`Status_Position` 是**用户设置**，所以阅读器不能改设置，
- * 只能在 `onStart`/`onStop` 用 `setTopOffsetPx` 临时覆盖**像素**顶距。
+ * 只能在 `onStart`/`onStop` 用 `setTopScreenY` 临时覆盖**屏幕坐标**顶距。
  * 这里是**静态**检查（布局里的 marginTop 与兜底估算常量），真正的"紧贴"由宿主的
  * 实测推送保证 —— 固定 dp 在大字号下会压住胶囊、在小字号下会留大缝，用户两次都在纠这一点。
+ *
+ * ⚠️ **必须是屏幕坐标（`getLocationOnScreen`），不能是视图的 `pill.bottom`**（2026-10 事故）：
+ * `View.bottom` 相对父布局，而 `TYPE_APPLICATION_OVERLAY` 窗口被 WMS 按系统栏内缩
+ * （真机 `Frames: parent=[0,138][1220,2660]`，即窗口 `y=0` 对应屏幕 138px）。
+ * 阅读器窗口是整屏的（`frame=[0,0][1220,2712]`），于是两边差了一个系统栏高 ≈ 42dp ——
+ * 表现就是「提示条永远比胶囊低一大截，怎么改 dp 都像原地没动」。
  */
 class ReaderTopPillInsetTest {
 
@@ -139,20 +145,55 @@ class ReaderTopPillInsetTest {
             assertTrue(
                 "$name 必须按**实测的胶囊下沿**推（不猜固定 dp：猜的在大字号下压住胶囊、" +
                     "在小字号下留缝 —— 用户两次都在纠这一点）",
-                src.contains("pill.bottom"),
+                src.contains("pill.height"),
+            )
+            // ⚠️ 取屏幕坐标，不是视图的 pill.bottom —— 浮层窗口被系统栏内缩，两者差一个系统栏高
+            assertTrue(
+                "$name 必须用 getLocationOnScreen() 取**屏幕坐标**：视图的 pill.bottom 相对父布局，" +
+                    "而浮层窗口坐标被系统栏内缩过，混用会让提示条整体低一条系统栏（约 42dp）",
+                src.contains("getLocationOnScreen"),
+            )
+            assertTrue(
+                "$name 的胶囊下沿必须是「屏幕 y + 高度」，不是视图的 `pill.bottom`",
+                src.contains("loc[1] + pill.height"),
             )
             assertTrue(
                 "$name 的 onStop 必须恢复默认顶距（单例不清会连带别的页面一起偏）",
-                src.contains("setTopOffsetPx(null)"),
+                src.contains("setTopScreenY(null)"),
             )
             assertTrue(
                 "$name 要监听胶囊高度变化（章名换行会把胶囊撑高）",
                 src.contains("addOnLayoutChangeListener"),
             )
         }
-        // 浮层侧：覆盖值是**像素**，且有兜底估算
+        // 浮层侧：覆盖值是**屏幕坐标**，且自带窗口内缩校准
         val overlay = read(OVERLAY)
-        assertTrue("浮层要提供像素级覆盖入口", overlay.contains("fun setTopOffsetPx(px: Int?)"))
+        assertTrue("浮层要提供屏幕坐标的覆盖入口", overlay.contains("fun setTopScreenY(screenY: Int?)"))
         assertTrue("要有布局前的兜底估算", overlay.contains("const val READER_TOP_OFFSET_DP ="))
+        assertTrue(
+            "浮层必须把屏幕坐标换算成窗口坐标（减去系统栏内缩），不能直接当 LayoutParams.y 用",
+            overlay.contains("want - windowTopOffsetPx"),
+        )
+        assertTrue(
+            "内缩量只能**量**出来（WindowInsets 在沉浸全屏下报 0，而 parent frame 仍是 138）",
+            overlay.contains("private fun calibrateTopOffset(") && overlay.contains("lastRawTopPx"),
+        )
+    }
+
+    /**
+     * 老 API `setTopOffsetPx`（窗口坐标）必须彻底消失。
+     *
+     * ⚠️ 留着它等于留着一条"同一个字段两种坐标系"的路 —— 新调用点抄谁全凭运气，
+     * 而这两者只差 42dp、肉眼一眼看不出错，只会表现成"提示条有点偏低"。改名是为了让
+     * 混淆在编译期就过不去。
+     */
+    @Test
+    fun theWindowCoordinateApiIsGone() {
+        for (rel in listOf(MANGA_ACT, NOVEL_ACT, OVERLAY)) {
+            assertTrue(
+                "$rel 里还留着 setTopOffsetPx（窗口坐标口径）—— 会被当成屏幕坐标误用",
+                !read(rel).contains("setTopOffsetPx"),
+            )
+        }
     }
 }

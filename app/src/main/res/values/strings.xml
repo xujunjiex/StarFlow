@@ -193,6 +193,8 @@
     <string name="not_notify_content">It seems that you have not granted StarFlow notification permission. Screenshot Translation requires notification permission. Click Grant to grant the app notification permission.</string>
     <string name="select_source_language">Select source language</string>
     <string name="select_target_language">Select target language</string>
+    <string name="language_search_hint">Search languages</string>
+    <string name="language_search_no_result">No matching languages</string>
     <string name="custom_api_select_language">Custom</string>
     <string name="source_language">Source Language：</string>
     <string name="target_language">Target Language：</string>
@@ -1103,8 +1105,6 @@
     <string name="reader_translate_ahead_hint">Only for incremental mode: how many pages past the current one to translate ahead. The window moves as you turn pages.</string>
 
     <!-- ═══ 超分记录系统（2026-10）═══ -->
-    <string name="reader_records_tab_translate">Translation</string>
-    <string name="reader_records_tab_sr">Super-resolution</string>
     <string name="reader_sr_state_running">Upscaling</string>
     <string name="reader_sr_chapter_translate">Upscale chapter</string>
     <string name="reader_sr_chapter_clear">Clear chapter</string>

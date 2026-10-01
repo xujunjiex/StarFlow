@@ -130,6 +130,8 @@
     <string name="not_notify_content">看起来您没有授予星译通知权限，截图翻译需要获取通知权限，点击去授予即可授予应用通知权限。</string>
     <string name="select_source_language">选择源语言</string>
     <string name="select_target_language">选择目标语言</string>
+    <string name="language_search_hint">搜索语言</string>
+    <string name="language_search_no_result">没有匹配的语言</string>
     <string name="custom_api_select_language">自定义</string>
     <string name="source_language">源语言：</string>
     <string name="target_language">目标语言：</string>
@@ -1039,8 +1041,6 @@
     <string name="reader_translate_ahead_hint">仅增量模式：从当前页往后自动翻多少页。翻页时窗口跟着前移。</string>
 
     <!-- ═══ 超分记录系统（2026-10）═══ -->
-    <string name="reader_records_tab_translate">翻译</string>
-    <string name="reader_records_tab_sr">超分</string>
     <string name="reader_sr_state_running">超分中</string>
     <string name="reader_sr_chapter_translate">超分本章</string>
     <string name="reader_sr_chapter_clear">清空本章</string>
