@@ -140,10 +140,25 @@
         </FrameLayout>
     </LinearLayout>
 
+    <!-- ═══════════ 底部浮层组：超分三件套 + 翻译三件套 **同一行、整体贴右下角** ═══════════
+         用户口径 2026-10：「阅读器的超分组件位置要调整，和翻译一样都在当前组件的最右边」。
+         ⚠️ 必须是**一个容器**套住两组：让两个组各自 `bottom|end` 会**完全重叠**；
+             而把超分组放到翻译组"上面"是用户更早明确否掉过的方案（「不是右边的上面」）。
+         组序 = **超分在左、翻译在右**：翻译组内部最右是「清除本页译文」，它的位置一点没变。
+         ⚠️ 两组的 id 不变（`sr_group` / `translate_group`）—— `applyChromeVisibility`
+             逐组淡入淡出、`refreshSrButtons` 只切 `sr_group` 自己的 visibility，都靠它。 -->
+    <LinearLayout
+        android:id="@+id/floating_groups"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="20dp"
+        android:layout_marginBottom="62dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
     <!-- ═══════════ 超分浮层组（**独立一组**，用户口径 2026-10）═══════════
          与翻译浮层组完全分开：自己的背景、自己的显隐、自己的三枚按钮。
-         ⚠️ 位置：**左下角**（`bottom|start`），与右下角的翻译组**同一水平线**对称 ——
-             用户口径：「超分按钮放到左边，不是右边的上面」（上一版我放在右上，错了）。
          三枚按钮与翻译侧一一对应：
            超分 / 重新超分（恒显示，有结果时图标变"重翻"）｜原图⇄超分（有结果才显示）｜删除（有结果才显示）
          ⚠️ 超分功能关闭 / Webtoon / 隐藏上下 UI 时整组 GONE（`refreshSrButtons`）。 -->
@@ -151,9 +166,7 @@
         android:id="@+id/sr_group"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_gravity="bottom|start"
-        android:layout_marginStart="20dp"
-        android:layout_marginBottom="62dp"
+        android:layout_marginEnd="8dp"
         android:orientation="horizontal"
         android:gravity="center"
         android:padding="6dp"
@@ -222,15 +235,14 @@
                 android:contentDescription="@string/reader_sr_button_desc"/>
         </FrameLayout>
     </LinearLayout>
-    <!-- 右下角翻译浮层组：翻译按钮 +（有翻译结果时出现）三态切换按钮，同一背景组件。
-         翻译按钮成功态图标变「重翻」（ic_refresh），点击即重新翻译；三态按钮点按循环 译文/原文/原图，长按开详情。 -->
+    <!-- 翻译浮层组：翻译按钮 +（有翻译结果时出现）三态切换按钮，同一背景组件。
+         翻译按钮成功态图标变「重翻」（ic_refresh），点击即重新翻译；三态按钮点按循环 译文/原文/原图，长按开详情。
+         ⚠️ 它挂在 `floating_groups` 里（与超分组同一行），**不要再给自己写 layout_gravity / margin** ——
+            那会把它从那一行里拽出去、和超分组重叠。 -->
     <LinearLayout
         android:id="@+id/translate_group"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_gravity="bottom|end"
-        android:layout_marginEnd="20dp"
-        android:layout_marginBottom="62dp"
         android:orientation="horizontal"
         android:gravity="center"
         android:padding="6dp"
@@ -310,5 +322,6 @@
                 android:contentDescription="@string/reader_clear_page_desc"/>
         </FrameLayout>
     </LinearLayout>
+    </LinearLayout><!-- /floating_groups -->
 
 </FrameLayout>

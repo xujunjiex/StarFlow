@@ -182,6 +182,48 @@ class SrRecordSystemWiringTest {
         assertTrue("调色面板重建时要重新绑超分记录", sheet.contains("setupSrRecords("))
     }
 
+    /**
+     * **底部进度条也要标出「已超分」的页**（用户口径 2026-10：「超分过的页码底部进度条也要有
+     * 特别的颜色标记。想办法设计一种能分辨清楚的方案」）。
+     *
+     * 方案：**四层信息叠在同一根条上，两条细线分居粗带上/下**——
+     * ```
+     *   ▓▓▓ 2dp 绿：已翻译（压在粗带**中间**）
+     *   ███ 5dp 粗带：白=已读 / 灰=未读（交界 = 当前位置）
+     *   ━━━ 3dp 紫：已超分（画在粗带**下方**）
+     * ```
+     * ⚠️ 关键是**位置**而不只是颜色：两个维度互相独立（一页可以"翻了没超"或"超了没翻"），
+     * 挤在同一条水平线上必然互相遮盖；分居粗带上下之后，即便分不清颜色（色弱 / 灰度截图）
+     * 也能靠"在粗带上面还是下面"分辨。
+     */
+    @Test
+    fun theProgressBarMarksUpscaledPagesSeparatelyFromTranslatedOnes() {
+        val bar = read("src/main/java/com/moe/starflow/mangaimport/reader/ReaderProgressBar.kt")
+        assertTrue("进度条要有独立的「已超分」入口", bar.contains("fun setSrPages(pages: Set<Int>)"))
+        assertTrue("超分标记要有自己的画笔", bar.contains("srPaint"))
+        assertTrue(
+            "绿条画在**粗带中线**上",
+            bar.contains("drawRuns(canvas, cy, w, span, translatedRuns, translatedPaint)"),
+        )
+        assertTrue(
+            "紫条画在**粗带下方**（与绿分居两侧，互不遮盖）",
+            bar.contains("drawRuns(canvas, cy + dp(5f), w, span, srRuns, srPaint)"),
+        )
+        assertTrue(
+            "翻页换总页数时两条都要重算",
+            Regex("srRuns = computeTranslatedRuns\\(srPages, total\\)").containsMatchIn(bar),
+        )
+        // 宿主接线 + 数据源口径
+        assertTrue(
+            "宿主要把「已成功的超分页」喂给进度条",
+            activity.contains("setSrPages(translationController?.srPages()"),
+        )
+        assertTrue(
+            "数据源只算 STATE_SUCCESS（RUNNING/FAILED 不该在进度条上留痕，否则失败后紫条不退）",
+            controller.contains("it.state == ImportedPageSr.STATE_SUCCESS }.keys"),
+        )
+    }
+
     @Test
     fun srChapterJobStopsWhenTheReaderCloses() {
         // ⚠️ 超分本章**没有通知栏入口**，而它的进行中提示是系统级浮层窗口：

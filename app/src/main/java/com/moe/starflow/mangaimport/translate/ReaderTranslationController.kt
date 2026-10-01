@@ -796,6 +796,15 @@ class ReaderTranslationController(
         srRows.value.values.count { it.pageIndex in from..to && it.state == ImportedPageSr.STATE_SUCCESS }
 
     /**
+     * 已**成功超分**的页码集合 —— 底部进度条那条紫线的数据源。
+     *
+     * ⚠️ 只算 `STATE_SUCCESS`：`RUNNING`（正在超）与 `FAILED` 都不该在进度条上留痕，
+     * 否则失败之后紫条不退回，用户以为那一页超好了。
+     */
+    fun srPages(): Set<Int> =
+        srRows.value.filterValues { it.state == ImportedPageSr.STATE_SUCCESS }.keys
+
+    /**
      * 超分记录流：宿主面板订阅它拿"记录 + 在途"的最新快照。
      * 与 [version] 并不同源（超分不动译文行），所以单独一个。
      */

@@ -1389,8 +1389,13 @@ class MangaReaderActivity : AppCompatActivity() {
             notifyUser(getString(R.string.reader_sr_blocked_by_translate), AppNotice.Style.ERROR)
             return
         }
-        // 没选/没下模型时**先拦住**：否则会一页页失败，用户得等一整章才知道原因
-        if (!SuperResolutionEngines.isSrModelUsable(this, prefs)) {
+        // 没选/没下模型时**先拦住**：否则会一页页失败，用户得等一整章才知道原因。
+        // ⚠️ **必须用默认 prefs，不能用本类的 `prefs`**：后者是 `getSharedPreferences("manga_reader")`
+        //    （阅读器自己的模式/动画/背景），而 `sr_active_model_key` 存在
+        //    `PreferenceManager.getDefaultSharedPreferences` 里 —— 读错了文件就永远读不到模型，
+        //    表现为"明明选了模型，点超分本章却提示请先选择模型"，而手动超分（走控制器、
+        //    用的是默认 prefs）完全正常（2026-10 真机踩到）。
+        if (!SuperResolutionEngines.isSrModelUsable(this, PreferenceManager.getDefaultSharedPreferences(this))) {
             notifyUser(getString(R.string.reader_sr_need_model), AppNotice.Style.ERROR)
             return
         }
@@ -1899,6 +1904,10 @@ class MangaReaderActivity : AppCompatActivity() {
     /** 刷新进度条上的「已翻译」绿色区间。 */
     private fun refreshProgressTranslation() {
         binding.readerProgress.setTranslatedPages(translationController?.translatedPages() ?: emptySet())
+        // 超分那一条**独立**的紫色区间（用户口径：超分过的页也要在进度条上有标记）。
+        // 与绿色分居粗带两侧：绿在粗带中间、紫在粗带下方 —— 一页可以"翻了没超"或"超了没翻"，
+        // 两个维度互不遮盖。
+        binding.readerProgress.setSrPages(translationController?.srPages() ?: emptySet())
         // 顺带把打开着的面板一起刷新：面板是打开那一刻的快照，宿主不推它就停在旧状态
         // （`ReaderMenuSheet.notifyTranslateChanged` 以前从来没有调用方 —— 面板开着时
         // 译文在涨、每页列表与汇总却一直不动）

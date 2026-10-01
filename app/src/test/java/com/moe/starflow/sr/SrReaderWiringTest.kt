@@ -386,25 +386,46 @@ class SrReaderWiringTest {
     }
 
     @Test
-    fun srHasItsOwnFloatingGroupNotNestedInTheTranslateOne() {
-        // 用户口径：「单独设计一个组件组放到右边！专门显示超分相关的东西」。
+    fun srHasItsOwnFloatingGroupAndSitsRightNextToTheTranslateOne() {
+        // 「单独设计一个组件组专门显示超分相关的东西」（2026-10 早先）
+        // + 「超分组件位置要调整，和翻译一样都在当前组件的最右边」（2026-10 最新）——
+        // 所以两组**同一行、整体贴右下角**，超分在左、翻译在右。
         val layout = read("src/main/res/layout/activity_manga_reader.xml")
+        val wrapper = layout.indexOf("android:id=\"@+id/floating_groups\"")
         val srGroup = layout.indexOf("android:id=\"@+id/sr_group\"")
         val translateGroup = layout.indexOf("android:id=\"@+id/translate_group\"")
+        assertTrue("要有底部浮层容器 floating_groups", wrapper > 0)
         assertTrue("要有独立的超分组", srGroup > 0)
-        // 用户口径：「超分按钮放到左边，不是右边的上面」→ 左下角、与翻译组同一水平线
-        assertTrue("超分组的 id 要出现（顺序无关）", srGroup > 0)
-        val srBlock = layout.substring(srGroup, layout.indexOf(">", layout.indexOf("android:background", srGroup)))
-        assertTrue("超分组必须靠左（bottom|start）", srBlock.contains("android:layout_gravity=\"bottom|start\""))
-        assertTrue("左边的组用 marginStart", srBlock.contains("android:layout_marginStart="))
-        assertFalse("左边不许再用 marginEnd", srBlock.contains("android:layout_marginEnd="))
-        // 三枚按钮必须在 sr_group 里，而不是 translate_group 里
+        assertTrue("要有翻译组", translateGroup > 0)
+
+        // ① 容器贴右下角（两组各自 bottom|end 会完全重叠，所以必须同一个容器）
+        val wrapperBlock = layout.substring(wrapper, layout.indexOf(">", wrapper))
+        assertTrue(
+            "容器必须贴右下角（bottom|end）",
+            wrapperBlock.contains("android:layout_gravity=\"bottom|end\""),
+        )
+        // ② 两组都在容器里，且**超分在左**（翻译组一字不动，用户不会认不出来）
+        assertTrue("超分组必须在 floating_groups 容器里", srGroup > wrapper && srGroup < translateGroup)
+        // ③ 组自己不许再写 layout_gravity —— 那会把它从那一行里拽出去
+        val srBlock = layout.substring(srGroup, layout.indexOf(">", srGroup))
+        assertFalse(
+            "超分组不许再自带 layout_gravity（会被拽出 floating_groups 这一行）",
+            srBlock.contains("android:layout_gravity="),
+        )
+        val trBlock = layout.substring(translateGroup, layout.indexOf(">", translateGroup))
+        assertFalse(
+            "翻译组同样不许自带 layout_gravity / 底边距（那会让它脱离那一行）",
+            trBlock.contains("android:layout_gravity=") || trBlock.contains("android:layout_marginBottom="),
+        )
+        assertTrue("两组之间要留一点缝", srBlock.contains("android:layout_marginEnd="))
+
+        // ④ 超分三枚按钮必须在 sr_group 里，而不是 translate_group 里
         val srEnd = layout.indexOf("</LinearLayout>", srGroup)
         for (id in listOf("btn_sr_page", "btn_sr_toggle", "btn_sr_clear")) {
             val p = layout.indexOf("android:id=\"@+id/" + id + "\"")
             assertTrue("$id 必须在 sr_group 内", p in srGroup until srEnd)
         }
-        // 整组显隐在 refreshTranslationChrome（每页每次刷新都走它）
+        // ⑤ 整组显隐在 refreshTranslationChrome（每页每次刷新都走它）
         assertTrue("refreshSrButtons 要能整组 GONE", activity().contains("binding.srGroup.visibility = View.GONE"))
     }
     @Test
