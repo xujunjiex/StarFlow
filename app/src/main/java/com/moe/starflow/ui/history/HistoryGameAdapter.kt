@@ -10,6 +10,7 @@ import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.moe.starflow.data.HistoryEntry
+import com.moe.starflow.data.HistoryEntity
 import com.moe.starflow.databinding.ItemHistoryGameBinding
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -40,7 +41,9 @@ class HistoryGameAdapter(
         fun bind(entry: HistoryEntry) {
             binding.tvSourceText.text = entry.sourceText ?: ""
             binding.tvTranslatedText.text = entry.translatedText ?: ""
-            binding.tvTranslatorName.text = entry.translatorName
+            binding.tvTranslatorName.text = if (entry.processingState == HistoryEntity.PROCESS_OCR)
+                binding.root.context.getString(com.moe.starflow.R.string.history_ocr_badge)
+            else entry.translatorName
             binding.tvTime.text = dateFormat.format(Date(entry.updatedAt))
 
             binding.root.setOnClickListener { onItemClick(entry) }

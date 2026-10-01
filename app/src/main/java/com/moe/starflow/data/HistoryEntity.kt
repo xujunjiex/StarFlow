@@ -43,5 +43,15 @@ data class HistoryEntity(
     val updatedAt: Long = 0,     // 最后修改时间戳（翻译/缓存命中时更新）
 
     @ColumnInfo(name = "bubble_rects")
-    val bubbleRects: String? = null  // JSON: [{"l":10,"t":20,"r":100,"b":60}, ...] 气泡位置数据，旧数据为 NULL
-)
+    val bubbleRects: String? = null,  // JSON: [{"l":10,"t":20,"r":100,"b":60}, ...] 气泡位置数据，旧数据为 NULL
+
+    /** 0=已翻译，1=仅 OCR，2=失败但保留 OCR 载荷。 */
+    @ColumnInfo(name = "processing_state", defaultValue = "0")
+    val processingState: Int = PROCESS_TRANSLATED
+) {
+    companion object {
+        const val PROCESS_TRANSLATED = 0
+        const val PROCESS_OCR = 1
+        const val PROCESS_FAILED = 2
+    }
+}

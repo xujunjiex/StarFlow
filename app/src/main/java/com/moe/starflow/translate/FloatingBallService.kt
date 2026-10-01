@@ -44,6 +44,9 @@ import com.moe.starflow.data.TranslationCacheManager
 import com.moe.starflow.utils.LogCollector
 import com.moe.starflow.utils.OcrEngineManager
 import com.moe.starflow.utils.TextSimilarity
+import com.moe.starflow.utils.TranslationExecutionMode
+import com.moe.starflow.utils.TranslationBusyRegistry
+import com.moe.starflow.utils.LocalTranslationCoordinator
 import com.moe.starflow.utils.ThemeManager
 import android.view.*
 import android.widget.AdapterView
@@ -151,6 +154,22 @@ class FloatingBallService : LifecycleService() {
 
     // 是否正在翻译，默认false
     private val isTranslating = AtomicBoolean(false)
+    private val screenshotBusyHeld = AtomicBoolean(false)
+    private val localTranslationHeld = AtomicBoolean(false)
+
+    private fun enterScreenshotBusy() {
+        if (screenshotBusyHeld.compareAndSet(false, true)) TranslationBusyRegistry.enter()
+    }
+
+    private fun exitScreenshotBusy() {
+        if (screenshotBusyHeld.compareAndSet(true, false)) TranslationBusyRegistry.exit()
+    }
+
+    private fun releaseLocalTranslationLock() {
+        if (localTranslationHeld.compareAndSet(true, false)) {
+            LocalTranslationCoordinator.mutex.unlock()
+        }
+    }
 
     /** 用户主动停止翻译：忽略本次结果回调、不保存 */
     @Volatile private var translationCancelled = false
@@ -1338,6 +1357,10 @@ class FloatingBallService : LifecycleService() {
 
     // 5.1.0新增：启动自动翻译
     private fun startAutoTranslate() {
+        if (TranslationExecutionMode.isOcrOnly(this)) {
+            showToast(getString(R.string.execution_ocr_only_auto_disabled), true)
+            return
+        }
         // ⚠️ 框选守卫必须排在最前：自动翻译是围绕框选区域的定时像素/OCR 循环，
         // 没有框选它无从工作。此前权限检查排在前面，未授权时会先弹授权并置
         // `pendingAutoStart`，**授权回来的那条路会绕过本守卫** —— 没框选也能开起来。
@@ -1665,7 +1688,9 @@ class FloatingBallService : LifecycleService() {
         partialResultShown = false  // 已停止：再点悬浮球不再弹确认，直接幂等终止
         translatorText?.cancelTranslation()
         translatorPic?.cancelTranslation()
+        releaseLocalTranslationLock()
         isTranslating.set(false)
+        exitScreenshotBusy()
         ballStateManager?.setState(BallStateManager.State.Idle)
         if (showMessage) statusOverlay.showImmediate(getString(R.string.translation_stopped), autoDismiss = true)
     }
@@ -1769,6 +1794,7 @@ class FloatingBallService : LifecycleService() {
                 val bitmap = data.croppedBitmap ?: data.fullBitmap
                 if (data.croppedBitmap != null) data.fullBitmap.recycle()
                 try {
+                    enterScreenshotBusy()
                     isTranslating.set(true)
                     translationCancelled = false  // 每次新截图翻译重置取消标志
                     partialResultShown = false    // 每次新截图翻译重置部分结果标志
@@ -1779,6 +1805,10 @@ class FloatingBallService : LifecycleService() {
                     statusOverlay.showError(getString(R.string.ocr_failed, e.toString()))
                     ballStateManager?.setState(BallStateManager.State.Error)
                 } finally {
+                    if (!isTranslating.get()) {
+                        releaseLocalTranslationLock()
+                        exitScreenshotBusy()
+                    }
                     if (isAutoTranslating) {
                         scheduleNextDetection(getPixelCheckInterval())
                     }
@@ -1948,6 +1978,15 @@ class FloatingBallService : LifecycleService() {
                     }
                     // 检查数据库缓存（使用 normalize 后的文本，不区分大小写）
                     val normalizedTxt = TextSimilarity.normalize(txt)
+                    if (TranslationExecutionMode.isOcrOnly(this)) {
+                        statusOverlay.showImmediate(getString(R.string.execution_ocr_only_done))
+                        ballStateManager?.setState(BallStateManager.State.Completed)
+                        translationResultView.setText(normalizedTxt)
+                        lastTranslatedSource = normalizedTxt
+                        saveOcrToCache(normalizedTxt)
+                        isTranslating.set(false)
+                        return
+                    }
                     val dbCache = cacheManager.findGameCache(
                         normalizedTxt,
                         prefs.getString("Source_Language", "ja"),
@@ -1987,6 +2026,10 @@ class FloatingBallService : LifecycleService() {
             ballStateManager?.setState(BallStateManager.State.Error)
         } finally {
             bitmap.recycle()
+            if (!isTranslating.get()) {
+                releaseLocalTranslationLock()
+                exitScreenshotBusy()
+            }
         }
     }
 
@@ -2016,6 +2059,13 @@ class FloatingBallService : LifecycleService() {
 
     // 文本翻译
     private fun translateByText(str: String) {
+        val localTranslation = translatorText?.isLocalHeavyEngine() == true
+        if (localTranslation && !LocalTranslationCoordinator.mutex.tryLock()) {
+            isTranslating.set(false)
+            showToast(getString(R.string.reader_translate_waiting_other), true)
+            return
+        }
+        if (localTranslation) localTranslationHeld.set(true)
         val sourceLang = prefs.getString("Source_Language", "ja")
         val targetLang = prefs.getString("Target_Language", "zh")
         LogCollector.d(TAG, "开始文本翻译: ${str.take(50)}..., $sourceLang → $targetLang")
@@ -2029,8 +2079,9 @@ class FloatingBallService : LifecycleService() {
             prefs
         )
 
-        translatorText?.getTranslationStreaming(
-            str, sourceLang, targetLang,
+        try {
+            translatorText?.getTranslationStreaming(
+                str, sourceLang, targetLang,
             onPhase = { phase ->
                 // 阶段提示：读取原文中 → 生成译文中
                 lifecycleScope.launch(Dispatchers.Main) {
@@ -2049,6 +2100,7 @@ class FloatingBallService : LifecycleService() {
                 }
             },
             callback = { result ->
+            releaseLocalTranslationLock()
             lifecycleScope.launch(Dispatchers.Main) {
                 when (result) {
                     is TranslationResult.Success -> {
@@ -2119,7 +2171,12 @@ class FloatingBallService : LifecycleService() {
                 isTranslating.set(false)
             }
             }
-        )
+            )
+        } catch (e: Throwable) {
+            releaseLocalTranslationLock()
+            isTranslating.set(false)
+            throw e
+        }
     }
 
     private fun translateByPic(bitmap: Bitmap){
@@ -2172,6 +2229,31 @@ class FloatingBallService : LifecycleService() {
         }
     }
 
+    private fun saveOcrToCache(sourceText: String) {
+        lifecycleScope.launch {
+            try {
+                val sourceLang = prefs.getString("Source_Language", "ja")
+                val targetLang = prefs.getString("Target_Language", "zh")
+                val entry = CacheEntry(
+                    type = TranslationCacheManager.MODE_GAME,
+                    sourceText = sourceText,
+                    translatedText = null,
+                    resultBitmap = null,
+                    sourceLang = sourceLang,
+                    targetLang = targetLang,
+                    translatorName = "OCR",
+                    pHash = 0L,
+                    sessionId = sessionId,
+                    lastSessionId = sessionId,
+                    processingState = com.moe.starflow.data.HistoryEntity.PROCESS_OCR,
+                )
+                cacheManager.refreshGameCache(sourceText, sourceLang, targetLang, entry)
+            } catch (e: Exception) {
+                LogCollector.e("FloatingBallService", "保存 OCR 历史失败", e)
+            }
+        }
+    }
+
     private fun saveTranslationToCache(
         sourceText: String,
         translatedText: String,
@@ -2189,7 +2271,8 @@ class FloatingBallService : LifecycleService() {
                     translatorName = translatorName,
                     pHash = 0L,
                     sessionId = sessionId,
-                    lastSessionId = sessionId
+                    lastSessionId = sessionId,
+                    processingState = com.moe.starflow.data.HistoryEntity.PROCESS_TRANSLATED,
                 )
                 // 先删除旧的同源记录，再保存新结果
                 cacheManager.refreshGameCache(sourceText, entry.sourceLang, entry.targetLang, entry)

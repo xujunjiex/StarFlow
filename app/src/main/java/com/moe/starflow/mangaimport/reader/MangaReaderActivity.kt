@@ -44,8 +44,10 @@ import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.mangaimport.data.MangaChapter
 import com.moe.starflow.mangaimport.data.chapterIndexOf
 import com.moe.starflow.mangaimport.data.mangaChapterLabel
+import com.moe.starflow.mangaimport.translate.BusySource
 import com.moe.starflow.mangaimport.translate.ReaderTranslatePhase
 import com.moe.starflow.mangaimport.translate.ReaderTranslationHub
+import com.moe.starflow.utils.TranslationExecutionMode
 import com.moe.starflow.translate.batch.ChapterJobState
 import com.moe.starflow.translate.batch.ChapterTaskStage
 import com.moe.starflow.translate.batch.InFlightTask
@@ -155,6 +157,9 @@ class MangaReaderActivity : AppCompatActivity() {
 
     /** 翻译按钮双击判定用的上次单击时刻（elapsedRealtime）。 */
     private var lastTranslateClickMs = 0L
+
+    /** 超分/重新超分按钮双击判定用的上次单击时刻（与翻译按钮同一套语义，见 `onSrEnhanceClicked`）。 */
+    private var lastSrClickMs = 0L
 
     /**
      * 上下 UI（顶部返回/菜单/页码 + 底部进度条/翻译浮层组）是否隐藏。
@@ -1031,6 +1036,14 @@ class MangaReaderActivity : AppCompatActivity() {
                     refreshTranslationChrome()
                     refreshProgressTranslation()
                 }
+                is TranslateClick.CancelledBatch -> {
+                    // 双击关掉的是**批量**（超分本章 / 翻译本章）：只关那一个，**不变模式、不清屏**
+                    //（各自的取消路径已经处理了在途清理），文案由控制器给（按关掉的是谁）。
+                    setTranslatingPulse(false)
+                    notifyUser(r.text)
+                    refreshTranslationChrome()
+                    refreshProgressTranslation()
+                }
                 TranslateClick.Busy -> {
                     notifyUser(getString(R.string.reader_translate_busy))
                     refreshTranslationChrome()
@@ -1284,7 +1297,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 ps.joinToString(", ") { "P${it + 1}" },
             )
         }
-        pages(ChapterTaskStage.TRANSLATE).takeIf { it.isNotEmpty() }?.let { ps ->
+        if (!TranslationExecutionMode.isOcrOnly(this)) pages(ChapterTaskStage.TRANSLATE).takeIf { it.isNotEmpty() }?.let { ps ->
             entries += getString(
                 R.string.reader_translate_stage_entry,
                 getString(R.string.reader_translate_state_translating),
@@ -1876,61 +1889,94 @@ class MangaReaderActivity : AppCompatActivity() {
      *
      * ⚠️ **只有这一路才挂「正在超分…」常驻提示**；二态切换是瞬时的（真机日志实证：
      * 切换时冒一句「正在超分第 N 页…」会让用户以为"没法切换，它又重超了一遍"）。
+     *
+     * ## 被"自动进程"挡住时：单击提示、双击关掉它（用户口径 2026-10-01）
+     * 「自动翻译 / 增量翻译 / 翻译本章 / 超分本章 开启状态，**不管有没有开翻译自动超分**，
+     *  都不能点超分和重新超分按钮进行工作；第一次提示，第二次关闭自动进程后才能正常使用，
+     *  关闭也要有对应提示」—— 与右下角翻译按钮**完全同一套语义**（那里也是单击 Hint、双击取消）。
+     *
+     * ⚠️ **按钮保持可点**（不置灰）：置灰就没有"第一次提示"了，用户只会觉得按钮坏了。
      */
     private fun onSrEnhanceClicked() {
         val controller = translationController ?: return
-        if (controller.srActionOf(currentPage) == ReaderTranslationController.SrAction.BUSY) {
+        // ⚠️ **页号必须在点击这一刻抓下来**（用户报的 bug 2026-10-01：「超分第二页，翻到第三页
+        //    却显示第三页超分完成」）。超分单页要跑几十秒到几分钟，协程恢复时 `currentPage`
+        //    早就跟着手指翻走了 —— 超分本身打的是 `page`（参数在挂起前求值，没错），
+        //    但**提示文案**在 `await` 之后才拼 `currentPage + 1` → 报成了用户当下停留的那一页。
+        //    凡是"先挂起、再报页码"的地方都要用这个快照。
+        val page = currentPage
+        // 单击 = 只提示、绝不打断；快速双击 = 关掉挡路的那个进程
+        val now = SystemClock.elapsedRealtime()
+        val isDouble = now - lastSrClickMs <= DOUBLE_CLICK_MS
+        lastSrClickMs = if (isDouble) 0L else now
+
+        // ① 本页自己正在超分：维持原样（那是"这一页的产物还在写"，与"别的进程挡着"不是一回事）
+        if (controller.srActionOf(page) == ReaderTranslationController.SrAction.BUSY) {
             showSrNotice(getString(R.string.sr_fail_busy), isError = false)
             return
         }
+        // ② 有「自动进程」在跑 → 第一次提示、第二次关掉它，两次都不动手超分
+        val busy = controller.busySource()
+        if (busy != BusySource.NONE) {
+            showSrNotice(
+                if (isDouble) controller.cancelBusy(busy) else controller.busyHint(busy),
+                isError = false,
+            )
+            refreshTranslationChrome()
+            return
+        }
         binding.btnSrPage.isEnabled = false
-        showSrProgress(currentPage)
+        showSrProgress(page)
         lifecycleScope.launch {
-            val result = controller.onSrButtonClicked(currentPage)
+            val result = controller.onSrButtonClicked(page)
             binding.btnSrPage.isEnabled = true
             refreshTranslationChrome()
             when (result) {
                 is ReaderTranslationController.SrClickResult.Failed -> showSrNotice(result.message, isError = true)
+                // ⚠️ 报的是**发起时那一页**，不是"现在停在哪一页"
                 is ReaderTranslationController.SrClickResult.Done ->
-                    showSrNotice(getString(R.string.sr_done_page, currentPage + 1), isError = false)
+                    showSrNotice(getString(R.string.sr_done_page, page + 1), isError = false)
             }
         }
     }
 
-    /** 「原图 ⇄ 超分底图」二态切换（瞬时，不挂进度提示）。 */
+    /**
+     * 「原图 ⇄ 超分底图」二态切换（瞬时，**不发任何提示**）。
+     *
+     * ⚠️ 不提示是**用户明确要求**（2026-10-01：「切换超分原图不要提示」）。原来切换会报一句
+     * 「第 N 页已切回原图显示（超分文件保留）」—— 那是**解释性**文案，而二态切换的结果
+     * 用户一眼就看得见（画面变了、图标高亮了），再弹一条只会盖住别的提示条；
+     * "超分文件保留"更是答非所问（用户没问文件去哪了）。
+     * ⚠️ 页号仍要**先抓下来**：`toggleSrBase` 是挂起函数，返回后 `currentPage` 可能已经翻页
+     * （同 `onSrEnhanceClicked` 那个 bug 的成因）。
+     */
     private fun onSrToggleClicked() {
         val controller = translationController ?: return
+        val page = currentPage
         lifecycleScope.launch {
-            controller.toggleSrBase(currentPage)
+            controller.toggleSrBase(page)
             refreshTranslationChrome()
-            // ⚠️ 文案按**切换后的真实显示态**取，不要用 `toggleSrBase` 返回的 `SrAction`：
-            // 那个枚举描述的是"按钮的下一个动作"（SHOW_ORIGINAL = 当前正显示超分底图），
-            // 而且这一页正在超分（BUSY）时它返回的根本不是二态值 → 文案会张冠李戴。
-            showSrNotice(
-                getString(
-                    if (controller.srBaseOn(currentPage)) R.string.sr_show_sr_page
-                    else R.string.sr_show_original_page,
-                    currentPage + 1,
-                ),
-                isError = false,
-            )
         }
     }
 
     /** 「删除本页超分结果」：**二次确认**（与清除译文同一约定：所有删除都要确认）。 */
     private fun onSrClearClicked() {
         val controller = translationController ?: return
+        // ⚠️ 页号在**弹确认框之前**抓：确认框是异步的，用户完全可能在框开着的时候翻页 ——
+        //    不抓的话「第 3 页的超分图会被删除」这句提示写着第 3 页，实际删的却是翻过去之后的第 5 页。
+        //    （与 `onSrEnhanceClicked` 的报错页号是同一个成因，见那里的注释。）
+        val page = currentPage
         ReaderDialogs.show(this, isDarkBackground()) {
             setTitle(R.string.reader_sr_clear_confirm_title)
-            setMessage(getString(R.string.reader_sr_clear_confirm_msg, currentPage + 1))
+            setMessage(getString(R.string.reader_sr_clear_confirm_msg, page + 1))
             setPositiveButton(R.string.reader_sr_clear_ok) { _, _ ->
                 lifecycleScope.launch {
-                    val deleted = controller.deleteSrResult(currentPage)
+                    val deleted = controller.deleteSrResult(page)
                     refreshTranslationChrome()
                     showSrNotice(
                         getString(
                             if (deleted) R.string.sr_clear_done_page else R.string.sr_clear_none_page,
-                            currentPage + 1,
+                            page + 1,
                         ),
                         isError = false,
                     )
@@ -2177,6 +2223,10 @@ class MangaReaderActivity : AppCompatActivity() {
                     }
                 },
                 onPanelClosed = { translationController?.setPanelOpen(false) },
+                onOpenExecutionModeSettings = {
+                    startActivity(Intent(this@MangaReaderActivity, SettingPageActivity::class.java)
+                        .putExtra(SettingPageActivity.EXTRA_FRAGMENT_TYPE, SettingPageActivity.TYPE_FRAGMENT_TRANSLATE_MODE))
+                },
                 onOpenModelManagement = {
                     startActivity(Intent(this@MangaReaderActivity, SettingPageActivity::class.java)
                         .putExtra(SettingPageActivity.EXTRA_FRAGMENT_TYPE, SettingPageActivity.TYPE_FRAGMENT_MODEL_MANAGEMENT))

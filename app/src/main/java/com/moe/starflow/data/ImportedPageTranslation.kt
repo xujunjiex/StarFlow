@@ -40,7 +40,8 @@ data class ImportedPageTranslation(
         const val STATE_IDLE = 0          // 未翻译
         const val STATE_TRANSLATING = 1   // 翻译中
         const val STATE_SUCCESS = 2       // 成功
-        const val STATE_FAILED = 3        // 失败
+        const val STATE_FAILED = 3        // 失败（保留已有 OCR/译文载荷）
+        const val STATE_OCR = 4           // OCR 完成，尚未翻译
     }
 }
 
@@ -147,6 +148,6 @@ interface ImportedPageTranslationDao {
      * state 字面量 0/1 与 [ImportedPageTranslation.STATE_IDLE] / [STATE_TRANSLATING] 对应
      * —— @Query 里不能引用 Kotlin 常量，改这两个值时必须同步改这里。
      */
-    @Query("UPDATE imported_page_translation SET state = 0 WHERE mangaId = :mangaId AND mangaKey = :mangaKey AND state = 1")
+    @Query("UPDATE imported_page_translation SET state = CASE WHEN sourceText IS NOT NULL AND trim(sourceText) <> '' THEN 4 ELSE 0 END WHERE mangaId = :mangaId AND mangaKey = :mangaKey AND state = 1")
     suspend fun resetTranslating(mangaId: Long, mangaKey: String)
 }

@@ -25,6 +25,7 @@ import android.graphics.BitmapFactory
 import com.google.android.material.tabs.TabLayout
 import com.moe.starflow.R
 import com.moe.starflow.data.HistoryEntry
+import com.moe.starflow.data.HistoryEntity
 import com.moe.starflow.data.TranslationCacheManager
 import com.moe.starflow.databinding.FragmentHistoryBinding
 import com.moe.starflow.utils.CustomPreference
@@ -528,7 +529,8 @@ class HistoryFragment : Fragment() {
      */
     private fun openMangaViewer(grouped: GroupedHistoryEntry) {
         val prefs = CustomPreference.getInstance(requireContext())
-        val isManage = prefs.getString("history_view_mode", "default") == "manage"
+        val isManage = prefs.getString("history_view_mode", "default") == "manage" ||
+            grouped.representative.processingState == HistoryEntity.PROCESS_OCR
         val intent = Intent(requireContext(), MangaViewerActivity::class.java).apply {
             putExtra(MangaViewerActivity.EXTRA_ENTRY_ID, grouped.representative.id)
             putExtra(MangaViewerActivity.EXTRA_ENTRY_IDS, grouped.allEntryIds.toLongArray())

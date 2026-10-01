@@ -211,9 +211,16 @@
     <string name="check_update">Check for Updates</string>
     <string name="cache_indicator">⚡ </string>
     <string name="about_page">About</string>
-    <string name="choose_mode">Select the translation mode you wish to use</string>
-    <string name="ocr_mode">Local OCR Recognition + Text Translation<font color="#55AEEA">(Recommended)</font></string>
+    <string name="choose_mode">Choose execution mode</string>
+    <string name="ocr_mode">Local OCR + text translation</string>
     <string name="ocr_mode_description">Perform offline OCR locally to extract text from the image, and then translate the text. Supports local machine offline text translation, as well as the use of preset cloud text translation APIs and custom cloud text translation APIs. Note that offline OCR recognition only supports Chinese,  English, Japanese, and Korean. This method consumes very little data traffic; if you choose to process it completely locally, you can even do it completely offline.</string>
+    <string name="translate_execution_translate">Translate</string>
+    <string name="translate_execution_translate_desc">Translate after recognition and show translated results</string>
+    <string name="translate_execution_ocr_only">OCR only</string>
+    <string name="translate_execution_ocr_only_desc">Recognize and save the original text without translating</string>
+    <string name="execution_ocr_only_auto_disabled">OCR-only mode: automatic translation is disabled. Tap OCR to recognize the current screen.</string>
+    <string name="execution_ocr_only_done">OCR complete</string>
+    <string name="execution_mode_busy">Stop OCR/translation tasks before changing execution mode</string>
     <string name="pic_mode">Upload Images Directly for Translation</string>
     <string name="pic_mode_description">Upload the screenshot directly to the cloud API for translation. It supports using the preset cloud image translation API, and also supports using the custom cloud image translation API. <font color="#55AEEA">It does not support local translation</font>. This method consumes relatively more data traffic.</string>
     <string name="nllb_name">NLLB Translate Model</string>
@@ -710,15 +717,15 @@
     <string name="sr_storage_note">📁 Models live in Android/data/com.moe.starflow/files/sr/ — deleting those files uninstalls the model (the app will show it as "not downloaded").\n🎯 Super resolution only applies to the manga reader. Screenshot/recording translation and the novel reader never upscale, and OCR always reads the original page.\n🗂 Upscaled pages are 2x images cached per page in files/sr_cache/. Switching model overwrites the same page, and deleting a manga removes them too.</string>
     <string name="sr_no_model_selected">No super-resolution model selected — download one below</string>
     <string name="sr_srmd_group">SRMD (2x)</string>
-    <string name="sr_srmd_group_desc">Highest fidelity (best measured PSNR) but about 3x slower.</string>
+    <string name="sr_srmd_group_desc">A single model that handles several degradations at once (blur, noise, rescaling). Two levels: with denoise / without denoise.</string>
     <string name="sr_cugan_group">Real-CUGAN (2x)</string>
-    <string name="sr_cugan_group_desc">Bilibili model — sharper but re-draws more. Conservative = mildest denoise; No denoise = none at all.</string>
+    <string name="sr_cugan_group_desc">Anime super-resolution model open-sourced by Bilibili. Three denoise strengths: no denoise, conservative, and denoise 3x.</string>
     <string name="sr_rsrgan_group">Real-ESRGAN anime 6B (4x)</string>
-    <string name="sr_rsrgan_group_desc">4x upscale (other families are 2x), 17MB, the most aggressive style change.</string>
+    <string name="sr_rsrgan_group_desc">Real-ESRGAN\'s 6B weights, optimised for anime images with a much smaller size than the general model. Outputs at 4x.</string>
     <string name="sr_w2x_group">waifu2x upconv_7</string>
-    <string name="sr_w2x_group_desc">Smallest (1.06MB) and fastest. Two weight sets: Anime for drawn pages, Photo for real photos, colour pages and heavy screentone. Pick No denoise for clean sources; Strong denoise — the level used in the official examples — for noisy or scanned pages.</string>
+    <string name="sr_w2x_group_desc">The anime super-resolution model from nagadomi/waifu2x; upconv_7 is its lightweight variant. Two weight sets: Anime for drawn pages, Photo for real photos, colour pages and heavy screentone. Pick No denoise for clean sources, Strong denoise for noisy or scanned pages.</string>
     <string name="sr_cunet_group">waifu2x cunet</string>
-    <string name="sr_cunet_group_desc">59 layers; more tolerant of noise and JPEG artifacts. Peaks at Strong denoise.</string>
+    <string name="sr_cunet_group_desc">waifu2x\'s deeper convolutional variant — handles noise and JPEG artifacts better, at a larger size and higher cost.</string>
     <string name="sr_active_switched">Switched to %1$s</string>
     <!-- Personalization · Super resolution -->
     <string name="sr_settings_category">Super resolution (AI upscaling)</string>
@@ -1089,6 +1096,8 @@
     <string name="reader_translate_empty">No translation produced</string>
     <string name="reader_toggle_desc">Toggle translated/original/plain</string>
     <string name="reader_translate_mode_title">Translation mode</string>
+    <string name="reader_execution_mode_translate">Execution mode: Translate</string>
+    <string name="reader_execution_mode_ocr_only">Execution mode: OCR only</string>
     <string name="reader_translate_mode_manual">Manual</string>
     <string name="reader_translate_mode_auto">Auto</string>
     <string name="reader_translate_mode_incremental">Incremental</string>
@@ -1111,8 +1120,11 @@
     <string name="reader_sr_chapter_running">Upscaling %1$d/%2$d</string>
     <string name="reader_sr_chapter_done">Upscaled</string>
     <string name="reader_sr_badge">%1$d/%2$d upscaled</string>
-    <string name="reader_sr_blocked_by_translate">Chapter translation is running. Pause or cancel it before upscaling.</string>
+    <string name="reader_sr_blocked_by_translate">Translation is running (chapter / auto / translate-ahead). Pause or cancel it before upscaling.</string>
     <string name="reader_translate_blocked_by_sr">Chapter upscaling is running. Cancel it before translating.</string>
+    <string name="reader_blocked_by_chapter_translate">Chapter translation is running. Double-tap to cancel it first.</string>
+    <string name="reader_blocked_by_chapter_sr">This chapter is being upscaled. Double-tap to cancel it first.</string>
+    <string name="reader_translate_force_stopped_chapter">Chapter translation was cancelled.</string>
     <string name="reader_sr_clear_chapter_title">Clear chapter upscaling</string>
     <string name="reader_sr_clear_chapter_msg">Delete the upscaled image of every page in this chapter? Pages go back to the original artwork.</string>
     <string name="reader_sr_clear_chapter_ok">Clear</string>
@@ -1155,9 +1167,7 @@
     <string name="sr_fail_exception">Something went wrong during super resolution</string>
     <string name="sr_enhancing_page">Upscaling page %1$d…</string>
     <string name="sr_done_page">Page %1$d upscaled</string>
-    <string name="sr_show_original_page">Page %1$d is showing the original again (upscaled file kept)</string>
-    <string name="sr_show_sr_page">Page %1$d is showing the upscaled base again</string>
-    <string name="reader_sr_base_label">Page base</string>
+            <string name="reader_sr_base_label">Page base</string>
     <string name="reader_sr_base_value_sr">Upscaled</string>
     <string name="reader_sr_base_value_original">Original</string>
     <string name="reader_sr_base_value_none">Not upscaled yet</string>
@@ -1390,6 +1400,7 @@
     <string name="toast_nothing_to_download">No images to download</string>
     <string name="history_created_format">Created %1$s</string>
     <string name="history_updated_format">Modified %1$s</string>
+    <string name="history_ocr_badge">OCR</string>
     <string name="toast_original_unavailable">Original image unavailable</string>
     <string name="toast_crop_unavailable">Crop region unavailable</string>
     <string name="toast_translating_wait">Translation in progress, please wait</string>

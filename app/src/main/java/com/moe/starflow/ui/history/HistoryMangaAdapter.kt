@@ -18,6 +18,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.card.MaterialCardView
 import com.moe.starflow.R
 import com.moe.starflow.data.HistoryEntry
+import com.moe.starflow.data.HistoryEntity
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -120,7 +121,9 @@ class HistoryMangaAdapter(
             }
 
             // 翻译器名（模型名）
-            tvTranslatorName.text = getDisplayName(itemView.context, entry.translatorName)
+            tvTranslatorName.text = if (entry.processingState == HistoryEntity.PROCESS_OCR)
+                itemView.context.getString(R.string.history_ocr_badge)
+            else getDisplayName(itemView.context, entry.translatorName)
 
             // pHash
             tvPhash.text = if (entry.pHash != 0L) String.format("%016X", entry.pHash) else ""

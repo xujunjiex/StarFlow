@@ -76,7 +76,7 @@
             app:layout_constraintStart_toStartOf="parent">
 
             <LinearLayout
-                android:id="@+id/ocrModeLayout"
+                android:id="@+id/translateModeLayout"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="15dp"
@@ -92,7 +92,7 @@
                     <TextView 
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="@string/ocr_mode"
+                        android:text="@string/translate_execution_translate"
                         android:textSize="14sp"
 						android:textStyle="bold"
                         android:textColorHighlight="@android:color/transparent"/>
@@ -101,8 +101,38 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
-                        android:text="@string/ocr_mode_description" />
+                        android:text="@string/translate_execution_translate_desc" />
 
+                </LinearLayout>
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/ocrOnlyModeLayout"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:background="@drawable/custom_radio_button_background"
+                android:orientation="horizontal"
+                android:padding="16dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:text="@string/translate_execution_ocr_only"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:text="@string/translate_execution_ocr_only_desc"
+                        android:textSize="14sp" />
                 </LinearLayout>
             </LinearLayout>
 

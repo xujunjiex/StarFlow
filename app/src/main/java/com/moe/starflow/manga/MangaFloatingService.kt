@@ -70,12 +70,16 @@ import com.moe.starflow.translate.screenshot.MediaProjectionIntentHolder
 import com.moe.starflow.translate.screenshot.ScreenshotProvider
 import com.moe.starflow.translate.screenshot.ScreenCapturePermissionActivity
 import com.moe.starflow.translate.TranslationTextAPI
+import com.moe.starflow.translate.isLocalHeavyEngine
 import com.moe.starflow.utils.Constants
 import com.moe.starflow.utils.ContextBudget
 import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.FloatingBallStyle
 import com.moe.starflow.utils.KeystoreManager
 import com.moe.starflow.utils.TextSimilarity
+import com.moe.starflow.utils.TranslationExecutionMode
+import com.moe.starflow.utils.TranslationBusyRegistry
+import com.moe.starflow.utils.LocalTranslationCoordinator
 import com.moe.starflow.utils.ThemeManager
 import com.moe.starflow.translate.TranslationStatusOverlay
 import com.moe.starflow.utils.UtilTools
@@ -1196,6 +1200,10 @@ class MangaFloatingService : LifecycleService() {
     }
 
     private fun startAutoTranslate() {
+        if (TranslationExecutionMode.isOcrOnly(this)) {
+            showToast(getString(R.string.execution_ocr_only_auto_disabled), true)
+            return
+        }
         // 只在 AccessibilityService 模式下检查无障碍服务
         val isMediaProjection = screenshotProvider is MediaProjectionProvider
         if (!isMediaProjection && AccessibilityServiceManager.getService() == null) {
@@ -1891,7 +1899,7 @@ class MangaFloatingService : LifecycleService() {
             val entry = CacheEntry(
                 type = TranslationCacheManager.MODE_MANGA,
                 sourceText = ocrTexts.ifEmpty { null },
-                translatedText = transTexts.ifEmpty { null },
+                translatedText = transTexts?.ifEmpty { null },
                 resultBitmap = null,
                 sourceLang = config.sourceLang,
                 targetLang = config.targetLang,
@@ -2061,6 +2069,7 @@ class MangaFloatingService : LifecycleService() {
     }
 
     private suspend fun processMangaScreenshot(bitmap: Bitmap, precomputedPHash: Long? = null, precomputedExtHashes: LongArray? = null) {
+        TranslationBusyRegistry.enter()
         try {
             LogCollector.d(TAG, "processMangaScreenshot: START")
             // 整个翻译流程开始（OCR 阶段），立刻标 Processing。
@@ -2445,6 +2454,31 @@ class MangaFloatingService : LifecycleService() {
             }
             LogCollector.d(TAG, "processMangaScreenshot: Step 2 - Detected ${allBubbles.size} bubbles")
 
+            if (TranslationExecutionMode.isOcrOnly(this)) {
+                // 仅 OCR：把原文作为 overlay 的显示文本，但保存记录时译文列保持为空。
+                val ocrBubbles = allBubbles.map { b ->
+                    val original = b.texts.map { TranslateUtils.cleanOcrText(it) }
+                        .filter { it.isNotBlank() }.joinToString("")
+                    TranslatedBubble(
+                        rect = b.rect,
+                        originalText = original,
+                        translatedText = original,
+                        backgroundColor = android.graphics.Color.TRANSPARENT,
+                        fontSize = b.fontSize,
+                        direction = b.direction,
+                        angle = b.angle,
+                        centerX = b.centerX,
+                        centerY = b.centerY,
+                    )
+                }
+                renderAndShowMergedOverlay(bitmap, ocrBubbles)
+                statusOverlay.showImmediate(getString(R.string.execution_ocr_only_done))
+                ballStateManager?.setState(BallStateManager.State.Completed)
+                autoTranslateEngine.lastTranslatedHash = currentPHash
+                autoTranslateEngine.lastTranslatedTime = System.currentTimeMillis()
+                return
+            }
+
             // Step 3: 翻译（走文本缓存匹配，自动/手动均适用）
             LogCollector.d(TAG, "processMangaScreenshot: Step 3 - Translate ${allBubbles.size} bubbles")
             // BUGFIX (2026-07-06): 调翻译函数之前立刻切 Translating 图标（之前遗漏，自动模式从 Idle 直接到翻译完成）。
@@ -2453,10 +2487,16 @@ class MangaFloatingService : LifecycleService() {
             // 该开关同时管辖两种增量显示：PP 系列/RT+manga 的分两批、Hy-MT2 的逐句流式。
             // 关闭时 Hy-MT2 不再逐句冒出，而是一次性返回全部译文（与分批关闭时的行为一致）。
             val incrementalEnabled = prefs.getBoolean("Incremental_Render", true)
-            val newTranslatedBubbles = batchPipeline(bitmap).translateWithCache(allBubbles) { partialBubbles ->
-                if (incrementalEnabled && partialBubbles.isNotEmpty()) {
-                    launchPartialRender { renderAndShowMergedOverlay(bitmap, partialBubbles, saveCache = false, showCopyButton = false) }
+            val localTranslation = translatorText?.isLocalHeavyEngine() == true
+            if (localTranslation) LocalTranslationCoordinator.mutex.lock()
+            val newTranslatedBubbles = try {
+                batchPipeline(bitmap).translateWithCache(allBubbles) { partialBubbles ->
+                    if (incrementalEnabled && partialBubbles.isNotEmpty()) {
+                        launchPartialRender { renderAndShowMergedOverlay(bitmap, partialBubbles, saveCache = false, showCopyButton = false) }
+                    }
                 }
+            } finally {
+                if (localTranslation) LocalTranslationCoordinator.mutex.unlock()
             }
             LogCollector.d(TAG, "processMangaScreenshot: Step 3 - done, got ${newTranslatedBubbles.size} results")
 
@@ -2487,6 +2527,7 @@ class MangaFloatingService : LifecycleService() {
                 pendingFullBitmap!!.recycle()
             }
             pendingFullBitmap = null
+            TranslationBusyRegistry.exit()
             // 自动翻译模式：确保 autoTranslateEngine.lastTranslatedHash 被更新，避免异常后状态机卡住
             if (autoTranslateEngine.isAutoTranslating && currentPHash != 0L) {
                 autoTranslateEngine.lastTranslatedHash = currentPHash
@@ -2618,7 +2659,8 @@ class MangaFloatingService : LifecycleService() {
             try {
                 val translatorName = TranslateUtils.buildTranslatorDisplayName(translatorText, config.detEngine, config.ocrEngine, prefs.getSharedPreferences())
                 val ocrTexts = newBubbles.mapIndexed { i, b -> "[${i + 1}] ${b.originalText}" }.joinToString("\n")
-                val transTexts = newBubbles.mapIndexed { i, b -> "[${i + 1}] ${b.translatedText}" }.joinToString("\n")
+                val ocrOnly = TranslationExecutionMode.isOcrOnly(this@MangaFloatingService)
+                val transTexts = if (ocrOnly) null else newBubbles.mapIndexed { i, b -> "[${i + 1}] ${b.translatedText}" }.joinToString("\n")
                 LogCollector.d(TAG, "保存缓存: ${newBubbles.size} 个气泡")
                 // 使用实际裁剪坐标（如果有 cropRect 或重翻）或全屏尺寸
                 val fullWidth = pendingFullBitmap?.width ?: original.width
@@ -2647,7 +2689,7 @@ class MangaFloatingService : LifecycleService() {
                 val entry = CacheEntry(
                     type = TranslationCacheManager.MODE_MANGA,
                     sourceText = ocrTexts.ifEmpty { null },
-                    translatedText = transTexts.ifEmpty { null },
+                    translatedText = transTexts?.ifEmpty { null },
                     resultBitmap = resultBitmap.copy(resultBitmap.config ?: Bitmap.Config.ARGB_8888, false),
                     sourceLang = config.sourceLang,
                     targetLang = config.targetLang,
@@ -2665,7 +2707,10 @@ class MangaFloatingService : LifecycleService() {
                     cropBottom = entryCropBottom,
                     bubbleRects = if (newBubbles.isNotEmpty()) {
                         TranslationCacheUtils.serializeBubbleRects(newBubbles)
-                    } else null
+                    } else null,
+                    processingState = if (TranslationExecutionMode.isOcrOnly(this@MangaFloatingService))
+                        com.moe.starflow.data.HistoryEntity.PROCESS_OCR
+                    else com.moe.starflow.data.HistoryEntity.PROCESS_TRANSLATED
                 )
                 if (isRetranslate && historyIdToDelete > 0) {
                     cacheManager.refreshCache(historyIdToDelete, entry, originalBitmap = saveOrigBmp)

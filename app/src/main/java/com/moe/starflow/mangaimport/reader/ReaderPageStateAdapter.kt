@@ -293,7 +293,10 @@ class ReaderPageStateAdapter(
 
     private fun matchesFilter(r: ImportedPageTranslation): Boolean = when (filter) {
         FILTER_DONE -> r.state == ImportedPageTranslation.STATE_SUCCESS
-        FILTER_ONGOING -> r.state == ImportedPageTranslation.STATE_TRANSLATING
+        FILTER_ONGOING -> r.state == ImportedPageTranslation.STATE_TRANSLATING ||
+            r.state == ImportedPageTranslation.STATE_OCR ||
+            (r.state == ImportedPageTranslation.STATE_FAILED &&
+                !r.sourceText.isNullOrBlank() && !r.bubbleRects.isNullOrBlank())
         FILTER_FAILED -> r.state == ImportedPageTranslation.STATE_FAILED
         else -> true
     }
@@ -476,6 +479,7 @@ class ReaderPageStateAdapter(
             row.stage == ChapterTaskStage.TRANSLATE ||
                 page.state == ImportedPageTranslation.STATE_TRANSLATING -> CardBackdrop.Tone.ACTIVE
             page.state == ImportedPageTranslation.STATE_FAILED -> CardBackdrop.Tone.FAILED
+            page.state == ImportedPageTranslation.STATE_OCR -> CardBackdrop.Tone.OCR
             else -> null
         }
         // ⚠️ 子行必须走 `applyNested`（方角 + 左侧 3dp 竖线 + 上下零间距）：
@@ -506,6 +510,7 @@ class ReaderPageStateAdapter(
                 ImportedPageTranslation.STATE_TRANSLATING -> R.string.reader_translate_state_translating
                 ImportedPageTranslation.STATE_SUCCESS -> R.string.reader_translate_state_success
                 ImportedPageTranslation.STATE_FAILED -> R.string.reader_translate_state_failed
+                ImportedPageTranslation.STATE_OCR -> R.string.reader_translate_state_ocr
                 else -> R.string.reader_translate_state_idle
             }))
             badge.setBackgroundResource(
@@ -513,6 +518,7 @@ class ReaderPageStateAdapter(
                     ImportedPageTranslation.STATE_SUCCESS -> R.drawable.bg_state_success
                     ImportedPageTranslation.STATE_FAILED -> R.drawable.bg_state_failed
                     ImportedPageTranslation.STATE_TRANSLATING -> R.drawable.bg_state_translating
+                    ImportedPageTranslation.STATE_OCR -> R.drawable.bg_state_ocr
                     else -> R.drawable.bg_state_idle
                 }
             )

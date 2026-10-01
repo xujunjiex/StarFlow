@@ -30,6 +30,11 @@ class ImportedPageTranslationDaoTest {
         mangaKey = "manga|1",
     )
 
+    /** 同 [row]，但**没有 OCR 原文** —— 用来区分 `resetTranslating` 的两条分支。 */
+    private fun rowWithoutSource(page: Int, state: Int) = row(page, state).copy(
+        sourceText = null, translatedText = null,
+    )
+
     @Test
     fun upsertThenGetRoundTrip() = runBlocking {
         db = Room.inMemoryDatabaseBuilder(
@@ -151,27 +156,46 @@ class ImportedPageTranslationDaoTest {
      * `resetTranslating` 是「记录永久卡在翻译中」的唯一兜底：该状态在翻译**开始时**写库，
      * 退出阅读器/崩溃会让它停在 TRANSLATING，之后该页既不显示译文也再也翻不了。
      *
-     * ⚠️ @Query 里写的是字面量 `state = 0` / `state = 1`（注解里引用不了 Kotlin 常量），
-     * 所以这条断言同时也锁住「常量值 ↔ 查询字面量」这个契约：改常量必须同步改查询。
+     * ⚠️ @Query 里写的是字面量（注解里引用不了 Kotlin 常量），所以这条断言同时也锁住
+     * 「常量值 ↔ 查询字面量」这个契约：改常量必须同步改查询。
+     *
+     * **契约（2026-10-01 起，随 `STATE_OCR` 一起变）**：卡在 `TRANSLATING` 的行按**有没有 OCR 原文**
+     * 决定退回哪里 ——
+     * - `sourceText` 非空（已经识别出字了）→ `STATE_OCR`(4)，面板显示「识别完成待翻译」，
+     *   用户不用重跑一遍 OCR
+     * - `sourceText` 空（OCR 都没做完）→ `STATE_IDLE`(0)，与以前一样
+     *
+     * 以前是一律回 `IDLE`；`STATE_OCR` 加了之后那句 `SET state = 0` 必须跟着改成 `CASE WHEN …`
+     * （两边不同步的话，识别结果会被静默丢掉、用户重开会发现又要重新 OCR 一遍）。
      */
     @Test
     fun resetTranslatingOnlyClearsTranslatingOfSameMangaKey() = runBlocking {
         db = Room.inMemoryDatabaseBuilder(
             RuntimeEnvironment.getApplication(), TranslationHistoryDatabase::class.java
         ).build()
-        // 契约守卫：查询把 1 当 TRANSLATING、0 当 IDLE
+        // 契约守卫：查询把 1 当 TRANSLATING、0 当 IDLE、4 当 OCR
         assertEquals(1, ImportedPageTranslation.STATE_TRANSLATING)
         assertEquals(0, ImportedPageTranslation.STATE_IDLE)
+        assertEquals(4, ImportedPageTranslation.STATE_OCR)
 
         dao().upsert(row(1, ImportedPageTranslation.STATE_TRANSLATING))
         dao().upsert(row(2, ImportedPageTranslation.STATE_SUCCESS))
         dao().upsert(row(3, ImportedPageTranslation.STATE_FAILED))
+        // 没有 OCR 原文的那一行：应当退回 IDLE（另一条分支）
+        dao().upsert(rowWithoutSource(5, ImportedPageTranslation.STATE_TRANSLATING))
         // 别的漫画（指纹不同）不得被清
         dao().upsert(row(4, ImportedPageTranslation.STATE_TRANSLATING).copy(mangaKey = "other|9"))
 
         dao().resetTranslating(7L, "manga|1")
 
-        assertEquals(ImportedPageTranslation.STATE_IDLE, dao().get(7L, 1)?.state)
+        assertEquals(
+            "有 OCR 原文的中断行退回「OCR 完成待翻译」，不能丢识别结果",
+            ImportedPageTranslation.STATE_OCR, dao().get(7L, 1)?.state,
+        )
+        assertEquals(
+            "没有 OCR 原文的中断行退回「未翻译」",
+            ImportedPageTranslation.STATE_IDLE, dao().get(7L, 5)?.state,
+        )
         assertEquals(ImportedPageTranslation.STATE_SUCCESS, dao().get(7L, 2)?.state)
         assertEquals(ImportedPageTranslation.STATE_FAILED, dao().get(7L, 3)?.state)
         assertEquals(

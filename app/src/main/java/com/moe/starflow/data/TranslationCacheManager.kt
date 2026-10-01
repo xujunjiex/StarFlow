@@ -619,7 +619,8 @@ class TranslationCacheManager(private val context: Context) {
             originalImagePath = originalImagePath,
             isRetranslated = entry.isRetranslated,
             bubbleRects = entry.bubbleRects,
-            updatedAt = now
+            updatedAt = now,
+            processingState = entry.processingState,
         )
         val historyId = dao.insertHistory(historyEntity)
         LogCollector.d(TAG, "saveToCache: 插入 history, id=$historyId, sessionId=$inheritedSessionId, createdAt=$inheritedCreatedAt")
@@ -693,7 +694,8 @@ class TranslationCacheManager(private val context: Context) {
             bubbleRects = newBubbleRects,
             translatorName = newTranslatorName,
             updatedAt = now,
-            isRetranslated = isRetranslated
+            isRetranslated = isRetranslated,
+            processingState = HistoryEntity.PROCESS_TRANSLATED,
         )
         dao.updateHistory(updatedHistory)
 
@@ -752,6 +754,22 @@ class TranslationCacheManager(private val context: Context) {
         var inheritedCreatedAt = System.currentTimeMillis()
         val oldHistory = dao.findHistoryBySourceText(sourceText.trim(), sourceLang, targetLang)
         if (oldHistory != null) {
+            // OCR-only 不应因为重新识别同一文本而删除已有译文：保留译文载荷，
+            // 只把处理状态标成 OCR，后续切回翻译模式可继续复用它。
+            if (newEntry.processingState == HistoryEntity.PROCESS_OCR && !oldHistory.translatedText.isNullOrBlank()) {
+                val now = System.currentTimeMillis()
+                dao.updateHistory(oldHistory.copy(
+                    sourceText = newEntry.sourceText,
+                    sourceLang = newEntry.sourceLang,
+                    targetLang = newEntry.targetLang,
+                    translatorName = newEntry.translatorName,
+                    processingState = HistoryEntity.PROCESS_OCR,
+                    updatedAt = now,
+                    lastSessionId = newEntry.lastSessionId,
+                ))
+                dao.findCacheByHistoryId(oldHistory.id)?.let { dao.updateLastAccessed(it.id, now) }
+                return@withContext
+            }
             // sessionId 继承旧值（按创建排序位置不变）
             inheritedSessionId = oldHistory.sessionId
             inheritedCreatedAt = oldHistory.createdAt
@@ -1169,6 +1187,7 @@ data class CacheEntry(
     val cropBottom: Int = 0,    // 裁剪区域下边界
     val isRetranslated: Boolean = false,
     val bubbleRects: String? = null,  // JSON: [{"l":10,"t":20,"r":100,"b":60}, ...] 气泡位置数据
+    val processingState: Int = HistoryEntity.PROCESS_TRANSLATED,
 )
 
 data class HistoryEntry(
@@ -1194,6 +1213,7 @@ data class HistoryEntry(
     val originalImagePath: String? = null,
     val isRetranslated: Boolean = false,
     val bubbleRects: String? = null,  // JSON: [{"l":10,"t":20,"r":100,"b":60}, ...]
+    val processingState: Int = HistoryEntity.PROCESS_TRANSLATED,
 )
 
 data class HistoryGroup(
@@ -1230,5 +1250,6 @@ fun HistoryEntity.toHistoryEntry() = HistoryEntry(
     updatedAt = updatedAt,
     originalImagePath = originalImagePath,
     isRetranslated = isRetranslated,
-    bubbleRects = bubbleRects
+    bubbleRects = bubbleRects,
+    processingState = processingState,
 )

@@ -43,7 +43,10 @@ class ReaderIncrementalConcurrencyGuardTest {
             .substringBefore("private fun reportQueuePhase(")
         val acquire = body.indexOf("slots.acquire()")
         val launch = body.indexOf("launch {")
-        val call = body.indexOf("translatePhase(page, prep, label = \"增量\")")
+        // ⚠️ 只匹配到 `label = "增量"` 为止 —— 增量那条路现在还带 `allowAutoSr = true`
+        //    （用户口径 2026-10-01：「翻译时自动超分」只管手动/自动/增量三个页面模式），
+        //    把后面的参数一起写进来这里就会误报。
+        val call = body.indexOf("translatePhase(page, prep, label = \"增量\"")
         // 注意：runWindow 里在 launch **之前**也有 slots.release()（早退分支），
         // 所以"翻译那一次的释放"要从 launch 之后再找。
         val release = body.indexOf("slots.release()", launch.coerceAtLeast(0))

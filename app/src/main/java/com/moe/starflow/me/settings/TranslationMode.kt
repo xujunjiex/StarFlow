@@ -29,6 +29,11 @@ import androidx.fragment.app.Fragment
 import com.moe.starflow.R
 import com.moe.starflow.databinding.FragmentTranslationModeBinding
 import com.moe.starflow.utils.CustomPreference
+import com.moe.starflow.utils.TranslationExecutionMode
+import com.moe.starflow.manga.OcrLock
+import com.moe.starflow.translate.batch.TranslationJobRegistry
+import com.moe.starflow.utils.UiUtils
+import com.moe.starflow.utils.TranslationBusyRegistry
 
 
 class TranslationMode : Fragment() {
@@ -48,13 +53,20 @@ class TranslationMode : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        // 强制使用OCR模式，隐藏图片翻译模式
+        // 图片直传翻译暂不暴露；保留 Translate_Mode=0 兼容旧逻辑。
         prefs.setInt("Translate_Mode", 0)
-        binding.ocrModeLayout.setBackgroundResource(R.drawable.custom_radio_button_selected_background)
         binding.picModeLayout.visibility = View.GONE
+        applyExecutionMode(animate = false)
 
-        binding.ocrModeLayout.setOnClickListener {
-            // OCR模式已固定，无需切换
+        binding.translateModeLayout.setOnClickListener {
+            if (!canChangeExecutionMode()) return@setOnClickListener
+            TranslationExecutionMode.set(requireContext(), TranslationExecutionMode.TRANSLATE)
+            applyExecutionMode(animate = true)
+        }
+        binding.ocrOnlyModeLayout.setOnClickListener {
+            if (!canChangeExecutionMode()) return@setOnClickListener
+            TranslationExecutionMode.set(requireContext(), TranslationExecutionMode.OCR_ONLY)
+            applyExecutionMode(animate = true)
         }
 
         // 截图方式选择
@@ -66,6 +78,34 @@ class TranslationMode : Fragment() {
         binding.accessibilityLayout.setOnClickListener {
             prefs.setString("Screenshot_Method", "1")
             updateScreenshotSelection(animate = true)
+        }
+    }
+
+    private fun canChangeExecutionMode(): Boolean {
+        val busy = OcrLock.isRunning || TranslationJobRegistry.hasActiveJobs.value || TranslationBusyRegistry.isBusy
+        if (busy) {
+            UiUtils.showToast(requireContext(), getString(R.string.execution_mode_busy), isShort = false)
+            return false
+        }
+        return true
+    }
+
+    private fun applyExecutionMode(animate: Boolean) {
+        val translate = binding.translateModeLayout
+        val ocrOnly = binding.ocrOnlyModeLayout
+        val selected = if (TranslationExecutionMode.isOcrOnly(requireContext())) ocrOnly else translate
+        val unselected = if (selected === ocrOnly) translate else ocrOnly
+        selected.setBackgroundResource(R.drawable.custom_radio_button_selected_background)
+        unselected.setBackgroundResource(R.drawable.custom_radio_button_background)
+        if (animate) {
+            val bounceIn = AnimationUtils.loadAnimation(requireContext(), R.anim.card_select_bounce_in)
+            val bounceOut = AnimationUtils.loadAnimation(requireContext(), R.anim.card_select_bounce_out)
+            bounceIn.setAnimationListener(object : android.view.animation.Animation.AnimationListener {
+                override fun onAnimationStart(animation: android.view.animation.Animation?) {}
+                override fun onAnimationRepeat(animation: android.view.animation.Animation?) {}
+                override fun onAnimationEnd(animation: android.view.animation.Animation?) { selected.startAnimation(bounceOut) }
+            })
+            selected.startAnimation(bounceIn)
         }
     }
 

@@ -33,6 +33,7 @@ import com.moe.starflow.translate.LanguageSelectionDialog
 import com.moe.starflow.translate.TranslateTools
 import com.moe.starflow.utils.Constants
 import com.moe.starflow.utils.CustomPreference
+import com.moe.starflow.utils.TranslationExecutionMode
 import com.moe.starflow.utils.MangaFontSize
 import com.moe.starflow.sr.SrModelManager
 import com.moe.starflow.sr.SrSettings
@@ -109,6 +110,8 @@ class ReaderMenuCallbacks(
     val onRotate: () -> Unit,
     val onDownload: () -> Unit,
     val onSettings: () -> Unit,
+    /** 点击执行模式标记，跳转到全局翻译设置。 */
+    val onOpenExecutionModeSettings: () -> Unit = {},
     val onTranslateMode: (Int) -> Unit = {},
     /** 「连续滑动」按钮再次点击：在 原图 ↔ 译文 之间切换（不进模式，只换显示态）。 */
     val onWebtoonTranslated: (Boolean) -> Unit = {},
@@ -380,6 +383,14 @@ class ReaderMenuSheet(
             getString(R.string.reader_translate_ocr_model, ReaderTranslationInfo.ocrModelLabel(requireContext()))
         v.findViewById<TextView>(R.id.tv_translator_model_row).text =
             getString(R.string.reader_translate_translator_model, ReaderTranslationInfo.translatorModelLabel(requireContext()))
+        v.findViewById<TextView>(R.id.tv_translate_mode_label).apply {
+            text = getString(
+                if (TranslationExecutionMode.isOcrOnly(requireContext()))
+                    R.string.reader_execution_mode_ocr_only
+                else R.string.reader_execution_mode_translate
+            )
+            setOnClickListener { cb.onOpenExecutionModeSettings() }
+        }
     }
 
     /** Webtoon(3) 下翻页动画/自动翻页不生效：即时禁用置灰，切回分页模式自动恢复。 */
