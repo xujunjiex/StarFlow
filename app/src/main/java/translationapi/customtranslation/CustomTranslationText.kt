@@ -18,6 +18,7 @@
 package translationapi.customtranslation
 
 import translationapi.InFlightRequests
+import translationapi.TranslationResponseDiagnostics
 
 import android.util.Log
 import com.moe.starflow.me.apiconfig.CustomTextAPIConfig
@@ -37,6 +38,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 class CustomTranslationText(private val config: CustomTextAPIConfig): TranslationTextAPI {
@@ -115,13 +117,18 @@ class CustomTranslationText(private val config: CustomTextAPIConfig): Translatio
 
         // 执行请求
         client.newCall(request).execute().use { response ->
+            val responseBody = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                throw Exception("Unexpected response ${response.code}")
+                throw TranslationResponseDiagnostics.httpError(
+                    "Custom text API", response.code, responseBody, response.header("Content-Type")
+                )
             }
 
-            // 解析响应
-            val responseBody = response.body?.string()
-                ?: throw Exception("Empty response body")
+            if (responseBody.isBlank()) {
+                throw TranslationResponseDiagnostics.emptyBody(
+                    "Custom text API", response.code, response.header("Content-Type")
+                )
+            }
 
             return parseResponse(responseBody)
         }
@@ -152,13 +159,18 @@ class CustomTranslationText(private val config: CustomTextAPIConfig): Translatio
 
         // 执行请求
         client.newCall(request).execute().use { response ->
+            val responseBody = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                throw Exception("Unexpected response ${response.code}")
+                throw TranslationResponseDiagnostics.httpError(
+                    "Custom text API", response.code, responseBody, response.header("Content-Type")
+                )
             }
 
-            // 解析响应
-            val responseBody = response.body?.string()
-                ?: throw Exception("Empty response body")
+            if (responseBody.isBlank()) {
+                throw TranslationResponseDiagnostics.emptyBody(
+                    "Custom text API", response.code, response.header("Content-Type")
+                )
+            }
 
             return parseResponse(responseBody)
         }
@@ -178,9 +190,17 @@ class CustomTranslationText(private val config: CustomTextAPIConfig): Translatio
                 }
             }
 
-            current.toString()
+            val translated = current.toString()
+            if (current == JSONObject.NULL || translated.isBlank()) {
+                throw IOException(
+                    "Custom text API returned an empty value at response path '${config.jsonResponsePath}'; " +
+                        "response=${TranslationResponseDiagnostics.responsePreview(responseBody)}"
+                )
+            }
+            translated
         } catch (e: Exception) {
-            throw Exception("Failed to parse response: ${e.message}")
+            if (e is IOException) throw e
+            throw TranslationResponseDiagnostics.invalidResponse("Custom text API", responseBody, e)
         }
     }
 

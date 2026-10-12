@@ -18,6 +18,7 @@
 package translationapi.customtranslation
 
 import translationapi.InFlightRequests
+import translationapi.TranslationResponseDiagnostics
 
 import android.graphics.Bitmap
 import android.util.Base64
@@ -45,6 +46,7 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 class CustomTranslationImage(private val config: CustomPicAPIConfig): TranslationPicAPI {
@@ -202,13 +204,18 @@ class CustomTranslationImage(private val config: CustomPicAPIConfig): Translatio
     private fun executeRequest(request: Request): String {
         // 执行请求
         client.newCall(request).execute().use { response ->
+            val responseBody = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                throw Exception("Unexpected response ${response.code}")
+                throw TranslationResponseDiagnostics.httpError(
+                    "Custom image API", response.code, responseBody, response.header("Content-Type")
+                )
             }
 
-            // 解析响应
-            val responseBody = response.body?.string()
-                ?: throw Exception("Empty response body")
+            if (responseBody.isBlank()) {
+                throw TranslationResponseDiagnostics.emptyBody(
+                    "Custom image API", response.code, response.header("Content-Type")
+                )
+            }
 
             return parseResponse(responseBody)
         }
@@ -228,9 +235,17 @@ class CustomTranslationImage(private val config: CustomPicAPIConfig): Translatio
                 }
             }
 
-            current.toString()
+            val translated = current.toString()
+            if (current == JSONObject.NULL || translated.isBlank()) {
+                throw IOException(
+                    "Custom image API returned an empty value at response path '${config.jsonResponsePath}'; " +
+                        "response=${TranslationResponseDiagnostics.responsePreview(responseBody)}"
+                )
+            }
+            translated
         } catch (e: Exception) {
-            throw Exception("Failed to parse response: ${e.message}")
+            if (e is IOException) throw e
+            throw TranslationResponseDiagnostics.invalidResponse("Custom image API", responseBody, e)
         }
     }
 

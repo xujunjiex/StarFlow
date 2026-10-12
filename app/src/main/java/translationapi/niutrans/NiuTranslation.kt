@@ -20,6 +20,7 @@ package translationapi.niutrans
 import android.util.Log
 import com.moe.starflow.translate.TranslationResult
 import com.moe.starflow.translate.TranslationTextAPI
+import translationapi.TranslationResponseDiagnostics
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -84,13 +85,18 @@ class NiuTranslation(private val apiKey: String) : TranslationTextAPI {
 
         // 执行请求
         client.newCall(request).execute().use { response ->
+            val responseBody = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                throw IOException("Unexpected response ${response.code}")
+                throw TranslationResponseDiagnostics.httpError(
+                    "NiuTrans", response.code, responseBody, response.header("Content-Type")
+                )
             }
 
-            // 解析响应
-            val responseBody = response.body?.string()
-                ?: throw IOException("Empty response body")
+            if (responseBody.isBlank()) {
+                throw TranslationResponseDiagnostics.emptyBody(
+                    "NiuTrans", response.code, response.header("Content-Type")
+                )
+            }
 
             Log.d("NIUTRANS", "Response: $responseBody")
             return parseResponse(responseBody)
@@ -109,14 +115,23 @@ class NiuTranslation(private val apiKey: String) : TranslationTextAPI {
             // 检查是否有错误
             if (jsonObject.has("error_code")) {
                 val errorCode = jsonObject.getString("error_code")
-                val errorMsg = jsonObject.getString("error_msg")
+                val errorMsg = TranslationResponseDiagnostics.safeMessage(jsonObject.getString("error_msg"))
                 throw IOException("Translation error (code: $errorCode): $errorMsg")
             }
 
             // 获取翻译结果
-            return jsonObject.getString("tgt_text")
+            val translated = jsonObject.getString("tgt_text")
+            if (translated.isBlank()) {
+                throw IOException(
+                    "NiuTrans returned a blank 'tgt_text'; " +
+                        "response=${TranslationResponseDiagnostics.responsePreview(responseBody)}"
+                )
+            }
+            return translated
+        } catch (e: IOException) {
+            throw e
         } catch (e: Exception) {
-            throw IOException("Failed to parse response: ${e.message}")
+            throw TranslationResponseDiagnostics.invalidResponse("NiuTrans", responseBody, e)
         }
     }
 

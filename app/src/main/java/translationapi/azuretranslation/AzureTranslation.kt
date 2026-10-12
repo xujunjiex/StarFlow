@@ -20,6 +20,7 @@ package translationapi.azuretranslation
 import android.util.Log
 import com.moe.starflow.translate.TranslationResult
 import com.moe.starflow.translate.TranslationTextAPI
+import translationapi.TranslationResponseDiagnostics
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -97,13 +98,18 @@ class AzureTranslation(private val subscriptionKey: String) : TranslationTextAPI
 
         // 执行请求
         client.newCall(request).execute().use { response ->
+            val responseBody = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                throw IOException("Unexpected response ${response.code}")
+                throw TranslationResponseDiagnostics.httpError(
+                    "Azure Translator", response.code, responseBody, response.header("Content-Type")
+                )
             }
 
-            // 解析响应
-            val responseBody = response.body?.string()
-                ?: throw IOException("Empty response body")
+            if (responseBody.isBlank()) {
+                throw TranslationResponseDiagnostics.emptyBody(
+                    "Azure Translator", response.code, response.header("Content-Type")
+                )
+            }
 
             Log.d("AZURE", "Response: $responseBody")
             return parseResponse(responseBody)
@@ -130,19 +136,31 @@ class AzureTranslation(private val subscriptionKey: String) : TranslationTextAPI
             if (translationObject.has("error")) {
                 val error = translationObject.getJSONObject("error")
                 val errorCode = error.getString("code")
-                val errorMessage = error.getString("message")
+                val errorMessage = TranslationResponseDiagnostics.safeMessage(error.getString("message"))
                 throw IOException("Translation error (code: $errorCode): $errorMessage")
             }
 
             // 获取translations数组中的第一个翻译结果
             val translations = translationObject.getJSONArray("translations")
             if (translations.length() == 0) {
-                throw IOException("No translation results")
+                throw IOException(
+                    "Azure Translator returned no translation entries; " +
+                        "response=${TranslationResponseDiagnostics.responsePreview(responseBody)}"
+                )
             }
 
-            return translations.getJSONObject(0).getString("text")
+            val translated = translations.getJSONObject(0).getString("text")
+            if (translated.isBlank()) {
+                throw IOException(
+                    "Azure Translator returned a blank 'translations[0].text'; " +
+                        "response=${TranslationResponseDiagnostics.responsePreview(responseBody)}"
+                )
+            }
+            return translated
+        } catch (e: IOException) {
+            throw e
         } catch (e: Exception) {
-            throw IOException("Failed to parse response: ${e.message}")
+            throw TranslationResponseDiagnostics.invalidResponse("Azure Translator", responseBody, e)
         }
     }
 

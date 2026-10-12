@@ -20,8 +20,10 @@ package translationapi.volctranslation
 import android.util.Log
 import com.moe.starflow.translate.TranslationResult
 import com.moe.starflow.translate.TranslationTextAPI
+import translationapi.TranslationResponseDiagnostics
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
 import java.util.Date
 
 /**
@@ -54,7 +56,13 @@ class VolcTranslation(private val ak: String, private val sk: String): Translati
                 val result = translate(list, modifyTargetLanguage(sourceLanguage), modifyTargetLanguage(targetLanguage))
                 callback(TranslationResult.Success(result))
             } catch (e: Exception) {
-                callback(TranslationResult.Error(e))
+                val message = e.message.orEmpty()
+                val surfaced = if (message.startsWith("Request failed with code ")) {
+                    IOException("VolcEngine Translate ${TranslationResponseDiagnostics.safeMessage(message)}", e)
+                } else {
+                    e
+                }
+                callback(TranslationResult.Error(surfaced))
             }
         }.apply { start() }
     }
@@ -94,28 +102,46 @@ class VolcTranslation(private val ak: String, private val sk: String): Translati
             version = "2020-06-01"
         )
 
-        // 解析响应
-        val jsonResponse = JSONObject(response)
+        try {
+            val jsonResponse = JSONObject(response)
 
-        // 检查是否有错误
-        val metadata = jsonResponse.getJSONObject("ResponseMetadata")
-        if (metadata.has("Error") && !metadata.isNull("Error")) {
-            val error = metadata.getJSONObject("Error")
-            throw Exception("Code：${error.getString("Code")} ${error.getString("Message")} ")
+            // 检查是否有错误
+            val metadata = jsonResponse.optJSONObject("ResponseMetadata")
+                ?: throw IllegalStateException("ResponseMetadata is missing")
+            if (metadata.has("Error") && !metadata.isNull("Error")) {
+                val error = metadata.optJSONObject("Error")
+                    ?: throw IllegalStateException("ResponseMetadata.Error is not an object")
+                throw IOException(
+                    "VolcEngine Translate API error: ${error.optString("Code", "unknown")} " +
+                        TranslationResponseDiagnostics.safeMessage(error.optString("Message", "Unknown error"))
+                )
+            }
+
+            // 解析翻译结果
+            val translationList = jsonResponse.optJSONArray("TranslationList")
+                ?: throw IllegalStateException("TranslationList is missing")
+
+            // 在本应用中，长度为1
+            val sb = StringBuilder()
+            Log.d("VOLC", translationList.length().toString())
+            for (i in 0 until translationList.length()) {
+                val item = translationList.getJSONObject(i)
+                sb.append(item.getString("Translation"))
+            }
+
+            val translated = sb.toString()
+            if (translated.isBlank()) {
+                throw IOException(
+                    "VolcEngine Translate returned no translation text in 'TranslationList[*].Translation'; " +
+                        "response=${TranslationResponseDiagnostics.responsePreview(response)}"
+                )
+            }
+            return translated
+        } catch (e: IOException) {
+            throw e
+        } catch (e: Exception) {
+            throw TranslationResponseDiagnostics.invalidResponse("VolcEngine Translate", response, e)
         }
-
-        // 解析翻译结果
-        val translationList = jsonResponse.getJSONArray("TranslationList")
-
-        // 在本应用中，长度为1
-        val sb = StringBuilder()
-        Log.d("VOLC", translationList.length().toString())
-        for (i in 0 until translationList.length()) {
-            val item = translationList.getJSONObject(i)
-            sb.append(item.getString("Translation"))
-        }
-
-        return sb.toString()
     }
 
     private fun modifyTargetLanguage(to: String): String = when (to) {

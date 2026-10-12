@@ -20,6 +20,7 @@ package translationapi.tencentcloud
 import android.util.Log
 import com.moe.starflow.translate.TranslationResult
 import com.moe.starflow.translate.TranslationTextAPI
+import translationapi.TranslationResponseDiagnostics
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -95,13 +96,19 @@ class TencentTranslationText(
 
             // 执行请求
             client.newCall(request).execute().use { response ->
+                val responseBody = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
-                    throw IOException("Unexpected response ${response.code}")
+                    throw TranslationResponseDiagnostics.httpError(
+                        "Tencent Cloud text translation", response.code, responseBody,
+                        response.header("Content-Type")
+                    )
                 }
 
-                // 解析响应
-                val responseBody = response.body?.string()
-                    ?: throw IOException("Empty response body")
+                if (responseBody.isBlank()) {
+                    throw TranslationResponseDiagnostics.emptyBody(
+                        "Tencent Cloud text translation", response.code, response.header("Content-Type")
+                    )
+                }
 
                 Log.d("TENCENT", "Response: $responseBody")
                 return parseResponse(responseBody)
@@ -119,7 +126,10 @@ class TencentTranslationText(
             // 检查是否有错误信息
             if (jsonObject.has("Error")) {
                 val error = jsonObject.getJSONObject("Error")
-                throw IOException("${error.getString("Code")}: ${error.getString("Message")}")
+                throw IOException(
+                    "Tencent Cloud API error ${error.getString("Code")}: " +
+                        TranslationResponseDiagnostics.safeMessage(error.getString("Message"))
+                )
             }
 
             // 获取Response对象
@@ -128,13 +138,27 @@ class TencentTranslationText(
             // 检查Response中是否有错误
             if (response.has("Error")) {
                 val error = response.getJSONObject("Error")
-                throw IOException("${error.getString("Code")}: ${error.getString("Message")}")
+                throw IOException(
+                    "Tencent Cloud API error ${error.getString("Code")}: " +
+                        TranslationResponseDiagnostics.safeMessage(error.getString("Message"))
+                )
             }
 
             // 返回翻译结果
-            return response.getString("TargetText")
+            val translated = response.getString("TargetText")
+            if (translated.isBlank()) {
+                throw IOException(
+                    "Tencent Cloud text translation returned a blank 'Response.TargetText'; " +
+                        "response=${TranslationResponseDiagnostics.responsePreview(responseBody)}"
+                )
+            }
+            return translated
+        } catch (e: IOException) {
+            throw e
         } catch (e: Exception) {
-            throw IOException("Failed to parse response: ${e.message}")
+            throw TranslationResponseDiagnostics.invalidResponse(
+                "Tencent Cloud text translation", responseBody, e
+            )
         }
     }
 

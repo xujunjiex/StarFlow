@@ -1,6 +1,7 @@
 package translationapi.doubaotranslation
 
 import translationapi.InFlightRequests
+import translationapi.TranslationResponseDiagnostics
 
 import android.util.Log
 import com.moe.starflow.me.apiconfig.OpenAIProviderConfig
@@ -116,11 +117,19 @@ class DoubaoTranslation(
         if (!response.isSuccessful) {
             val errorBody = response.body?.string() ?: ""
             response.close()
-            throw IOException("Request failed ${response.code}: $errorBody")
+            throw TranslationResponseDiagnostics.httpError(
+                "Doubao Responses API", response.code, errorBody, response.header("Content-Type")
+            )
         }
 
-        val responseBody = response.body?.string() ?: throw IOException("Empty response body")
+        val responseBody = response.body?.string().orEmpty()
+        val contentType = response.header("Content-Type")
+        val statusCode = response.code
         response.close()
+
+        if (responseBody.isBlank()) {
+            throw TranslationResponseDiagnostics.emptyBody("Doubao Responses API", statusCode, contentType)
+        }
 
         Log.d(TAG, "Response: $responseBody")
         parseResponse(responseBody)
@@ -132,25 +141,54 @@ class DoubaoTranslation(
 
             if (jsonObject.has("error")) {
                 val error = jsonObject.getJSONObject("error")
-                val message = error.optString("message", "Unknown error")
+                val message = TranslationResponseDiagnostics.safeMessage(
+                    error.optString("message", "Unknown error")
+                )
                 throw IOException("Doubao API error: $message")
             }
 
-            val output = jsonObject.getJSONArray("output")
-            if (output.length() == 0) throw IOException("No output in response")
+            val output = jsonObject.optJSONArray("output")
+                ?: throw TranslationResponseDiagnostics.invalidResponse(
+                    "Doubao Responses API", responseBody, IllegalStateException("output is missing")
+                )
+            if (output.length() == 0) {
+                throw IOException(
+                    "Doubao Responses API returned an empty 'output' array " +
+                        "(status=${jsonObject.optString("status", "unknown")}); " +
+                        "response=${TranslationResponseDiagnostics.responsePreview(responseBody)}"
+                )
+            }
 
-            val firstOutput = output.getJSONObject(0)
-            val content = firstOutput.getJSONArray("content")
-            if (content.length() == 0) throw IOException("No content in response")
+            val contentBlocks = mutableListOf<JSONObject>()
+            val blockTypes = mutableListOf<String>()
+            for (outputIndex in 0 until output.length()) {
+                val outputItem = output.optJSONObject(outputIndex) ?: continue
+                val content = outputItem.optJSONArray("content") ?: continue
+                for (contentIndex in 0 until content.length()) {
+                    val block = content.optJSONObject(contentIndex) ?: continue
+                    contentBlocks += block
+                    block.optString("type").takeIf(String::isNotBlank)?.let(blockTypes::add)
+                }
+            }
 
-            val text = content.getJSONObject(0).getString("text").trim()
-            if (text.isEmpty()) throw IOException("Empty translation result")
+            val text = contentBlocks.mapNotNull { block ->
+                val type = block.optString("type")
+                if (type.isNotBlank() && type != "output_text") return@mapNotNull null
+                block.optString("text").takeIf(String::isNotBlank)
+            }.joinToString("\n").trim()
+            if (text.isEmpty()) {
+                throw IOException(
+                    "Doubao Responses API returned no translation text in output content " +
+                        "(block_types=${blockTypes.distinct()}, status=${jsonObject.optString("status", "unknown")}); " +
+                        "response=${TranslationResponseDiagnostics.responsePreview(responseBody)}"
+                )
+            }
 
             return text
         } catch (e: IOException) {
             throw e
         } catch (e: Exception) {
-            throw IOException("Failed to parse response: ${e.message}")
+            throw TranslationResponseDiagnostics.invalidResponse("Doubao Responses API", responseBody, e)
         }
     }
 

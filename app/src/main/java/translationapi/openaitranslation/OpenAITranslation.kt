@@ -18,6 +18,7 @@
 package translationapi.openaitranslation
 
 import translationapi.InFlightRequests
+import translationapi.TranslationResponseDiagnostics
 
 import android.content.Context
 import com.moe.starflow.R
@@ -205,15 +206,24 @@ class OpenAITranslation(
 
         if (!response.isSuccessful) {
             val errorBody = response.body?.string() ?: ""
+            val contentType = response.header("Content-Type")
+            val statusCode = response.code
             response.close()
             // 和「获取模型列表」走同一条文案（服务端说明优先），中文/英文随应用语言
-            throw IOException(extractServerError(errorBody, response.code))
+            throw IOException(extractServerError(errorBody, statusCode, contentType))
         }
 
         // 解析响应
-        val responseBody = response.body?.string()
-            ?: throw IOException("Empty response body")
+        val responseBody = response.body?.string().orEmpty()
+        val contentType = response.header("Content-Type")
+        val statusCode = response.code
         response.close()
+
+        if (responseBody.isBlank()) {
+            throw TranslationResponseDiagnostics.emptyBody(
+                "OpenAI-compatible API (model=$model)", statusCode, contentType
+            )
+        }
 
         LogCollector.d(TAG, "Response: $responseBody")
         parseResponse(responseBody)
@@ -311,37 +321,68 @@ class OpenAITranslation(
     }
 
     private fun parseResponse(responseBody: String): String {
-        try {
-            val jsonObject = JSONObject(responseBody)
-
-            // 检查是否有错误
-            if (jsonObject.has("error")) {
-                val error = jsonObject.getJSONObject("error")
-                val message = error.optString("message", "Unknown error")
-                val type = error.optString("type", "unknown")
-                throw IOException("OpenAI API error ($type): $message")
-            }
-
-            // 获取翻译结果
-            val choices = jsonObject.getJSONArray("choices")
-            if (choices.length() == 0) {
-                throw IOException("No translation result in response")
-            }
-
-            val firstChoice = choices.getJSONObject(0)
-            val message = firstChoice.getJSONObject("message")
-            val content = message.getString("content").trim()
-
-            LogCollector.d(TAG, "翻译结果: $content")
-
-            if (content.isEmpty()) {
-                throw IOException("Empty translation result")
-            }
-
-            return content
+        val jsonObject = try {
+            JSONObject(responseBody)
         } catch (e: Exception) {
-            throw IOException("Failed to parse response: ${e.message}")
+            throw TranslationResponseDiagnostics.invalidResponse("OpenAI-compatible API", responseBody, e)
         }
+
+        // 检查是否有错误
+        if (jsonObject.has("error")) {
+            val error = jsonObject.optJSONObject("error")
+            val message = error?.optString("message")?.takeIf(String::isNotBlank)?.let {
+                TranslationResponseDiagnostics.safeMessage(it)
+            } ?: "Unknown error; response=${TranslationResponseDiagnostics.responsePreview(responseBody)}"
+            val type = error?.optString("type")?.takeIf(String::isNotBlank) ?: "unknown"
+            throw IOException("OpenAI API error ($type): $message")
+        }
+
+        // 获取翻译结果
+        val choices = jsonObject.optJSONArray("choices")
+            ?: throw IOException(
+                "OpenAI-compatible API response is valid JSON but has no 'choices' array; " +
+                    "model=$model, fields=${jsonObject.keys().asSequence().toList()}, " +
+                    "response=${TranslationResponseDiagnostics.responsePreview(responseBody)}"
+            )
+        if (choices.length() == 0) {
+            throw IOException(
+                "OpenAI-compatible API returned an empty 'choices' array; model=$model, " +
+                    "response=${TranslationResponseDiagnostics.responsePreview(responseBody)}"
+            )
+        }
+
+        val firstChoice = choices.optJSONObject(0)
+            ?: throw TranslationResponseDiagnostics.invalidResponse(
+                "OpenAI-compatible API (model=$model)", responseBody,
+                IllegalStateException("choices[0] is not an object")
+            )
+        val message = firstChoice.optJSONObject("message")
+        val rawContent = message?.opt("content")
+        val content = when (rawContent) {
+            is String -> rawContent.trim()
+            is JSONArray -> (0 until rawContent.length()).mapNotNull { index ->
+                rawContent.optJSONObject(index)?.optString("text")?.takeIf(String::isNotBlank)
+            }.joinToString("\n").trim()
+            else -> ""
+        }
+
+        LogCollector.d(TAG, "翻译结果: $content")
+
+        if (content.isEmpty()) {
+            val finishReason = firstChoice.optString("finish_reason", "unknown")
+            val refusal = message?.optString("refusal")?.takeIf(String::isNotBlank)
+            val messageState = if (message == null) "message is missing" else "message.content is missing or blank"
+            val refusalDetail = refusal?.let {
+                "; refusal=${TranslationResponseDiagnostics.responsePreview(it)}"
+            }.orEmpty()
+            throw IOException(
+                "OpenAI-compatible API returned no translation text: $messageState " +
+                    "(model=$model, finish_reason=$finishReason$refusalDetail); " +
+                    "response=${TranslationResponseDiagnostics.responsePreview(responseBody)}"
+            )
+        }
+
+        return content
     }
 
     override fun cancelTranslation() {
@@ -372,18 +413,42 @@ class OpenAITranslation(
                 modelsClient.newCall(request).execute().use { response ->
                     val responseBody = response.body?.string().orEmpty()
                     if (!response.isSuccessful) {
-                        val detail = extractServerError(responseBody, response.code)
+                        val detail = extractServerError(
+                            responseBody, response.code, response.header("Content-Type")
+                        )
                         LogCollector.e(TAG, "获取模型列表失败 $detail")
                         throw IOException(detail)
                     }
 
-                    val jsonObject = JSONObject(responseBody)
-                    val data = jsonObject.getJSONArray("data")
+                    if (responseBody.isBlank()) {
+                        throw TranslationResponseDiagnostics.emptyBody(
+                            "OpenAI-compatible model-list API", response.code, response.header("Content-Type")
+                        )
+                    }
+                    val jsonObject = try {
+                        JSONObject(responseBody)
+                    } catch (e: Exception) {
+                        throw TranslationResponseDiagnostics.invalidResponse(
+                            "OpenAI-compatible model-list API", responseBody, e
+                        )
+                    }
+                    val data = jsonObject.optJSONArray("data")
+                        ?: throw TranslationResponseDiagnostics.invalidResponse(
+                            "OpenAI-compatible model-list API", responseBody,
+                            IllegalStateException("data array is missing")
+                        )
                     val models = mutableListOf<String>()
 
                     for (i in 0 until data.length()) {
                         val model = data.getJSONObject(i)
-                        models.add(model.getString("id"))
+                        val id = model.optString("id")
+                        if (id.isBlank()) {
+                            throw TranslationResponseDiagnostics.invalidResponse(
+                                "OpenAI-compatible model-list API", responseBody,
+                                IllegalStateException("data[$i].id is missing or blank")
+                            )
+                        }
+                        models.add(id)
                     }
 
                     LogCollector.d(TAG, "获取模型列表成功: ${models.size} 个")
@@ -394,7 +459,12 @@ class OpenAITranslation(
             } catch (e: Exception) {
                 LogCollector.e(TAG, "获取模型列表异常: $url", e)
                 withContext(Dispatchers.Main) {
-                    callback(null, e.message)
+                    callback(
+                        null,
+                        TranslationResponseDiagnostics.safeMessage(
+                            e.message?.takeIf(String::isNotBlank) ?: e.javaClass.simpleName
+                        )
+                    )
                 }
             }
         }
@@ -407,17 +477,22 @@ class OpenAITranslation(
      * （如 DeepSeek 的 "Authentication Fails, Your api key: xxx is invalid"），
      * 直接把原始 JSON 丢给用户既难看又难读。取不到才退回状态码 + 响应体片段。
      */
-    private fun extractServerError(body: String, code: Int): String {
+    private fun extractServerError(body: String, code: Int, contentType: String? = null): String {
         val message = try {
             JSONObject(body).optJSONObject("error")?.optString("message").orEmpty()
         } catch (e: Exception) {
             ""   // 响应体不是 JSON（网关/代理返回的 HTML 等）
         }
+        val detail = if (message.isNotBlank()) {
+            TranslationResponseDiagnostics.safeMessage(message)
+        } else {
+            TranslationResponseDiagnostics.responsePreview(body)
+        }
+        val typeSuffix = contentType?.takeIf(String::isNotBlank)?.let { " ($it)" }.orEmpty()
         return when {
             message.isNotBlank() && (code == 401 || code == 403) ->
-                appContext.getString(R.string.api_http_unauthorized, code, message)
-            message.isNotBlank() -> appContext.getString(R.string.api_http_error, code, message)
-            else -> appContext.getString(R.string.api_http_error, code, body.take(200))
+                appContext.getString(R.string.api_http_unauthorized, code, detail) + typeSuffix
+            else -> appContext.getString(R.string.api_http_error, code, detail) + typeSuffix
         }
     }
 }

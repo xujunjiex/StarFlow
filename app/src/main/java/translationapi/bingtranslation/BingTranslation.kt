@@ -20,6 +20,7 @@ package translationapi.bingtranslation
 import android.util.Log
 import com.moe.starflow.translate.TranslationResult
 import com.moe.starflow.translate.TranslationTextAPI
+import translationapi.TranslationResponseDiagnostics
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
 import org.json.JSONArray
@@ -130,14 +131,19 @@ class BingTranslation : TranslationTextAPI {
 
         // 执行请求
         client.newCall(request).execute().use { response ->
+            val responseBody = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                throw IOException("Unexpected response ${response.code}")
+                throw TranslationResponseDiagnostics.httpError(
+                    "Bing", response.code, responseBody, response.header("Content-Type")
+                )
+            }
+            if (responseBody.isBlank()) {
+                throw TranslationResponseDiagnostics.emptyBody(
+                    "Bing", response.code, response.header("Content-Type")
+                )
             }
 
-            val responseBody = response.body?.string()
-                ?: throw IOException("Empty response body")
-
-            return parseTranslationResponse(responseBody)
+            return parseTranslationResponse(responseBody, response.code)
         }
     }
 
@@ -155,20 +161,38 @@ class BingTranslation : TranslationTextAPI {
             .build()
 
         client.newCall(request).execute().use { response ->
+            val html = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                throw IOException("Failed to get tokens, response: ${response.code}")
+                throw TranslationResponseDiagnostics.httpError(
+                    "Bing token endpoint", response.code, html, response.header("Content-Type")
+                )
             }
 
-            val html = response.body?.string()
-                ?: throw IOException("Empty response when getting tokens")
+            if (html.isBlank()) {
+                throw TranslationResponseDiagnostics.emptyBody(
+                    "Bing token endpoint", response.code, response.header("Content-Type")
+                )
+            }
 
             // 提取必要的token
             val igMatcher = IG_PATTERN.matcher(html)
             val iidMatcher = IID_PATTERN.matcher(html)
             val tokenMatcher = TOKEN_PATTERN.matcher(html)
 
-            if (!igMatcher.find() || !iidMatcher.find() || !tokenMatcher.find()) {
-                throw IOException("Failed to extract necessary tokens from response")
+            val hasIg = igMatcher.find()
+            val hasIid = iidMatcher.find()
+            val hasTokenPair = tokenMatcher.find()
+            if (!hasIg || !hasIid || !hasTokenPair) {
+                val missing = buildList {
+                    if (!hasIg) add("IG")
+                    if (!hasIid) add("IID")
+                    if (!hasTokenPair) add("key/token pair")
+                }
+                throw IOException(
+                    "Bing token page did not contain required fields: ${missing.joinToString()}; " +
+                        "HTTP ${response.code}, Content-Type=${response.header("Content-Type") ?: "unknown"} " +
+                        "(response page may have changed or returned a block page)"
+                )
             }
 
             // 解析token参数
@@ -192,18 +216,30 @@ class BingTranslation : TranslationTextAPI {
         }
     }
 
-    private fun parseTranslationResponse(responseBody: String): String {
+    private fun parseTranslationResponse(responseBody: String, statusCode: Int): String {
         try {
             val jsonArray = JSONArray(responseBody)
             if (jsonArray.length() == 0) {
-                throw IOException("Empty translation response")
+                throw IOException(
+                    "Bing returned an empty translation array (HTTP $statusCode); " +
+                        "response=${TranslationResponseDiagnostics.responsePreview(responseBody)}"
+                )
             }
-            return jsonArray.getJSONObject(0)
+            val translated = jsonArray.getJSONObject(0)
                 .getJSONArray("translations")
                 .getJSONObject(0)
                 .getString("text")
+            if (translated.isBlank()) {
+                throw IOException(
+                    "Bing returned a blank 'translations[0].text'; " +
+                        "response=${TranslationResponseDiagnostics.responsePreview(responseBody)}"
+                )
+            }
+            return translated
+        } catch (e: IOException) {
+            throw e
         } catch (e: Exception) {
-            throw IOException("Failed to parse translation response: ${e.message}")
+            throw TranslationResponseDiagnostics.invalidResponse("Bing", responseBody, e)
         }
     }
 

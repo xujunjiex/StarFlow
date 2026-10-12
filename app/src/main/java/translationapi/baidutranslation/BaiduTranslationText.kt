@@ -20,10 +20,11 @@ package translationapi.baidutranslation
 import android.util.Log
 import com.moe.starflow.translate.TranslationResult
 import com.moe.starflow.translate.TranslationTextAPI
+import translationapi.TranslationResponseDiagnostics
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okio.IOException
+import java.io.IOException
 import org.json.JSONObject
 import java.nio.charset.Charset
 import java.security.MessageDigest
@@ -87,14 +88,16 @@ class BaiduTranslationText(private val appId: String, private val secretKey: Str
 
         // 执行请求
         client.newCall(request).execute().use { response ->
+            val responseBody = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                throw IOException("Unexpected response ${response.code}")
+                throw TranslationResponseDiagnostics.httpError("Baidu Translate", response.code, responseBody)
             }
 
-            // 解析响应
-            val responseBody = response.body?.string()
-                ?: throw IOException("Empty response body")
-
+            if (responseBody.isBlank()) {
+                throw TranslationResponseDiagnostics.emptyBody(
+                    "Baidu Translate", response.code, response.header("Content-Type")
+                )
+            }
 
             Log.d("BAIDU", responseBody)
             return parseResponse(responseBody)
@@ -107,24 +110,39 @@ class BaiduTranslationText(private val appId: String, private val secretKey: Str
 
             // 检查是否有错误
             if (jsonObject.has("error_code")) {
-                throw IOException(jsonObject.getString("error_msg"))
+                throw IOException(
+                    "Baidu Translate API error ${jsonObject.optString("error_code", "unknown")}: " +
+                        TranslationResponseDiagnostics.safeMessage(jsonObject.optString("error_msg"))
+                )
             }
 
             // 获取翻译结果
             val transResult = jsonObject.getJSONArray("trans_result")
             if (transResult.length() == 0) {
-                throw IOException("Empty translation result")
+                throw IOException(
+                    "Baidu Translate returned no translation entries (trans_result is empty); " +
+                        "response=${TranslationResponseDiagnostics.responsePreview(responseBody)}"
+                )
             }
 
             // 返回翻译文本
-            return buildString {
+            val translated = buildString {
                 for (i in 0 until transResult.length()) {
                     if (i > 0) append("\n")
                     append(transResult.getJSONObject(i).getString("dst"))
                 }
             }
+            if (translated.isBlank()) {
+                throw IOException(
+                    "Baidu Translate returned translation entries but all 'dst' text was blank; " +
+                        "response=${TranslationResponseDiagnostics.responsePreview(responseBody)}"
+                )
+            }
+            return translated
+        } catch (e: IOException) {
+            throw e
         } catch (e: Exception) {
-            throw IOException("Failed to parse response: ${e.message}")
+            throw TranslationResponseDiagnostics.invalidResponse("Baidu Translate", responseBody, e)
         }
     }
 

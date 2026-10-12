@@ -18,6 +18,7 @@
 package translationapi.tencentcloud
 
 import translationapi.InFlightRequests
+import translationapi.TranslationResponseDiagnostics
 
 import android.graphics.Bitmap
 import android.util.Base64
@@ -109,13 +110,20 @@ class TencentTranslationImage(
                 // 执行请求
                 client.newCall(request).execute().use { response ->
                     ensureActive()
+                    val responseBody = response.body?.string().orEmpty()
 
                     if (!response.isSuccessful) {
-                        throw IOException("Unexpected response ${response.code}")
+                        throw TranslationResponseDiagnostics.httpError(
+                            "Tencent Cloud image translation", response.code, responseBody,
+                            response.header("Content-Type")
+                        )
                     }
 
-                    val responseBody = response.body?.string()
-                        ?: throw IOException("Empty response body")
+                    if (responseBody.isBlank()) {
+                        throw TranslationResponseDiagnostics.emptyBody(
+                            "Tencent Cloud image translation", response.code, response.header("Content-Type")
+                        )
+                    }
 
                     Log.d("TENCENT_PIC", "Response: $responseBody")
 
@@ -144,30 +152,48 @@ class TencentTranslationImage(
     }
 
     private fun parseResponse(responseBody: String): String {
-        val jsonObject = JSONObject(responseBody)
+        try {
+            val jsonObject = JSONObject(responseBody)
 
-        // 检查错误
-        if (!jsonObject.has("Response")) {
-            throw IOException("Invalid response format")
-        }
-
-        val response = jsonObject.getJSONObject("Response")
-        if (response.has("Error")) {
-            val error = response.getJSONObject("Error")
-            throw IOException("${error.getString("Code")}: ${error.getString("Message")}")
-        }
-
-        // 获取翻译结果
-        val imageRecord = response.getJSONObject("ImageRecord")
-        val records = imageRecord.getJSONArray("Value")
-
-        // 合并所有翻译结果
-        return buildString {
-            for (i in 0 until records.length()) {
-                val record = records.getJSONObject(i)
-                if (isNotEmpty()) append("\n")
-                append(record.getString("TargetText"))
+            // 检查错误
+            if (!jsonObject.has("Response")) {
+                throw IOException("Tencent Cloud image translation response is missing 'Response'")
             }
+
+            val response = jsonObject.getJSONObject("Response")
+            if (response.has("Error")) {
+                val error = response.getJSONObject("Error")
+                throw IOException(
+                    "Tencent Cloud API error ${error.getString("Code")}: " +
+                        TranslationResponseDiagnostics.safeMessage(error.getString("Message"))
+                )
+            }
+
+            // 获取翻译结果
+            val imageRecord = response.getJSONObject("ImageRecord")
+            val records = imageRecord.getJSONArray("Value")
+
+            // 合并所有翻译结果
+            val translated = buildString {
+                for (i in 0 until records.length()) {
+                    val record = records.getJSONObject(i)
+                    if (isNotEmpty()) append("\n")
+                    append(record.getString("TargetText"))
+                }
+            }
+            if (translated.isBlank()) {
+                throw IOException(
+                    "Tencent Cloud image translation returned no 'ImageRecord.Value[*].TargetText'; " +
+                        "response=${TranslationResponseDiagnostics.responsePreview(responseBody)}"
+                )
+            }
+            return translated
+        } catch (e: IOException) {
+            throw e
+        } catch (e: Exception) {
+            throw TranslationResponseDiagnostics.invalidResponse(
+                "Tencent Cloud image translation", responseBody, e
+            )
         }
     }
 

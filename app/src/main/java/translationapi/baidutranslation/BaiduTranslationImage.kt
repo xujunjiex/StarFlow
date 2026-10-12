@@ -18,6 +18,7 @@
 package translationapi.baidutranslation
 
 import translationapi.InFlightRequests
+import translationapi.TranslationResponseDiagnostics
 
 import android.graphics.Bitmap
 import com.moe.starflow.translate.TranslationPicAPI
@@ -156,14 +157,19 @@ class BaiduTranslationImage(
         // 执行请求
         client.newCall(request).execute().use { response ->
             ensureActive()
+            val responseBody = response.body?.string().orEmpty()
 
             if (!response.isSuccessful) {
-                throw IOException("Unexpected response ${response.code}")
+                throw TranslationResponseDiagnostics.httpError(
+                    "Baidu image translation", response.code, responseBody, response.header("Content-Type")
+                )
             }
 
-            // 解析响应
-            val responseBody = response.body?.string()
-                ?: throw IOException("Empty response body")
+            if (responseBody.isBlank()) {
+                throw TranslationResponseDiagnostics.emptyBody(
+                    "Baidu image translation", response.code, response.header("Content-Type")
+                )
+            }
 
             Log.d("BAIDU_PIC", "Response: $responseBody")
             parseResponse(responseBody)
@@ -171,16 +177,32 @@ class BaiduTranslationImage(
     }
 
     private fun parseResponse(responseBody: String): String {
-        val jsonObject = JSONObject(responseBody)
+        try {
+            val jsonObject = JSONObject(responseBody)
 
-        // 检查是否有错误
-        if (jsonObject.has("error_code") && jsonObject.getString("error_code") != "0") {
-            throw IOException("${jsonObject.getString("error_code")}: ${jsonObject.getString("error_msg")}")
+            // 检查是否有错误
+            if (jsonObject.has("error_code") && jsonObject.getString("error_code") != "0") {
+                throw IOException(
+                    "Baidu image translation API error ${jsonObject.getString("error_code")}: " +
+                        TranslationResponseDiagnostics.safeMessage(jsonObject.optString("error_msg"))
+                )
+            }
+
+            // 获取翻译结果
+            val data = jsonObject.getJSONObject("data")
+            val translated = data.getString("sumDst")
+            if (translated.isBlank()) {
+                throw IOException(
+                    "Baidu image translation returned a blank 'data.sumDst'; " +
+                        "response=${TranslationResponseDiagnostics.responsePreview(responseBody)}"
+                )
+            }
+            return translated // 返回未分段的完整译文
+        } catch (e: IOException) {
+            throw e
+        } catch (e: Exception) {
+            throw TranslationResponseDiagnostics.invalidResponse("Baidu image translation", responseBody, e)
         }
-
-        // 获取翻译结果
-        val data = jsonObject.getJSONObject("data")
-        return data.getString("sumDst") // 返回未分段的完整译文
     }
 
     private suspend fun getMD5File(file: File): String = withContext(Dispatchers.IO) {
