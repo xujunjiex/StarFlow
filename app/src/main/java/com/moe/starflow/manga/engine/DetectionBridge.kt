@@ -20,6 +20,7 @@ import com.moe.starflow.manga.types.DetectedBubble
 import com.moe.starflow.manga.types.MLKitDebugResult
 import com.moe.starflow.manga.types.RTDetrV2DebugResult
 import com.moe.starflow.utils.LogCollector
+import com.moe.starflow.utils.MangaFontSize
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
@@ -313,24 +314,6 @@ object DetectionBridge {
             (m[1] * m[6] - m[0] * m[7]) * invDet,
             (m[0] * m[4] - m[1] * m[3]) * invDet
         )
-    }
-
-    /**
-     * 使用 ML Kit 检测+识别（或 manga-ocr 混合模式）。
-     * 这是原有逻辑的封装，保持向后兼容。
-     */
-    suspend fun detectWithMLKit(
-        bitmap: Bitmap,
-        language: String,
-        useMangaOcr: Boolean
-    ): List<TextBlockInfo> {
-        return if (useMangaOcr && MangaOcrBridge.isAvailable()) {
-            LogCollector.d(TAG, "使用 ML Kit 检测 + manga-ocr 识别")
-            MangaOcrBridge.recognizeWithLocation(bitmap, language)
-        } else {
-            LogCollector.d(TAG, "使用 ML Kit 检测 + 识别")
-            OCRBridge.recognizeWithLocation(language, bitmap)
-        }
     }
 
     private fun cropBitmap(bitmap: Bitmap, rect: Rect): Bitmap {
@@ -819,14 +802,20 @@ object DetectionBridge {
         ocrResults: List<TextBlockInfo>,
         textDirection: TextDirection = TextDirection.VERTICAL_RL
     ): List<BubbleRegion> {
-        return ocrResults.filter { it.boundingBox != null }.map { block ->
+        return ocrResults.filter { block ->
+            block.boundingBox?.let { it.width() > 0 && it.height() > 0 } == true
+        }.mapNotNull { block ->
             val rect = block.boundingBox!!
             val isVertical = block.inferredVertical()  // 真实边长推断（抗旋转），缺失才 AABB
+            val direction = if (isVertical) textDirection else TextDirection.HORIZONTAL
+            val fontSize = block.fontSize?.takeIf { it.isFinite() && it > 0f }
+                ?: MangaFontSize.estimateAutoSizeCap(rect, block.text, direction)
+                ?: return@mapNotNull null
             BubbleRegion(
                 rect = rect,
                 texts = listOf(block.text),
-                fontSize = if (isVertical) rect.width().toFloat() else rect.height().toFloat(),
-                direction = if (isVertical) textDirection else TextDirection.HORIZONTAL,
+                fontSize = fontSize,
+                direction = direction,
                 angle = block.angle,
                 centerX = block.centerX,
                 centerY = block.centerY
@@ -1071,7 +1060,8 @@ object DetectionBridge {
                     isVertical = region.direction == TextDirection.VERTICAL_RL || region.direction == TextDirection.VERTICAL_LR,
                     angle = region.angle,
                     centerX = region.center.x,
-                    centerY = region.center.y
+                    centerY = region.center.y,
+                    fontSize = region.fontSize
                 )
             }
 
@@ -1192,7 +1182,8 @@ object DetectionBridge {
                     isVertical = region.direction == TextDirection.VERTICAL_RL || region.direction == TextDirection.VERTICAL_LR,
                     angle = region.angle,
                     centerX = region.center.x,
-                    centerY = region.center.y
+                    centerY = region.center.y,
+                    fontSize = region.fontSize
                 )
             }
 

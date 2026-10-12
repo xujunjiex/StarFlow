@@ -973,7 +973,9 @@ class TranslateFragment : Fragment() {
             dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
         } else {
             // 源语言(type=1)：按当前 OCR 组排序置灰；目标语言(type=2)：按翻译模型过滤
-            val ocrGroup = if (type == 1) com.moe.starflow.utils.OcrEngineManager.getOcrEngineGroup(prefs.getSharedPreferences()) else null
+            val ocrGroup = if (type == 1) {
+                com.moe.starflow.utils.OcrEngineManager.getGameVideoOcrEngineGroup(prefs.getSharedPreferences())
+            } else null
             val locales = TranslateTools.getLanguagesList(requireContext(), type, ocrGroup) ?: return
             LogCollector.d(TAG, locales.toString())
             val disabledTargets = if (type == 2) TranslateTools.getDisabledTargetLangs(prefs) else emptySet()
@@ -1016,6 +1018,8 @@ class TranslateFragment : Fragment() {
                 onDisabledClick = when (type) {
                     1 -> { locale ->
                         val supportedNames = com.moe.starflow.manga.config.OcrEngineGroup.entries
+                            .map { com.moe.starflow.utils.OcrEngineManager.gameVideoGroup(it) }
+                            .distinct()
                             .filter { it.sourceLangs.contains(locale.getOriCode()) }
                             .joinToString(" / ") { getString(it.labelRes) }
                         val msg = if (supportedNames.isEmpty()) {

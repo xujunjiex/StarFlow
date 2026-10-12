@@ -9,9 +9,7 @@ import com.moe.starflow.translate.screenshot.*
 
 import android.content.Context
 import android.graphics.Bitmap
-import com.moe.starflow.manga.engine.MangaOcrBridge
 import com.moe.starflow.manga.engine.OCRTextRecognizer
-import com.moe.starflow.manga.engine.MangaOcrModelFiles
 import com.moe.starflow.manga.engine.PPOcrV5Engine
 import com.moe.starflow.manga.engine.PPOcrV6Engine
 import com.moe.starflow.utils.CustomPreference
@@ -21,8 +19,8 @@ import kotlinx.coroutines.withContext
 
 /**
  * 游戏翻译 OCR 引擎封装。
- * 封装 MLKit(0)、PP-OCRv5(1)、manga-ocr(2)、PP-OCRv6(3) 四种引擎，
- * 统一调用接口，支持引擎切换和自动降级。
+ * 封装 ML Kit、PP-OCRv5、PP-OCRv6 三种游戏/视频引擎。
+ * RT-MANGA 组在此模式下由 OcrEngineGroup 映射到纯 ML Kit。
  */
 class GameOcrEngine(
     private val context: Context,
@@ -44,24 +42,20 @@ class GameOcrEngine(
      *   横屏时同一段竖排文字在帧里转了 90°、顺序会整段翻过来。这里统一补一次
      *   阅读顺序排序（横排恒左→右，不受设置影响），让「识别顺序」不再随屏幕方向变。
      *
-     *   ⚠️ **ML Kit / manga-ocr 不接，且不要接**：ML Kit 的 block 是它自己版式分析的
-     *   产物（官方文档：*"a contiguous set of text lines, such as a paragraph or a
-     *   **column**"*）—— 一个竖排整列常常就是**一个 block**，块内读序封在它手里、
-     *   我们插不进去。曾试图按 `line.boundingBox` 重排，表现为「设置时灵时不灵」，
-     *   比不支持更难解释，已删除（见 `OCRTextRecognizer` 的说明）。manga-ocr 借 ML Kit
-     *   定位，同理不接。
+     *   ML Kit 使用其自身阅读顺序；PP-OCRv5/v6 按检测框几何排序。
      * @return 识别出的文字
      */
     suspend fun recognize(
         bitmap: Bitmap,
         verticalDirection: TextDirection = TextDirection.VERTICAL_RL
     ): String {
-        val engine = com.moe.starflow.utils.OcrEngineManager.getOcrEngineGroup(prefs.getSharedPreferences()).gameEngine
+        val engine = com.moe.starflow.utils.OcrEngineManager.getGameVideoOcrEngineGroup(
+            prefs.getSharedPreferences()
+        ).gameEngine
         val language = prefs.getString("Source_Language", "ja")
 
         return when (engine) {
             1 -> recognizeWithPPOcrV5(bitmap, language, verticalDirection)
-            2 -> recognizeWithMangaOcr(bitmap, language)
             3 -> recognizeWithPPOcrV6(bitmap, language, verticalDirection)
             else -> recognizeWithMLKit(bitmap, language)
         }
@@ -89,17 +83,6 @@ class GameOcrEngine(
             result.toReadOrderText(verticalDirection)
         } else {
             LogCollector.w(TAG, "PP-OCRv5 不支持语言: $language, 回退 ML Kit")
-            recognizeWithMLKit(bitmap, language)
-        }
-    }
-
-    private suspend fun recognizeWithMangaOcr(bitmap: Bitmap, language: String): String {
-        initMangaOcrIfNeeded()
-        return if (MangaOcrBridge.isAvailable()) {
-            val textBlocks = MangaOcrBridge.recognizeWithLocation(bitmap, language)
-            textBlocks.joinToString("\n") { it.text }
-        } else {
-            LogCollector.w(TAG, "manga-ocr 未初始化, 回退 ML Kit")
             recognizeWithMLKit(bitmap, language)
         }
     }
@@ -174,20 +157,4 @@ class GameOcrEngine(
         }
     }
 
-    private suspend fun initMangaOcrIfNeeded() {
-        LogCollector.d(TAG, "initMangaOcrIfNeeded: isAvailable=${MangaOcrBridge.isAvailable()}")
-        if (MangaOcrBridge.isAvailable()) return
-        try {
-            if (MangaOcrModelFiles.isModelDownloaded(context)) {
-                LogCollector.d(TAG, "initMangaOcrIfNeeded: 开始初始化 manga-ocr")
-                onMessage?.invoke("manga-ocr 识别器初始化中...")
-                MangaOcrBridge.initializeDownloaded(context)
-                LogCollector.d(TAG, "initMangaOcrIfNeeded: manga-ocr 初始化完成")
-                onMessage?.invoke("manga-ocr 识别器初始化成功")
-            }
-        } catch (e: Exception) {
-            LogCollector.e(TAG, "manga-ocr 识别器初始化失败", e)
-            onMessage?.invoke("manga-ocr 识别器初始化失败: ${e.message}")
-        }
-    }
 }

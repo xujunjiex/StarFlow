@@ -17,8 +17,8 @@
 **悬浮窗语言切换：**
 游戏和漫画模式的悬浮菜单都支持运行时切换源语言。
 - **循环仅在常用的 4 个源语言间转：中(繁)zh-TW → ja → en → ko**（`OcrEngineGroup.FLOATING_COMMON_LANGS`）；完整源语言目录只在主页可选
-- **逻辑统一收敛到 `OcrEngineManager.cycleFloatingSourceLang`**，游戏/漫画共用一份实现（原两个 `cycleSourceLang` 已删）
-- 只循环「常用 ∩ 当前 OCR 组支持」的语言，跳过不支持的（V6 不支持 ko 则循环不含 ko；RT_MANGA 仅 ja → 无可切换返回 null 提示「无可用的 OCR 模型」）
+- **逻辑统一收敛到 `OcrEngineManager.cycleFloatingSourceLang`**，游戏/视频和漫画共用一份实现，按各自实际 OCR 路径筛选语言
+- 只循环「常用 ∩ 当前模式 OCR 引擎支持」的语言，跳过不支持的；RT-MANGA 在漫画模式仅支持 ja，在游戏/视频模式映射为 ML Kit
 - 悬浮窗与主页**读写同一个 `Source_Language` pref**，一一对应；悬浮窗切换后主页选中同步更新
 - 自动翻译时禁用切换，显示提示
 - 切换后不关闭菜单，显示新的语言名称
@@ -44,13 +44,13 @@ IDLE（跳过OCR）──像素变化──→ CHANGED ──稳定1帧──→
 - `pixel_stability_check`：翻页稳定性检测开关
 
 **OCR 引擎（游戏模式）：**
-- MLKit(0)、PP-OCRv5(1)、manga-ocr(2)、PP-OCRv6(3)
-- 切换顺序：v5 → v6 → MLKit → manga（`FloatingBallService.engineCycle` 数组 + `engineLabel()` 统一标签映射 —— **两个符号都在 `translate/FloatingBallService.kt`，不在 `GameOcrEngine` 里**）
-- MLKit 和 PP-OCRv5 固定使用直接合并（不保留换行）
+- ML Kit、PP-OCRv5、PP-OCRv6；选中共享组 RT-MANGA 时，游戏/视频路径固定解析为纯 ML Kit
+- 悬浮切换顺序：v5 → v6 → ML Kit（`FloatingBallService.engineCycle` + `engineLabel()`）；旧引擎编号 `2` 迁移到 ML Kit
+- ML Kit 和 PP-OCRv5 固定使用直接合并（不保留换行）
 
 **竖排读取方向（`Game_Text_Direction`）** —— 与漫画的 `Manga_Text_Direction` 是**独立两项**：
 - 个性化页「翻译结果设置」；`FloatingBallService.readVerticalDirection()` 每次识别**现读**
-- **只对 PP-OCRv5/v6 生效**；ML Kit / manga-ocr 不接（理由见漫画一节）
+- **只对 PP-OCRv5/v6 生效**；ML Kit 使用自身的阅读顺序。游戏/视频路径不调用 MangaOCR
 - 生效链：`GameOcrEngine.recognize(bitmap, dir)` → PP 路径 `OcrResult.toReadOrderText(dir)`
   → `PPOcrDetGeometry.sortDetCandidates(boxes, scores, dir == LR)`
 - ⚠️ **两模式的「生效半边」不同，排查时最容易在这里走错路**：

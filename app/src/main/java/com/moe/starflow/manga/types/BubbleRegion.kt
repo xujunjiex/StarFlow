@@ -12,7 +12,8 @@ import android.graphics.Rect
 data class BubbleRegion(
     val rect: Rect,
     val texts: List<String>,
-    val fontSize: Float = 16f,
+    /** Estimated glyph size from OCR text geometry; must be supplied by each producer. */
+    val fontSize: Float,
     val direction: TextDirection = TextDirection.VERTICAL_RL,
     val angle: Float = 0f,
     val centerX: Float = -1f,

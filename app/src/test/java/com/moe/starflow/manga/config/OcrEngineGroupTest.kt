@@ -35,6 +35,6 @@ class OcrEngineGroupTest {
         assertEquals(0, OcrEngineGroup.MLKIT.gameEngine)
         assertEquals(3, OcrEngineGroup.PP_OCR_V6.gameEngine)
         assertEquals(1, OcrEngineGroup.PP_OCR_V5.gameEngine)
-        assertEquals(2, OcrEngineGroup.RT_MANGA.gameEngine)
+        assertEquals(0, OcrEngineGroup.RT_MANGA.gameEngine)
     }
 }

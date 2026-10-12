@@ -49,6 +49,7 @@ class TranslationCacheManager(private val context: Context) {
         /** 用户行间距（整数百分比 0..100，同上）。 */
         const val KEY_MANGA_LEADING = "manga_leading"
         private const val SIMILARITY_THRESHOLD_MANGA = 0.95f  // 256-bit hash 相似度阈值（~13 bit 容差）
+        private const val ENABLE_MANGA_SIMILARITY_FALLBACK = false
         private const val THUMBNAIL_SIZE = 200
         private const val AREA_RATIO_MIN = 0.8f   // 面积比下限（框选偏移面积变化 <1%，宽松允许 ±20%）
         private const val AREA_RATIO_MAX = 1.25f  // 面积比上限
@@ -350,7 +351,7 @@ class TranslationCacheManager(private val context: Context) {
         // 2. 相似度匹配：精确匹配未命中的降级（容差 ~13 bit）
         // 用途：同一页在不同截图方式（无障碍/录屏）下像素略有差异时仍能命中
         // 性能：比精确匹配慢（遍历全部缓存），所以先走精确匹配的快速路径
-        if (mode == MODE_MANGA) {
+        if (mode == MODE_MANGA && ENABLE_MANGA_SIMILARITY_FALLBACK) {
             // 稀疏 hash 守卫：纯色 / 几乎纯色页面 dHash 4 段几乎全 0（只有 1-3 bit）。
             // 两张低纹理页即使内容完全不同，Hamming distance 也只有 2-3 bits，
             // similarity = 1 - 3/256 = 0.988 远超 0.95 → 误命中（曾导致第二页命中第一页缓存）。
@@ -391,6 +392,8 @@ class TranslationCacheManager(private val context: Context) {
                 }
             }
             }
+        } else if (mode == MODE_MANGA) {
+            LogCollector.d(TAG, "findCacheExt: 漫画相似度兜底已停用，等待哈希精确匹配")
         }
 
         LogCollector.d(TAG, "findCacheExt: 未命中, mode=$mode")

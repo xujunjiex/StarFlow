@@ -8,13 +8,13 @@ import com.moe.starflow.manga.types.DetEngine
 import com.moe.starflow.manga.types.OcrEngine
 
 /**
- * 统一 OCR 引擎选择：4 组，游戏/漫画共用唯一事实来源。
- * 游戏/漫画引擎映射、支持源语言、是否需下载全部收敛于此。
+ * 统一 OCR 引擎组选择：游戏/视频与漫画共用唯一事实来源。
+ * 漫画使用各组定义的检测/识别组合；游戏/视频使用 gameEngine 映射。
  */
 enum class OcrEngineGroup(
     val key: String,
     val labelRes: Int,
-    val gameEngine: Int,          // 游戏 FloatingBallService：MLKIT=0/V5=1/MANGA=2/V6=3
+    val gameEngine: Int,          // 游戏/视频：MLKIT=0/V5=1/V6=3；RT_MANGA 映射到 MLKIT
     val mangaDet: DetEngine,
     val mangaOcr: OcrEngine,
     val sourceLangs: Set<String>, // 30 种池内子集
@@ -30,7 +30,7 @@ enum class OcrEngineGroup(
     PP_OCR_V5("ppocrv5", R.string.model_group_ppocrv5, 1, DetEngine.PP_OCR_V5, OcrEngine.PPOcrV5,
         setOf("zh","zh-TW","en","ja","ko","ru"),
         needsDownload = true, requiredModelsRes = R.string.ocr_group_v5_required),
-    RT_MANGA("rtmanga", R.string.model_group_rt_manga, 2, DetEngine.RT_DETR_V2, OcrEngine.MangaOcr,
+    RT_MANGA("rtmanga", R.string.model_group_rt_manga, 0, DetEngine.RT_DETR_V2, OcrEngine.MangaOcr,
         setOf("ja"),
         needsDownload = true, requiredModelsRes = R.string.ocr_group_manga_required);
 

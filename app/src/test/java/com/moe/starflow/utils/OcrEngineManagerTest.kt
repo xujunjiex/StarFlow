@@ -27,6 +27,23 @@ class OcrEngineManagerTest {
         p.edit().putInt("Manga_Det_Model", 5).putInt("Manga_Rec_Model", 5).commit()
         assertEquals(OcrEngineGroup.PP_OCR_V6, OcrEngineManager.getOcrEngineGroup(p))
     }
+
+    @Test fun legacyGameMangaEngine_migratesToMlkit() {
+        val p = prefs()
+        p.edit().clear().putInt("Game_OCR_Engine", 2).commit()
+
+        assertEquals(OcrEngineGroup.MLKIT, OcrEngineManager.getOcrEngineGroup(p))
+    }
+
+    @Test fun rtMangaGroupMapsToMlkitForGameAndVideo() {
+        assertEquals(0, OcrEngineGroup.RT_MANGA.gameEngine)
+        assertEquals(OcrEngineGroup.MLKIT, OcrEngineManager.groupForGameVideoEngine(2))
+
+        val p = prefs()
+        p.edit().clear().commit()
+        OcrEngineManager.setOcrEngineGroup(p, OcrEngineGroup.RT_MANGA)
+        assertEquals(OcrEngineGroup.MLKIT, OcrEngineManager.getGameVideoOcrEngineGroup(p))
+    }
     @Test fun setAndRead() {
         val p = prefs()
         p.edit().clear().commit()
@@ -91,5 +108,15 @@ class OcrEngineManagerTest {
         setSource(p, "ja")
         assertEquals(null, OcrEngineManager.cycleFloatingSourceLang(p))
         assertEquals("ja", p.getString("Source_Language", "ja"))
+    }
+
+    @Test fun cycleFloating_rtMangaUsesMlkitLanguagesInGameVideoMode() {
+        val p = prefs()
+        p.edit().clear().commit()
+        OcrEngineManager.setOcrEngineGroup(p, OcrEngineGroup.RT_MANGA)
+        setSource(p, "ja")
+
+        assertEquals("en", OcrEngineManager.cycleFloatingSourceLang(p, gameVideo = true))
+        assertEquals("en", p.getString("Source_Language", ""))
     }
 }

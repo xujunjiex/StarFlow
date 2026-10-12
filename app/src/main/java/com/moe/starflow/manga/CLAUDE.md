@@ -4,7 +4,7 @@
 
 ## 结构与核心实现
 
-**核心文件：** `MangaFloatingService.kt`（主服务）、`DetectionBridge.kt`（检测桥接，engine/）、`ComicBubbleDetector.kt`（RT-DETR-V2 检测，engine/）、`PPOcrV5Engine.kt`（PP-OCRv5 det+rec，engine/）、`MangaOcrBridge.kt`（manga-ocr，engine/）、`TextRegionMerger.kt`（识别后合并，merge/）、`OverlayRenderer.kt`（渲染，render/）
+**核心文件：** `MangaFloatingService.kt`（主服务）、`DetectionBridge.kt`（检测桥接，engine/）、`ComicBubbleDetector.kt`（RT-DETR-V2 检测，engine/）、`PPOcrV5Engine.kt`（PP-OCRv5 det+rec，engine/）、`MangaOcrRecognizer.kt`（manga-ocr 识别，engine/）、`TextRegionMerger.kt`（识别后合并，merge/）、`OverlayRenderer.kt`（渲染，render/）
 **工具类：** `engine/GeometryUtils.kt`（凸包、点在多边形等几何算法）、`engine/OnnxUtils.kt`（ONNX 张量提取、资源拷贝）
 **调试渲染子包 `manga/debug/`：** `MangaDebugOverlays.kt`（object：4 个 render*DebugOverlay 纯渲染函数 + applyCropDimming/createInfoPanelView/createToggleButton/MaxHeightScrollView 辅助）、`MangaDebugPanelController.kt`（全屏 debug overlay 窗口骨架 + 折叠状态机，4 个引擎共用的窗口管理）、`MangaDebugSliders.kt`（object：PP-OCRv5/v6 参数滑块面板构建器，注入 `CustomPreference` + `context`，无服务引用）。
 **滑块面板的控件构造全部收在 8 个私有 helper 里**（`panelContainer`/`sliderRow`/`sectionTitle`/`addSlider`(竖排 标签在上)/`addInlineSlider`(横排 标签在左)/`addSwitch`/`addLimitTypeToggle`/`addResetButton`）——两个公开入口只保留「刻度 + prefs key」，每个参数一条 `SliderSpec`。改滑块样式/尺寸只动 helper，不要在入口里重写控件。⚠️ 两个面板的**布局形态不同**：v5 的 `merge_gap` 是竖排、v6 的是横排内联；`large_box_ratio` 两边都是横排。
@@ -27,11 +27,11 @@
 游戏/漫画引擎不再是两套独立 prefs，统一到单一共享源 **`Ocr_Engine_Group`**：
 
 - `OcrEngineManager`（utils/）— `getOcrEngineGroup()`/`setOcrEngineGroup()`：首次升级迁移（漫画 legacy 键优先、游戏兜底），新装默认 `PP_OCR_V6`
-- `OcrEngineGroup`（manga/）— 4 组固定组合：`MLKIT`/`PP_OCR_V6`/`PP_OCR_V5`/`RT_MANGA`（RT-DETR+manga-ocr），每组合定义 `gameEngine`/`mangaDet`/`mangaOcr`/`sourceLangs`/`needsDownload`/`requiredModelsRes`
-- 引擎读取统一：`MangaFloatingService.loadConfig()`、`GameOcrEngine.recognize()`、`FloatingBallService` 均从 `OcrEngineManager` 读；`applyCombo`/`cycleOcrEngine` 改动写回共享
+- `OcrEngineGroup`（manga/）— 4 个共享选择项：`MLKIT`/`PP_OCR_V6`/`PP_OCR_V5`/`RT_MANGA`。漫画按组使用 `mangaDet` + `mangaOcr`；游戏/视频按 `gameEngine` 映射，选 `RT_MANGA` 时固定走纯 ML Kit。这里没有 ML Kit 检测后再交给 MangaOCR 的混合路径。
+- 引擎读取统一：漫画由 `MangaFloatingService.loadConfig()` / `TranslationEngineInit` 读取漫画组合；游戏/视频由 `GameOcrEngine` / `FloatingBallService` 读取游戏引擎映射。悬浮窗切换会写回共享选择
 - **模型管理页选择**：点 4 组标题选 OCR 引擎（当前组高亮「当前使用」；未下载模型组置灰，点击弹提示需要哪些模型）；与悬浮窗同步
 - **首页 top_bar 双行状态栏**：🔔通知 与 ❓帮助 之间两行——`OCR模型：xxx` + `翻译模型：xxx`（`refreshEngineStatusBar()`，OCR 组/翻译引擎变化实时刷新）
-- **源语言动态（首页/悬浮窗）**：30 种语言池按当前 OCR 组排序（支持在前），不支持的下移置灰，点击弹「该语言当前 OCR 模型不支持，请使用 X」；悬浮窗语言循环仅「常用 4 语言（`OcrEngineGroup.FLOATING_COMMON_LANGS`）∩ 当前组支持」
+- **源语言动态（首页/悬浮窗）**：30 种语言池按当前模式实际 OCR 组排序（支持在前），不支持的下移置灰，点击弹「该语言当前 OCR 模型不支持，请使用 X」；游戏/视频选 RT-MANGA 时按 ML Kit 能力过滤，漫画仍按 RT-MANGA 的日文能力过滤；悬浮窗只循环常用语言交集
 - **目标语言过滤（白名单）**：**预制 Hy-MT2** 仅 38 种目标语言（`LlamaCppLanguages.hyMt2SupportedCodes`），游戏页/文本页按这 38 种置灰（旧 9 种黑名单已废）；**导入的任意 GGUF**（`hyProfile=false`）与 NLLB/API 全支持。判定走 `LlamaCppModelStore.isHyMt2ActiveFromPrefs`（读 prefs 镜像 `LlamaCpp_Active_Is_Builtin`，所以切换模型时必须同步写镜像，且判据是模型自身 `hyProfile` 而不是某个写死的 id）
 - **目标语言列表资源按引擎区分**：`getLanguagesList` 在 TextApi=AI 时，预制 Hy-MT2 用 `res/raw/hy_mt2_text_support_languages.xml`（38 种，含 zh-TW 中文台湾），NLLB 用 `nllb_text_support_languages.xml`（68 种）。勿让 Hy-MT2 复用 NLLB 资源——否则选不到 zh-TW
 - **文本翻译源语言不受 OCR 影响**：`getLanguagesList(type=1, ocrGroup=null)` 全量 30 种
@@ -40,7 +40,7 @@
 
 游戏模式和漫画模式均使用"单一声源"模式避免分支遗漏：
 
-- **游戏模式**（`FloatingBallService`）：`engineCycle` 数组定义切换顺序 `[V5, V6, MLKIT, MANGA]`，`engineLabel()` 统一值→标签映射，`cycleOcrEngine()` 用 `engineCycle.indexOf() + 1` 查找下一个
+- **游戏/视频模式**（`FloatingBallService`）：`engineCycle` 数组定义切换顺序 `[V5, V6, MLKIT]`，`engineLabel()` 统一值→标签映射。旧引擎编号 `2` 迁移为 ML Kit；RT-MANGA 组在游戏/视频解析为 ML Kit
 - **漫画模式**（`MangaFloatingService`）：`engineCombos` 列表定义 det+ocr 固定搭配，包含 `key`/`detEngine`/`ocrEngine`/`labelRes`/`needsDownloadCheck` 五元组。四个方法覆盖所有需求：
   - `currentCombo()` — config → 组合
   - `comboLabel()` — 组合 → 标签字符串
@@ -173,6 +173,8 @@
 ### 竖排符号与 PP 识别内存
 
 - `render/VerticalGlyphRules` 只决定竖排显示字形、旋转与位置；`VerticalTextRenderer` 在字符格内绘制。原文、译文共用，横排保持原字符；已有竖排字符不重复旋转，不改 OCR 输出或持久化文本。
+- 竖排符号优先使用当前字体的竖排字形；缺字时尝试 Android 默认字体的对应竖排字形，只有没有竖排形式时才旋转原字符。逗号、顿号和句点在格内定位；字符格步距、气泡坐标及持久化文本不变。
+- OCR 返回检测几何，不是真实字号。PP-OCRv5/v6 在合并前有单行检测框时，根据其几何估算原文字号并随合并结果传递；RT-DETR + MangaOCR 不调用 ML Kit 补框。缺少可用字号时，自动模式按原文长度和文字区域几何估计动态上限，再由 `LayoutEngine` 缩小译文以适配原区域；不使用固定像素或手动字号偏好作自动上限。固定模式仍使用用户选择的字号。
 - PPv5/v6 识别共用 `engine/PpRecRecognizer` 与 `PpRecBatching`：按补齐后的宽度分组，单张探测实际输出形状，再在 32 MiB 或可用 Java 堆四分之一的较小预算内选择批量。预算含输入、预处理临时图/像素、原生输出及 Java 输出副本；设置的批量只是上限，结果按原索引恢复。
 - ORT 1.19 的 `getFloatBuffer()` 会复制完整张量，必须先检查形状和预算。`PpRecCtcDecoder` 按偏移读取同一缓冲区，不逐张复制预测数组。
 - `OcrMemoryException` 是终止本次 OCR 的可恢复错误；增量管线重抛，不能返回 `NotApplicable` 后回退重跑。先结束并行 OCR，再回收裁剪图；普通 `runOCR` 同样在识别的 `finally` 回收自有裁剪图。

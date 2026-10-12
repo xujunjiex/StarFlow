@@ -6,7 +6,7 @@ import com.moe.starflow.manga.types.DetEngine
 import com.moe.starflow.manga.types.OcrEngine
 import com.moe.starflow.manga.config.OcrEngineGroup
 
-/** 统一 OCR 引擎选择的共享 prefs 读写（游戏/漫画共用）。 */
+/** 统一 OCR 引擎组选择的共享 prefs 读写（游戏/视频/漫画共用）。 */
 object OcrEngineManager {
     const val PREF_KEY = "Ocr_Engine_Group"
 
@@ -38,14 +38,22 @@ object OcrEngineManager {
         prefs.edit().putString(PREF_KEY, group.key).apply()
     }
 
+    /** 游戏/视频实际使用的 OCR 组。RT-MANGA 只给漫画提供 RT-DETR + MangaOCR。 */
+    fun getGameVideoOcrEngineGroup(prefs: SharedPreferences): OcrEngineGroup =
+        gameVideoGroup(getOcrEngineGroup(prefs))
+
+    /** 映射游戏/视频模式的有效引擎组；RT-MANGA 在这些模式固定使用 ML Kit。 */
+    fun gameVideoGroup(group: OcrEngineGroup): OcrEngineGroup =
+        if (group == OcrEngineGroup.RT_MANGA) OcrEngineGroup.MLKIT else group
+
     /**
-     * 悬浮窗循环切换源语言（游戏/漫画共用唯一实现，不再各自写一份）。
-     * 只在「常用语言 ∩ 当前 OCR 组支持语言」内循环，跳过不支持的；
-     * 写回共享 pref `Source_Language`（与主页选中一一对应）。
-     * @return 切换后的语言代码；无可切换（如 manga-ocr 仅支持 ja）返回 null
+     * 悬浮窗循环切换源语言（游戏/漫画共用实现）。
+     * 只在「常用语言 ∩ 当前模式实际 OCR 组支持语言」内循环，并写回共享 Source_Language。
+     * @return 切换后的语言代码；当前模式没有可切换的常用语言时返回 null
      */
-    fun cycleFloatingSourceLang(prefs: SharedPreferences): String? {
-        val group = getOcrEngineGroup(prefs)
+    fun cycleFloatingSourceLang(prefs: SharedPreferences, gameVideo: Boolean = false): String? {
+        val selectedGroup = getOcrEngineGroup(prefs)
+        val group = if (gameVideo) gameVideoGroup(selectedGroup) else selectedGroup
         val cycle = OcrEngineGroup.FLOATING_COMMON_LANGS.filter { it in group.sourceLangs }
         if (cycle.isEmpty()) return null
         val current = prefs.getString("Source_Language", "ja")
@@ -59,13 +67,15 @@ object OcrEngineManager {
         return null
     }
 
-    /** 游戏 OCR 引擎值 → 组。MLKIT=0/V5=1/MANGA=2/V6=3。 */
-    private fun fromGameEngine(value: Int): OcrEngineGroup = when (value) {
+    /** 游戏/视频快捷切换值 → 组。旧值 MANGA=2 不再支持，按 ML Kit 处理。 */
+    fun groupForGameVideoEngine(value: Int): OcrEngineGroup = when (value) {
         0 -> OcrEngineGroup.MLKIT
         1 -> OcrEngineGroup.PP_OCR_V5
-        2 -> OcrEngineGroup.RT_MANGA
         3 -> OcrEngineGroup.PP_OCR_V6
+        2 -> OcrEngineGroup.MLKIT
         // 未知值兜底：与全新安装默认一致（PP_OCR_V6）
         else -> OcrEngineGroup.PP_OCR_V6
     }
+
+    private fun fromGameEngine(value: Int): OcrEngineGroup = groupForGameVideoEngine(value)
 }

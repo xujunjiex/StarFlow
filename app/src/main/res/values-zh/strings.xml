@@ -410,7 +410,7 @@
     <string name="tutorial_permission">授权时间！</string>
     <string name="tutorial_skip_accessibility">使用录屏模式可跳过此页</string>
     <string name="tutorial_screenshot_intro">截图授权方式\n\n星译支持两种截图方式，可在设置中随时切换：\n\n录屏授权（推荐，默认）\n点击翻译后，系统弹出授权窗口，选择「全屏共享」\n或仅共享某个应用。开箱即用，无需配置系统设置。\n翻页时自感应触发翻译，每次启动需弹窗授权，\n状态栏会显示录制中的通知。\n\n无障碍服务\n需前往系统设置中手动开启无障碍权限。\n一次授权永久有效，状态栏干净无通知。</string>
-    <string name="tutorial_model_switch">模型介绍\n\nML Kit\n速度最快，日文中文等识别精度较低，\n适合识别英文漫画翻译或者简单的各语言游戏和字幕翻译。\n\nPP-OCR 系列（v5/v6）\n多语言文字检测与识别。\nv5：速度和精度均衡，支持倾斜文字。\nv6：精度更高，small 模型内置，可选下载 medium 模型。\n\nmanga-ocr\n专门处理竖排日文，日文识别精度最高，\n需从模型管理页面下载。配合 RT-DETR-V2 使用效果最佳。</string>
+    <string name="tutorial_model_switch">模型介绍\n\nML Kit\n速度最快，日文中文等识别精度较低，\n适合识别英文漫画翻译或者简单的各语言游戏和字幕翻译。\n\nPP-OCR 系列（v5/v6）\n多语言文字检测与识别。\nv5：速度和精度均衡，支持倾斜文字。\nv6：精度更高，small 模型内置，可选下载 medium 模型。\n\nmanga-ocr\n专门处理竖排日文，日文识别精度最高，\n需从模型管理页面下载。漫画模式中通过 RT-DETR-V2 配合使用；选择 RT-MANGA 组时，游戏/视频仍使用 ML Kit。</string>
     <string name="tutorial_manga_download">manga-ocr 下载指南\n\n需从模型管理页面下载 2 个模型（国内需开启代理）：\n\n1. RT-DETR-V2 检测器（~11MB）\n   用于检测气泡和文字区域\n\n2. manga-ocr 模型（~135MB）\n   竖排日文识别，精度最高\n\n前往设置 → 模型管理，分别下载即可。\nGitHub/HuggingFace 无法直连，请开启代理。</string>
     <string name="faq_q1">为什么我的HarmonyOS版本大于等于3.0，但还是提示安卓版本过低？</string>
     <string name="faq_a1">这是由于华为更新HarmonyOS后（注意并不是HarmonyOS NEXT），其底层的Android API不再能被用户直观地看出。对于<b><u>大部分较新款</u></b>的华为手机，HarmonyOS 2.0对应Android 10 (API 29)；HarmonyOS 3.0对应Android 12 (API 31)。但对于部分较旧的华为机型，虽然更新了HarmonyOS 3.0，但实际上并未更新底层的Android API，一些机型底层的Android版本仍为Android 10。因此<b><u>系统仍没有达到本软件要求</u></b>的Android 11 (API 30)。下面是一些已知的型号：\n\n搭载麒麟980及以下的机型，如mate20，P30，Nova5等机型，HarmonyOS 3.0对应的Android版本是10 (API 29)。这些机型的HarmonyOS 3.0其实并不是真正的3.0，功能缺失比较多，主要升级是：更新了版本号，使用了3.0的新主题，增加了一些不依赖Android 12的小功能。</string>
@@ -433,7 +433,7 @@
     <string name="faq_a9">如果自动下载不成功，您可以手动下载模型文件并放入正确位置。\n\n模型存储基础路径：<b>Android/data/com.moe.starflow/files/</b>\n\n1. <b><u>PP-OCRv5 核心（det + rec_zh）</u></b>\n   子目录：ppocrv5/\n   ├── det_v5.onnx → 浏览器（检测模型 ~4.6MB）\n   ├── rec_zh.onnx → 浏览器（识别模型 ~16MB）\n   └── rec_zh_dict.txt → 浏览器（字典 ~75KB）\n\n2. <b><u>PP-OCRv5 可选语言</u></b>\n   子目录：ppocrv5/\n   ├── rec_en.onnx + rec_en_dict.txt（英文 ~7.5MB）\n   ├── rec_ko.onnx + rec_ko_dict.txt（韩文 ~12.9MB）\n   └── rec_ru.onnx + rec_ru_dict.txt（俄文 ~7.7MB）\n\n3. <b><u>PP-OCRv6 medium（检测 + 识别）</u></b>\n   子目录：ppocrv6/\n   ├── det_v6_medium.onnx → 浏览器（~60MB）\n   └── rec_v6_medium.onnx → 浏览器（~74MB）\n\n4. <b><u>RT-DETR-V2</u></b>\n   子目录：rt_detr/\n   └── model.onnx → 浏览器（~11MB）\n\n5. <b><u>manga-ocr</u></b>\n   子目录：manga_ocr_download/\n   ├── encoder_model.onnx → 浏览器（~85MB）\n   ├── decoder_model.onnx → 浏览器（~50MB）\n   └── vocab.txt → 浏览器（~200KB）\n\n您可以点击模型旁边的 🔗 按钮打开下载链接。下载完成后，用文件管理器将文件移动到对应子目录。如果目录不存在，请手动创建。</string>
 
     <string name="faq_q10">漫画模式反复提示"未检测到文字"，但图片上明明有文字？</string>
-    <string name="faq_a10">这个问题取决于你当前使用的截图方式，以下是可能的原因和解决方法：\n\n<b><u>录屏模式（MediaProjection）</u></b>\n• <b>受保护的应用无法截图</b>：部分应用（系统相册、私密相册、银行、支付等）使用 FLAG_SECURE 或 DRM 阻止录屏捕获，系统会返回空白画面，导致 OCR 检测不到文字。\n• <b>私密相册限制</b>：华为/荣耀/小米等品牌的系统相册内置了隐私保护功能，即使已授予录屏权限，相册内的图片内容仍然无法被截取。\n• <b>解决方法</b>：将图片保存到普通文件夹（如下载目录），使用第三方图片查看器打开，或使用浏览器在线查看内容。\n\n<b><u>无障碍模式（Accessibility）</u></b>\n• <b>同样受限</b>：无障碍截图在受保护的应用和私密相册中同样无法获取画面内容。\n• <b>未处于目标应用界面</b>：如果当前在桌面、通知栏等位置，无障碍服务可能捕获不到内容。请先打开目标应用，再触发翻译。\n• <b>解决方法</b>：同上，用第三方查看器打开。也可尝试在系统设置中关闭无障碍服务再重新开启。\n\n<b><u>其他常见原因</u></b>\n• <b>页面确实无可识别文字</b>：纯图片、装饰性文字、艺术字体等 OCR 引擎可能无法识别。\n• <b>框选区域不含文字</b>：检查框选范围是否包含文字区域，尝试扩大框选。\n• <b>OCR 引擎不匹配</b>：在漫画悬浮菜单中切换 OCR 引擎（PP-OCRv5 ↔ ML Kit ↔ manga-ocr），不同引擎对不同字体的识别效果不同。\n• <b>图片质量不佳</b>：模糊、分辨率低或压缩过度的文字难以被识别。\n\n如果以上都无法解决，尝试在「设置 → 关于 → 截图方式」中切换截图方式，不同设备和场景的兼容性可能不同。</string>
+    <string name="faq_a10">这个问题取决于你当前使用的截图方式，以下是可能的原因和解决方法：\n\n<b><u>录屏模式（MediaProjection）</u></b>\n• <b>受保护的应用无法截图</b>：部分应用（系统相册、私密相册、银行、支付等）使用 FLAG_SECURE 或 DRM 阻止录屏捕获，系统会返回空白画面，导致 OCR 检测不到文字。\n• <b>私密相册限制</b>：华为/荣耀/小米等品牌的系统相册内置了隐私保护功能，即使已授予录屏权限，相册内的图片内容仍然无法被截取。\n• <b>解决方法</b>：将图片保存到普通文件夹（如下载目录），使用第三方图片查看器打开，或使用浏览器在线查看内容。\n\n<b><u>无障碍模式（Accessibility）</u></b>\n• <b>同样受限</b>：无障碍截图在受保护的应用和私密相册中同样无法获取画面内容。\n• <b>未处于目标应用界面</b>：如果当前在桌面、通知栏等位置，无障碍服务可能捕获不到内容。请先打开目标应用，再触发翻译。\n• <b>解决方法</b>：同上，用第三方查看器打开。也可尝试在系统设置中关闭无障碍服务再重新开启。\n\n<b><u>其他常见原因</u></b>\n• <b>页面确实无可识别文字</b>：纯图片、装饰性文字、艺术字体等 OCR 引擎可能无法识别。\n• <b>框选区域不含文字</b>：检查框选范围是否包含文字区域，尝试扩大框选。\n• <b>OCR 引擎不匹配</b>：在模型管理页选择适合的 OCR 组合。漫画模式中 manga-ocr 与 RT-DETR-V2 配对使用；游戏/视频选择 RT-MANGA 组时使用 ML Kit。\n• <b>图片质量不佳</b>：模糊、分辨率低或压缩过度的文字难以被识别。\n\n如果以上都无法解决，尝试在「设置 → 关于 → 截图方式」中切换截图方式，不同设备和场景的兼容性可能不同。</string>
     <string name="faq_q11">录屏模式自动翻译卡死，翻页无变化，手动翻译始终显示同一页的缓存结果？</string>
     <string name="faq_a11">这是<b><u>录屏服务与系统录屏功能冲突</u></b>导致的截图通道失效。\n\n<b>症状表现：</b>\n• 自动翻译：翻页后始终检测不到页面变化，进度条一直显示"自动检测中"，或 30 秒后弹出超时提示\n• 手动翻译：每次点击翻译都提示"⚡ 缓存"（缓存命中），显示的始终是同一页的翻译结果，翻页后翻译内容不更新\n\n<b>原因：</b>\n系统录屏、投屏、或某些应用的屏幕录制功能会独占 MediaProjection 通道，导致本应用的 VirtualDisplay 无法获取新的屏幕画面。截图拿到的永远是卡死前最后一帧画面，所以 pHash 检测不到变化，翻译结果也始终不变。\n\n<b>解决方法：</b>\n• <b>关闭系统录屏</b>：下拉通知栏，关闭系统自带的屏幕录制\n• <b>关闭投屏</b>：断开手机投屏/镜像连接\n• <b>检查其他录屏应用</b>：关闭游戏助手、直播助手等可能占用录屏通道的应用\n• <b>重启翻译服务</b>：关闭所有可能的录屏后，重新开启漫画翻译\n• <b>切换到无障碍截图模式</b>：在「设置 → 关于 → 截图方式」中切换为无障碍服务，不受录屏冲突影响\n\n该问题在所有使用 MediaProjection 的应用中都存在，不是本应用独有的 bug。</string>
     <string name="faq_q12">如何连接本地局域网/电脑上部署的翻译模型？</string>
@@ -758,7 +758,6 @@
     <string name="game_ocr_engine_label">OCR模型</string>
     <string name="game_ocr_engine_mlkit">ML Kit</string>
     <string name="game_ocr_engine_ppocr">PP-OCRv5</string>
-    <string name="game_ocr_engine_manga_ocr">manga-ocr</string>
     <string name="game_ocr_engine_select">选择 OCR 引擎</string>
     <string name="game_crop_position">选取翻译区域</string>
     <string name="game_adjust_position">调整翻译结果位置</string>
@@ -895,7 +894,7 @@
     <string name="model_group_mlkit">ML Kit</string>
     <string name="model_group_mlkit_desc">Google 设备端机器学习，检测识别一体。速度快，适合字幕翻译和快速扫图。不建议用于复杂漫画场景（竖排、密集气泡识别效果较差）</string>
     <string name="model_group_rt_manga">RT-DETR-V2 + manga-ocr</string>
-    <string name="model_group_rt_manga_desc">漫画气泡检测与日文竖排识别组合，仅适用于漫画。manga-ocr 只识别日文、不适用于游戏/视频字幕</string>
+    <string name="model_group_rt_manga_desc">漫画模式使用 RT-DETR 气泡检测 + manga-ocr 日文识别；游戏/视频模式选择此组时使用 ML Kit</string>
     <string name="model_group_ppocrv5">PP-OCRv5</string>
     <string name="model_group_ppocrv5_desc">源自 PaddleOCR，ONNX 格式离线识别</string>
     <string name="model_group_ppocrv6">PP-OCRv6</string>
@@ -1385,9 +1384,6 @@
     <string name="toast_no_ocr_engine">无可用的 OCR 引擎</string>
     <string name="toast_ppocrv5_init">PP-OCRv5 初始化中…</string>
     <string name="toast_ppocrv5_ready">PP-OCRv5 初始化成功</string>
-    <string name="toast_mangaocr_init">manga-ocr 初始化中…</string>
-    <string name="toast_mangaocr_ready">manga-ocr 初始化成功</string>
-    <string name="toast_mangaocr_not_downloaded">manga-ocr 未下载，请先在模型管理中下载</string>
     <string name="toast_ppocrv6_init">PP-OCRv6 初始化中…</string>
     <string name="toast_ppocrv6_ready">PP-OCRv6 初始化成功</string>
     <string name="toast_engine_init_failed_format">引擎初始化失败：%1$s</string>
@@ -1512,6 +1508,7 @@
     <string name="text_recognizing">文字识别中…</string>
     <string name="translation_stopped">已停止翻译</string>
     <string name="cache_tag">⚡ 缓存</string>
+    <string name="cache_refresh">重新翻译</string>
     <string name="error_det_model_missing">RT-DETR-V2 模型未下载，请先在模型管理中下载</string>
 
     <!-- 下载通知 / 异常 -->

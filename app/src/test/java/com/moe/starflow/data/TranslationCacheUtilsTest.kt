@@ -63,7 +63,10 @@ class TranslationCacheUtilsTest {
                 translatedText = "你好",
                 fontSize = 16f,
                 direction = TextDirection.VERTICAL_RL,
-                backgroundColor = 0
+                backgroundColor = 0,
+                angle = -7.5f,
+                centerX = 55f,
+                centerY = 115f
             )
         )
         val json = TranslationCacheUtils.serializeBubbleRects(bubbles)
@@ -72,6 +75,9 @@ class TranslationCacheUtilsTest {
         assertEquals(Rect(10, 20, 110, 220), entries[0].rect)
         assertEquals(16f, entries[0].fontSize, 0.01f)
         assertEquals(TextDirection.VERTICAL_RL, entries[0].direction)
+        assertEquals(-7.5f, entries[0].angle, 0.01f)
+        assertEquals(55f, entries[0].centerX, 0.01f)
+        assertEquals(115f, entries[0].centerY, 0.01f)
     }
 
     @Test
@@ -88,5 +94,6 @@ class TranslationCacheUtilsTest {
         assertEquals("xyz", bubbles[0].translatedText)
         assertEquals(14f, bubbles[0].fontSize, 0.01f)
         assertEquals(TextDirection.HORIZONTAL, bubbles[0].direction)
+        assertEquals(0f, bubbles[0].angle, 0f) // legacy rows did not persist tilt
     }
 }

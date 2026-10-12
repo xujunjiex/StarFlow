@@ -202,7 +202,7 @@ class MangaEngineManager(
                         }
                         LogCollector.d(TAG, "ensureMangaOcrInitialized: 加载 manga-ocr 模型")
                         withContext(Dispatchers.IO) {
-                            MangaOcrBridge.initializeDownloaded(context)
+                            MangaOcrRecognizer.initialize(context, useAssets = false)
                         }
                     } catch (e: Exception) {
                         LogCollector.e(TAG, "manga-ocr 识别器初始化失败", e)

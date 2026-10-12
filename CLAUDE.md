@@ -209,7 +209,7 @@ StarFlow 是 Kotlin Android 应用，界面使用 Android Views 和 ViewBinding�
 
 logcat 过滤器：
 ```
-tag:OCRBridge | tag:DetectionBridge | tag:BubbleDetector | tag:MangaFloatingService | tag:MangaOcrBridge | tag:MangaOcrRecognizer | tag:PPOcrV5Engine | tag:OCRTextRecognizer | tag:TranslationCacheManager | tag:AutoTranslateEngine | tag:FloatingBallService | tag:GameOcrEngine | tag:Screenshot | tag:Shooter | tag:OpenAITranslation | tag:TranslateUtils | tag:ExitReason
+tag:OCRBridge | tag:DetectionBridge | tag:BubbleDetector | tag:MangaFloatingService | tag:MangaOcrRecognizer | tag:PPOcrV5Engine | tag:OCRTextRecognizer | tag:TranslationCacheManager | tag:AutoTranslateEngine | tag:FloatingBallService | tag:GameOcrEngine | tag:Screenshot | tag:Shooter | tag:OpenAITranslation | tag:TranslateUtils | tag:ExitReason
 
 阅读器内嵌翻译（导入功能）日志 tag：`ReaderTranslate`（控制器：逐气泡 rect/原文/译文/来源、缓存命中统计、翻译开始时的引擎与语言）、`IncrementalBatch`（分批管线：`translateWithCache` 命中数）。
 ```

@@ -1,8 +1,11 @@
 package com.moe.starflow.utils
 
 import android.content.SharedPreferences
+import android.graphics.Rect
 import androidx.preference.PreferenceManager
+import com.moe.starflow.manga.types.TextDirection
 import com.moe.starflow.R
+import kotlin.math.min
 
 /**
  * 漫画翻译结果**字号**的唯一读写入口。
@@ -30,6 +33,25 @@ object MangaFontSize {
 
     const val DEFAULT_SIZE = 16f
     const val DEFAULT_AUTO = true
+
+    /**
+     * Estimate a conservative automatic-size ceiling when OCR returns only a region box, not a
+     * character-size estimate. The estimate comes from the original text length and region geometry;
+     * it is not a substitute for a model-provided text-line size.
+     */
+    fun estimateAutoSizeCap(rect: Rect, sourceText: String, direction: TextDirection): Float? {
+        val width = rect.width().toFloat()
+        val height = rect.height().toFloat()
+        if (width <= 0f || height <= 0f) return null
+
+        val textUnits = sourceText.count { it != '\n' && it != '\r' }
+        if (textUnits <= 0) return null
+
+        val inlineExtent = if (direction == TextDirection.HORIZONTAL) width else height
+        val crossExtent = if (direction == TextDirection.HORIZONTAL) height else width
+        val cap = min(crossExtent, inlineExtent / textUnits)
+        return cap.takeIf { it.isFinite() && it > 0f }
+    }
 
     /**
      * 预置档位，与悬浮窗弹窗里的列表一一对应。

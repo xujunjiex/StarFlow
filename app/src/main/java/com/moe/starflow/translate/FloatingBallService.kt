@@ -59,12 +59,8 @@ import com.moe.starflow.MainActivity
 import com.moe.starflow.R
 import com.moe.starflow.me.apiconfig.BuiltinProviders
 import com.moe.starflow.me.apiconfig.ConfigurationStorage
-import com.moe.starflow.manga.engine.MangaOcrBridge
 import com.moe.starflow.manga.engine.OCRTextRecognizer
-import com.moe.starflow.manga.engine.MangaOcrModelFiles
-import com.moe.starflow.manga.engine.MangaOcrRecognizer
 import com.moe.starflow.manga.OcrLock
-import com.moe.starflow.manga.config.OcrEngineGroup
 import com.moe.starflow.manga.engine.PPOcrModelFiles
 import com.moe.starflow.manga.types.TextDirection
 import com.moe.starflow.manga.engine.PPOcrV5Engine
@@ -469,26 +465,24 @@ class FloatingBallService : LifecycleService() {
     // 引擎值常量
     private val ENGINE_MLKIT = 0
     private val ENGINE_V5 = 1
-    private val ENGINE_MANGA = 2
     private val ENGINE_V6 = 3
 
-    // 切换顺序：v5 → v6 → MLKit → manga（PP 模型放一起）
-    private val engineCycle = intArrayOf(ENGINE_V5, ENGINE_V6, ENGINE_MLKIT, ENGINE_MANGA)
+    // 游戏/视频只循环通用 OCR 引擎；RT-MANGA 组在这些模式下映射为 ML Kit。
+    private val engineCycle = intArrayOf(ENGINE_V5, ENGINE_V6, ENGINE_MLKIT)
 
     /** 引擎值 → 显示名称（单一声源）；ctx 决定本地化（Service 传 dialogContext） */
     private fun engineLabel(value: Int, ctx: android.content.Context = this): String = when (value) {
         ENGINE_V5 -> ctx.getString(R.string.game_ocr_engine_ppocr)
         ENGINE_V6 -> ctx.getString(R.string.game_ocr_engine_ppocrv6)
-        ENGINE_MANGA -> ctx.getString(R.string.game_ocr_engine_manga_ocr)
         else -> ctx.getString(R.string.game_ocr_engine_mlkit)
     }
 
     private fun isGameDebugEnabled(): Boolean =
         prefs.getBoolean("Game_Translate_Debug_View", false)
 
-    /** 当前游戏 OCR 引擎值（从共享 Ocr_Engine_Group 读取；Game_OCR_Engine 仅兼容保留，不再作为事实来源） */
+    /** 当前游戏/视频 OCR 引擎值（RT-MANGA 组在此映射为 ML Kit）。 */
     private fun currentGameOcrEngineValue(): Int =
-        OcrEngineManager.getOcrEngineGroup(prefs.getSharedPreferences()).gameEngine
+        OcrEngineManager.getGameVideoOcrEngineGroup(prefs.getSharedPreferences()).gameEngine
 
     private fun getOcrEngineName(): String = engineLabel(currentGameOcrEngineValue())
 
@@ -496,7 +490,7 @@ class FloatingBallService : LifecycleService() {
      * 游戏模式竖排读取方向（`Game_Text_Direction`）。
      *
      * 每次识别**现读**（非缓存字段），设置改动即时生效。
-     * 仅 PP-OCRv5/v6 会用它排序；ML Kit / manga-ocr 走各自引擎的阅读序，忽略此值。
+     * 仅 PP-OCRv5/v6 会用它排序；ML Kit 使用自身阅读序。
      */
     private fun readVerticalDirection(): TextDirection {
         val dir = com.moe.starflow.manga.types.VerticalFlow
@@ -1128,10 +1122,12 @@ class FloatingBallService : LifecycleService() {
 
     /**
      * 循环切换源语言：仅中(繁)/日/英/韩等常用语言（与主页共用 Source_Language pref）。
-     * 只循环当前 OCR 组支持的语言，跳过不支持的。逻辑统一收敛到 OcrEngineManager.cycleFloatingSourceLang。
+     * 只循环当前游戏/视频实际 OCR 引擎支持的语言，跳过不支持的。
      */
     private fun cycleSourceLang() {
-        val next = com.moe.starflow.utils.OcrEngineManager.cycleFloatingSourceLang(prefs.getSharedPreferences())
+        val next = com.moe.starflow.utils.OcrEngineManager.cycleFloatingSourceLang(
+            prefs.getSharedPreferences(), gameVideo = true
+        )
             ?: run { showToast(getString(R.string.no_available_ocr_model), true); return }
         val langName = com.moe.starflow.translate.CustomLocale.getInstance(next).getDisplayName()
         showToast(getString(R.string.language_switched_to, langName), true)
@@ -1150,7 +1146,7 @@ class FloatingBallService : LifecycleService() {
     }
 
 
-    /** 循环切换 OCR 引擎：v5 → v6 → MLKit → manga → v5 */
+    /** 循环切换 OCR 引擎：v5 → v6 → ML Kit → v5 */
     private fun cycleOcrEngine() {
         val current = currentGameOcrEngineValue()
         val currentIdx = engineCycle.indexOf(current).coerceAtLeast(0)
@@ -1169,7 +1165,7 @@ class FloatingBallService : LifecycleService() {
         }
 
         prefs.setIntSync("Game_OCR_Engine", next)   // 兼容保留（不再作为事实来源）
-        val group = OcrEngineGroup.entries.firstOrNull { it.gameEngine == next } ?: OcrEngineGroup.MLKIT
+        val group = OcrEngineManager.groupForGameVideoEngine(next)
         OcrEngineManager.setOcrEngineGroup(prefs.getSharedPreferences(), group)
         val label = engineLabel(next)
         val fromLabel = engineLabel(current)
@@ -1184,7 +1180,6 @@ class FloatingBallService : LifecycleService() {
     private fun isEngineAvailable(engine: Int): Boolean = when (engine) {
         ENGINE_V5 -> PPOcrModelFiles.isV5DetDownloaded(this) && PPOcrModelFiles.isV5RecZhDownloaded(this)
         ENGINE_V6 -> true  // small 内置，始终可用
-        ENGINE_MANGA -> MangaOcrModelFiles.isModelDownloaded(this)
         ENGINE_MLKIT -> true
         else -> false
     }
@@ -1196,12 +1191,6 @@ class FloatingBallService : LifecycleService() {
                     if (PPOcrV5Engine.isInitialized) {
                         LogCollector.d(TAG, "释放 PP-OCRv5")
                         PPOcrV5Engine.release()
-                    }
-                }
-                ENGINE_MANGA -> {
-                    if (MangaOcrBridge.isAvailable()) {
-                        LogCollector.d(TAG, "释放 manga-ocr")
-                        MangaOcrRecognizer.release()
                     }
                 }
                 ENGINE_V6 -> {
@@ -1227,17 +1216,6 @@ class FloatingBallService : LifecycleService() {
                             PPOcrV5Engine.initialize(this@FloatingBallService)
                         }
                         showToast(getString(R.string.toast_ppocrv5_ready), true)
-                    }
-                    ENGINE_MANGA -> {
-                        if (MangaOcrModelFiles.isModelDownloaded(this@FloatingBallService)) {
-                            showToast(getString(R.string.toast_mangaocr_init), true)
-                            withContext(Dispatchers.IO) {
-                                MangaOcrBridge.initializeDownloaded(this@FloatingBallService)
-                            }
-                            showToast(getString(R.string.toast_mangaocr_ready), true)
-                        } else {
-                            showToast(getString(R.string.toast_mangaocr_not_downloaded), true)
-                        }
                     }
                     ENGINE_V6 -> {
                         showToast(getString(R.string.toast_ppocrv6_init), true)
@@ -1268,7 +1246,7 @@ class FloatingBallService : LifecycleService() {
         val isMangaOcr = currentOcr == 2  // manga-ocr
         val src = prefs.getString("Source_Language", "ja")
 
-        // 俄文：仅 PP-OCRv5 支持（v6 / ML Kit / manga-ocr 均不支持西里尔文）
+        // 俄文：仅 PP-OCRv5 支持（v6 / ML Kit 不支持西里尔文）
         if (src == "ru" && !isPPv5) {
             Toast.makeText(this, getString(R.string.ru_need_ppocrv5_engine), Toast.LENGTH_SHORT).show()
             return

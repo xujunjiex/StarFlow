@@ -10,6 +10,7 @@ import com.moe.starflow.manga.types.*
 import com.moe.starflow.manga.config.*
 import android.graphics.Rect
 import com.moe.starflow.utils.LogCollector
+import com.moe.starflow.utils.MangaFontSize
 
 /**
  * 漫画空间聚类/分批切分纯算法（从 MangaFloatingService 阶段 1 提取）。
@@ -168,14 +169,18 @@ object MangaSpatialGrouping {
                 return@filter false
             }
             true
-        }.map { block ->
+        }.mapNotNull { block ->
             val rect = block.boundingBox!!
             val isVertical = block.inferredVertical()  // 真实边长推断（抗旋转），缺失才 AABB；ML Kit 路径的竖排误判源头
+            val direction = if (isVertical) textDirection else TextDirection.HORIZONTAL
+            val fontSize = block.fontSize?.takeIf { it.isFinite() && it > 0f }
+                ?: MangaFontSize.estimateAutoSizeCap(rect, block.text, direction)
+                ?: return@mapNotNull null
             BubbleRegion(
                 rect = rect,
                 texts = listOf(block.text),
-                fontSize = if (isVertical) rect.width().toFloat() else rect.height().toFloat(),
-                direction = if (isVertical) textDirection else TextDirection.HORIZONTAL,
+                fontSize = fontSize,
+                direction = direction,
                 angle = block.angle,
                 centerX = block.centerX,
                 centerY = block.centerY

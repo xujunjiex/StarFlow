@@ -44,10 +44,13 @@ object VerticalTextRenderer {
         if (vertical) {
             val glyphs = HashMap<Char, VerticalGlyphRules.Glyph>()
             val bounds = Rect()
+            val defaultTypefacePaint = Paint(paint).apply { typeface = Typeface.DEFAULT }
             for (line in layout.lines) {
                 var y = line.baseline
                 for (ch in line.text) {
-                    val glyph = glyphs.getOrPut(ch) { VerticalGlyphRules.resolve(ch, paint::hasGlyph) }
+                    val glyph = glyphs.getOrPut(ch) {
+                        VerticalGlyphRules.resolve(ch, paint::hasGlyph, defaultTypefacePaint::hasGlyph)
+                    }
                     drawVerticalGlyph(canvas, glyph, line.x, y, paint, bounds)
                     y += layout.charStep
                 }
@@ -64,49 +67,42 @@ object VerticalTextRenderer {
         canvas: Canvas, glyph: VerticalGlyphRules.Glyph, x: Float, baseline: Float,
         paint: Paint, bounds: Rect,
     ) {
-        if (glyph.rotation == 0f && !glyph.corner && !glyph.fitToCell) {
-            canvas.drawText(glyph.text, x, baseline, paint)
-            return
-        }
-        paint.getTextBounds(glyph.text, 0, glyph.text.length, bounds)
-        if (bounds.isEmpty) {
-            canvas.drawText(glyph.text, x, baseline, paint)
-            return
-        }
-        val size = paint.textSize
-        // Rotations are local to this character cell, inside the bubble's existing transform.
-        val saved = canvas.save()
-        val previousAlign = paint.textAlign
+        val previousTypeface = paint.typeface
+        if (glyph.useDefaultTypeface) paint.typeface = Typeface.DEFAULT
         try {
-            paint.textAlign = Paint.Align.LEFT
-            if (glyph.corner) {
-                val scale = minOf(1f, size * 0.5f / maxOf(bounds.width(), bounds.height()))
-                canvas.translate(x + size * 0.45f, baseline - size * 0.95f)
-                canvas.scale(scale, scale)
-                canvas.drawText(glyph.text, -bounds.right.toFloat(), -bounds.top.toFloat(), paint)
-            } else if (glyph.rotation != 0f) {
-                canvas.translate(x, baseline - size / 2f)
-                canvas.rotate(glyph.rotation)
-                val scale = minOf(1f, size / maxOf(bounds.width(), bounds.height()))
-                canvas.scale(scale, scale)
-                canvas.drawText(glyph.text, -bounds.exactCenterX(), -bounds.exactCenterY(), paint)
-            } else {
-                // Preserve the font's vertical positioning, correcting only cell overflow.
-                val scale = minOf(1f, size / maxOf(bounds.width(), bounds.height()))
-                canvas.translate(x, baseline)
-                canvas.scale(scale, scale)
-                val half = size / (2f * scale)
-                val minX = -half - bounds.left
-                val minY = -size / scale - bounds.top
-                // A fitted dimension can differ by a few float ulps; never invert the clamp.
-                val drawX = (-paint.measureText(glyph.text) / 2f)
-                    .coerceIn(minX, maxOf(minX, half - bounds.right))
-                val drawY = 0f.coerceIn(minY, maxOf(minY, -bounds.bottom.toFloat()))
-                canvas.drawText(glyph.text, drawX, drawY, paint)
+            if (glyph.rotation == 0f && !glyph.corner) {
+                canvas.drawText(glyph.text, x, baseline, paint)
+                return
+            }
+            paint.getTextBounds(glyph.text, 0, glyph.text.length, bounds)
+            if (bounds.isEmpty) {
+                canvas.drawText(glyph.text, x, baseline, paint)
+                return
+            }
+            val size = paint.textSize
+            // Fallback rotation and corner positioning stay inside this character cell.
+            val saved = canvas.save()
+            val previousAlign = paint.textAlign
+            try {
+                paint.textAlign = Paint.Align.LEFT
+                if (glyph.corner) {
+                    val scale = minOf(1f, size * 0.5f / maxOf(bounds.width(), bounds.height()))
+                    canvas.translate(x + size * 0.45f, baseline - size * 0.95f)
+                    canvas.scale(scale, scale)
+                    canvas.drawText(glyph.text, -bounds.right.toFloat(), -bounds.top.toFloat(), paint)
+                } else if (glyph.rotation != 0f) {
+                    canvas.translate(x, baseline - size / 2f)
+                    canvas.rotate(glyph.rotation)
+                    val scale = minOf(1f, size / maxOf(bounds.width(), bounds.height()))
+                    canvas.scale(scale, scale)
+                    canvas.drawText(glyph.text, -bounds.exactCenterX(), -bounds.exactCenterY(), paint)
+                }
+            } finally {
+                paint.textAlign = previousAlign
+                canvas.restoreToCount(saved)
             }
         } finally {
-            paint.textAlign = previousAlign
-            canvas.restoreToCount(saved)
+            paint.typeface = previousTypeface
         }
     }
 }

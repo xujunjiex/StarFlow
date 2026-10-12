@@ -63,7 +63,12 @@ object TranslationCacheUtils {
                 } else {
                     TextDirection.VERTICAL_RL
                 }
-                result.add(BubbleJsonEntry(rect, fs, dir))
+                result.add(BubbleJsonEntry(
+                    rect, fs, dir,
+                    obj.optDouble("angle", 0.0).toFloat(),
+                    obj.optDouble("cx", rect.exactCenterX().toDouble()).toFloat(),
+                    obj.optDouble("cy", rect.exactCenterY().toDouble()).toFloat()
+                ))
             }
             result
         } catch (e: Exception) {
@@ -96,6 +101,9 @@ object TranslationCacheUtils {
             obj.put("b", b.rect.bottom)
             obj.put("fs", b.fontSize.toDouble())
             obj.put("dir", b.direction.name)
+            obj.put("angle", b.angle.toDouble())
+            obj.put("cx", b.centerX.takeIf { it >= 0f }?.toDouble() ?: b.rect.exactCenterX().toDouble())
+            obj.put("cy", b.centerY.takeIf { it >= 0f }?.toDouble() ?: b.rect.exactCenterY().toDouble())
             jsonArray.put(obj)
         }
         return jsonArray.toString()
@@ -111,15 +119,17 @@ object TranslationCacheUtils {
     ): List<TranslatedBubble> {
         val entries = parseBubbleEntriesJson(bubbleRectsJson, defaultFontSize)
         if (entries.isEmpty() || originals.isEmpty()) return emptyList()
-        return entries.mapIndexed { idx, (rect, fontSize, direction) ->
+        return entries.mapIndexed { idx, entry ->
             TranslatedBubble(
-                rect = rect,
+                rect = entry.rect,
                 originalText = originals.getOrElse(idx) { "" },
                 translatedText = translations.getOrElse(idx) { "" },
                 backgroundColor = bgColor,
-                fontSize = fontSize,
-                direction = direction,
-                angle = 0f,
+                fontSize = entry.fontSize,
+                direction = entry.direction,
+                angle = entry.angle,
+                centerX = entry.centerX,
+                centerY = entry.centerY,
                 fromCache = true
             )
         }
@@ -130,5 +140,8 @@ object TranslationCacheUtils {
 data class BubbleJsonEntry(
     val rect: Rect,
     val fontSize: Float,
-    val direction: TextDirection
+    val direction: TextDirection,
+    val angle: Float = 0f,
+    val centerX: Float = rect.exactCenterX(),
+    val centerY: Float = rect.exactCenterY()
 )

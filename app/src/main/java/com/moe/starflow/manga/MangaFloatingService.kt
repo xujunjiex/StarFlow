@@ -1120,7 +1120,9 @@ class MangaFloatingService : LifecycleService() {
      * 只循环当前 OCR 组支持的语言，跳过不支持的。逻辑统一收敛到 OcrEngineManager.cycleFloatingSourceLang。
      */
     private fun cycleSourceLang() {
-        val next = com.moe.starflow.utils.OcrEngineManager.cycleFloatingSourceLang(prefs.getSharedPreferences())
+        val next = com.moe.starflow.utils.OcrEngineManager.cycleFloatingSourceLang(
+            prefs.getSharedPreferences(), gameVideo = false
+        )
             ?: run { showToast(getString(R.string.no_available_ocr_model), true); return }
         config = loadConfig()  // 写 pref 之后再读，刷新内存 config.sourceLang
         val langName = com.moe.starflow.translate.CustomLocale.getInstance(next).getDisplayName()
@@ -2443,23 +2445,15 @@ class MangaFloatingService : LifecycleService() {
                 BubbleDetector.detectBubbles(ocrTextBlocks, config)
             } else {
                 LogCollector.d(TAG, "processMangaScreenshot: Step 2 - 已前合并，跳过后合并")
-                ocrTextBlocks.filter { it.boundingBox != null }.map { block ->
-                    val rect = block.boundingBox!!
-                    val isVertical = block.inferredVertical()  // 真实边长推断（抗旋转），缺失才 AABB
+                ocrTextBlocks.forEach { block ->
                     if (kotlin.math.abs(block.angle) > 0.5f) {
                         LogCollector.d(TAG, "BubbleRegion: angle=${block.angle}, cx=${block.centerX}, cy=${block.centerY}, text='${block.text.take(15)}'")
                     }
-                    BubbleRegion(
-                        rect = rect,
-                        texts = listOf(block.text),
-                        fontSize = if (isVertical) rect.width().toFloat() else rect.height().toFloat(),
-                        // ⚠️ RT-DETR-V2 用 rtTextDirection（该路径不判横竖，由设置决定）；PP 用竖排方向设置
-                        direction = if (isVertical) config.renderTextDirection else TextDirection.HORIZONTAL,
-                        angle = block.angle,
-                        centerX = block.centerX,
-                        centerY = block.centerY
-                    )
                 }
+                DetectionBridge.ocrToBubbleRegions(
+                    ocrTextBlocks,
+                    config.renderTextDirection
+                )
             }
             LogCollector.d(TAG, "processMangaScreenshot: Step 2 - Detected ${allBubbles.size} bubbles")
 
@@ -2900,9 +2894,7 @@ class MangaFloatingService : LifecycleService() {
         }
     }
 
-    /**
-     * 显示缓存结果 overlay — 带"缓存"标签和刷新按钮
-     */
+    /** 显示带缓存标记的漫画结果 overlay。 */
     @SuppressLint("ClickableViewAccessibility")
     private fun showCacheOverlay(bitmap: Bitmap) {
         dismissProgressOverlay()
@@ -2913,7 +2905,6 @@ class MangaFloatingService : LifecycleService() {
         val screenSize = getScreenSize()
         val screenW = screenSize.width
         val screenH = screenSize.height
-
         val container = android.widget.FrameLayout(this).apply {
             setBackgroundColor(Color.argb(180, 0, 0, 0))
         }
@@ -2946,39 +2937,10 @@ class MangaFloatingService : LifecycleService() {
             setMargins(24, 24, 0, 0)
         })
 
-        // 刷新按钮（右上角）
-        val refreshBtn = ImageView(this).apply {
-            setImageResource(android.R.drawable.ic_menu_rotate)
-            setBackgroundColor(Color.argb(180, 0, 0, 0))
-            setPadding(20, 20, 20, 20)
-            setOnClickListener {
-                dismissCacheOverlay()
-                forceRefresh = true
-                autoTranslateEngine.lastTranslatedHash = 0L
-                autoTranslateEngine.lastTranslatedTime = 0L
-                regionCache.clear()  // 清空内存缓存，避免 ⚡ 标志
-                triggerTranslation()
-            }
-        }
-        container.addView(refreshBtn, android.widget.FrameLayout.LayoutParams(
-            120, 120
-        ).apply {
-            gravity = Gravity.TOP or Gravity.END
-            setMargins(0, 24, 24, 0)
-        })
-
-        // 点击其他区域关闭（复制模式下不拦截，让气泡窗口和按钮处理）
+        // 点击结果区域关闭；复制模式下让气泡和独立按钮接收触摸。
         container.setOnTouchListener { _, event ->
-            val refreshRight = screenW - 24
-            val refreshLeft = refreshRight - 120
-            val refreshTop = 24
-            val refreshBottom = refreshTop + 120
-            val touchX = event.x.toInt()
-            val touchY = event.y.toInt()
-            if (touchX in refreshLeft..refreshRight && touchY in refreshTop..refreshBottom) {
-                false  // 让刷新按钮处理
-            } else if (isCopyMode) {
-                false  // 复制模式下不拦截触摸
+            if (isCopyMode) {
+                false
             } else {
                 if (event.action == MotionEvent.ACTION_UP) {
                     dismissCacheOverlay()
@@ -3288,6 +3250,12 @@ class MangaFloatingService : LifecycleService() {
             val row = android.widget.LinearLayout(this).apply {
                 orientation = android.widget.LinearLayout.HORIZONTAL
             }
+            if (cacheOverlayContainer != null) {
+                row.addView(createCacheRefreshActionBtn(), android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { marginEnd = dpToPx(6) })
+            }
             row.addView(createCopyActionBtn(getString(R.string.copy_all), 11f).apply {
                 setOnClickListener { copyAllBubbles() }
             })
@@ -3303,6 +3271,12 @@ class MangaFloatingService : LifecycleService() {
         } else {
             val row = android.widget.LinearLayout(this).apply {
                 orientation = android.widget.LinearLayout.HORIZONTAL
+            }
+            if (cacheOverlayContainer != null) {
+                row.addView(createCacheRefreshActionBtn(), android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
+                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT
+                ).apply { marginEnd = dpToPx(6) })
             }
             row.addView(createCopyActionBtn(getString(R.string.copy_text), 12f).apply {
                 setOnClickListener { toggleCopyMode() }
@@ -3334,6 +3308,19 @@ class MangaFloatingService : LifecycleService() {
             try { if (it.isAttachedToWindow) windowManager.removeView(it) } catch (_: Exception) {}
         }
     }
+
+    private fun createCacheRefreshActionBtn(): android.widget.TextView =
+        createCopyActionBtn(getString(R.string.game_refresh_translation), 12f).apply {
+            contentDescription = getString(R.string.cache_refresh)
+            setOnClickListener {
+                dismissCacheOverlay()
+                forceRefresh = true
+                autoTranslateEngine.lastTranslatedHash = 0L
+                autoTranslateEngine.lastTranslatedTime = 0L
+                regionCache.clear()
+                triggerTranslation()
+            }
+        }
 
     private fun removeCopyButtons() {
         toggleSegOriginal = null

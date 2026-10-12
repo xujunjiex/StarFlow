@@ -692,6 +692,7 @@ class IncrementalBatchPipeline(
         isVertical = direction == TextDirection.VERTICAL_RL || direction == TextDirection.VERTICAL_LR,
         angle = angle,
         centerX = center.x,
-        centerY = center.y
+        centerY = center.y,
+        fontSize = fontSize
     )
 }

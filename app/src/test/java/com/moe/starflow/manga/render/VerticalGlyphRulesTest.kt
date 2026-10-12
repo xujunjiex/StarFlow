@@ -12,16 +12,28 @@ class VerticalGlyphRulesTest {
             val glyph = VerticalGlyphRules.resolve(source) { true }
             assertEquals(target.toString(), glyph.text)
             assertEquals(0f, glyph.rotation, 0f)
-            assertTrue(glyph.fitToCell)
+            assertFalse(glyph.corner)
         }
     }
 
-    @Test fun absentVerticalGlyphRotatesOriginalShapeInsteadOfDrawingTofu() {
+    @Test fun absentVerticalGlyphRotatesOriginalShapeWhenDefaultFontAlsoLacksForm() {
         "()（）[]{}〔〕【】〖〗〈〉《》「」『』…‥—–_".forEach {
             val glyph = VerticalGlyphRules.resolve(it) { false }
             assertEquals(it.toString(), glyph.text)
             assertEquals(90f, glyph.rotation, 0f)
         }
+    }
+
+    @Test fun missingCustomGlyphUsesDefaultFontVerticalFormBeforeRotation() {
+        val glyph = VerticalGlyphRules.resolve(
+            ch = '（',
+            hasGlyph = { false },
+            hasDefaultGlyph = { it == "︵" }
+        )
+
+        assertEquals("︵", glyph.text)
+        assertEquals(0f, glyph.rotation, 0f)
+        assertTrue(glyph.useDefaultTypeface)
     }
 
     @Test fun otherQuotesDashesWavesAndProlongedSoundsRotateClockwise() {

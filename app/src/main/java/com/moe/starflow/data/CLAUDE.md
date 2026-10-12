@@ -5,7 +5,7 @@
 ## 缓存与历史
 
 `TranslationCacheManager` — 统一管理游戏/漫画翻译缓存
-- 漫画模式：pHash 精确匹配 + 相似度匹配（256-bit 阈值 0.95，约 13 bit 容差）
+- 漫画截图命中：256-bit 扩展 pHash 完全相同后，再校验裁剪尺寸和位置；第二层相似度兜底保留实现但默认停用，避免相似版式页面误命中
 - 游戏模式：仅精确匹配（相似度匹配会误判相似背景）
 - Room 数据库 `translation_history.db`，当前 version 24，`fallbackToDestructiveMigration`
   - v9→v10 迁移：`ALTER TABLE ... ADD COLUMN pHash2/pHash3/pHash4 INTEGER NOT NULL DEFAULT 0`（256-bit 扩展 hash）

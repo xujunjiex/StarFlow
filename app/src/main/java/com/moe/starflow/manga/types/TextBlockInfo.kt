@@ -5,7 +5,7 @@ import com.moe.starflow.translate.screenshot.*
 
 import android.graphics.Rect
 
-/** 游戏/漫画共用 ML Kit 识别结果的一个文本块。 */
+/** OCR 引擎返回的文字及其检测几何；fontSize 仅在引擎路径能估算文字行尺寸时提供。 */
 data class TextBlockInfo(
     val text: String,
     val boundingBox: Rect?,
@@ -13,7 +13,9 @@ data class TextBlockInfo(
     val isVertical: Boolean? = null,  // 显式值优先；null → 用 inferredVertical() 从几何推断
     val angle: Float = 0f,
     val centerX: Float = -1f,
-    val centerY: Float = -1f
+    val centerY: Float = -1f,
+    /** Estimated text-line glyph size retained from pre-merge OCR detection geometry, when available. */
+    val fontSize: Float? = null
 ) {
     /**
      * 推断文字方向（true=竖排 / false=横排）。
