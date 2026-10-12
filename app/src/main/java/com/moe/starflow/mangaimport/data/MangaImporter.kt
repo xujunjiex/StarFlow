@@ -4,16 +4,25 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
-import androidx.documentfile.provider.DocumentFile
+import android.provider.DocumentsContract
+import android.util.Base64
 import com.moe.starflow.utils.LogCollector
+import com.moe.starflow.utils.SafDocumentMetadata
+import com.moe.starflow.utils.SafDocumentTreeReader
 import com.moe.starflow.R
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileNotFoundException
+import java.io.FilterInputStream
+import java.io.FilterOutputStream
 import java.io.FileOutputStream
+import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.security.MessageDigest
 import java.util.zip.ZipFile
 import kotlin.coroutines.coroutineContext
 
@@ -62,9 +71,144 @@ object MangaImporter {
     private fun coverDir(context: Context): File =
         StorageDirStore.coversDir(context)
 
+    /** Expected reader path for a source found by the app-directory scanner. */
+    internal fun scannedLocalRoot(context: Context, source: File): File {
+        if (source.isDirectory) return source.canonicalFile
+        return when (ArchiveTypes.detect(source)) {
+            ArchiveKind.RAR, ArchiveKind.SEVEN_ZIP -> scanExtractionDir(context, source)
+            else -> source.canonicalFile
+        }
+    }
+
+    /** Delete the original archive behind an auto-scanned RAR/7z entry when the user deletes it. */
+    internal fun deleteScannedArchiveSource(context: Context, localRoot: String) {
+        val cacheDir = File(localRoot).canonicalFile
+        if (!cacheDir.name.startsWith(".starflow_scan_")) return
+        val stamp = File(cacheDir, ".source_stamp")
+        val lines = runCatching { stamp.readLines() }.getOrNull() ?: return
+        val encodedPath = lines.lastOrNull()?.takeIf { it.isNotBlank() } ?: return
+        val sourcePath = runCatching {
+            String(Base64.decode(encodedPath, Base64.NO_WRAP), Charsets.UTF_8)
+        }.getOrNull() ?: return
+        val source = File(sourcePath).canonicalFile
+        // The stamp is app-managed input; validate both its cache hash and source location before deletion.
+        if (scanExtractionDir(context, source).canonicalFile != cacheDir) return
+        val appRoot = (context.getExternalFilesDir(null) ?: context.filesDir).canonicalFile
+        if (!source.path.startsWith(appRoot.path + File.separator) || !source.isFile) return
+        if (!source.delete()) throw IOException("无法删除扫描漫画的原始压缩包：${source.absolutePath}")
+    }
+
+    /** Parse an already-present app file/folder without copying or deleting the user's source. */
+    internal suspend fun inspectLocalSource(
+        context: Context,
+        source: File,
+        id: Long,
+        title: String,
+        coverPathOverride: String? = null,
+    ): ImportedManga = withContext(Dispatchers.IO) {
+        if (source.isDirectory) {
+            return@withContext inspectImageDirectory(context, source, id, title, coverPathOverride)
+        }
+        when (ArchiveTypes.detect(source)) {
+            ArchiveKind.ZIP -> importZipArchive(context, source, id, title, coverPathOverride)
+            ArchiveKind.PDF -> importPdf(context, source, id, title, coverPathOverride)
+            ArchiveKind.RAR, ArchiveKind.SEVEN_ZIP ->
+                inspectExtractedSource(context, source, id, title, coverPathOverride)
+            ArchiveKind.UNKNOWN -> throw IllegalArgumentException("不支持的漫画文件内容：${source.name}")
+        }
+    }
+
+    private fun inspectImageDirectory(
+        context: Context,
+        dir: File,
+        id: Long,
+        title: String,
+        coverPathOverride: String?,
+    ): ImportedManga {
+        val split = MangaChapterSplitter.split(ArchivedMangaReader.listImageFilesInDir(dir))
+        val coverPath = coverPathOverride ?: split.keys.firstOrNull()
+            ?.let { File(dir, it) }
+            ?.let { extractThumbnailFromFile(context, it, id) }
+        val size = dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        return ImportedManga(
+            id = id,
+            title = title,
+            localRoot = dir.canonicalPath,
+            isArchive = false,
+            coverPath = coverPath,
+            pageCount = split.keys.size,
+            addedAt = freshAddedAt(context),
+            sizeBytes = size,
+            description = ComicMetadataParser.descriptionOf(context, readDirMetadataTexts(dir)),
+            chapters = split.chapters,
+        )
+    }
+
+    private suspend fun inspectExtractedSource(
+        context: Context,
+        source: File,
+        id: Long,
+        title: String,
+        coverPathOverride: String?,
+    ): ImportedManga {
+        val extractDir = scanExtractionDir(context, source)
+        val stamp = File(extractDir, ".source_stamp")
+        val signature = "${source.length()}\n${source.lastModified()}"
+        val stampValue = signature + "\n" + Base64.encodeToString(source.canonicalPath.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+        if (!extractDir.isDirectory || !stamp.isFile || runCatching { stamp.readText() }.getOrNull() != stampValue ||
+            ArchivedMangaReader.listImageFilesInDir(extractDir).isEmpty()
+        ) {
+            extractDir.deleteRecursively()
+            if (!extractDir.mkdirs()) {
+                throw ImportOperationException(
+                    ImportFailureReason.DESTINATION_WRITE_FAILED,
+                    "无法创建漫画扫描解压目录：${extractDir.absolutePath}",
+                )
+            }
+            LibArchiveExtractor.extract(
+                archive = source,
+                destDir = extractDir,
+                filter = { ArchivedMangaReader.isImageFile(it) || ComicMetadataParser.isMetadataEntry(it) },
+            )
+            stamp.writeText(stampValue)
+        }
+        // Extraction is cached in a hidden app-managed directory. Keep the original user file intact.
+        val split = MangaChapterSplitter.split(ArchivedMangaReader.listImageFilesInDir(extractDir))
+        val coverPath = coverPathOverride ?: split.keys.firstOrNull()
+            ?.let { File(extractDir, it) }
+            ?.let { extractThumbnailFromFile(context, it, id) }
+        return ImportedManga(
+            id = id,
+            title = title,
+            localRoot = extractDir.canonicalPath,
+            isArchive = false,
+            coverPath = coverPath,
+            pageCount = split.keys.size,
+            addedAt = freshAddedAt(context),
+            sizeBytes = extractDir.walkTopDown().filter { it.isFile && it != stamp }.sumOf { it.length() },
+            description = ComicMetadataParser.descriptionOf(context, readDirMetadataTexts(extractDir)),
+            chapters = split.chapters,
+        )
+    }
+
+    private fun scanExtractionDir(context: Context, source: File): File {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(source.canonicalPath.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        return File(StorageDirStore.root(context), ".starflow_scan_$digest")
+    }
+
     /** 某次导入的本地目录（也是取消/失败时的清理对象）。 */
     private fun localDir(context: Context, id: Long): File =
-        File(StorageDirStore.root(context), id.toString())
+        try {
+            File(StorageDirStore.root(context), id.toString())
+        } catch (e: SecurityException) {
+            throw ImportOperationException(
+                ImportFailureReason.DESTINATION_WRITE_FAILED,
+                "系统拒绝访问应用漫画存储根目录",
+                e
+            )
+        }
 
     // ===== 导入压缩包 zip/cbz/cbr/7z =====
 
@@ -84,15 +228,14 @@ object MangaImporter {
         id: Long = nextId(context),
         onProgress: (ImportProgress) -> Unit = {}
     ): ImportedManga = withContext(Dispatchers.IO) {
-        val name = safeSegment(
-            DocumentFile.fromSingleUri(context, contentUri)?.name
-                ?: contentUri.lastPathSegment
-                ?: ""
-        ) ?: context.getString(R.string.default_manga_title, id.toString())
+        // SAF 的 name 查询只是显示名提示；有些 provider 的 metadata query 会抛异常，
+        // 但 openInputStream 仍可读。查询失败时用 URI 路径名兜底，不要提前误报读取失败。
+        val metadata = SafDocumentMetadata.query(context, contentUri, TAG)
+        val name = safeSegment(metadata.displayName ?: SafDocumentMetadata.fallbackName(contentUri).orEmpty())
+            ?: context.getString(R.string.default_manga_title, id.toString())
         val title = name.substringBeforeLast('.', name)
 
-        val manga = importArchiveToFile(context, contentUri, id, name, title, onProgress)
-            ?: throw IllegalStateException("导入失败")
+        val manga = importArchiveToFile(context, contentUri, id, name, title, metadata.sizeBytes ?: 0L, onProgress)
         LogCollector.i(TAG, "复制压缩包完成: ${manga.title} (${manga.pageCount} 页, ${manga.chapterCount} 章)")
         manga
     }
@@ -103,18 +246,19 @@ object MangaImporter {
         id: Long,
         name: String,
         title: String,
+        totalBytes: Long,
         onProgress: (ImportProgress) -> Unit
-    ): ImportedManga? {
-        val destDir = localDir(context, id).apply { mkdirs() }
+    ): ImportedManga {
+        val destDir = localDir(context, id)
         try {
+            ensureDestinationDirectory(destDir)
             // ⚠️ 文件名同样不可信（SAF 显示名可能带 `../`/分隔符）→ 只取最后一段
             val archiveFile = File(destDir, safeSegment(name) ?: "archive")
-            // 源文件大小（可能查不到 → 0 → 进度条转不确定态）
-            val totalBytes = DocumentFile.fromSingleUri(context, contentUri)?.length() ?: 0L
+            // 长度只用于进度条；metadata query 不可用时改走不确定进度，不能因此拒绝可读文件。
             onProgress(ImportProgress(ImportPhase.COPYING, totalBytes = totalBytes))
 
-            context.contentResolver.openInputStream(contentUri)?.use { input ->
-                FileOutputStream(archiveFile).use { output ->
+            openSourceInput(context, contentUri).use { input ->
+                openDestinationOutput(archiveFile).use { output ->
                     var last = 0L
                     copyStream(input, output) { copied ->
                         val now = System.currentTimeMillis()
@@ -137,7 +281,7 @@ object MangaImporter {
                         )
                     )
                 }
-            } ?: return null
+            }
 
             return when (ArchiveTypes.detect(archiveFile)) {
                 ArchiveKind.ZIP -> importZipArchive(context, archiveFile, id, title)
@@ -175,7 +319,13 @@ object MangaImporter {
      *
      * @throws PdfImportException 打不开（加密 / 损坏）——由 [ImportManager] 转成用户提示
      */
-    private fun importPdf(context: Context, pdfFile: File, id: Long, title: String): ImportedManga {
+    private fun importPdf(
+        context: Context,
+        pdfFile: File,
+        id: Long,
+        title: String,
+        coverPathOverride: String? = null,
+    ): ImportedManga {
         val renderer = PdfPageRenderer(pdfFile)
         try {
             val pageCount = renderer.pageCount
@@ -188,7 +338,7 @@ object MangaImporter {
                 throw PdfImportException(reason, "PDF 打不开（${renderer.openError}）: ${pdfFile.name}")
             }
             // 封面 = 阅读顺序的第一页（PDF 第 1 页），与 zip/目录同一条口径
-            val coverPath = renderer.renderCanonical(0)
+            val coverPath = coverPathOverride ?: renderer.renderCanonical(0)
                 ?.let { bmp -> try { extractThumbnail(context, bmp, id) } finally { bmp.recycle() } }
             LogCollector.i(TAG, "导入 PDF 完成: $title（$pageCount 页，按需栅格化）")
             return ImportedManga(
@@ -220,10 +370,11 @@ object MangaImporter {
         context: Context,
         archiveFile: File,
         id: Long,
-        title: String
+        title: String,
+        coverPathOverride: String? = null,
     ): ImportedManga {
         val split = MangaChapterSplitter.split(listZipImageEntries(archiveFile))
-        val coverPath = extractCoverFromZipFile(context, archiveFile, split.keys, id)
+        val coverPath = coverPathOverride ?: extractCoverFromZipFile(context, archiveFile, split.keys, id)
         return ImportedManga(
             id = id,
             title = title,
@@ -314,25 +465,49 @@ object MangaImporter {
         id: Long = nextId(context),
         onProgress: (ImportProgress) -> Unit = {}
     ): ImportedManga = withContext(Dispatchers.IO) {
-        val rootDoc = DocumentFile.fromTreeUri(context, treeUri)
-            ?: throw IllegalStateException("无法读取目录: $treeUri")
+        val rootDocumentId = try {
+            DocumentsContract.getTreeDocumentId(treeUri)
+        } catch (e: SecurityException) {
+            throw ImportOperationException(
+                ImportFailureReason.DIRECTORY_ACCESS_DENIED,
+                "读取 SAF 目录标识时系统拒绝访问：$treeUri",
+                e
+            )
+        } catch (e: Exception) {
+            throw ImportOperationException(
+                ImportFailureReason.DIRECTORY_SCAN_FAILED,
+                "无法从所选 SAF URI 解析目录标识：$treeUri",
+                e
+            )
+        }.takeIf { it.isNotBlank() } ?: throw ImportOperationException(
+            ImportFailureReason.DIRECTORY_INVALID,
+            "所选 SAF URI 没有目录标识：$treeUri",
+        )
 
-        importDirectoryToFile(context, rootDoc, id, onProgress)
-            ?: throw IllegalStateException("导入失败")
+        // ACTION_OPEN_DOCUMENT_TREE returns a tree URI. Query metadata on the concrete root
+        // document URI; some DocumentsProviders reject metadata queries against the tree URI.
+        val rootUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, rootDocumentId)
+        val title = SafDocumentMetadata.query(context, rootUri, TAG).displayName
+            ?.let(::safeSegment)
+            ?: context.getString(R.string.default_manga_title, id.toString())
+        importDirectoryToFile(context, treeUri, rootDocumentId, title, id, onProgress)
     }
 
     private suspend fun importDirectoryToFile(
         context: Context,
-        rootDoc: DocumentFile,
+        treeUri: Uri,
+        rootDocumentId: String,
+        title: String,
         id: Long,
         onProgress: (ImportProgress) -> Unit
-    ): ImportedManga? {
-        val destDir = localDir(context, id).apply { mkdirs() }
+    ): ImportedManga {
+        val destDir = localDir(context, id)
         try {
+            ensureDestinationDirectory(destDir)
             // ===== 阶段一：扫描（枚举图片 + 排序）。总量未知 → 不确定进度 =====
             onProgress(ImportProgress(ImportPhase.SCANNING))
-            val entries = mutableListOf<Pair<DocumentFile, String>>()
-            collectImageDocs(rootDoc, "", entries)
+            val entries = mutableListOf<Pair<Uri, String>>()
+            collectImageDocs(context, treeUri, rootDocumentId, "", entries)
 
             // ⚠️ 章节切分在这里就定下来：它同时产出**权威页序**（按章分组、章内自然排序），
             // 落盘顺序即阅读顺序 —— 阅读侧 `ReaderPageSource` 用同一个切分器，两边不会错位。
@@ -346,19 +521,33 @@ object MangaImporter {
             var total = 0L
             var done = 0
             var last = 0L
-            ordered.forEach { (doc, rel) ->
+            ordered.forEach { (sourceUri, rel) ->
                 coroutineContext.ensureActive()
                 val target = File(destDir, rel)
                 // ⚠️ 纵深防御：哪怕上游漏了消毒，也**绝不允许**写到这本书自己的目录之外
                 // （越界会覆盖 models/、covers/、别人书的页图）。
-                if (!target.canonicalPath.startsWith(destDir.canonicalPath + File.separator)) {
+                val staysInsideImportDir = try {
+                    target.canonicalPath.startsWith(destDir.canonicalPath + File.separator)
+                } catch (e: SecurityException) {
+                    throw ImportOperationException(
+                        ImportFailureReason.DESTINATION_WRITE_FAILED,
+                        "无法校验应用漫画文件的目标路径：${target.absolutePath}",
+                        e
+                    )
+                } catch (e: IOException) {
+                    throw ImportOperationException(
+                        ImportFailureReason.DESTINATION_WRITE_FAILED,
+                        "无法解析应用漫画文件的目标路径：${target.absolutePath}",
+                        e
+                    )
+                }
+                if (!staysInsideImportDir) {
                     LogCollector.w(TAG, "跳过越界目标: $rel")
                     return@forEach
                 }
-                target.parentFile?.mkdirs()
-                context.contentResolver.openInputStream(doc.uri)?.use { input ->
+                openSourceInput(context, sourceUri).use { input ->
                     // 单文件内部也可取消：大页图不至于让「取消」等满一整页
-                    FileOutputStream(target).use { output -> copyStream(input, output) {} }
+                    openDestinationOutput(target).use { output -> copyStream(input, output) {} }
                 }
                 total += target.length()
                 done++
@@ -377,7 +566,7 @@ object MangaImporter {
 
             return ImportedManga(
                 id = id,
-                title = rootDoc.name ?: context.getString(R.string.default_manga_title, id.toString()),
+                title = title,
                 localRoot = destDir.absolutePath,
                 isArchive = false,
                 coverPath = coverPath,
@@ -396,29 +585,67 @@ object MangaImporter {
     // ===== 复制工具 =====
 
     /**
-     * 递归枚举 DocumentFile 树里的图片，收集**相对路径**（ch1/001.jpg）。
+     * 递归枚举 SAF 子项查询结果里的图片，收集**相对路径**（ch1/001.jpg）。
      *
      * ⚠️ 收的是相对路径而不是文件名：分章节目录里 ch1/001.jpg 与 ch2/001.jpg 同名，只记 basename
      * 会让 File(destDir, it) 指不到文件 → 封面永远是灰底占位，排序也会把两章的同名页混在一起。
      *
-     * ⚠️ 递归里每层 `ensureActive()`：`DocumentFile.listFiles()` 是逐层 IPC，大文件夹（上万条目）
+     * ⚠️ 递归里每层 `ensureActive()`：DocumentsProvider 子项查询是逐层 IPC，大文件夹（上万条目）
      * 的扫描本身就要几十秒 —— 不检查取消的话用户点了 ✕ 仍要等扫描跑完，看起来像"取消没反应"。
      */
     private suspend fun collectImageDocs(
-        doc: DocumentFile,
+        context: Context,
+        treeUri: Uri,
+        documentId: String,
         prefix: String,
-        out: MutableList<Pair<DocumentFile, String>>
+        out: MutableList<Pair<Uri, String>>
     ) {
-        doc.listFiles().forEach { child ->
-            coroutineContext.ensureActive()
-            if (child.isDirectory) {
-                val dirName = safeSegment(child.name ?: return@forEach) ?: return@forEach
-                collectImageDocs(child, "$prefix$dirName/", out)
-            } else if (child.isFile && ArchivedMangaReader.isImageFile(child.name ?: "")) {
-                val name = safeSegment(child.name ?: return@forEach) ?: return@forEach
-                out.add(child to "$prefix$name")
+        try {
+            val children = SafDocumentTreeReader.listChildren(context, treeUri, documentId, TAG)
+            children.forEachIndexed { index, child ->
+                coroutineContext.ensureActive()
+                val providerName = child.displayName ?: child.documentId.substringAfterLast('/')
+                val imageExtension = imageExtension(child.mimeType)
+                val isImage = ArchivedMangaReader.isImageFile(providerName) ||
+                    (imageExtension != null && child.mimeType?.startsWith("image/") == true)
+                val isDirectory = child.isDirectory ||
+                    (child.mimeType == null && !isImage && providerName.substringAfterLast('.', "").isEmpty())
+                if (isDirectory) {
+                    val dirName = safeSegment(providerName) ?: "folder_${index + 1}"
+                    collectImageDocs(context, treeUri, child.documentId, "$prefix$dirName/", out)
+                } else if (isImage) {
+                    val suggestedName = if (ArchivedMangaReader.isImageFile(providerName)) providerName
+                    else "image_${(index + 1).toString().padStart(5, '0')}.$imageExtension"
+                    val name = safeSegment(suggestedName) ?: return@forEachIndexed
+                    out.add(child.uri to "$prefix$name")
+                }
             }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: ImportOperationException) {
+            throw e
+        } catch (e: SecurityException) {
+            throw ImportOperationException(
+                ImportFailureReason.DIRECTORY_ACCESS_DENIED,
+                "扫描所选目录时 SAF 拒绝访问",
+                e
+            )
+        } catch (e: Exception) {
+            throw ImportOperationException(
+                ImportFailureReason.DIRECTORY_SCAN_FAILED,
+                "扫描所选目录失败",
+                e
+            )
         }
+    }
+
+    private fun imageExtension(mimeType: String?): String? = when (mimeType?.lowercase()) {
+        "image/jpeg", "image/jpg" -> "jpg"
+        "image/png" -> "png"
+        "image/webp" -> "webp"
+        "image/gif" -> "gif"
+        "image/bmp" -> "bmp"
+        else -> null
     }
 
     /**
@@ -433,6 +660,161 @@ object MangaImporter {
         if (last.isEmpty() || last == "." || last == "..") return null
         val cleaned = last.filter { it.code >= 0x20 }
         return cleaned.ifEmpty { null }
+    }
+
+    /** 读取 SAF 来源时保留「打开来源」和「读取来源」两个不同失败阶段。 */
+    private fun openSourceInput(context: Context, uri: Uri): InputStream {
+        val input = try {
+            context.contentResolver.openInputStream(uri)
+                ?: throw ImportOperationException(
+                    ImportFailureReason.SOURCE_OPEN_FAILED,
+                    "ContentResolver.openInputStream 返回 null"
+                )
+        } catch (e: ImportOperationException) {
+            throw e
+        } catch (e: SecurityException) {
+            throw ImportOperationException(
+                ImportFailureReason.SOURCE_ACCESS_DENIED,
+                "打开 SAF 来源时系统拒绝访问",
+                e
+            )
+        } catch (e: FileNotFoundException) {
+            throw ImportOperationException(
+                ImportFailureReason.SOURCE_OPEN_FAILED,
+                "SAF 文件提供器未能打开所选 URI",
+                e
+            )
+        } catch (e: IOException) {
+            throw ImportOperationException(
+                ImportFailureReason.SOURCE_OPEN_FAILED,
+                "打开 SAF 来源时发生 I/O 错误",
+                e
+            )
+        }
+
+        return object : FilterInputStream(input) {
+            override fun read(): Int = try {
+                super.read()
+            } catch (e: IOException) {
+                throw ImportOperationException(
+                    ImportFailureReason.SOURCE_READ_FAILED,
+                    "从 SAF 来源读取数据时发生 I/O 错误",
+                    e
+                )
+            }
+
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int = try {
+                super.read(buffer, offset, length)
+            } catch (e: IOException) {
+                throw ImportOperationException(
+                    ImportFailureReason.SOURCE_READ_FAILED,
+                    "从 SAF 来源读取数据时发生 I/O 错误",
+                    e
+                )
+            }
+
+            override fun close() {
+                try {
+                    super.close()
+                } catch (e: IOException) {
+                    throw ImportOperationException(
+                        ImportFailureReason.SOURCE_READ_FAILED,
+                        "关闭 SAF 来源数据流时发生 I/O 错误",
+                        e
+                    )
+                }
+            }
+        }
+    }
+
+    /** 目标目录/文件不可写时明确报告应用目标存储故障，不冒充 SAF 权限问题。 */
+    private fun ensureDestinationDirectory(dir: File) {
+        try {
+            if (dir.isDirectory) return
+            if ((dir.exists() && !dir.isDirectory) || !dir.mkdirs() || !dir.isDirectory) {
+                throw ImportOperationException(
+                    ImportFailureReason.DESTINATION_WRITE_FAILED,
+                    "无法创建应用漫画存储目录：${dir.absolutePath}"
+                )
+            }
+        } catch (e: ImportOperationException) {
+            throw e
+        } catch (e: SecurityException) {
+            throw ImportOperationException(
+                ImportFailureReason.DESTINATION_WRITE_FAILED,
+                "创建应用漫画存储目录时被系统拒绝：${dir.absolutePath}",
+                e
+            )
+        }
+    }
+
+    private fun openDestinationOutput(file: File): OutputStream {
+        file.parentFile?.let(::ensureDestinationDirectory)
+        val output = try {
+            FileOutputStream(file)
+        } catch (e: IOException) {
+            throw ImportOperationException(
+                ImportFailureReason.DESTINATION_WRITE_FAILED,
+                "无法创建应用漫画文件：${file.absolutePath}",
+                e
+            )
+        } catch (e: SecurityException) {
+            throw ImportOperationException(
+                ImportFailureReason.DESTINATION_WRITE_FAILED,
+                "系统拒绝创建应用漫画文件：${file.absolutePath}",
+                e
+            )
+        }
+
+        return object : FilterOutputStream(output) {
+            override fun write(value: Int) {
+                try {
+                    out.write(value)
+                } catch (e: IOException) {
+                    throw ImportOperationException(
+                        ImportFailureReason.DESTINATION_WRITE_FAILED,
+                        "写入应用漫画文件失败：${file.absolutePath}",
+                        e
+                    )
+                }
+            }
+
+            override fun write(buffer: ByteArray, offset: Int, length: Int) {
+                try {
+                    out.write(buffer, offset, length)
+                } catch (e: IOException) {
+                    throw ImportOperationException(
+                        ImportFailureReason.DESTINATION_WRITE_FAILED,
+                        "写入应用漫画文件失败：${file.absolutePath}",
+                        e
+                    )
+                }
+            }
+
+            override fun flush() {
+                try {
+                    out.flush()
+                } catch (e: IOException) {
+                    throw ImportOperationException(
+                        ImportFailureReason.DESTINATION_WRITE_FAILED,
+                        "刷新应用漫画文件失败：${file.absolutePath}",
+                        e
+                    )
+                }
+            }
+
+            override fun close() {
+                try {
+                    out.close()
+                } catch (e: IOException) {
+                    throw ImportOperationException(
+                        ImportFailureReason.DESTINATION_WRITE_FAILED,
+                        "关闭应用漫画文件失败：${file.absolutePath}",
+                        e
+                    )
+                }
+            }
+        }
     }
 
     /**

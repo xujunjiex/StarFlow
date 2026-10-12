@@ -332,10 +332,18 @@
 
             <TextView
                 android:id="@+id/tv_empty"
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="@string/import_manga_empty_hint"
-                android:textSize="14sp"
+                android:layout_marginHorizontal="24dp"
+                android:background="@drawable/bg_library_empty_hint"
+                android:paddingHorizontal="20dp"
+                android:paddingVertical="24dp"
+                android:gravity="center"
+                android:textAlignment="center"
+                android:textColor="@color/text_primary"
+                android:lineSpacingExtra="5dp"
+                android:textSize="13sp"
                 android:visibility="gone"
                 android:layout_gravity="center"/>
 

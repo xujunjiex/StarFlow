@@ -5,8 +5,8 @@
 ## 书架与阅读器
 
 **书架（`ImportMangaFragment`）**：
-- 存储固定 `getExternalFilesDir()/manga_import/<id>/`（zip 放原文件 / 目录放散图；封面在 `getExternalFilesDir()/covers/`），**在 Android/data/<pkg>/files 下，用户可经文件管理器/数据线访问——绝不允许存进不可访问的 `filesDir`（/data/data）**；**无自定义目录可切**；根目录由 `StorageDirStore.root()` 提供，封面目录 `StorageDirStore.coversDir()`
-- 一次性迁移 `StorageDirStore.migrate()`：把旧版存于 `filesDir` 的漫画/封面搬到外部专属目录并重写清单路径（Fragment 启动时后台执行，幂等）；Manifest 已移除废弃的 READ/WRITE/MANAGE_EXTERNAL_STORAGE（漫画导入走 SAF，无需存储权限）
+- 存储固定 `getExternalFilesDir()/manga_import/<id>/`（zip 放原文件 / 目录放散图），供用户经文件管理器/数据线直接添加和管理；生成的封面缩略图保存在应用私有 `filesDir/covers/`，避免受 Android/data 子目录所有权影响；**无自定义目录可切**；根目录由 `StorageDirStore.root()` 提供，封面目录 `StorageDirStore.coversDir()`
+- 一次性迁移 `StorageDirStore.migrate()`：把旧版存于 `filesDir` 的漫画文件搬到外部专属目录并重写清单路径（Fragment 启动时后台执行，幂等）；封面缓存保留在应用私有目录；Manifest 已移除废弃的 READ/WRITE/MANAGE_EXTERNAL_STORAGE（漫画导入走 SAF，无需存储权限）
 - 导入即复制（SAF 源 → 复制进 app 内部存储）；封面**唯一命名** `covers/<id>_<ts>.jpg`（每次导入/换封面都新路径，防 Glide 按路径缓存导致删除重导后显示旧图）；重导前清理该 id 旧封面
 - `ImportedManga` 字段：id/title/localRoot/isArchive/coverPath/pageCount/addedAt/sizeBytes/description(简介)/lastReadPage/lost(文件丢失标记)；JSON 存 SP `manga_import`
 - 长按**多选管理**：已读/未读（改 `lastReadPage`）/删除（连同 `filesDir` 副本+封面）/重命名/换封面（photo picker 复制进 covers）/编辑简介；顶部「全选」图标按钮 + 返回键退出多选
@@ -121,12 +121,16 @@
   改扩展名白名单或排序规则**必须改那一处**，别在两边各写一份。
 
 - **导入跑在进程级 `ImportManager`（`mangaimport/data/`），不在 Fragment 的 lifecycleScope**：旧实现旋转/切页会取消导入 → 复制一半、条目没入库 = 孤儿目录。现在 View 只观察 `tasks`（占位卡片：图片位进度条 + 百分比 + ✕）与 `events`（结果弹窗，`drainEvents()` 取走）。
+- **导入失败按实际阶段分类**：SAF 来源的拒绝访问、打开失败、读取失败，应用目标目录写入失败，以及文件夹枚举失败分别映射；失败弹窗附最深层异常类型/消息。不要再把 `FileNotFoundException`、`SecurityException` 混成「权限不足或文件被移动」。
+- SAF 的 `DISPLAY_NAME` / `SIZE` 是 DocumentsProvider 查询返回的可选列，不等于内容流权限。通过 `SafDocumentMetadata` 先合并查询，provider 不接受合并投影时分别查缺失列；记录 authority、URI、缺列/null cursor/异常。树选择器返回 tree URI，查询根目录名称时必须先构造具体 document URI；文件名最终可回退 URI，大小未知时显示不确定进度。只有 `openInputStream` / `read` 失败才阻止复制，失败弹窗保留操作阶段和根异常。
+- **漫画文件与书架索引分开存**：漫画文件在 `getExternalFilesDir()/manga_import/`，书名、页数、路径索引在私有 SharedPreferences（`manga_import`）。`MangaLibraryScanner` 在书架进入/恢复前台/下拉刷新时扫描该目录及 app files 根目录，按路径去重并重建缺失索引；数字目录优先复用原 id，帮助保留关联的翻译行。作品文件夹递归扫描图片，按第一层子目录分章。根目录自动扫描只识别漫画包/PDF和包含图片的作品文件夹；RAR/7z 的缓存使用隐藏 `.starflow_scan_*` 目录。非漫画 app 目录（例如 `sr_cache`、`sr_bench_out`）必须跳过，不能把它们报成扫描失败。
+- **外部目录权限诊断**：`File.listFiles() == null` 时记录 `canRead()`、应用 UID、目录 UID/GID 与权限模式。`getExternalFilesDir()` 无需存储权限；若 MTP/ADB 创建的子目录归 `shell` 所有且没有应用遍历权限，应用无法读取其子项，不能把它误报成 SAF 授权失败。
 - ⚠️ **并发导入了 → 清单写入必须同步**：`importArchives` 每个 uri 一个并发任务，而 `ImportedMangaStore.add/remove/update` 是 `load→改→save` 三步。**全部方法已 `@Synchronized`**；去掉同步 = 两个任务同毫秒收尾互相覆盖 → **整条导入静默消失**（占位卡片没了、书架也没条目）。守卫：`ImportedMangaStoreConcurrencyTest`（8 线程 × 20 次 add，必须有 160 条）。
-- ⚠️ **`ImportManager` 的 scope 挂了 `CoroutineExceptionHandler`，且 SAF 名字查询用 `runCatching` 兜住**：`launch` 里未捕获异常会走线程默认处理器 = **整个应用崩**，而 SAF 的 `DocumentFile.name`（ContentResolver 查询）在权限被撤销/存储卸载时会抛。
+- ⚠️ **`ImportManager` 的 scope 挂了 `CoroutineExceptionHandler`**：`launch` 里未捕获异常会走线程默认处理器 = **整个应用崩**；SAF 查询异常由 `SafDocumentMetadata` 记录并降级，不应被误报成内容流读取失败。
 - ⚠️ **`addedAt` 必须单调递增**（`MangaImporter.freshAddedAt` = `max(now, 清单最大 addedAt+1)`）：它同时是翻译记录的**身份指纹**，同一毫秒内「删书 → 重导」会复用同一个 id + 同指纹 → 旧译图映射到新书。
 - ⚠️ **删除翻译记录按 `(mangaId, mangaKey)` 成对删**（`deleteMangaScoped`）：删除是异步的，id 又会被复用 → 只按 id 删可能删掉刚导入的同 id 新书的记录。孤儿清理 `purgeOrphanTranslations` 每个 id 前也二次确认（清理期间用户可能刚好导入同 id 新书）。
 - ⚠️ **取消/失败清理要连封面一起删**（`ImportManager.cleanup` 按 `<id>_` 前缀）：目录导入是「复制 → 生成封面 → 返回」，取消可能落在封面之后、入库之前。
-- ⚠️ **扫描阶段也要可取消**（`collectImageDocs` 是 `suspend` + 每层 `ensureActive()`）：`DocumentFile.listFiles()` 逐层 IPC，万级条目扫描几十秒，不检查取消 = 点了 ✕ 像没反应。
+- ⚠️ **SAF 扫描阶段也要可取消**（`collectImageDocs` 是 `suspend` + 每层 `ensureActive()`）：`SafDocumentTreeReader` 每层发一次 DocumentsProvider 子项查询，万级条目扫描几十秒，不检查取消 = 点了 ✕ 像没反应。不要改回逐 child 访问 `DocumentFile.name/isDirectory`，那会增加每项 IPC 并把 provider 元数据错误吞成空结果。
 - ⚠️ **导入结果弹窗要能扛住旋转**：MainActivity 没有 `configChanges`，Fragment 会重建，而事件已被 `drainEvents()` 取走 → 队列进 `onSaveInstanceState`，且 `onDestroyView` 把「正在展示的那条」放回队首（否则「空文件夹 / 导入失败」提示**永久丢失**）。
 - ⚠️ **取消竞态文案**：`ImportManager.cancel()` 返回 false（任务恰好跑完）时提示「已经导入完成了」，不能报「已取消」。
 - 入口只有两个：**导入文件（zip/cbz，可多选）** 与 **导入文件夹（整个夹 = 一部）**。第三个「导入多个漫画文件夹」是假的（同一个 `OpenDocumentTree`，SAF 不给多选目录），已删；文件夹模式**不认夹里的压缩包**，子目录递归且按「先目录名、再夹内页名」自然排序。
@@ -344,7 +348,7 @@
 - `PdfRenderer` **没有密码接口** → 加密 PDF 只能请用户先解密；
   它与"损坏"都抛 `IOException/SecurityException`、没有错误码，只能**嗅探异常文本**
   （message/类名里带 password/encrypt → 加密，其余 → 损坏）。判不出来按损坏处理，
-  文案里两种可能都写上。`FileNotFoundException/SecurityException` → 复用 `UNREADABLE`。
+  文案里两种可能都写上。PDF 本地副本打开失败 → `UNREADABLE`，提示明确指向 PDF 渲染器读取本地副本失败；SAF 导入源的访问/打开/读取错误使用独立原因。
 - 文件选择器的 mime 列表要显式带上 `application/pdf`（SAF 按 mime 过滤，不给就选不中）。
 
 **⑦ 留给以后的口子（用户口径：复杂图表类 PDF 之后走"全新 PDF 导入页 + PDFMathTranslate 式路线"）**

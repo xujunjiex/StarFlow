@@ -239,16 +239,18 @@ class NovelImageExtractionTest {
         assertTrue("txt 章没有图", txt.images.isEmpty())
     }
 
-    /** 子目录里的 html **不**成章（既有约定：只取直接子文件，别把杂七杂八吞成章节）。 */
+    /** 章节分类子目录里的 HTML 成章，章节 locator 保留相对路径。 */
     @Test
-    fun `子目录里的 html 不成章`() = runBlocking {
+    fun `章节子目录里的 html 成章`() = runBlocking {
         val dir = tmp.newFolder("folder2")
         File(dir, "text").mkdirs()
         File(dir, "text/ch1.html").writeText("<p>藏在子目录里</p>")
         File(dir, "ch0.txt").writeText("根目录的正文")
 
         val book = FolderNovelParser.parse(dir)
-        assertEquals(listOf("ch0"), book.chapters.map { it.title })
+        assertEquals(listOf("ch0", "text · ch1"), book.chapters.map { it.title })
+        assertEquals(listOf("ch0.txt", "text/ch1.html"), book.chapters.map { it.locator })
+        assertTrue(FolderNovelParser.loadChapter(dir, book.chapters[1].locator).contains("藏在子目录里"))
     }
 
     /** 夹内 html 引用的图**不在**时返回 null（渲染回落占位），不能抛也不能改变张数。 */

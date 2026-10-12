@@ -13,12 +13,17 @@
          否则会出现「导入 | 小说」这种一边是动作、一边是品类的错位。 -->
     <string name="import_tab_manga">Manga</string>
     <string name="display_options">Display</string>
-    <string name="import_manga_empty_hint">Tap + to import manga</string>
+    <string name="import_manga_empty_hint">No manga yet\nAdd manga to the folder below or tap + to import; pull down to scan again.\nManga folder: %1$s\nApp files root: %2$s\nSupports ZIP/CBZ/RAR/CBR/7z/PDF; image subfolders can organize chapters.</string>
+    <string name="import_auto_scan_failed_title">Some files could not be added by auto-scan</string>
+    <string name="import_auto_scan_failed_message">%1$d item(s) were not added. Exact reasons:\n%2$s</string>
+    <string name="import_auto_scan_failed_hint">The report includes exact paths and system permission details. Scroll to inspect or copy the full report.</string>
+    <string name="import_auto_scan_copy">Copy details</string>
+    <string name="import_auto_scan_copied">Scan details copied</string>
     <string name="import_manga_deleted">Deleted</string>
-    <string name="import_manga_option_files">Import files (zip/cbz/cbr/7z/pdf)</string>
+    <string name="import_manga_option_files">Import files (zip/cbz/rar/cbr/7z/pdf)</string>
     <string name="import_manga_option_single_dir">Import folder (whole folder = one manga)</string>
     <string name="import_folder_hint">Tip: some devices only allow choosing a newly-created folder. If blocked, create a folder in the picker first.</string>
-    <string name="import_storage_hint">Stored to app\'s internal storage:&#10;%1$s</string>
+    <string name="import_storage_hint">Imported content is stored in this app-specific directory:&#10;%1$s</string>
     <string name="browse">Browse</string>
     <string name="import_delete">Delete</string>
     <string name="import_delete_selected_confirm">Delete %1$d selected manga? App-local copies will also be removed.</string>
@@ -77,12 +82,22 @@
     <!-- 导入结果弹窗 -->
     <string name="import_result_failed_title">Import failed</string>
     <string name="import_result_failed_msg">%1$s: %2$s</string>
-    <string name="import_fail_not_archive">not a valid zip/cbz archive, or the file is damaged</string>
+    <string name="import_fail_not_archive">The file content is not a supported manga format (ZIP/CBZ/CBR/7z/PDF)</string>
+    <string name="import_fail_archive_invalid">The file was identified as an archive, but its structure could not be parsed</string>
     <string name="import_fail_pdf_encrypted">this PDF is password-protected. Remove the password (export a decrypted copy) and import again</string>
     <string name="import_fail_pdf_invalid">cannot open this PDF — the file is damaged, or it is not a PDF this device can render</string>
-    <string name="import_fail_unreadable">cannot read the file (permission denied, or the file has moved)</string>
-    <string name="import_fail_directory">cannot read the selected folder (permission denied, or it has moved)</string>
-    <string name="import_fail_unknown">unknown error — see the log for details</string>
+    <string name="import_fail_source_access_denied">The system document provider denied access to the selected file</string>
+    <string name="import_fail_source_open_failed">The system document provider could not open the selected file</string>
+    <string name="import_fail_source_read_failed">An I/O error occurred while reading data from the system document provider</string>
+    <string name="import_fail_destination_write_failed">Could not write to the app manga storage directory</string>
+    <string name="import_fail_storage_insufficient">There is not enough available storage space to extract this archive</string>
+    <string name="import_fail_archive_limit">The archive exceeded the safe extraction limits and import was stopped</string>
+    <string name="import_fail_directory_access_denied">The system document provider denied access to the selected folder</string>
+    <string name="import_fail_directory_scan_failed">Could not scan the selected folder contents</string>
+    <string name="import_fail_pdf_read_failed">The PDF renderer could not read the local PDF copy</string>
+    <string name="import_fail_directory_invalid">The system document provider did not return a valid folder</string>
+    <string name="import_fail_detail">System error: %1$s</string>
+    <string name="import_fail_unknown">Import processing failed. The system exception is shown below.</string>
     <string name="import_empty_title">No images found</string>
     <string name="import_empty_folder">No images were found in %1$s or its subfolders. It was added to the shelf as a 0-page manga.\nSupported: jpg / jpeg / png / webp / gif / bmp — archives inside the folder are not detected.</string>
     <string name="import_empty_archive">%1$s contains no images. It was added to the shelf as a 0-page manga.</string>
@@ -1596,8 +1611,13 @@
     <string name="novel_import_wrong_format_text">Not a supported text format.</string>
     <string name="novel_import_no_chapters">No readable chapters found.</string>
     <string name="novel_import_failed">Import failed</string>
-    <string name="novel_import_reason_not_archive">Unsupported format or corrupted file.</string>
-    <string name="novel_import_reason_unreadable">File is unreadable. Check access permission.</string>
+    <string name="novel_import_reason_not_archive">The archive structure could not be parsed; see details for the parser error.</string>
+    <string name="novel_import_reason_unreadable">File reading failed; see details for the operation and system exception.</string>
+    <string name="novel_import_reason_source_open">The system could not open the selected SAF source stream.</string>
+    <string name="novel_import_reason_source_read">An I/O error occurred while reading the SAF source.</string>
+    <string name="novel_import_reason_destination_write">Writing to the app novel storage directory failed.</string>
+    <string name="novel_import_reason_directory_scan">The SAF document provider could not enumerate the selected folder.</string>
+    <string name="novel_import_reason_directory_access">The system denied access to the selected SAF folder.</string>
     <string name="novel_import_reason_no_text_chapter">No readable text chapters.</string>
     <string name="novel_import_reason_empty">Empty file.</string>
     <string name="novel_import_reason_too_large">File is too large to import.</string>
@@ -1759,7 +1779,7 @@
     <string name="novel_cover_failed">Could not use that image as the cover.</string>
 
     <!-- ===== 小说书架管理 ===== -->
-    <string name="novel_shelf_empty">No novels yet. Tap + at the bottom right to add some.</string>
+    <string name="novel_shelf_empty">No novels yet\nAdd a novel to the folder below or tap + to import; pull down to scan again.\nNovel folder: %1$s\nApp files root: %2$s\nSupports TXT/EPUB/HTML/HTM/XHTML and ZIP chapter packs; chapters may be grouped in subfolders.</string>
     <string name="novel_manage_rename">Rename</string>
     <string name="novel_manage_mark_read">Mark as read</string>
     <string name="novel_manage_mark_unread">Mark as unread</string>
@@ -1768,15 +1788,15 @@
     <string name="import_already_done">That import already finished</string>
 
     <!-- ===== 导入弹窗的选项说明（措辞与 koto 统一；只保留「文件」「文件夹(单部)」，不含多部入口）===== -->
-    <string name="import_desc_files_manga">Pick one or more CBZ/ZIP/CBR/7z/PDF files. Each file becomes one manga; subfolders become chapters (a PDF is read page by page, without extra copies).</string>
-    <string name="import_desc_dir_manga">Pick a folder holding a single manga. Its subfolders become chapters; loose images in the root become chapter 0.</string>
-    <string name="import_desc_files_novel">Pick one or more TXT / EPUB / ZIP (novel pack containing HTML) / HTML files. Each file is imported as one novel. Note: a single HTML file is copied on its own, so illustrations that sit next to it cannot be read — import the whole folder instead if it has pictures.</string>
-    <string name="import_desc_dir_novel">Pick a folder holding a single novel. TXT / HTML files inside become chapters; each EPUB becomes a volume and keeps its own chapters. When the folder contains HTML, the pictures under it are copied too so illustrations show up.</string>
+    <string name="import_desc_files_manga">Pick CBZ/ZIP/CBR/RAR/7z/PDF files; each becomes one manga. ZIP/CBZ stays archived, RAR/CBR/7z is extracted, and PDF is read page by page. The app also scans this folder and matching manga files/folders directly under its files directory.</string>
+    <string name="import_desc_dir_manga">Pick one folder per manga. Subfolders become chapters and loose root images become chapter 0. Auto-scan image extensions: jpg/jpeg/png/webp/gif/bmp. Keep each manga in its own folder.</string>
+    <string name="import_desc_files_novel">Pick TXT / EPUB / ZIP (novel pack containing HTML/XHTML/TXT) / HTML / HTM / XHTML files; each file becomes one novel. A standalone HTML file cannot access sibling illustrations; use folder import when it has pictures.</string>
+    <string name="import_desc_dir_novel">Pick one folder per novel. TXT/HTML/HTM/XHTML files in the root or chapter subfolders become chapters in natural order; each EPUB is a volume. HTML illustrations use relative paths. Auto-scan also supports chapter subfolders.</string>
     <string name="import_option_dir_manga_single">Import folder (single manga)</string>
     <string name="import_option_dir_novel_single">Import folder (single novel)</string>
     <!-- ⚠️ 小说侧的「导入文件」按钮**必须**用自己的 key：曾经复用 import_manga_option_files，
          于是文本导入弹窗上写着「导入文件（zip/cbz/cbr/7z）」—— 那三种是漫画格式（用户 2026-10-04 指出）。 -->
-    <string name="import_novel_option_files">Import files (txt / epub / zip / html)</string>
+    <string name="import_novel_option_files">Import novel files</string>
 
     <string name="reader_clear_page_desc">Clear this page</string>
     <string name="reader_clear_page_confirm_title">Clear this page\'s translation?</string>

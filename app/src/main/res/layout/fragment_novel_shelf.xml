@@ -257,11 +257,19 @@
 
             <TextView
                 android:id="@+id/novel_shelf_empty"
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_gravity="center"
+                android:layout_marginHorizontal="24dp"
+                android:background="@drawable/bg_library_empty_hint"
+                android:paddingHorizontal="20dp"
+                android:paddingVertical="24dp"
+                android:gravity="center"
+                android:textAlignment="center"
+                android:textColor="@color/text_primary"
+                android:lineSpacingExtra="5dp"
                 android:text="@string/novel_shelf_empty"
-                android:textSize="14sp"
+                android:textSize="13sp"
                 android:visibility="gone"/>
         </FrameLayout>
     </LinearLayout>

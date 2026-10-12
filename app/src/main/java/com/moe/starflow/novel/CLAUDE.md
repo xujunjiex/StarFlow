@@ -6,6 +6,12 @@
 
 **格式判定先看内容再信扩展名**（`NovelFormatDetector`）：`.txt` 里塞 HTML 的、无扩展名的都要认出来；编码（UTF-8/GBK/Big5）同理按字节判。
 
+- **自动扫描**：`NovelLibraryScanner` 在书架进入、恢复前台和下拉刷新时扫描 `getExternalFilesDir()/novel_import/` 与 app files 根目录；单文件和每个作品文件夹分别建书架项，按规范化 `localRoot` 去重。作品文件夹内根目录和最多 6 层子目录中的 TXT / EPUB / HTML / HTM / XHTML 都作为章节，保留相对路径。数字目录中的单文件沿用目录 id，便于索引丢失后找回旧书及关联记录。扫描先于孤儿译文清理，避免恢复书架前误删数据库行；应用工具文件（如 `sr_ncnn_benchmark.txt`）不作为小说候选。
+- **手动放置格式**：TXT / EPUB / HTML / HTM / XHTML；ZIP 包需含 HTML / HTM / XHTML / TXT 章节。作品目录内最多 6 层子目录中的文本/EPUB 文件按自然序作为章节；HTML 插图按 HTML 所在目录的相对路径读取。单 HTML 文件无法读取兄弟目录的图片，须以文件夹形式放置整本内容。
+- **外部目录访问诊断**：`File.listFiles() == null` 时报告 `File.canRead()`、应用 UID、目录 UID/GID 与权限模式。`getExternalFilesDir()` 无需存储权限；若 MTP/ADB 创建的子目录归 `shell` 所有且没有应用遍历权限，应用无法读取其子项，不能把它误报成 SAF 授权失败。
+- 生成的封面缩略图保存在应用私有 `filesDir/covers/`；小说原文件与章节仍保留在外部 app 专属目录，便于用户直接添加和管理内容。
+- SAF `DISPLAY_NAME` / `SIZE` 只用于文件名与进度展示，不作为可读性判据。查询失败由 `SafDocumentMetadata` 记录 provider authority、URI 和列/异常细节，合并投影不受支持时分别查询；树 URI 的目录名查询先转换为具体 document URI。内容流打开、读取、app 目标写入分别报告阶段与根异常。
+
 ### 小说书架排序
 
 - 显示选项提供标题、添加时间和最近阅读三种排序。标题按小写后的标题排序；添加时间按 addedAt 倒序。
@@ -83,7 +89,7 @@ Robolectric 的文本引擎是**桩**：`Paint.breakText` 不按宽度换行、�
 | `EPUB` | 文件 | spine 序（不是文件名字典序） | ✅ 包内图（整包复制进来） |
 | `ZIP_HTML` | 文件（.zip） | 包内 html/htm/xhtml/txt 条目，自然序 | ✅ 包内图（`ZipImages.read`） |
 | `HTML` | 文件（.html） | 整篇 = 一章 | ⚠️ **导不进来**：单文件授权只有那一个文件，兄弟图片拿不到 → 回落占位文本 |
-| `FOLDER` | 文件夹 | 直接子文件：txt / **html** / epub（epub 展开成卷） | ✅ 夹内 html 引用的图（导入时**递归**拷进来）；epub 卷的图 ✅；txt 无图 |
+| `FOLDER` | 文件夹 | 根目录及最多 6 层子目录中的 txt / **html** / epub（epub 展开成卷） | ✅ html 按所在目录解析相对图片；epub 卷的图 ✅；txt 无图 |
 
 - ⚠️ **小说侧不许复用漫画的导入文案**：`NovelShelfFragment.showImportDialog` 曾用
   `import_manga_option_files`（＝「导入文件（zip/cbz/cbr/7z）」）—— **cbr/cbz/7z 是漫画的格式**
@@ -99,14 +105,16 @@ Robolectric 的文本引擎是**桩**：`Paint.breakText` 不按宽度换行、�
   解析出来永远是 null。两条配套约束：
   1. **只有夹里有 html 才拷图片**（txt/epub 不需要外部图；纯 txt 夹不该被塞进一堆图）；
   2. 相对路径由 **documentId** 折出来（`DocumentsContract.getDocumentId` 去掉树根前缀），
-     不是靠 `DocumentFile.name` 拼 —— 后者只有文件名，`images/` 那层就丢了。
+     不是靠 provider 返回的单段显示名拼 —— 后者只有文件名，`images/` 那层就丢了。目录枚举用
+     `SafDocumentTreeReader` 一次读取子项的 documentId、displayName、mimeType，避免每个 child 再走
+     `DocumentFile.name/isDirectory` 的额外查询。
 - ⚠️ **拷图片必须过两道守卫**（与 `safeSegment` / `resolveInside` 同一套威胁模型）：
   `sanitizeRelPath`（拒 `..`、冒号/盘符、控制字符、超长、层级过深）+ `resolveInsideTree`
   （规范路径必须**严格**落在书目录内）。放行一条 `../../x.jpg` 就能覆盖别的书/封面/日志。
   张数/字节上限：`MAX_DIR_IMAGES = 2000` / `MAX_DIR_IMAGE_BYTES = 400MB`（命中只停拷 + 留日志）。
 - 单张图拷失败**不让整次导入失败**（少一张插图 ≠ 整本书读不了），但必须 `LogCollector.w` 留痕。
 - 守卫：`NovelImporterDirectoryRulesTest`（扩展名分类 + 路径消毒 8 例）、
-  `NovelImageExtractionTest`（含「文件夹里的 html 章节能读出插图」/「子目录里的 html 不成章」/
+  `NovelImageExtractionTest`（含「文件夹里的 html 章节能读出插图」/「章节子目录里的 html 能成章」/
   「夹内 html 缺图返回 null」）、`FolderNovelParserTest`（12 例，既有约定一条没破）。
 
 ### EPUB 与 HTML 内嵌插图

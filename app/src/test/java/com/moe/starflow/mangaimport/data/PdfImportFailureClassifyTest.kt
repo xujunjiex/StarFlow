@@ -38,9 +38,9 @@ class PdfImportFailureClassifyTest {
     }
 
     @Test
-    fun `archiveAndIoFailuresKeepTheirExistingReasons`() {
+    fun `archiveAndIoFailuresKeepTheirSpecificReasons`() {
         assertEquals(
-            ImportFailureReason.NOT_ARCHIVE,
+            ImportFailureReason.ARCHIVE_INVALID,
             ImportManager.classifyArchive(java.util.zip.ZipException("not a zip")),
         )
         assertEquals(
@@ -48,7 +48,7 @@ class PdfImportFailureClassifyTest {
             ImportManager.classifyArchive(IllegalArgumentException("不支持的压缩包格式")),
         )
         assertEquals(
-            ImportFailureReason.UNREADABLE,
+            ImportFailureReason.SOURCE_OPEN_FAILED,
             ImportManager.classifyArchive(java.io.FileNotFoundException("gone")),
         )
         assertEquals(

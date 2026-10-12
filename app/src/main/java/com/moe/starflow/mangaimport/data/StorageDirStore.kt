@@ -2,14 +2,15 @@ package com.moe.starflow.mangaimport.data
 
 import android.content.Context
 import java.io.File
+import java.io.IOException
 
 /**
  * 导入漫画的固定存放位置（app 外部存储专属目录，即 `Android/data/<pkg>/files/`）。
  *
- * 与下载的 PP-OCR/RT-DETR/manga-ocr 模型同层（都位于 `getExternalFilesDir`），
- * 无需任何存储权限即可在文件管理器 / 数据线（MTP）中访问——绝不允许把导入/下载的
- * 文件放到普通用户无法访问的 `filesDir`（`/data/data/<pkg>/files`，仅 root 可见）。
- * 所有导入的漫画复制件都存放在这里，子目录按漫画 id 命名：
+ * 漫画原文件与模型放在 `getExternalFilesDir`，供用户直接放入或管理；生成的封面缩略图
+ * 放在应用私有 `filesDir/covers`。封面是可重建缓存，不应依赖 Android/data 下目录的
+ * 所有权或可写权限。
+ * 漫画复制件的子目录按漫画 id 命名：
  *   <externalFiles>/manga_import/<id>/   图片夹：直接放图
  *   <externalFiles>/manga_import/<id>/   zip：放原始 zip 文件
  */
@@ -22,10 +23,12 @@ object StorageDirStore {
         return dir
     }
 
-    /** 封面目录（与图片同层，便于用户统一访问）。 */
+    /** 应用私有封面缓存目录，避免 Android/data 下被 MTP/ADB 创建的目录不可写。 */
     fun coversDir(context: Context): File {
-        val dir = File(externalBase(context), "covers")
-        if (!dir.exists()) dir.mkdirs()
+        val dir = File(context.filesDir, "covers")
+        if (!dir.isDirectory && !dir.mkdirs() && !dir.isDirectory) {
+            throw IOException("无法创建应用私有封面目录：${dir.absolutePath}")
+        }
         return dir
     }
 
@@ -36,8 +39,8 @@ object StorageDirStore {
 
     /**
      * 一次性迁移：把旧版存放在 `filesDir`（/data/data/<pkg>/files，用户不可访问）的
-     * 导入漫画与封面搬移到外部专属目录（Android/data/<pkg>/files），并同步更新
-     * [ImportedMangaStore] 里所有条目指向的 localRoot / coverPath。
+     * 漫画原文件搬移到外部专属目录（Android/data/<pkg>/files），并同步更新
+     * [ImportedMangaStore] 里所有条目的 localRoot。封面缓存继续留在应用私有目录。
      *
      * 幂等：旧目录不存在或已搬完时直接返回，可安全重复调用。应在后台线程调用。
      */
@@ -52,22 +55,11 @@ object StorageDirStore {
             oldRoot.listFiles()?.takeIf { it.isEmpty() }?.let { oldRoot.delete() }
         }
 
-        val oldCovers = File(context.filesDir, "covers")
-        val newCovers = coversDir(context)
-        if (oldCovers.isDirectory) {
-            oldCovers.listFiles()?.forEach { child ->
-                val target = File(newCovers, child.name)
-                if (!target.exists()) moveQuietly(child, target)
-            }
-            oldCovers.listFiles()?.takeIf { it.isEmpty() }?.let { oldCovers.delete() }
-        }
-
-        // 同步清单里指向旧 filesDir 路径的条目（localRoot / coverPath）
+        // 同步清单里指向旧 filesDir 路径的漫画原文件。
         rewriteStorePaths(context, oldRoot.absolutePath, newRoot.absolutePath)
-        rewriteStorePaths(context, oldCovers.absolutePath, newCovers.absolutePath)
     }
 
-    /** 把 store 里命中旧目录前缀的 localRoot / coverPath 改写为新目录。 */
+    /** 把 store 里命中旧目录前缀的 localRoot 改写为新目录。 */
     private fun rewriteStorePaths(context: Context, oldBase: String, newBase: String) {
         if (oldBase == newBase) return
         val list = ImportedMangaStore.load(context)
@@ -77,12 +69,6 @@ object StorageDirStore {
             if (m.localRoot.startsWith(oldBase)) {
                 out = out.copy(localRoot = newBase + m.localRoot.removePrefix(oldBase))
                 changed = true
-            }
-            m.coverPath?.let { path ->
-                if (path.startsWith(oldBase)) {
-                    out = out.copy(coverPath = newBase + path.removePrefix(oldBase))
-                    changed = true
-                }
             }
             out
         }

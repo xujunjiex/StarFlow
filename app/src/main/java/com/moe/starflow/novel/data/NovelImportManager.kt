@@ -2,7 +2,6 @@ package com.moe.starflow.novel.data
 
 import android.content.Context
 import android.net.Uri
-import androidx.documentfile.provider.DocumentFile
 import com.moe.starflow.data.TranslationHistoryDatabase
 import com.moe.starflow.mangaimport.data.ImportFormat
 import com.moe.starflow.mangaimport.data.ImportPhase
@@ -10,6 +9,7 @@ import com.moe.starflow.mangaimport.data.ImportProgress
 import com.moe.starflow.mangaimport.data.ImportTask
 import com.moe.starflow.novel.parser.NovelReadLimits
 import com.moe.starflow.utils.LogCollector
+import com.moe.starflow.utils.SafDocumentMetadata
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -55,6 +55,8 @@ object NovelImportManager {
 
     private val jobs = mutableMapOf<Long, Job>()
     private val reservedIds = mutableSetOf<Long>()
+    private val deletingIds = mutableSetOf<Long>()
+    private val deletingSourcePaths = mutableSetOf<String>()
 
     private val _tasks = MutableStateFlow<List<ImportTask>>(emptyList())
     val tasks: StateFlow<List<ImportTask>> = _tasks.asStateFlow()
@@ -77,11 +79,8 @@ object NovelImportManager {
         val app = context.applicationContext
         scope.launch {
             val id = reserveId(app)
-            // ⚠️ 名字查询走 ContentResolver（SAF provider）：权限被撤销 / URI 失效 / 存储卸载
-            // 都会抛。必须在 try 外也兜住（冒泡 = 未捕获异常 = 崩溃），退化成默认标题。
-            val title = runCatching { DocumentFile.fromTreeUri(app, treeUri)?.name }.getOrNull()
-                ?.takeIf { it.isNotBlank() }
-                ?: "folder_$id"
+            // 占位标题只用 URI 本地回退；真实名称在 NovelImporter 中查询一次并记录诊断。
+            val title = SafDocumentMetadata.fallbackName(treeUri) ?: "folder_$id"
             registerTask(id, title, ImportPhase.SCANNING, coroutineContext[Job])
             try {
                 val novel = NovelImporter.importDirectory(app, treeUri, id) { p -> updateProgress(id, p) }
@@ -95,7 +94,7 @@ object NovelImportManager {
             } catch (e: Exception) {
                 cleanup(app, id)
                 LogCollector.e(TAG, "文件夹导入失败: $treeUri", e)
-                emit(NovelImportEvent.Failed(title, classify(e)))
+                emit(NovelImportEvent.Failed(title, classify(e), failureDetail(e)))
             } finally {
                 unregisterTask(id)
                 releaseId(id)
@@ -127,8 +126,8 @@ object NovelImportManager {
     private fun launchFileTask(app: Context, uri: Uri) {
         scope.launch {
             val id = reserveId(app)
-            val name = runCatching { DocumentFile.fromSingleUri(app, uri)?.name }.getOrNull()
-                ?: uri.lastPathSegment.orEmpty()
+            // 占位标题使用 URI 本地回退，避免重复触发一次会被吞掉的 provider 元数据查询。
+            val name = SafDocumentMetadata.fallbackName(uri).orEmpty()
             val title = name.substringBeforeLast('.', name).ifBlank { "book_$id" }
             registerTask(id, title, ImportPhase.COPYING, coroutineContext[Job])
             try {
@@ -146,7 +145,7 @@ object NovelImportManager {
             } catch (e: Exception) {
                 cleanup(app, id)
                 LogCollector.e(TAG, "导入失败: $uri", e)
-                emit(NovelImportEvent.Failed(title, classify(e)))
+                emit(NovelImportEvent.Failed(title, classify(e), failureDetail(e)))
             } finally {
                 unregisterTask(id)
                 releaseId(id)
@@ -192,6 +191,59 @@ object NovelImportManager {
     }
 
     @Synchronized
+    internal fun reserveScanId(context: Context, preferredId: Long?): Long? {
+        if (preferredId != null && preferredId in reservedIds) return null
+        val storedIds = NovelStore.load(context).mapTo(mutableSetOf()) { it.id }
+        val id = preferredId?.takeIf { it > 0 && it !in storedIds && it !in reservedIds } ?: run {
+            var candidate = NovelImporter.nextId(context)
+            while (candidate in reservedIds || candidate in storedIds) candidate++
+            candidate
+        }
+        reservedIds += id
+        return id
+    }
+
+    @Synchronized
+    internal fun releaseScanIds(ids: Collection<Long>) {
+        ids.forEach { id ->
+            if (id !in deletingIds) reservedIds -= id
+        }
+    }
+
+    @Synchronized
+    internal fun activeIdsForScanner(): Set<Long> =
+        _tasks.value.mapTo(reservedIds.toMutableSet()) { it.id }
+
+    @Synchronized
+    internal fun isSourceBeingDeleted(file: File): Boolean {
+        val path = runCatching { file.canonicalPath }.getOrNull() ?: return false
+        return path in deletingSourcePaths
+    }
+
+    @Synchronized
+    private fun markDeleting(novels: List<ImportedNovel>) {
+        novels.forEach { novel ->
+            reservedIds += novel.id
+            deletingIds += novel.id
+            runCatching { File(novel.localRoot).canonicalPath }
+                .getOrNull()
+                ?.let(deletingSourcePaths::add)
+        }
+    }
+
+    @Synchronized
+    private fun clearDeleting(novels: List<ImportedNovel>) {
+        novels.forEach { novel ->
+            deletingIds -= novel.id
+            if (_tasks.value.none { it.id == novel.id }) reservedIds -= novel.id
+            runCatching { File(novel.localRoot).canonicalPath }
+                .getOrNull()
+                ?.let(deletingSourcePaths::remove)
+        }
+    }
+
+
+    @Synchronized
     private fun releaseId(id: Long) {
         reservedIds -= id
     }
@@ -213,6 +265,16 @@ object NovelImportManager {
      * 它们直接抛字面量 `"NO_TEXT_CHAPTER"` / `"ENCRYPTED"`（与常量取值一致，见这两个文件）。
      */
     internal fun classify(e: Throwable): NovelImportFailureReason = when {
+        e is NovelImportIoException && e.kind == NovelImportIoException.Kind.SOURCE_OPEN ->
+            NovelImportFailureReason.SOURCE_OPEN_FAILED
+        e is NovelImportIoException && e.kind == NovelImportIoException.Kind.SOURCE_READ ->
+            NovelImportFailureReason.SOURCE_READ_FAILED
+        e is NovelImportIoException && e.kind == NovelImportIoException.Kind.DESTINATION_WRITE ->
+            NovelImportFailureReason.DESTINATION_WRITE_FAILED
+        e is NovelImportIoException && e.kind == NovelImportIoException.Kind.DIRECTORY_SCAN ->
+            NovelImportFailureReason.DIRECTORY_SCAN_FAILED
+        e is NovelImportIoException && e.kind == NovelImportIoException.Kind.DIRECTORY_ACCESS ->
+            NovelImportFailureReason.DIRECTORY_ACCESS_DENIED
         e is IllegalStateException && e.message == NovelImporter.ERROR_NO_TEXT_CHAPTER ->
             NovelImportFailureReason.NO_TEXT_CHAPTER
         e is IllegalStateException && e.message == NovelImporter.ERROR_ENCRYPTED ->
@@ -225,6 +287,20 @@ object NovelImportManager {
         e is ZipException -> NovelImportFailureReason.NOT_ARCHIVE
         e is java.io.FileNotFoundException || e is SecurityException -> NovelImportFailureReason.UNREADABLE
         else -> NovelImportFailureReason.UNKNOWN
+    }
+
+    /** Keep the operation and root provider/filesystem error visible instead of collapsing it to "unreadable". */
+    private fun failureDetail(error: Throwable): String? {
+        val chain = mutableListOf<String>()
+        val seen = mutableSetOf<Throwable>()
+        var current: Throwable? = error
+        while (current != null && seen.add(current) && chain.size < 3) {
+            val message = current.localizedMessage?.replace(Regex("\\s+"), " ")?.trim()
+            chain += listOfNotNull(current.javaClass.simpleName.takeIf { it.isNotBlank() }, message)
+                .joinToString(": ")
+            current = current.cause
+        }
+        return chain.filter { it.isNotBlank() }.joinToString(" ← ").take(500).ifBlank { null }
     }
 
     // ===== 书架删除（进程级，不随 View 销毁被取消）=====
@@ -244,23 +320,31 @@ object NovelImportManager {
     fun deleteNovels(context: Context, novels: List<ImportedNovel>) {
         if (novels.isEmpty()) return
         val app = context.applicationContext
+        markDeleting(novels)
         // 清单先同步删：调用方紧接着的 refresh 必然看到「已删除」，不会闪回一张已经删掉的卡片
         novels.forEach { NovelStore.remove(app, it.id) }
         scope.launch {
             try {
-                val dao = TranslationHistoryDatabase.getInstance(app).novelParagraphTranslationDao()
                 novels.forEach { n ->
-                    // ⚠️ 逐部兜异常：一部失败（外置存储被卸载、provider 抛 SecurityException）
-                    // 不该让后面的书连**文件**都不删。真删不掉的译文行还有 purgeOrphanTranslations 兜底。
                     runCatching { NovelImporter.deleteBookFiles(app, n.id) }
                         .onFailure { LogCollector.w(TAG, "删除书籍文件失败 id=${n.id}", it) }
-                    runCatching { dao.deleteForNovelScoped(n.id, n.translationKey) }
-                        .onFailure { LogCollector.w(TAG, "删除译文记录失败 id=${n.id}", it) }
+                    runCatching { NovelImporter.deleteScannedSource(app, n.id, n.localRoot) }
+                        .onFailure { LogCollector.w(TAG, "删除自动扫描的小说来源失败 id=${n.id}", it) }
                 }
-                LogCollector.i(TAG, "已删除 ${novels.size} 部小说: ${novels.map { it.id }}")
-            } catch (e: Exception) {
-                // 连库都没拿到（getInstance 失败）：清单已经同步删了，孤儿行等下次进书架清理
-                LogCollector.e(TAG, "删除译文记录失败: ${novels.map { it.id }}", e)
+                try {
+                    val dao = TranslationHistoryDatabase.getInstance(app).novelParagraphTranslationDao()
+                    novels.forEach { n ->
+                        // 一部删除失败不影响其他书；孤儿行由 purgeOrphanTranslations 兜底。
+                        runCatching { dao.deleteForNovelScoped(n.id, n.translationKey) }
+                            .onFailure { LogCollector.w(TAG, "删除译文记录失败 id=${n.id}", it) }
+                    }
+                    LogCollector.i(TAG, "已删除 ${novels.size} 部小说: ${novels.map { it.id }}")
+                } catch (e: Exception) {
+                    // 连库都没拿到：文件已单独处理，孤儿行等下次进书架清理
+                    LogCollector.e(TAG, "删除译文记录失败: ${novels.map { it.id }}", e)
+                }
+            } finally {
+                clearDeleting(novels)
             }
         }
     }

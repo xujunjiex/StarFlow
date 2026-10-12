@@ -67,7 +67,12 @@ object LibArchiveExtractor {
         onProgress: (Long, Long) -> Unit = { _, _ -> }
     ): Int = withContext(Dispatchers.IO) {
         val totalBytes = archive.length()
-        destDir.mkdirs()
+        if ((destDir.exists() && !destDir.isDirectory) || (!destDir.isDirectory && !destDir.mkdirs())) {
+            throw ImportOperationException(
+                ImportFailureReason.DESTINATION_WRITE_FAILED,
+                "无法创建解压目标目录：${destDir.absolutePath}"
+            )
+        }
         // ⚠️ 先看剩余空间（见上面的「解压炸弹防线」）：不够就当面拒绝，
         //    而不是写到一半把 /data 填满（那时系统层面已经很难恢复了）
         val freeBytes = runCatching { destDir.usableSpace }.getOrDefault(0L)
@@ -78,7 +83,10 @@ object LibArchiveExtractor {
                 "剩余空间不足，拒绝解压: 可用 ${freeBytes / 1024 / 1024}MB，" +
                     "需要至少 ${freeNeeded / 1024 / 1024}MB（${archive.name}）",
             )
-            error("存储空间不足，无法解压 ${archive.name}")
+            throw ImportOperationException(
+                ImportFailureReason.STORAGE_INSUFFICIENT,
+                "存储空间不足，解压 ${archive.name} 至少需要 ${freeNeeded / 1024 / 1024}MB，可用 ${freeBytes / 1024 / 1024}MB"
+            )
         }
         val expansionBudget = maxOf(totalBytes * MAX_EXPANSION_RATIO, MIN_TOTAL_BUDGET_BYTES)
         val rootPath = destDir.canonicalPath
@@ -95,7 +103,10 @@ object LibArchiveExtractor {
                 coroutineContext.ensureActive()
                 if (++entryCount > MAX_ENTRIES) {
                     LogCollector.e(TAG, "条目数超过上限 $MAX_ENTRIES，判定为异常包: ${archive.name}")
-                    error("压缩包条目过多，已中止（${archive.name}）")
+                    throw ImportOperationException(
+                        ImportFailureReason.ARCHIVE_LIMIT_EXCEEDED,
+                        "压缩包条目数超过 $MAX_ENTRIES：${archive.name}"
+                    )
                 }
                 val name = entryName(entry) ?: continue
                 val relative = name.replace('\\', '/').trimStart('/')
@@ -118,8 +129,31 @@ object LibArchiveExtractor {
                     drainData(handle, null)
                     continue
                 }
-                target.parentFile?.mkdirs()
-                val written = FileOutputStream(target).use { output -> drainData(handle, output) }
+                target.parentFile?.let { parent ->
+                    if ((parent.exists() && !parent.isDirectory) || (!parent.isDirectory && !parent.mkdirs())) {
+                        throw ImportOperationException(
+                            ImportFailureReason.DESTINATION_WRITE_FAILED,
+                            "无法创建解压子目录：${parent.absolutePath}"
+                        )
+                    }
+                }
+                val written = try {
+                    FileOutputStream(target).use { output -> drainData(handle, output) }
+                } catch (e: ImportOperationException) {
+                    throw e
+                } catch (e: SecurityException) {
+                    throw ImportOperationException(
+                        ImportFailureReason.DESTINATION_WRITE_FAILED,
+                        "系统拒绝写入解压文件：${target.absolutePath}",
+                        e
+                    )
+                } catch (e: java.io.IOException) {
+                    throw ImportOperationException(
+                        ImportFailureReason.DESTINATION_WRITE_FAILED,
+                        "写入解压文件失败：${target.absolutePath}",
+                        e
+                    )
+                }
                 writtenBytes += written
                 if (writtenBytes > expansionBudget) {
                     LogCollector.e(
@@ -127,7 +161,10 @@ object LibArchiveExtractor {
                         "解压总量超过上限 ${expansionBudget / 1024 / 1024}MB" +
                             "（包 ${totalBytes / 1024 / 1024}MB），判定为解压炸弹: ${archive.name}",
                     )
-                    error("解压后体积异常，已中止（${archive.name}）")
+                    throw ImportOperationException(
+                        ImportFailureReason.ARCHIVE_LIMIT_EXCEEDED,
+                        "解压后体积超过安全上限：${archive.name}"
+                    )
                 }
                 extracted++
                 val now = System.currentTimeMillis()

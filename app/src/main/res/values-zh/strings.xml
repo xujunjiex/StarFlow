@@ -13,12 +13,17 @@
          否则会出现「导入 | 小说」这种一边是动作、一边是品类的错位。 -->
     <string name="import_tab_manga">漫画</string>
     <string name="display_options">显示选项</string>
-    <string name="import_manga_empty_hint">点击右下角 + 导入漫画</string>
+    <string name="import_manga_empty_hint">还没有漫画\n把漫画放入下面的目录，或点右下角 + 导入；下拉即可重新扫描。\n漫画目录：%1$s\n应用 files 根目录：%2$s\n支持 ZIP/CBZ/RAR/CBR/7z/PDF；图片文件夹可用子文件夹分章。</string>
+    <string name="import_auto_scan_failed_title">自动扫描未能加入部分内容</string>
+    <string name="import_auto_scan_failed_message">有 %1$d 项未加入书架，具体原因如下：\n%2$s</string>
+    <string name="import_auto_scan_failed_hint">应用会显示具体路径和系统权限信息。内容可滚动查看，也可复制完整详情。</string>
+    <string name="import_auto_scan_copy">复制详情</string>
+    <string name="import_auto_scan_copied">扫描详情已复制</string>
     <string name="import_manga_deleted">已删除</string>
-    <string name="import_manga_option_files">导入文件（zip/cbz/cbr/7z/pdf）</string>
+    <string name="import_manga_option_files">导入文件（zip/cbz/rar/cbr/7z/pdf）</string>
     <string name="import_manga_option_single_dir">导入文件夹（整个文件夹 = 一部漫画）</string>
     <string name="import_folder_hint">提示：部分机型系统文件选择器只允许选择「新建的文件夹」，若无法选择请先在系统选择器里新建一个文件夹</string>
-    <string name="import_storage_hint">已导入的漫画保存在应用专属目录（Android/data 下，可通过文件管理器 / 数据线访问）：&#10;%1$s</string>
+    <string name="import_storage_hint">导入内容保存在应用专属目录（Android/data 下，可通过文件管理器 / 数据线访问）：&#10;%1$s</string>
     <string name="browse">浏览</string>
     <string name="import_delete">删除</string>
     <string name="import_delete_selected_confirm">删除选中的 %1$d 部漫画？应用内副本将一并删除。</string>
@@ -77,12 +82,22 @@
     <!-- 导入结果弹窗 -->
     <string name="import_result_failed_title">导入失败</string>
     <string name="import_result_failed_msg">%1$s：%2$s</string>
-    <string name="import_fail_not_archive">不是有效的 zip/cbz 压缩包，或文件已损坏</string>
+    <string name="import_fail_not_archive">文件内容不是支持的漫画格式（ZIP/CBZ/CBR/7z/PDF）</string>
+    <string name="import_fail_archive_invalid">文件格式已识别为压缩包，但压缩包结构无法解析</string>
     <string name="import_fail_pdf_encrypted">这个 PDF 已加密，请先去掉密码（另存为无密码副本）再导入</string>
     <string name="import_fail_pdf_invalid">PDF 无法打开：文件已损坏，或本机渲染器不支持</string>
-    <string name="import_fail_unreadable">无法读取文件（权限不足或文件已被移动）</string>
-    <string name="import_fail_directory">无法读取所选文件夹（权限不足或已被移动）</string>
-    <string name="import_fail_unknown">未知错误，详情见日志</string>
+    <string name="import_fail_source_access_denied">系统文件提供器拒绝打开所选文件</string>
+    <string name="import_fail_source_open_failed">系统文件提供器未能打开所选文件</string>
+    <string name="import_fail_source_read_failed">读取系统文件提供器返回的数据时发生 I/O 错误</string>
+    <string name="import_fail_destination_write_failed">写入应用漫画存储目录失败</string>
+    <string name="import_fail_storage_insufficient">设备可用空间不足，无法解压此漫画包</string>
+    <string name="import_fail_archive_limit">压缩包超过安全解压限制，已中止导入</string>
+    <string name="import_fail_directory_access_denied">系统文件提供器拒绝访问所选目录</string>
+    <string name="import_fail_directory_scan_failed">扫描所选目录内容失败</string>
+    <string name="import_fail_pdf_read_failed">PDF 渲染器无法读取应用内的 PDF 副本</string>
+    <string name="import_fail_directory_invalid">系统文件提供器没有返回有效的目录对象</string>
+    <string name="import_fail_detail">系统错误：%1$s</string>
+    <string name="import_fail_unknown">导入处理失败，具体系统异常见下一行</string>
     <string name="import_empty_title">没有找到图片</string>
     <string name="import_empty_folder">%1$s 及其子文件夹内没有图片，已作为 0 页漫画加入书架。\n支持格式：jpg / jpeg / png / webp / gif / bmp；文件夹里的压缩包不会被识别。</string>
     <string name="import_empty_archive">%1$s 压缩包内没有图片，已作为 0 页漫画加入书架。</string>
@@ -1597,8 +1612,13 @@
     <string name="novel_import_wrong_format_text">不是受支持的文本格式</string>
     <string name="novel_import_no_chapters">未找到可阅读的章节</string>
     <string name="novel_import_failed">导入失败</string>
-    <string name="novel_import_reason_not_archive">格式不支持或文件损坏</string>
-    <string name="novel_import_reason_unreadable">文件无法读取，请检查访问权限</string>
+    <string name="novel_import_reason_not_archive">压缩包结构无法解析；具体解析异常见详情。</string>
+    <string name="novel_import_reason_unreadable">文件读取失败；具体操作阶段和系统异常见详情。</string>
+    <string name="novel_import_reason_source_open">系统未能打开所选 SAF 来源数据流。</string>
+    <string name="novel_import_reason_source_read">SAF 来源在读取过程中发生 I/O 错误。</string>
+    <string name="novel_import_reason_destination_write">写入应用小说存储目录失败。</string>
+    <string name="novel_import_reason_directory_scan">SAF 文件提供器无法枚举所选目录中的文件。</string>
+    <string name="novel_import_reason_directory_access">系统拒绝访问所选 SAF 目录。</string>
     <string name="novel_import_reason_no_text_chapter">未找到可阅读的文本章节</string>
     <string name="novel_import_reason_empty">空文件</string>
     <string name="novel_import_reason_too_large">文件太大，无法导入</string>
@@ -1757,7 +1777,7 @@
     <string name="novel_cover_failed">这张图没法用作封面</string>
 
     <!-- ===== 小说书架管理 ===== -->
-    <string name="novel_shelf_empty">还没有小说，点右下角 + 导入</string>
+    <string name="novel_shelf_empty">还没有小说\n把小说放入下面的目录，或点右下角 + 导入；下拉即可重新扫描。\n小说目录：%1$s\n应用 files 根目录：%2$s\n支持 TXT/EPUB/HTML/HTM/XHTML、含章节的 ZIP；章节可放在子文件夹中。</string>
     <string name="novel_manage_rename">重命名</string>
     <string name="novel_manage_mark_read">标为已读</string>
     <string name="novel_manage_mark_unread">标为未读</string>
@@ -1766,15 +1786,15 @@
     <string name="import_already_done">这次导入已经完成了</string>
 
     <!-- ===== 导入弹窗的选项说明（措辞与 koto 统一；只保留「文件」「文件夹(单部)」，不含多部入口）===== -->
-    <string name="import_desc_files_manga">选择一个或多个 CBZ/ZIP/CBR/7z/PDF 文件，每个文件导入为一本漫画，夹内的子文件夹将作为章节（PDF 按页读取，不会额外复制一份）。</string>
-    <string name="import_desc_dir_manga">选择一个包含单部漫画的文件夹，子文件夹将作为章节，最外层散图作为第0章。</string>
-    <string name="import_desc_files_novel">选择一个或多个 TXT / EPUB / ZIP（内含 HTML 的小说包）/ HTML 文件，每个文件导入为一部小说。注意：单个 HTML 只复制它自己，旁边同目录的插图读不到 —— 有插图请改用「导入文件夹」。</string>
-    <string name="import_desc_dir_novel">选择一个包含单部小说的文件夹。内部 TXT / HTML 文件会作为章节导入；每个 EPUB 文件会作为一个分卷导入，并保留其内部章节。夹内存在 HTML 时，它引用的图片也会一起复制，插图可正常显示。</string>
+    <string name="import_desc_files_manga">选择一个或多个 CBZ/ZIP/CBR/RAR/7z/PDF 文件，每个文件一本漫画；ZIP/CBZ保留原包，RAR/CBR/7z解压，PDF按页读取。也会自动扫描上方目录及应用 files 根目录中的漫画包/PDF和作品文件夹。</string>
+    <string name="import_desc_dir_manga">选择一个包含单部漫画的文件夹，子文件夹作为章节，最外层散图作为第0章。自动扫描文件夹时，图片格式为 jpg/jpeg/png/webp/gif/bmp；每部漫画请单独放一个文件夹。</string>
+    <string name="import_desc_files_novel">选择一个或多个 TXT / EPUB / ZIP（内含 HTML/XHTML/TXT 的小说包）/ HTML / HTM / XHTML 文件，每个文件一本小说。单个 HTML 不包含同目录插图；有插图请使用文件夹。</string>
+    <string name="import_desc_dir_novel">选择一个包含单部小说的文件夹。根目录及章节子文件夹中的 TXT/HTML/HTM/XHTML 都会按自然序作为章节，每个 EPUB 是一个分卷；HTML 插图按相对路径读取。自动扫描也支持这类章节子文件夹。</string>
     <string name="import_option_dir_manga_single">导入文件夹（单部漫画）</string>
     <string name="import_option_dir_novel_single">导入文件夹（单部小说）</string>
     <!-- ⚠️ 小说侧的「导入文件」按钮**必须**用自己的 key：曾经复用 import_manga_option_files，
          于是文本导入弹窗上写着「导入文件（zip/cbz/cbr/7z）」—— 那三种是漫画格式（用户 2026-10-04 指出）。 -->
-    <string name="import_novel_option_files">导入文件（txt / epub / zip / html）</string>
+    <string name="import_novel_option_files">导入小说文件</string>
 
     <string name="reader_clear_page_desc">清除本页译文</string>
     <string name="reader_clear_page_confirm_title">清除本页译文？</string>

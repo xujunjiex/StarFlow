@@ -25,12 +25,15 @@ import com.moe.starflow.novel.data.NovelImportEvent
 import com.moe.starflow.novel.data.NovelImportFailureReason
 import com.moe.starflow.novel.data.NovelImportManager
 import com.moe.starflow.novel.data.NovelImporter
+import com.moe.starflow.novel.data.NovelLibraryScanner
 import com.moe.starflow.novel.data.NovelStorageDir
 import com.moe.starflow.novel.data.NovelStore
 import com.moe.starflow.novel.reader.NovelReaderActivity
 import com.moe.starflow.utils.LogCollector
+import com.moe.starflow.utils.AutoScanFailureDialog
 import com.moe.starflow.utils.UiUtils
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -72,6 +75,7 @@ class NovelShelfFragment : Fragment() {
 
     /** 最近一次渲染的清单（长按菜单要拿完整条目）。 */
     private var rendered: List<ImportedNovel> = emptyList()
+    private var appFileScanJob: Job? = null
 
     private lateinit var backCallback: OnBackPressedCallback
 
@@ -114,8 +118,13 @@ class NovelShelfFragment : Fragment() {
             onCancelImport = { id -> confirmCancelImport(id) },
         )
         binding.novelShelfList.adapter = adapter
-        binding.novelShelfRefresh.setOnRefreshListener { refresh() }
+        binding.novelShelfRefresh.setOnRefreshListener { scanAppFiles() }
         binding.novelShelfImport.setOnClickListener { showImportDialog() }
+        binding.novelShelfEmpty.text = getString(
+            R.string.novel_shelf_empty,
+            NovelStorageDir.root(requireContext()).absolutePath,
+            (requireContext().getExternalFilesDir(null) ?: requireContext().filesDir).absolutePath,
+        )
 
         // 顶部栏 / 多选操作栏
         binding.novelTvSettings.setOnClickListener {
@@ -140,11 +149,8 @@ class NovelShelfFragment : Fragment() {
         showSelectionUi(false, 0)
 
         observeImportTasks()
-        // 进书架顺手清理孤儿译文行（清单里已不存在的小说）：删除是异步的，进程被杀 / 崩溃会让
-        // 那几条 DELETE 永远不执行 —— 孤儿行虽不会串到新书，但白占一整本书的原文 + 译文。
-        // 进程级作用域 + 幂等，与漫画侧 ImportMangaFragment.purgeOrphanTranslations 同一套做法。
-        NovelImportManager.purgeOrphanTranslations(requireContext())
         refresh()
+        scanAppFiles()
     }
 
     /** 宿主（`ImportMangaFragment`）切走 tab 时调用：否则切回来顶部栏还在多选态、与列表对不上。 */
@@ -284,8 +290,14 @@ class NovelShelfFragment : Fragment() {
             is NovelImportEvent.WrongFormat -> failTitle to getString(
                 if (isManga) R.string.novel_import_wrong_format_manga else R.string.novel_import_wrong_format_text
             )
-            is NovelImportEvent.Failed -> failTitle to getString(
-                when (reason) {
+            is NovelImportEvent.Failed -> {
+                val message = getString(
+                    when (reason) {
+                    NovelImportFailureReason.SOURCE_OPEN_FAILED -> R.string.novel_import_reason_source_open
+                    NovelImportFailureReason.SOURCE_READ_FAILED -> R.string.novel_import_reason_source_read
+                    NovelImportFailureReason.DESTINATION_WRITE_FAILED -> R.string.novel_import_reason_destination_write
+                    NovelImportFailureReason.DIRECTORY_SCAN_FAILED -> R.string.novel_import_reason_directory_scan
+                    NovelImportFailureReason.DIRECTORY_ACCESS_DENIED -> R.string.novel_import_reason_directory_access
                     NovelImportFailureReason.NOT_ARCHIVE -> R.string.novel_import_reason_not_archive
                     NovelImportFailureReason.UNREADABLE -> R.string.novel_import_reason_unreadable
                     NovelImportFailureReason.NO_TEXT_CHAPTER -> R.string.novel_import_reason_no_text_chapter
@@ -294,7 +306,9 @@ class NovelShelfFragment : Fragment() {
                     NovelImportFailureReason.ENCRYPTED -> R.string.novel_import_reason_encrypted
                     NovelImportFailureReason.UNKNOWN -> R.string.novel_import_reason_unknown
                 }
-            )
+                )
+                failTitle to if (detail.isNullOrBlank()) message else "$message\n\n$detail"
+            }
         }
     }
 
@@ -492,8 +506,47 @@ class NovelShelfFragment : Fragment() {
 
     override fun onResume() {
         super.onResume()
-        // 阅读器在另一个 Activity 中写入 lastReadAt；回来时立刻重排并刷新进度。
-        if (_binding != null) refresh()
+        // 阅读器在另一个 Activity 中写入 lastReadAt；回来时同时刷新进度并扫描外部添加的文件。
+        if (_binding != null) {
+            refresh()
+            scanAppFiles()
+        }
+    }
+
+    /** Scan app-owned storage on entry/resume and explicit pull-to-refresh. */
+    private fun scanAppFiles() {
+        val app = context?.applicationContext ?: return
+        if (appFileScanJob?.isActive == true) return
+        appFileScanJob = viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val scan = withContext(Dispatchers.IO) { NovelLibraryScanner.scan(app) }
+                // Restore the index before purging; otherwise translations for recovered numeric ids
+                // would be mistaken for orphaned rows and deleted.
+                NovelImportManager.purgeOrphanTranslations(app)
+                if (_binding != null) {
+                    refresh()
+                    showScanFailures(scan.failures)
+                }
+            } catch (e: Exception) {
+                LogCollector.e("NovelLibraryScanner", "扫描应用小说目录失败", e)
+            } finally {
+                appFileScanJob = null
+                _binding?.novelShelfRefresh?.isRefreshing = false
+            }
+        }
+    }
+
+    private fun showScanFailures(failures: List<String>) {
+        if (failures.isEmpty() || !isAdded) return
+        val allDetails = failures.joinToString("\n")
+        AutoScanFailureDialog.builder(
+            requireContext(),
+            getString(R.string.import_auto_scan_failed_title),
+            getString(R.string.import_auto_scan_failed_message, failures.size, allDetails),
+        )
+            .setPositiveButton(R.string.confirm, null)
+            .create()
+            .also { it.show(); it.window?.setBackgroundDrawableResource(R.drawable.dialog_background) }
     }
 
     override fun onDestroyView() {

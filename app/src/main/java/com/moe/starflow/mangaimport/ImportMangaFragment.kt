@@ -1,6 +1,8 @@
 package com.moe.starflow.mangaimport
 
 import android.app.AlertDialog
+import android.app.Dialog
+import android.content.DialogInterface
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -25,6 +27,7 @@ import com.moe.starflow.mangaimport.data.ImportTab
 import com.moe.starflow.mangaimport.data.ImportedManga
 import com.moe.starflow.mangaimport.data.ImportedMangaStore
 import com.moe.starflow.mangaimport.data.MangaChapterMigrator
+import com.moe.starflow.mangaimport.data.MangaLibraryScanner
 import com.moe.starflow.mangaimport.data.MangaImporter
 import com.moe.starflow.mangaimport.data.ShelfCleanup
 import com.moe.starflow.mangaimport.data.StorageDirStore
@@ -36,8 +39,10 @@ import com.moe.starflow.mangaimport.ui.ImportDialog
 import com.moe.starflow.mangaimport.ui.MangaGridAdapter
 import com.moe.starflow.novel.shelf.NovelShelfFragment
 import com.moe.starflow.utils.LogCollector
+import com.moe.starflow.utils.AutoScanFailureDialog
 import com.moe.starflow.utils.AppNotice
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -73,7 +78,7 @@ class ImportMangaFragment : Fragment() {
     // 已经取出来的这几条在旋转时要靠 onSaveInstanceState 带着走（见下面的 STATE_*）。
     private val dialogQueue = ArrayDeque<Pair<String, String>>()
     private var dialogShowing = false
-    private var resultDialog: AlertDialog? = null
+    private var resultDialog: Dialog? = null
 
     /** 正在展示的那条（旋转时放回队列，避免提示永久丢失）。 */
     private var resultDialogContent: Pair<String, String>? = null
@@ -87,6 +92,7 @@ class ImportMangaFragment : Fragment() {
     // refresh() 的「文件丢失」推导缓存：进度回调高频调 refresh 时复用，避免反复 stat 磁盘
     private var cachedStored: List<ImportedManga> = emptyList()
     private var cachedStoredWithLost: List<ImportedManga> = emptyList()
+    private var appFileScanJob: Job? = null
 
     // 返回键：多选模式下退出多选
     private lateinit var backCallback: OnBackPressedCallback
@@ -189,9 +195,13 @@ class ImportMangaFragment : Fragment() {
 
         // 下拉刷新：重新加载清单，立即反映编辑/阅读进度等状态
         binding.swipeRefresh.setOnRefreshListener {
-            refresh()
-            binding.swipeRefresh.isRefreshing = false
+            scanAppFiles()
         }
+        binding.tvEmpty.text = getString(
+            R.string.import_manga_empty_hint,
+            StorageDirStore.root(requireContext()).absolutePath,
+            (requireContext().getExternalFilesDir(null) ?: requireContext().filesDir).absolutePath,
+        )
 
         refresh()
 
@@ -199,15 +209,19 @@ class ImportMangaFragment : Fragment() {
         //  - 旧版 filesDir 目录搬到外部专属目录（Android/data/<pkg>/files）；
         //  - 已删除漫画的 imported_page_translation 旧行（书架删了但 DB 没清 → id 复用会把旧译图
         //    错误映射到新导入的漫画）按「当前书架不存在的 mangaId」批量清掉（根因修复，删除时也会即时清）。
+        val appContext = requireContext().applicationContext
         viewLifecycleOwner.lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
-                StorageDirStore.migrate(requireContext())
-                purgeOrphanTranslations(requireContext())
+            val scan = withContext(Dispatchers.IO) {
+                StorageDirStore.migrate(appContext)
+                val result = MangaLibraryScanner.scan(appContext)
+                purgeOrphanTranslations(appContext)
                 // 老条目回填章节表（导入时还没分章概念的那批）：只影响清单里 chapters 为空的项，
                 // 之后是幂等短路 —— 不补的话书架上永远看不到「共N章」
-                MangaChapterMigrator.ensureChapters(requireContext())
+                MangaChapterMigrator.ensureChapters(appContext)
+                result
             }
             refresh()
+            enqueueScanFailures(scan.failures)
         }
 
         // 导入进度：占位卡片实时刷新（tasks 由进程级 ImportManager 持有，与 View 生命周期解耦，
@@ -233,6 +247,40 @@ class ImportMangaFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         refresh()
+        scanAppFiles()
+    }
+
+    /** Scan app-owned storage on entry/resume and explicit pull-to-refresh. */
+    private fun scanAppFiles() {
+        val app = context?.applicationContext ?: return
+        if (appFileScanJob?.isActive == true) return
+        appFileScanJob = viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val scan = withContext(Dispatchers.IO) {
+                    StorageDirStore.migrate(app)
+                    val result = MangaLibraryScanner.scan(app)
+                    purgeOrphanTranslations(app)
+                    result
+                }
+                if (_binding != null) {
+                    refresh()
+                    enqueueScanFailures(scan.failures)
+                }
+            } catch (e: Exception) {
+                LogCollector.e("MangaLibraryScanner", "扫描应用漫画目录失败", e)
+            } finally {
+                appFileScanJob = null
+                _binding?.swipeRefresh?.isRefreshing = false
+            }
+        }
+    }
+
+    private fun enqueueScanFailures(failures: List<String>) {
+        if (failures.isEmpty() || _binding == null) return
+        val allDetails = failures.joinToString("\n")
+        val message = getString(R.string.import_auto_scan_failed_message, failures.size, allDetails)
+        dialogQueue.addLast(getString(R.string.import_auto_scan_failed_title) to message)
+        showNextResultDialog()
     }
 
     /**
@@ -553,6 +601,8 @@ class ImportMangaFragment : Fragment() {
     /** 删除导入的本地内容（应用专属目录 getExternalFilesDir/manga_import/<id>/ 复制件 + 封面）。 */
     private fun deleteImportedFiles(manga: ImportedManga) {
         try {
+            runCatching { MangaImporter.deleteScannedArchiveSource(requireContext(), manga.localRoot) }
+                .onFailure { LogCollector.w("ImportMangaFragment", "删除漫画原始压缩包失败: ${manga.id}", it) }
             val local = File(manga.localRoot)
             if (local.isDirectory) local.deleteRecursively() else local.delete()
             manga.coverPath?.let { File(it).delete() }
@@ -642,17 +692,29 @@ class ImportMangaFragment : Fragment() {
                 getString(R.string.import_result_failed_title) to getString(
                     R.string.import_result_failed_msg,
                     event.title,
-                    getString(
-                        when (event.reason) {
-                            ImportFailureReason.NOT_ARCHIVE -> R.string.import_fail_not_archive
-                            ImportFailureReason.UNREADABLE -> R.string.import_fail_unreadable
-                            ImportFailureReason.DIRECTORY -> R.string.import_fail_directory
-                            // PDF 打不开要分开说：加密有明确的解法（先解密），损坏只能重下
-                            ImportFailureReason.PDF_ENCRYPTED -> R.string.import_fail_pdf_encrypted
-                            ImportFailureReason.PDF_INVALID -> R.string.import_fail_pdf_invalid
-                            ImportFailureReason.UNKNOWN -> R.string.import_fail_unknown
-                        }
-                    )
+                    listOfNotNull(
+                        getString(
+                            when (event.reason) {
+                                ImportFailureReason.NOT_ARCHIVE -> R.string.import_fail_not_archive
+                                ImportFailureReason.ARCHIVE_INVALID -> R.string.import_fail_archive_invalid
+                                ImportFailureReason.SOURCE_ACCESS_DENIED -> R.string.import_fail_source_access_denied
+                                ImportFailureReason.SOURCE_OPEN_FAILED -> R.string.import_fail_source_open_failed
+                                ImportFailureReason.SOURCE_READ_FAILED -> R.string.import_fail_source_read_failed
+                                ImportFailureReason.DESTINATION_WRITE_FAILED -> R.string.import_fail_destination_write_failed
+                                ImportFailureReason.STORAGE_INSUFFICIENT -> R.string.import_fail_storage_insufficient
+                                ImportFailureReason.ARCHIVE_LIMIT_EXCEEDED -> R.string.import_fail_archive_limit
+                                ImportFailureReason.DIRECTORY_ACCESS_DENIED -> R.string.import_fail_directory_access_denied
+                                ImportFailureReason.DIRECTORY_SCAN_FAILED -> R.string.import_fail_directory_scan_failed
+                                ImportFailureReason.DIRECTORY_INVALID -> R.string.import_fail_directory_invalid
+                                ImportFailureReason.UNREADABLE -> R.string.import_fail_pdf_read_failed
+                                // PDF 打不开要分开说：加密有明确的解法（先解密），损坏只能重下
+                                ImportFailureReason.PDF_ENCRYPTED -> R.string.import_fail_pdf_encrypted
+                                ImportFailureReason.PDF_INVALID -> R.string.import_fail_pdf_invalid
+                                ImportFailureReason.UNKNOWN -> R.string.import_fail_unknown
+                            }
+                        ),
+                        event.detail?.let { getString(R.string.import_fail_detail, it) }
+                    ).joinToString("\n")
                 )
             )
         }
@@ -669,20 +731,27 @@ class ImportMangaFragment : Fragment() {
         resultDialogContent = item
         dialogShowing = true
         // ⚠️ 弹窗挂在 Activity 上，不随 View 销毁 → 留引用，onDestroyView 里主动 dismiss（防窗口泄漏）
-        resultDialog = AlertDialog.Builder(requireContext())
-            .setTitle(item.first)
-            .setMessage(item.second)
-            .setPositiveButton(R.string.confirm) { _, _ ->
-                dialogShowing = false
-                resultDialogContent = null
-                showNextResultDialog()
-            }
-            .setOnCancelListener {
-                dialogShowing = false
-                resultDialogContent = null
-                showNextResultDialog()
-            }
-            .create().also { it.show(); it.window?.setBackgroundDrawableResource(R.drawable.dialog_background) }
+        val onFinished = {
+            dialogShowing = false
+            resultDialogContent = null
+            showNextResultDialog()
+        }
+        val onPositive = DialogInterface.OnClickListener { _, _ -> onFinished() }
+        val onCancel = DialogInterface.OnCancelListener { onFinished() }
+        val dialog: Dialog = if (item.first == getString(R.string.import_auto_scan_failed_title)) {
+            AutoScanFailureDialog.builder(requireContext(), item.first, item.second)
+                .setPositiveButton(R.string.confirm, onPositive)
+                .setOnCancelListener(onCancel)
+                .create()
+        } else {
+            AlertDialog.Builder(requireContext())
+                .setTitle(item.first)
+                .setMessage(item.second)
+                .setPositiveButton(R.string.confirm, onPositive)
+                .setOnCancelListener(onCancel)
+                .create()
+        }
+        resultDialog = dialog.also { it.show(); it.window?.setBackgroundDrawableResource(R.drawable.dialog_background) }
     }
 
     /**

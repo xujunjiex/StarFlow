@@ -73,14 +73,17 @@ class FolderNovelParserTest {
         assertEquals(1, FolderNovelParser.parse(d).chapters.size)
     }
 
-    /** 子目录不递归：递归会把「夹里套了一堆杂七杂八」也变成章节。 */
+    /** 子目录是章节分类目录；章节标题保留目录名，locator 保留相对路径。 */
     @Test
-    fun `子目录里的文件不算章节`() = runBlocking {
+    fun `子目录里的文件按章节分类保留目录名`() = runBlocking {
         val d = dir()
         d.w("01.txt", "正文")
         val sub = File(d, "sub").apply { mkdirs() }
         File(sub, "02.txt").writeText("子目录里的")
-        assertEquals(listOf("01"), FolderNovelParser.parse(d).chapters.map { it.title })
+        val chapters = FolderNovelParser.parse(d).chapters
+        assertEquals(listOf("01", "sub · 02"), chapters.map { it.title })
+        assertEquals(listOf("01.txt", "sub/02.txt"), chapters.map { it.locator })
+        assertEquals("子目录里的", FolderNovelParser.loadChapter(d, chapters[1].locator))
     }
 
     /** 编码探测要串起来：GBK 的章文件名与内容都要正常。 */

@@ -14,6 +14,21 @@ enum class NovelImportFailureReason {
     /** SAF 权限被撤销 / 文件读不了。 */
     UNREADABLE,
 
+    /** SAF provider 无法打开来源数据流。 */
+    SOURCE_OPEN_FAILED,
+
+    /** SAF 来源流在读取过程中发生 I/O 错误。 */
+    SOURCE_READ_FAILED,
+
+    /** app 专属小说目录或目标文件写入失败。 */
+    DESTINATION_WRITE_FAILED,
+
+    /** DocumentsProvider 无法枚举所选小说目录的子项。 */
+    DIRECTORY_SCAN_FAILED,
+
+    /** DocumentsProvider 明确拒绝访问所选小说目录。 */
+    DIRECTORY_ACCESS_DENIED,
+
     /** 解析出来一个可读章节都没有。 */
     NO_TEXT_CHAPTER,
 
@@ -46,7 +61,12 @@ sealed interface NovelImportEvent {
     data class NoChapters(val title: String) : NovelImportEvent
 
     /** 导入失败，没有产生条目。 */
-    data class Failed(val title: String, val reason: NovelImportFailureReason) : NovelImportEvent
+    data class Failed(
+        val title: String,
+        val reason: NovelImportFailureReason,
+        /** Concrete failing stage and the original system exception, for device-specific diagnosis. */
+        val detail: String? = null,
+    ) : NovelImportEvent
 
     /**
      * 选错了书架：用户在小说的入口选了漫画文件（[isManga] = true），

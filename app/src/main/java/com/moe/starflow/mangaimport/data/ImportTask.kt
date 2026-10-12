@@ -71,8 +71,17 @@ data class ImportTask(
 /** 导入失败原因。数据层只给原因，文案由 UI 层映射（避免 data 包依赖具体资源）。 */
 enum class ImportFailureReason {
     NOT_ARCHIVE,
+    ARCHIVE_INVALID,
+    SOURCE_ACCESS_DENIED,
+    SOURCE_OPEN_FAILED,
+    SOURCE_READ_FAILED,
+    DESTINATION_WRITE_FAILED,
+    STORAGE_INSUFFICIENT,
+    ARCHIVE_LIMIT_EXCEEDED,
+    DIRECTORY_ACCESS_DENIED,
+    DIRECTORY_SCAN_FAILED,
+    DIRECTORY_INVALID,
     UNREADABLE,
-    DIRECTORY,
 
     /** PDF 需要密码（Android 的 `PdfRenderer` 没有密码接口 → 只能请用户先解密）。 */
     PDF_ENCRYPTED,
@@ -82,6 +91,16 @@ enum class ImportFailureReason {
 
     UNKNOWN
 }
+
+/**
+ * 发生在 SAF 源读取或应用目标写入阶段的失败。保留阶段信息，避免把文件提供器问题误报成
+ * 「权限不足或文件移动」；[cause] 会原样保留，供日志与失败弹窗显示系统实际错误。
+ */
+class ImportOperationException(
+    val reason: ImportFailureReason,
+    message: String,
+    cause: Throwable? = null
+) : java.io.IOException(message, cause)
 
 /**
  * PDF 打不开。
@@ -106,5 +125,10 @@ sealed interface ImportEvent {
     data class NoImages(val title: String, val isArchive: Boolean) : ImportEvent
 
     /** 导入失败，没有产生书架条目。 */
-    data class Failed(val title: String, val reason: ImportFailureReason) : ImportEvent
+    data class Failed(
+        val title: String,
+        val reason: ImportFailureReason,
+        /** 系统异常类型和原始消息；已截断，可能为空。 */
+        val detail: String? = null
+    ) : ImportEvent
 }

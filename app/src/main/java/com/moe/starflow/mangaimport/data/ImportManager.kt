@@ -2,9 +2,9 @@ package com.moe.starflow.mangaimport.data
 
 import android.content.Context
 import android.net.Uri
-import androidx.documentfile.provider.DocumentFile
 import com.moe.starflow.R
 import com.moe.starflow.utils.LogCollector
+import com.moe.starflow.utils.SafDocumentMetadata
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -18,6 +18,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
+import java.io.FileNotFoundException
+import java.io.IOException
 import java.util.zip.ZipException
 import kotlin.coroutines.coroutineContext
 
@@ -76,11 +78,8 @@ object ImportManager {
         val app = context.applicationContext
         scope.launch {
             val id = reserveId(app)
-            // ⚠️ 名字查询走 ContentResolver（SAF provider）：权限被撤销 / URI 失效 / 存储卸载都会抛。
-            // 必须在 try 之外也不能让它冒泡（冒泡 = 未捕获异常 = 崩溃）+ 连提示都没有，
-            // 所以这里单独兜住并退化成默认标题，后续导入失败会走正常的 Failed 弹窗。
-            val title = runCatching { DocumentFile.fromTreeUri(app, treeUri)?.name }.getOrNull()
-                ?: app.getString(R.string.default_manga_title, id.toString())
+            // 标题元数据只在真正导入时查询并记录 provider 诊断；任务占位不再重复查询 SAF。
+            val title = app.getString(R.string.default_manga_title, id.toString())
             registerTask(id, title, isArchive = false, phase = ImportPhase.SCANNING, job = coroutineContext[Job])
             try {
                 val manga = MangaImporter.importDirectory(app, treeUri, id) { p -> updateProgress(id, p) }
@@ -95,7 +94,7 @@ object ImportManager {
             } catch (e: Exception) {
                 cleanup(app, id)
                 LogCollector.e(TAG, "导入目录失败: $treeUri", e)
-                emit(ImportEvent.Failed(title, classifyDirectory(e)))
+                emit(ImportEvent.Failed(title, classifyDirectory(e), failureDetail(e)))
             } finally {
                 unregisterTask(id)
                 releaseId(id)
@@ -127,9 +126,8 @@ object ImportManager {
     private fun launchArchiveTask(app: Context, uri: Uri) {
         scope.launch {
             val id = reserveId(app)
-            // 同 importDirectory：名字查询在 try 外，单独兜住，别让 SAF 异常崩掉应用
-            val name = runCatching { DocumentFile.fromSingleUri(app, uri)?.name }.getOrNull()
-                ?: uri.lastPathSegment.orEmpty()
+            // 避免为占位标题重复查询 SAF；实际显示名在 MangaImporter 中单次查询并记录诊断。
+            val name = SafDocumentMetadata.fallbackName(uri).orEmpty()
             val title = name.substringBeforeLast('.', name).ifEmpty {
                 app.getString(R.string.default_manga_title, id.toString())
             }
@@ -147,7 +145,7 @@ object ImportManager {
             } catch (e: Exception) {
                 cleanup(app, id)
                 LogCollector.e(TAG, "导入压缩包失败: $uri", e)
-                emit(ImportEvent.Failed(title, classifyArchive(e)))
+                emit(ImportEvent.Failed(title, classifyArchive(e), failureDetail(e)))
             } finally {
                 unregisterTask(id)
                 releaseId(id)
@@ -190,6 +188,29 @@ object ImportManager {
         return id
     }
 
+    /** Reserve an id for scanner recovery so a simultaneous manual import cannot take the same id. */
+    @Synchronized
+    internal fun reserveScanId(context: Context, preferredId: Long?): Long? {
+        if (preferredId != null && preferredId in reservedIds) return null
+        val storedIds = ImportedMangaStore.load(context).mapTo(mutableSetOf()) { it.id }
+        val id = preferredId?.takeIf { it > 0 && it !in storedIds && it !in reservedIds } ?: run {
+            var candidate = MangaImporter.nextId(context)
+            while (candidate in reservedIds || candidate in storedIds) candidate++
+            candidate
+        }
+        reservedIds += id
+        return id
+    }
+
+    @Synchronized
+    internal fun activeIdsForScanner(): Set<Long> =
+        _tasks.value.mapTo(reservedIds.toMutableSet()) { it.id }
+
+    @Synchronized
+    internal fun releaseScanIds(ids: Collection<Long>) {
+        reservedIds.removeAll(ids.toSet())
+    }
+
     @Synchronized
     private fun releaseId(id: Long) {
         reservedIds -= id
@@ -224,17 +245,35 @@ object ImportManager {
     internal fun classifyArchive(e: Throwable): ImportFailureReason = when (e) {
         // PDF 打不开要单独说清（加密 / 损坏），别混进"不是压缩包"
         is PdfImportException -> e.reason
-        // ZipFile 对非 zip 与损坏包抛 ZipException；魔数认不出的包由 MangaImporter 抛
-        // IllegalArgumentException；rar/7z 解压失败由 libarchive 抛 ArchiveException
-        is ZipException, is IllegalArgumentException -> ImportFailureReason.NOT_ARCHIVE
-        is me.zhanghai.android.libarchive.ArchiveException -> ImportFailureReason.NOT_ARCHIVE
-        is java.io.FileNotFoundException, is SecurityException -> ImportFailureReason.UNREADABLE
+        is ImportOperationException -> e.reason
+        is SecurityException -> ImportFailureReason.SOURCE_ACCESS_DENIED
+        is FileNotFoundException -> ImportFailureReason.SOURCE_OPEN_FAILED
+        // ArchiveTypes 已先按魔数识别格式：未知魔数才是「不支持」；已识别的压缩包后续解析失败是损坏/解析错误。
+        is ZipException, is me.zhanghai.android.libarchive.ArchiveException, is IOException ->
+            ImportFailureReason.ARCHIVE_INVALID
+        is IllegalArgumentException -> ImportFailureReason.NOT_ARCHIVE
         else -> ImportFailureReason.UNKNOWN
     }
 
     private fun classifyDirectory(e: Throwable): ImportFailureReason = when (e) {
-        is SecurityException, is java.io.FileNotFoundException -> ImportFailureReason.UNREADABLE
-        is IllegalStateException -> ImportFailureReason.DIRECTORY
+        is ImportOperationException -> e.reason
+        is SecurityException -> ImportFailureReason.DIRECTORY_ACCESS_DENIED
+        is FileNotFoundException, is IOException -> ImportFailureReason.DIRECTORY_SCAN_FAILED
+        is IllegalStateException -> ImportFailureReason.DIRECTORY_SCAN_FAILED
         else -> ImportFailureReason.UNKNOWN
+    }
+
+    /** Keep the operation/path message and the provider/filesystem root cause in the dialog. */
+    private fun failureDetail(error: Throwable): String? {
+        val chain = mutableListOf<String>()
+        val seen = mutableSetOf<Throwable>()
+        var current: Throwable? = error
+        while (current != null && seen.add(current) && chain.size < 3) {
+            val message = current.localizedMessage?.replace(Regex("\\s+"), " ")?.trim()
+            chain += listOfNotNull(current.javaClass.simpleName.takeIf { it.isNotBlank() }, message)
+                .joinToString(": ")
+            current = current.cause
+        }
+        return chain.filter { it.isNotBlank() }.joinToString(" ← ").take(500).ifBlank { null }
     }
 }
