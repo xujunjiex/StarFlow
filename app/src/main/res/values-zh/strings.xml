@@ -1881,7 +1881,10 @@
     <string name="library_space">剩余空间：%1$s</string>
     <string name="library_space_unknown">无法获取</string>
     <string name="library_choose_folder">选择自定义目录</string>
-    <string name="library_default_folder">恢复默认位置</string>
+    <string name="library_default_folder">默认 app 目录\n%1$s</string>
+    <string name="library_custom_folder">自定义目录</string>
+    <string name="library_custom_folder_hint">点击选择文件夹</string>
+    <string name="library_menu">书库菜单</string>
     <string name="library_retry_save">重试保存书库数据</string>
     <string name="library_scan">扫描当前书库</string>
     <string name="library_saving">正在保存到书库…</string>

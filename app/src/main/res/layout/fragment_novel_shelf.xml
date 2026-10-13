@@ -17,10 +17,18 @@
         android:layout_height="match_parent"
         android:orientation="vertical">
 
-        <TextView android:id="@+id/library_status"
+        <LinearLayout
             android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:padding="10dp" android:textColor="@color/text_primary"
-            android:visibility="gone" />
+            android:gravity="center_vertical" android:orientation="horizontal"
+            android:paddingStart="10dp" android:paddingEnd="10dp" android:visibility="gone">
+            <ProgressBar android:id="@+id/library_scan_spinner"
+                style="?android:attr/progressBarStyleSmall" android:layout_width="20dp" android:layout_height="20dp"
+                android:layout_marginEnd="8dp" android:indeterminate="true" android:visibility="gone" />
+            <TextView android:id="@+id/library_status"
+                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:paddingTop="10dp" android:paddingBottom="10dp" android:textColor="@color/text_primary"
+                android:visibility="gone" />
+        </LinearLayout>
 
         <!-- 顶部栏：正常模式（标题 + 显示选项）/ 多选模式（已选数 + 全选 + 关闭） -->
         <LinearLayout
@@ -72,16 +80,23 @@
                     android:contentDescription="@string/select_all"/>
             </FrameLayout>
 
-            <TextView
+            <FrameLayout
                 android:id="@+id/novel_tv_settings"
-                android:layout_width="wrap_content"
+                android:layout_width="40dp"
                 android:layout_height="40dp"
                 android:gravity="center"
-                android:paddingStart="8dp"
-                android:paddingEnd="8dp"
-                android:textSize="14sp"
                 android:clickable="true"
-                android:text="@string/display_options"/>
+                android:focusable="true"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/library_menu">
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_gravity="center"
+                    android:src="@drawable/ic_reader_more"
+                    app:tint="@color/text_primary"
+                    android:contentDescription="@string/library_menu" />
+            </FrameLayout>
 
             <FrameLayout
                 android:id="@+id/novel_tv_close_selection"

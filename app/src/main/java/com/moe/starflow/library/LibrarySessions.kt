@@ -46,6 +46,7 @@ object LibrarySessions {
         }
         return FileLibraryStorage(File(path))
     }
+    fun defaultDisplayPath(context: Context): String = defaultStorage(context.applicationContext).displayPath
     private fun create(context: Context, storage: LibraryStorage): LibrarySession = sessions.getOrPut(storage.locationId) {
         val database = Room.databaseBuilder(context, LibraryDatabase::class.java, "library_${storage.locationId}.db")
             .openHelperFactory(LibraryOpenHelperFactory()).allowMainThreadQueries().build()

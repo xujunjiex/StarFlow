@@ -1,6 +1,8 @@
 package com.moe.starflow.library
 
 import android.view.View
+import android.view.ViewGroup
+import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.lifecycleScope
@@ -9,6 +11,15 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.flatMapLatest
 
 object LibraryShelfBinding {
+    private fun renderStatus(status: TextView, message: CharSequence, visible: Boolean, scanning: Boolean) {
+        val row = status.parent as? ViewGroup
+        row?.visibility = if (visible) View.VISIBLE else View.GONE
+        status.visibility = if (visible) View.VISIBLE else View.GONE
+        status.text = message
+        row?.findViewById<ProgressBar>(R.id.library_scan_spinner)?.visibility =
+            if (visible && scanning) View.VISIBLE else View.GONE
+    }
+
     @OptIn(ExperimentalCoroutinesApi::class)
     fun observe(fragment: Fragment, kind: String, status: TextView,
         refresh: () -> Unit, failures: (List<String>) -> Unit, rootChanged: () -> Unit = {}) {
@@ -31,24 +42,24 @@ object LibraryShelfBinding {
                 .collect { state ->
                     val scan = LibraryScanner.state.value
                     val scanning = scan.running && scan.kind == kind
-                    status.visibility = if (state.error != null || state.saving || scanning) View.VISIBLE else View.GONE
-                    status.text = when {
+                    val message = when {
                         scanning -> fragment.getString(R.string.library_scan_progress, scan.done, scan.total)
                         state.error != null -> fragment.getString(R.string.library_unsaved) + "：" + state.error
                         else -> fragment.getString(R.string.library_saving)
                     }
+                    renderStatus(status, message, state.error != null || state.saving || scanning, scanning)
                 }
         }
         scope.launch {
             LibraryScanner.state.collect { scan ->
                 if (scan.kind != kind || scan.location != LibrarySessions.current(fragment.requireContext()).locationId) return@collect
                 if (scan.running) {
-                    status.visibility = View.VISIBLE
-                    status.text = fragment.getString(R.string.library_scan_progress, scan.done, scan.total)
+                    renderStatus(status, fragment.getString(R.string.library_scan_progress, scan.done, scan.total), true, true)
                 } else {
                     refresh()
                     val saved = LibrarySessions.current(fragment.requireContext()).saveState.value
-                    status.visibility = if (saved.error != null || saved.saving) View.VISIBLE else View.GONE
+                    renderStatus(status, saved.error ?: fragment.getString(R.string.library_saving),
+                        saved.error != null || saved.saving, false)
                     LibraryScanner.consumeFailures()?.let(failures)
                 }
             }

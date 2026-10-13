@@ -126,13 +126,9 @@ class NovelShelfFragment : Fragment() {
 
         // 顶部栏 / 多选操作栏
         binding.novelTvSettings.setOnClickListener {
-            DisplayOptionsSheet(
-                displayMode,
-                gridSize,
-                sortOrder,
-                supportsRecentlyRead = true,
-            ) { m, s, order -> applyDisplay(m, s, order) }
-                .show(parentFragmentManager, DisplayOptionsSheet.TAG)
+            com.moe.starflow.library.LibraryShelfMenu.show(this, binding.novelTvSettings,
+                onDisplay = { showDisplayOptions() },
+                onScan = { com.moe.starflow.library.LibraryScanner.start(requireContext(), "novel") })
         }
         binding.novelTvCloseSelection.setOnClickListener { adapter.exitSelection() }
         binding.novelIvSelectAll.setOnClickListener { adapter.toggleSelectAll() }
@@ -197,14 +193,22 @@ class NovelShelfFragment : Fragment() {
         refresh()
     }
 
+    private fun showDisplayOptions() {
+        DisplayOptionsSheet(
+            displayMode,
+            gridSize,
+            sortOrder,
+            supportsRecentlyRead = true,
+        ) { mode, size, order -> applyDisplay(mode, size, order) }
+            .show(parentFragmentManager, DisplayOptionsSheet.TAG)
+    }
+
     // ===== 导入 =====
 
     private fun showImportDialog() {
         com.moe.starflow.mangaimport.ui.ImportDialog.show(requireContext(),
             onPickFiles = { pickFiles.launch(arrayOf("*/*")) },
             onPickSingleDir = { pickDir.launch(null) },
-            onScan = { com.moe.starflow.library.LibraryScanner.start(requireContext(), "novel") },
-            onStorage = { com.moe.starflow.library.LibraryStorageDialog().show(parentFragmentManager, "library-storage") },
             novel = true)
     }
 

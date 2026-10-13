@@ -158,19 +158,13 @@ class ImportMangaFragment : Fragment() {
                     )
                 },
                 onPickSingleDir = { pickDirLauncher.launch(null) },
-                onScan = { com.moe.starflow.library.LibraryScanner.start(requireContext(), "manga") },
-                onStorage = { com.moe.starflow.library.LibraryStorageDialog().show(parentFragmentManager, "library-storage") }
             )
         }
 
         binding.tvSettings.setOnClickListener {
-            DisplayOptionsSheet(
-                displayMode,
-                gridSize,
-                if (sortByAdded) DisplaySortOrder.ADDED else DisplaySortOrder.TITLE,
-            ) { m, s, sort ->
-                applyDisplay(m, s, sort == DisplaySortOrder.ADDED)
-            }.show(parentFragmentManager, DisplayOptionsSheet.TAG)
+            com.moe.starflow.library.LibraryShelfMenu.show(this, binding.tvSettings,
+                onDisplay = { showDisplayOptions() },
+                onScan = { com.moe.starflow.library.LibraryScanner.start(requireContext(), "manga") })
         }
 
         binding.tvCloseSelection.setOnClickListener { adapter.exitSelection() }
@@ -569,6 +563,15 @@ class ImportMangaFragment : Fragment() {
             .getOrDefault(DisplayMode.DETAILED_LIST)
         gridSize = p.getInt("grid_size", 3)
         sortByAdded = p.getBoolean("sort_by_added", false)
+    }
+
+    private fun showDisplayOptions() {
+        DisplayOptionsSheet(
+            displayMode,
+            gridSize,
+            if (sortByAdded) DisplaySortOrder.ADDED else DisplaySortOrder.TITLE,
+        ) { mode, size, order -> applyDisplay(mode, size, order == DisplaySortOrder.ADDED) }
+            .show(parentFragmentManager, DisplayOptionsSheet.TAG)
     }
 
     private fun applyDisplay(mode: DisplayMode, size: Int, sortAdded: Boolean) {

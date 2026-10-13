@@ -21,8 +21,6 @@ object ImportDialog {
         context: Context,
         onPickFiles: () -> Unit,
         onPickSingleDir: () -> Unit,
-        onScan: () -> Unit = {},
-        onStorage: () -> Unit = {},
         novel: Boolean = false
     ) {
         val view = LayoutInflater.from(context).inflate(R.layout.dialog_import_manga, null, false)
@@ -60,8 +58,6 @@ object ImportDialog {
             dialog.dismiss()
         }
 
-        view.findViewById<TextView>(R.id.btn_library_scan).setOnClickListener { onScan(); dialog.dismiss() }
-        view.findViewById<TextView>(R.id.btn_library_storage).setOnClickListener { onStorage(); dialog.dismiss() }
         dialog.show()
         dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
     }

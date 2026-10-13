@@ -1883,7 +1883,10 @@
     <string name="library_space">Available space: %1$s</string>
     <string name="library_space_unknown">Unavailable</string>
     <string name="library_choose_folder">Choose a custom folder</string>
-    <string name="library_default_folder">Use the default folder</string>
+    <string name="library_default_folder">Default app folder\n%1$s</string>
+    <string name="library_custom_folder">Custom folder</string>
+    <string name="library_custom_folder_hint">Tap to choose a folder</string>
+    <string name="library_menu">Library menu</string>
     <string name="library_retry_save">Retry saving library data</string>
     <string name="library_scan">Scan this library</string>
     <string name="library_saving">Saving to the library…</string>
