@@ -43,6 +43,8 @@ data class ActiveChapterJob(
     val state: ChapterJobState,
     val startPage: Int = 0,
     val stageText: String? = null,
+    val libraryLocationId: String = "",
+    val bookUuid: String = "",
 ) {
     /**
      * 通知 id 的稳定来源（同一本书同一章恒等）。
@@ -54,8 +56,14 @@ data class ActiveChapterJob(
      *    → 两条章通知互相覆盖 / 服务的 `shown - alive` 差集把别人的通知 cancel 掉。
      * 现在用 64 位混合 + 高位掩码，并把结果整体挪出汇总 id 附近的小数值区。
      */
+    val runtimeKey get() = "$libraryLocationId:${kind.name.lowercase()}:$bookUuid"
+
     val notificationId: Int
         get() {
+            if (bookUuid.isNotEmpty()) {
+                val scoped = "$runtimeKey:${kind.name}:$chapterIndex".hashCode().toLong() and 0x7fffffffL
+                return (10_000 + scoped % (Int.MAX_VALUE - 20_000)).toInt()
+            }
             // ⚠️ 不能用"乘以同一个基数再相加"的线性公式：bookId 每 +1 等于 chapterIndex +31，
             // 于是 book1/ch31 与 book2/ch0 必然同 id（审查实测撞了）。这里用**互质权重 + 显式区间**
             // 构造：bookId 权重 10_000 > chapterIndex 的上限 → 在 bookId < 100_000、chapterIndex < 10_000

@@ -107,7 +107,9 @@ class TranslationJobService : LifecycleService() {
         val chapterIndex = intent.getIntExtra(EXTRA_CHAPTER_INDEX, -1)
         if (bookId < 0 || chapterIndex < 0) return
         val job = TranslationJobRegistry.activeJobs.value
-            .firstOrNull { it.kind == kind && it.bookId == bookId && it.chapterIndex == chapterIndex }
+             .firstOrNull { it.kind == kind && it.bookId == bookId && it.chapterIndex == chapterIndex &&
+                it.libraryLocationId == intent.getStringExtra("library_location").orEmpty() &&
+                it.bookUuid == intent.getStringExtra("library_book_uuid").orEmpty() }
             ?: return
         val act = when (action) {
             ACTION_PAUSE -> JobAction.PAUSE
@@ -242,6 +244,9 @@ class TranslationJobService : LifecycleService() {
         }
         val intent = Intent(this, TranslationJobService::class.java).apply {
             this.action = name
+            putExtra("library_location", job.libraryLocationId)
+            putExtra("library_book_uuid", job.bookUuid)
+            data = android.net.Uri.parse("starflow://library/${job.libraryLocationId}/${job.bookUuid}/${job.chapterIndex}/$name")
             putExtra(EXTRA_KIND, job.kind.name)
             putExtra(EXTRA_BOOK_ID, job.bookId)
             putExtra(EXTRA_CHAPTER_INDEX, job.chapterIndex)
@@ -264,6 +269,9 @@ class TranslationJobService : LifecycleService() {
                 putExtra(NovelReaderActivity.EXTRA_CHAPTER_INDEX, job.chapterIndex)
             }
         }
+        intent.putExtra("library_location", job.libraryLocationId)
+        intent.putExtra("library_book_uuid", job.bookUuid)
+        intent.data = android.net.Uri.parse("starflow://library/${job.libraryLocationId}/${job.bookUuid}/${job.chapterIndex}")
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         return PendingIntent.getActivity(
             this, job.notificationId, intent,

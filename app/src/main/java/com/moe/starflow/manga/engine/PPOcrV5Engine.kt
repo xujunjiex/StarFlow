@@ -167,49 +167,54 @@ object PPOcrV5Engine {
      * rec 会话按需懒加载（首次调用 [getRecSession] 时）。
      */
     fun initialize(context: Context) {
-        synchronized(lock) {
-            if (isInitialized) return
+        PpRecRecognizer.withMemoryGuard(context, TAG, "PP-OCRv5 initialization") {
+            synchronized(lock) {
+                if (isInitialized) return
 
-            try {
-                LogCollector.d(TAG, "开始初始化 PP-OCRv5 引擎...")
+                try {
+                    LogCollector.d(TAG, "开始初始化 PP-OCRv5 引擎...")
 
-                ortEnv = OrtEnvironment.getEnvironment()
+                    ortEnv = OrtEnvironment.getEnvironment()
 
-                val sessionOpts = OrtSession.SessionOptions().apply {
-                    setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
-                    setMemoryPatternOptimization(true)
-                    setCPUArenaAllocator(true)
-                    setIntraOpNumThreads(4)
+                    val sessionOpts = OrtSession.SessionOptions().apply {
+                        setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+                        setMemoryPatternOptimization(true)
+                        setCPUArenaAllocator(true)
+                        setIntraOpNumThreads(4)
+                    }
+
+                    // det（从 filesDir 加载）
+                    LogCollector.d(TAG, "加载 det 模型...")
+                    val detFile = java.io.File(PPOcrModelFiles.getModelDir(context), "det_v5.onnx")
+                    if (!detFile.exists() || detFile.length() == 0L) {
+                        LogCollector.e(TAG, "v5 det 模型未下载，请先在模型管理中下载")
+                        throw IllegalStateException("PP-OCRv5 检测模型未下载，请在模型管理中下载")
+                    }
+                    val detBytes = detFile.readBytes()
+                    detSession = ortEnv!!.createSession(detBytes, sessionOpts)
+                    LogCollector.d(TAG, "det 模型加载完成 (${detBytes.size / 1024}KB)")
+
+                    // cls removed — direction classification is no longer used
+
+                    // 初始化 rec 锁
+                    for (lang in RecLang.entries) {
+                        recLocks[lang] = Any()
+                    }
+
+                    // 字典
+                    loadDictionary(context)
+
+                    isInitialized = true
+                    LogCollector.d(TAG, "PP-OCRv5 引擎初始化完成")
+
+                } catch (e: OutOfMemoryError) {
+                    release()
+                    throw e
+                } catch (e: Exception) {
+                    LogCollector.e(TAG, "PP-OCRv5 初始化失败", e)
+                    release()
+                    throw e
                 }
-
-                // det（从 filesDir 加载）
-                LogCollector.d(TAG, "加载 det 模型...")
-                val detFile = java.io.File(PPOcrModelFiles.getModelDir(context), "det_v5.onnx")
-                if (!detFile.exists() || detFile.length() == 0L) {
-                    LogCollector.e(TAG, "v5 det 模型未下载，请先在模型管理中下载")
-                    throw IllegalStateException("PP-OCRv5 检测模型未下载，请在模型管理中下载")
-                }
-                val detBytes = detFile.readBytes()
-                detSession = ortEnv!!.createSession(detBytes, sessionOpts)
-                LogCollector.d(TAG, "det 模型加载完成 (${detBytes.size / 1024}KB)")
-
-                // cls removed — direction classification is no longer used
-
-                // 初始化 rec 锁
-                for (lang in RecLang.entries) {
-                    recLocks[lang] = Any()
-                }
-
-                // 字典
-                loadDictionary(context)
-
-                isInitialized = true
-                LogCollector.d(TAG, "PP-OCRv5 引擎初始化完成")
-
-            } catch (e: Exception) {
-                LogCollector.e(TAG, "PP-OCRv5 初始化失败", e)
-                release()
-                throw e
             }
         }
     }
@@ -602,7 +607,7 @@ object PPOcrV5Engine {
         bitmap: Bitmap,
         recLang: RecLang = RecLang.ZH,
         useDet: Boolean = true
-    ): OcrResult {
+    ): OcrResult = PpRecRecognizer.withMemoryGuard(context, TAG) {
         if (!isInitialized) throw IllegalStateException("PPOcrV5Engine 未初始化")
         if (bitmap.isRecycled) throw IllegalArgumentException("Bitmap 已回收")
 
@@ -634,14 +639,19 @@ object PPOcrV5Engine {
         val cropT0 = System.currentTimeMillis()
         val cropResults = mutableListOf<Triple<Bitmap, FloatArray, Int>>() // crop, box, originalIndex
 
-        for ((idx, box) in boxes.withIndex()) {
-            val pts = boxToQuadPoints(box)
-            try {
-                val crop = PPOcrDetGeometry.getRotateCropImage(bitmap, pts)
-                cropResults.add(Triple(crop, box, idx))
-            } catch (e: Exception) {
-                LogCollector.w(TAG, "裁剪失败 box[$idx]: ${e.message}")
+        try {
+            for ((idx, box) in boxes.withIndex()) {
+                val pts = boxToQuadPoints(box)
+                try {
+                    val crop = PPOcrDetGeometry.getRotateCropImage(bitmap, pts)
+                    cropResults.add(Triple(crop, box, idx))
+                } catch (e: Exception) {
+                    LogCollector.w(TAG, "裁剪失败 box[$idx]: ${e.message}")
+                }
             }
+        } catch (e: OutOfMemoryError) {
+            cropResults.forEach { (crop, _, _) -> if (!crop.isRecycled) crop.recycle() }
+            throw e
         }
         val cropTime = System.currentTimeMillis() - cropT0
 
@@ -853,7 +863,7 @@ object PPOcrV5Engine {
      * 公开检测方法：返回原始坐标系的 box 数组。
      * 用于增量渲染场景的 det 阶段。
      */
-    fun runDetForBoxes(context: Context, bitmap: Bitmap): List<FloatArray> {
+    fun runDetForBoxes(context: Context, bitmap: Bitmap): List<FloatArray> = PpRecRecognizer.withMemoryGuard(context, TAG) {
         if (!isInitialized) throw IllegalStateException("PPOcrV5Engine 未初始化")
         refreshParams(context)
         val boxes = runDet(bitmap)
@@ -865,7 +875,7 @@ object PPOcrV5Engine {
      * 调试用检测：返回保留和被丢弃的选区。
      * 丢弃原因：score<box_thresh、尺寸过小、unclip过小
      */
-    fun runDetForDebug(context: Context, bitmap: Bitmap): DebugDetResult {
+    fun runDetForDebug(context: Context, bitmap: Bitmap): DebugDetResult = PpRecRecognizer.withMemoryGuard(context, TAG) {
         if (!isInitialized) throw IllegalStateException("PPOcrV5Engine 未初始化")
         refreshParams(context)
 
@@ -875,8 +885,11 @@ object PPOcrV5Engine {
             ortEnv!!, buffer,
             longArrayOf(1, 3, detH.toLong(), detW.toLong())
         )
-        val results = detSession!!.run(mapOf("x" to inputTensor))
-        inputTensor.close()
+        val results = try {
+            detSession!!.run(mapOf("x" to inputTensor))
+        } finally {
+            inputTensor.close()
+        }
 
         try {
             var detOutputTensor: OnnxTensor? = null
@@ -889,11 +902,10 @@ object PPOcrV5Engine {
             }
             val outputData = detOutputTensor!!.floatBuffer.array()
             val outputShape = detOutputTensor.info.shape
-            detOutputTensor.close()
 
             val predH = outputShape[2].toInt()
             val predW = outputShape[3].toInt()
-            val pred = outputData.sliceArray(0 until predH * predW)
+            val pred = outputData
 
             return postprocessDetDebug(pred, predH, predW, bitmap.height, bitmap.width)
         } finally {
@@ -1013,8 +1025,11 @@ object PPOcrV5Engine {
             longArrayOf(1, 3, detH.toLong(), detW.toLong())
         )
 
-        val results = detSession!!.run(mapOf("x" to inputTensor))
-        inputTensor.close()
+        val results = try {
+            detSession!!.run(mapOf("x" to inputTensor))
+        } finally {
+            inputTensor.close()
+        }
 
         try {
             var detOutputTensor: OnnxTensor? = null
@@ -1027,11 +1042,10 @@ object PPOcrV5Engine {
             }
             val outputData = detOutputTensor!!.floatBuffer.array()
             val outputShape = detOutputTensor.info.shape // [1, 1, H, W]
-            detOutputTensor.close()
 
             val predH = outputShape[2].toInt()
             val predW = outputShape[3].toInt()
-            val pred = outputData.sliceArray(0 until predH * predW)
+            val pred = outputData
 
             postprocessDet(pred, predH, predW, bitmap.height, bitmap.width).boxes
         } finally {

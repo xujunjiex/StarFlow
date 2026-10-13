@@ -2,6 +2,7 @@ package com.moe.starflow.sr
 
 import android.content.Context
 import android.graphics.Bitmap
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -11,23 +12,12 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
 import java.io.File
 
-/**
- * 超分产物的**归属**守卫（2026-10 审查发现）。
- *
- * 复现路径（漫画 id 会被复用，代码里到处写着这条）：
- * ```
- * 书架有 id=7（addedAt=1000）→ 给它超分了几页，落盘 sr_cache/7_0.webp + 7_0.json
- * 删掉这本书（ShelfCleanup.deleteManga 是**异步**的）
- * 立刻重新导入一本新书 → 拿到同一个 id=7（addedAt=2000）
- *   · 若异步清理丢失/还在途中 → 旧文件还在
- *   · 只按 `7_0` 取图 → 新书第 1 页渲染出**上一本书的放大页**
- * ```
- * 用户看到的是完全不相干的图，零报错。修法：标记里记身份指纹，读取时校验
- * （与 `imported_page_translation.mangaKey` 同一套口径 —— 那边早就这么防了）。
- */
+/** 书籍 id 被复用时，不同身份指纹的超分结果必须隔离，删除也只能作用于所属书籍。 */
 @RunWith(RobolectricTestRunner::class)
+@Config(shadows = [SrStoreTestOs::class])
 class SrStoreOwnershipTest {
 
     private val ctx: Context = RuntimeEnvironment.getApplication()
@@ -64,12 +54,9 @@ class SrStoreOwnershipTest {
         assertEquals("upconv7", SrStore.storedModelOrNull(ctx, oldBookId, 0, oldBookKey))
     }
 
-    /**
-     * 重导入（同 id、新指纹）**覆盖**那一页之后，就归新书了 —— 指纹是跟着每次落盘写的，
-     * 不会因为"文件被谁先写过"而锁死。
-     */
+    /** 新书即使复用了 id，保存和清理也不能影响旧书的结果。 */
     @Test
-    fun reUpscalingForTheNewBookReclaimsTheSlot() {
+    fun reUpscalingForTheNewBookKeepsBothBooksIsolated() {
         saveForOldBook(page = 0, key = oldBookKey)
         assertFalse(SrStore.exists(ctx, oldBookId, 0, newBookKey))
 
@@ -78,7 +65,12 @@ class SrStoreOwnershipTest {
 
         assertTrue("新书现在认领得到", SrStore.exists(ctx, oldBookId, 0, newBookKey))
         assertEquals("cunet", SrStore.storedModelOrNull(ctx, oldBookId, 0, newBookKey))
-        assertFalse("旧书**不能**再认领这一页（指纹已换）", SrStore.exists(ctx, oldBookId, 0, oldBookKey))
+        assertTrue("旧书的独立结果仍然保留", SrStore.exists(ctx, oldBookId, 0, oldBookKey))
+        assertEquals("upconv7", SrStore.storedModelOrNull(ctx, oldBookId, 0, oldBookKey))
+
+        SrStore.deleteManga(ctx, oldBookId, oldBookKey)
+        assertFalse(SrStore.exists(ctx, oldBookId, 0, oldBookKey))
+        assertTrue("旧书异步删除不能影响新书", SrStore.exists(ctx, oldBookId, 0, newBookKey))
     }
 
     /** 标记缺失/损坏 = 无法证伪 → 不算这本书的（宁可回落原图，也不冒渲染别人页面的风险）。 */
@@ -86,24 +78,28 @@ class SrStoreOwnershipTest {
     fun missingOrCorruptMarkerIsNotClaimed() {
         saveForOldBook()
         // 把标记删掉（模拟清理/损坏），图还在
-        File(srCacheDir(), "${oldBookId}_0.json").delete()
+        markerForOldBook().delete()
         assertFalse("标记没了就不能认领", SrStore.exists(ctx, oldBookId, 0, oldBookKey))
         assertNull(SrStore.load(ctx, oldBookId, 0, oldBookKey))
 
         // 再写一份，然后把标记写成坏 JSON
         saveForOldBook()
-        File(srCacheDir(), "${oldBookId}_0.json").writeText("{ not json")
+        markerForOldBook().writeText("{ not json")
         assertFalse("标记损坏也不能认领", SrStore.exists(ctx, oldBookId, 0, oldBookKey))
     }
 
-    /** 没有指纹就不该落盘（写出来也没人能认领，还会占缓存额度）。 */
+    private fun markerForOldBook(): File = srCacheDir().listFiles().orEmpty().single {
+        it.extension == "json" && JSONObject(it.readText()).optString("key") == oldBookKey
+    }
+
+    /** 没有指纹就不该落盘，避免留下无归属的文件。 */
     @Test
     fun saveWithoutFingerprintIsRefusedAndLeavesNoOrphan() {
         assertFalse("空指纹必须被拒", SrStore.save(ctx, oldBookId, 0, bmp(), "upconv7", ""))
         assertFalse("空指纹也认领不了", SrStore.exists(ctx, oldBookId, 0, ""))
         assertFalse(
             "不许留下认领不了的孤儿文件",
-            File(srCacheDir(), "${oldBookId}_0.webp").isFile,
+            srCacheDir().listFiles().orEmpty().isNotEmpty(),
         )
     }
 }

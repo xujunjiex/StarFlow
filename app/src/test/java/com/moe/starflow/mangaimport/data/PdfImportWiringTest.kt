@@ -110,7 +110,7 @@ class PdfImportWiringTest {
     @Test
     fun `everyPdfPixelSizeComesFromTheSinglePolicy`() {
         val src = read(SOURCE)
-        assertTrue("必须持有渲染器", src.contains("PdfPageRenderer(File(localRoot))"))
+        assertTrue("必须持有渲染器", src.contains("PdfPageRenderer(inputFile)"))
         assertTrue("权威尺寸必须经 PdfRasterPolicy（见 PdfPageRenderer.canonicalSize）", src.contains("pdfGeometry?.canonicalSize("))
         assertTrue(
             "采样尺寸也走策略（在渲染器内部一次 openPage 内算完）",
@@ -175,7 +175,7 @@ class PdfImportWiringTest {
         )
         assertTrue(
             "pageBytes 必须对 PDF 明说返回 0（不编假数据）",
-            body("fun pageBytes(", "fun rawPageKeys").contains("if (isPdf) return 0L"),
+            body("fun pageBytes(", "fun rawPageKeys").contains("if (closed || isPdf) return 0"),
         )
         assertTrue(
             "resolveRawPages 必须有 PDF 分支（页序 = page tree 顺序）",
@@ -204,7 +204,7 @@ class PdfImportWiringTest {
     fun `pageByteSizeIsHonestAboutPdf`() {
         // PDF 没有"某一页的字节数"这回事 —— 编一个平均值比返回 0 更糟（面板会显示得像真数据）
         val src = read(SOURCE)
-        assertTrue(src.contains("if (isPdf) return 0L"))
+        assertTrue(src.contains("if (closed || isPdf) return 0"))
     }
 
     // ===== 4. FD 生命周期 =====
@@ -213,7 +213,7 @@ class PdfImportWiringTest {
     fun `bothOwnersCloseTheirPageSource`() {
         val src = read(SOURCE)
         assertTrue("数据源要能关上", src.contains("fun close()"))
-        assertTrue("阅读器销毁必须释放自己的数据源", read(READER).contains("source.close()"))
+        assertTrue("阅读器销毁必须释放自己的数据源", read(READER).contains("closingSource?.close()"))
         assertTrue("控制器被回收时必须释放自持的数据源", read(CONTROLLER).contains("ownSource.close()"))
         assertTrue("渲染器真的关 FD", read(RENDERER).contains("pfd?.close()"))
         // ⚠️ **close 必须是终态**：退出阅读器那一刻在途的 loadFull 用的是关闭前捕获的 lambda，

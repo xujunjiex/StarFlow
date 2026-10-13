@@ -39,6 +39,9 @@ object HtmlParser : NovelParser {
      * 一旦哪天导入改成连图片一起拷（或用户手工把图片放进书目录），这条路径立刻就能用。
      */
     override suspend fun loadChapterSource(file: File, locator: String): ChapterSource =
+        loadChapterSourceWithin(file, file.parentFile ?: file)
+
+    suspend fun loadChapterSourceWithin(file: File, bookRoot: File): ChapterSource =
         withContext(Dispatchers.IO) {
             val ex = HtmlTextExtractor.extractWithImages(TextEncoding.decode(NovelReadLimits.readFile(file)))
             val dir = file.parentFile ?: return@withContext ChapterSource(ex.text)
@@ -49,7 +52,7 @@ object HtmlParser : NovelParser {
                     if (src.isEmpty() || spent >= NovelReadLimits.MAX_CHAPTER_IMAGE_BYTES) {
                         return@map null
                     }
-                    val bytes = ZipImages.readLocalOne(dir, src) ?: return@map null
+                    val bytes = ZipImages.readLocalOne(dir, src, bookRoot) ?: return@map null
                     spent += bytes.size
                     bytes
                 },

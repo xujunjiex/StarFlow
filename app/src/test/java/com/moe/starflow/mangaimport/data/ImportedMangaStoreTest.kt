@@ -18,10 +18,12 @@ class ImportedMangaStoreTest {
     private fun sample(id: Long) = ImportedManga(
         id = id,
         title = "漫画$id",
-        localRoot = "/data/manga_import/$id",
+        localRoot = com.moe.starflow.library.LibrarySessions.current(context).local("manga_import/$id").path,
         isArchive = id % 2 == 0L,
-        coverPath = "/data/covers/$id.jpg",
+        coverPath = com.moe.starflow.library.LibrarySessions.current(context).local(".starflow/books/${com.moe.starflow.library.LibrarySessions.current(context).uuid("manga", id)}/cover/$id.jpg").path,
         pageCount = 10,
+        bookUuid = com.moe.starflow.library.LibrarySessions.current(context).uuid("manga", id),
+        libraryLocationId = com.moe.starflow.library.LibrarySessions.current(context).locationId,
         addedAt = 1000L + id
     )
 
@@ -77,7 +79,7 @@ class ImportedMangaStoreTest {
         val pdf = sample(1).copy(
             isArchive = false,
             isPdf = true,
-            localRoot = "/data/manga_import/1/book.pdf",
+            localRoot = com.moe.starflow.library.LibrarySessions.current(context).local("manga_import/1/book.pdf").path,
             // PDF 的章节表在导入时就算好（整本一章），也要一起活过 JSON 往返
             chapters = listOf(MangaChapter(number = 1, title = "", startPage = 0, pageCount = 3)),
         )
@@ -112,7 +114,6 @@ class ImportedMangaStoreTest {
     @Test
     fun saveThenLoad_dropsTransientImportState() {
         val placeholder = sample(1).copy(
-            localRoot = "",
             importing = true,
             importPhase = ImportPhase.COPYING,
             importPercent = 42
@@ -120,7 +121,7 @@ class ImportedMangaStoreTest {
         ImportedMangaStore.save(context, listOf(placeholder))
 
         val loaded = ImportedMangaStore.load(context).single()
-        assertEquals(sample(1).copy(localRoot = ""), loaded)
+        assertEquals(sample(1), loaded)
         assertEquals(false, loaded.importing)
         assertNull(loaded.importPhase)
         assertEquals(-1, loaded.importPercent)

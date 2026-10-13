@@ -78,7 +78,7 @@ object FolderNovelParser : NovelParser {
     private data class ChapterFile(val file: File, val relativePath: String)
 
     private fun collectChapterFiles(directory: File, rootPath: String, depth: Int): List<ChapterFile> {
-        if (depth > MAX_CHAPTER_DEPTH) return emptyList()
+        if (depth > MAX_CHAPTER_DEPTH) throw IOException("章节目录层级超过支持深度：${directory.path}")
         val children = directory.listFiles() ?: throw IOException(
             "枚举小说章节目录失败：${directory.absolutePath}；File.listFiles() 返回 null " +
                 "(${FileAccessDiagnostics.describe(directory)})"
@@ -163,7 +163,7 @@ object FolderNovelParser : NovelParser {
                 // 图片基准 = html 的父目录；导入保留相对目录，
                 // 所以 `images/a.jpg` 与 `../` 都由 `ZipImages.resolveLocal`
                 // 做「夹在基准目录内」的越界守卫。
-                return@withContext HtmlParser.loadChapterSource(target, "")
+                return@withContext HtmlParser.loadChapterSourceWithin(target, file)
             }
             // 夹内的散章都是 txt（见 NovelImporter.DIR_TEXT_EXTS）→ 与 TxtParser 同一套「一行一段」
             ChapterSource(

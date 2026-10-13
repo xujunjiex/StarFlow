@@ -32,11 +32,11 @@ class MangaImporterTest {
             listOf(
                 // ⚠️ 用具名参数：ImportedManga 会随功能加字段（如 isPdf），位置参数一加就静默错位/编译不过
                 ImportedManga(
-                    id = 3, title = "a", localRoot = "/x", isArchive = false,
+                    id = 3, title = "a", localRoot = com.moe.starflow.library.LibrarySessions.current(context).local("manga_import/x").path, isArchive = false,
                     coverPath = null, pageCount = 1, addedAt = 1L,
                 ),
                 ImportedManga(
-                    id = 7, title = "b", localRoot = "/y", isArchive = true,
+                    id = 7, title = "b", localRoot = com.moe.starflow.library.LibrarySessions.current(context).local("manga_import/y").path, isArchive = true,
                     coverPath = null, pageCount = 1, addedAt = 1L,
                 )
             )

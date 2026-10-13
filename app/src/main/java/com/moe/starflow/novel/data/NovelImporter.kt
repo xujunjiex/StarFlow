@@ -30,7 +30,7 @@ import java.util.Locale
 import kotlin.coroutines.coroutineContext
 
 /**
- * 小说导入：SAF 源 → 复制进 `novel_import/<id>/` → 解析 → 封面 → [ImportedNovel]。
+ * 小说导入：SAF 源 → 复制进 `novel_import/<UUID>/` → 解析 → 封面 → [ImportedNovel]。
  *
  * 职责边界与 `MangaImporter` 一致：**只做搬运 + 解析**，不写清单（入库由
  * [NovelImportManager] 统一做，这样占位卡片与最终条目由同一处编排，id 也能提前预留）。
@@ -71,18 +71,10 @@ object NovelImporter {
         "jpg", "jpeg", "png", "gif", "webp", "bmp", "avif", "heic", "svg",
     )
 
-    /**
-     * 递归搬图片的两个上限：夹里若有上万张图（用户误把漫画夹当小说导入），
-     * 不封顶会把整本漫画复制进来。命中上限只**停止继续拷**并留日志，已拷的照常用。
-     */
-    internal const val MAX_DIR_IMAGES = 2000
-    internal const val MAX_DIR_IMAGE_BYTES = 400L * 1024 * 1024
-
     /** 递归深度上限（正常小说夹不会超过两三层）。 */
     private const val MAX_DIR_DEPTH = 6
 
-    fun nextId(context: Context): Long =
-        (NovelStore.load(context).maxOfOrNull { it.id } ?: 0L) + 1L
+    fun nextId(context: Context): Long = com.moe.starflow.library.LibrarySessions.current(context).nextId("novel")
 
     /**
      * 条目时间戳。**同时是译文身份指纹**（[ImportedNovel.translationKey]），必须单调递增：
@@ -110,7 +102,7 @@ object NovelImporter {
         onProgress: (ImportProgress) -> Unit = {},
     ): ImportedNovel = withContext(Dispatchers.IO) {
         // ⚠️ 必须过一道 safeSegment：DISPLAY_NAME 由 DocumentsProvider 给，**不受我们控制**，
-        // 带 `/` 或 `\` 时直接拿去拼路径会把写入目标挪出 `novel_import/<id>/`
+        // 带 `/` 或 `\` 时直接拿去拼路径会把写入目标挪出 `novel_import/<UUID>/`
         // （见 safeSegment 注释）。
         val metadata = SafDocumentMetadata.query(context, uri, TAG)
         val displayName = safeSegment(metadata.displayName ?: fileNameOf(uri), "book_$id")
@@ -118,6 +110,12 @@ object NovelImporter {
         importOne(context, uri, id, displayName, fallbackTitle, metadata.sizeBytes ?: 0L, onProgress)
     }
 
+    private fun requireStandaloneHtml(format: com.moe.starflow.novel.model.NovelFormat, file: File) {
+        if (format != com.moe.starflow.novel.model.NovelFormat.HTML) return
+        val raw = com.moe.starflow.novel.parser.TextEncoding.decode(com.moe.starflow.novel.parser.NovelReadLimits.readFile(file))
+        if (com.moe.starflow.novel.parser.HtmlTextExtractor.extractWithImages(raw).imageSources.any { it.isNotBlank() && !it.startsWith("data:") })
+            throw IOException("HTML 引用了外部插图，请按整本文件夹导入或扫描：${file.name}")
+    }
     /** Build an index entry for content already placed in app-owned storage; never copies or deletes it. */
     internal suspend fun inspectLocalSource(
         context: Context,
@@ -127,6 +125,7 @@ object NovelImporter {
     ): ImportedNovel = withContext(Dispatchers.IO) {
         val format = NovelFormatDetector.detect(source)
             ?: throw NovelWrongFormatException(isManga = false)
+        requireStandaloneHtml(format, source)
         val book = NovelParsers.forFormat(format).parse(source)
         if (book.chapters.isEmpty()) throw IllegalStateException(ERROR_NO_TEXT_CHAPTER)
         val title = if (format == NovelFormat.FOLDER) fallbackTitle else book.title.ifBlank { fallbackTitle }
@@ -166,7 +165,7 @@ object NovelImporter {
      *
      * ⚠️ 为什么必须收敛：`DISPLAY_NAME` 来自 DocumentsProvider，**不是**可信输入。实现粗糙或恶意
      * 的 provider 完全可以返回 `../evil.txt`、`a/b.txt` 这类名字，直接 `File(destDir, name)` 会
-     * 把写入目标挪出 `novel_import/<id>/` —— 越界后能覆盖**别的书**的目录、`covers/`，
+     * 把写入目标挪出 `novel_import/<UUID>/` —— 越界后能覆盖**别的书**的目录、`covers/`，
      * 甚至应用自己的日志文件（都在同一个 app 私有目录下）。
      *
      * 所以只取最后一个 `/`（或 `\`）之后的部分；为空则退回调用方给的生成名
@@ -198,14 +197,10 @@ object NovelImporter {
      * 那种语义在「一本小说被拆成 300 个 txt」时会长出 300 本书。
      *
      * ### 拷什么（2026-10-04 起）
-     * - **文本**：直接子文件里的 txt / epub / html / htm / xhtml（不递归 —— 递归会把
-     *   「夹里套了一堆杂七杂八」的情况也吞进来变成莫名其妙的章节）
+     * - **文本**：根目录及章节子目录里的 txt / epub / html / htm / xhtml，最多递归 6 层。
      * - **图片**：**仅当夹里有 html 时**才递归拷贝（`images/xxx.jpg` 这种子目录是常态）。
      *   txt / epub 不需要外部图片（epub 的图在包内），所以纯 txt 夹不会被塞进一堆图。
-     *   ⚠️ 两个上限见 [MAX_DIR_IMAGES] / [MAX_DIR_IMAGE_BYTES]，命中只停拷 + 留日志。
-     *
-     * 单张图拷失败**不让整次导入失败**：少一张插图是小事，整本书导不进来才是大事 ——
-     * 但每张失败都留日志（否则用户只看到"图没了"却查不出原因）。
+     *   必要的正文或插图复制失败时，清理本次半成品并报告具体来源；外部来源保持完整。
      */
     suspend fun importDirectory(
         context: Context,
@@ -213,6 +208,8 @@ object NovelImporter {
         id: Long = nextId(context),
         onProgress: (ImportProgress) -> Unit = {},
     ): ImportedNovel = withContext(Dispatchers.IO) {
+        (com.moe.starflow.library.LibrarySessions.current(context).storage as? com.moe.starflow.library.SafLibraryStorage)
+            ?.requireImportOutsideDestination(treeUri, "novel")
         val rootId = try {
             DocumentsContract.getTreeDocumentId(treeUri)
         } catch (e: SecurityException) {
@@ -244,42 +241,33 @@ object NovelImporter {
             }
             val textDocs = collectTextDocs(context, treeUri, rootId)
             if (textDocs.isEmpty()) throw IllegalStateException(ERROR_NO_TEXT_CHAPTER)
-            // 夹里有 html 才收图片（见 KDoc）；`rootId` 用来把 documentId 折成相对路径
-            val hasHtml = textDocs.any { isDirHtmlEntry(safName(it)) }
+            // 夹里有 html 才收图片；路径由遍历层级与显示名构造，documentId 仅用于查询/打开。
+            val hasHtml = textDocs.any { isDirHtmlEntry(it.relativePath) }
             val imageDocs = if (hasHtml) collectImageDocs(context, treeUri, rootId) else emptyList()
+            val relativeNames = textDocs.map { it.relativePath } + imageDocs.map { it.first }
+            if (relativeNames.toSet().size != relativeNames.size) throw IOException("来源包含重复名称，无法完整复制小说")
             val total = textDocs.size + imageDocs.size
 
             onProgress(ImportProgress(ImportPhase.COPYING, 0, total))
             var done = 0
-            for (doc in textDocs) {
+            for ((relativePath, doc) in textDocs) {
                 coroutineContext.ensureActive()
-                val relativePath = relativePathOf(rootId, doc) ?: continue
                 val target = resolveInsideTree(destDir, relativePath)
                     ?: throw IOException("小说章节路径不安全：$relativePath")
-                openSafSource(context, doc.uri).use { input ->
-                    openNovelDestination(target).use { output -> copyStream(input, output) {} }
-                }
+                copyRequired(context, doc.uri, target, relativePath)
                 done++
                 onProgress(ImportProgress(ImportPhase.COPYING, done, total))
             }
             var copiedBytes = 0L
             for ((rel, sourceUri) in imageDocs) {
                 coroutineContext.ensureActive()
-                if (copiedBytes >= MAX_DIR_IMAGE_BYTES) {
-                    LogCollector.w(TAG, "夹内图片超过 ${MAX_DIR_IMAGE_BYTES / (1024 * 1024)}MB，余下不再拷贝")
-                    break
-                }
+
                 val target = resolveInsideTree(destDir, rel)
                 if (target == null) {
-                    LogCollector.w(TAG, "夹内图片路径不安全，已跳过: $rel")
-                    continue
+                    throw IOException("小说插图路径不安全：$rel")
                 }
-                runCatching {
-                    openSafSource(context, sourceUri).use { input ->
-                        openNovelDestination(target).use { output -> copyStream(input, output) {} }
-                    }
-                    copiedBytes += target.length()
-                }.onFailure { LogCollector.w(TAG, "夹内图片拷贝失败，已跳过: $rel", it) }
+                copyRequired(context, sourceUri, target, rel)
+                copiedBytes += target.length()
                 done++
                 onProgress(ImportProgress(ImportPhase.COPYING, done, total))
             }
@@ -307,6 +295,16 @@ object NovelImporter {
         }
     }
 
+    private suspend fun copyRequired(context: Context, uri: Uri, target: File, relative: String) {
+        try {
+            openSafSource(context, uri).use { input ->
+                openNovelDestination(target).use { output -> copyStream(input, output) {} }
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (e: NovelImportIoException) { throw NovelImportIoException(e.kind, "必要文件复制失败：$relative：${e.message}", e) }
+        catch (e: Exception) { throw IOException("必要文件复制失败：$relative：${e.message}", e) }
+    }
+
     /** 这一条名字是不是文件夹导入认可的**文本**条目（纯函数，可单测）。 */
     internal fun isDirTextEntry(name: String?): Boolean = extOf(name) in DIR_TEXT_EXTS
 
@@ -321,11 +319,9 @@ object NovelImporter {
 
     /**
      * 递归收集夹内图片（只收 [DIR_IMAGE_EXTS]，深度封顶 [MAX_DIR_DEPTH]，张数封顶
-     * [MAX_DIR_IMAGES]），返回 `相对路径 -> 文档`。
+     * 完整复制），返回 `相对路径 -> 文档`。
      *
-     * ⚠️ 相对路径由 **documentId** 折出来（`primary:Books/novel/images/a.jpg` 去掉树根前缀），
-     * 而不是靠 provider 返回的单段显示名拼 —— 后者只有文件名，`images/` 这层就丢了，
-     * 于是 html 里的 `images/a.jpg` 永远解析不到。
+     * 路径逐层累计目录与文件的显示名；documentId 是不透明标识，不用于推导文件系统层级。
      */
     private suspend fun collectImageDocs(
         context: Context,
@@ -333,32 +329,28 @@ object NovelImporter {
         rootId: String,
     ): List<Pair<String, Uri>> {
         val out = ArrayList<Pair<String, Uri>>()
-        suspend fun walk(parentDocumentId: String, depth: Int) {
-            if (depth > MAX_DIR_DEPTH) return
+        suspend fun walk(parentDocumentId: String, prefix: String, depth: Int) {
+            if (depth > MAX_DIR_DEPTH) throw IOException("小说目录层级超过支持范围，未完整导入")
             for (child in queryChildren(context, treeUri, parentDocumentId)) {
                 coroutineContext.ensureActive()
-                if (out.size >= MAX_DIR_IMAGES) {
-                    LogCollector.w(TAG, "夹内图片超过 $MAX_DIR_IMAGES 张，余下不再拷贝")
-                    return
-                }
+
                 val name = safName(child)
+                if (child.isDirectory && com.moe.starflow.library.LibrarySessions.current(context).database.catalog().allMeta()
+                    .any { it.name.startsWith("importing:novel:") && it.value.substringAfterLast('/') == name })
+                    throw IOException("导入来源包含本次目标目录，已停止递归复制：$name")
+                val rel = treeRelativePath(prefix, name) ?: throw IOException("来源名称无法可靠定位：${child.uri}")
                 if (child.isDirectory || (child.mimeType == null && name.substringAfterLast('.', "").isEmpty())) {
-                    walk(child.documentId, depth + 1)
+                    walk(child.documentId, "$rel/", depth + 1)
                 } else if (isDirImageEntry(name) || imageExtension(child.mimeType) != null) {
-                    val rel = relativePathOf(rootId, child) ?: continue
-                    val targetRel = if (isDirImageEntry(rel)) rel else {
-                        val ext = imageExtension(child.mimeType) ?: continue
-                        val parent = rel.substringBeforeLast('/', "")
-                        listOf(parent.takeIf { it.isNotEmpty() }, "image_${out.size + 1}.$ext")
-                            .filterNotNull().joinToString("/")
-                    }
-                    out += targetRel to child.uri
+                    out += rel to child.uri
                 }
             }
         }
-        walk(rootId, 0)
+        walk(rootId, "", 0)
         return out
     }
+
+    private data class TreeEntry(val relativePath: String, val document: SafDocumentTreeReader.Child)
 
     /**
      * 收集小说目录根及章节子目录里的文本/EPUB 文件，保留相对路径，最多递归 [MAX_DIR_DEPTH] 层。
@@ -368,24 +360,28 @@ object NovelImporter {
         context: Context,
         treeUri: Uri,
         rootId: String,
-    ): List<SafDocumentTreeReader.Child> {
-        val out = ArrayList<SafDocumentTreeReader.Child>()
-        suspend fun walk(parentDocumentId: String, depth: Int) {
-            if (depth > MAX_DIR_DEPTH) return
+    ): List<TreeEntry> {
+        val out = ArrayList<TreeEntry>()
+        suspend fun walk(parentDocumentId: String, prefix: String, depth: Int) {
+            if (depth > MAX_DIR_DEPTH) throw IOException("小说目录层级超过支持范围，未完整导入")
             for (child in queryChildren(context, treeUri, parentDocumentId)) {
                 coroutineContext.ensureActive()
                 val name = safName(child)
+                if (child.isDirectory && com.moe.starflow.library.LibrarySessions.current(context).database.catalog().allMeta()
+                    .any { it.name.startsWith("importing:novel:") && it.value.substringAfterLast('/') == name })
+                    throw IOException("导入来源包含本次目标目录，已停止递归复制：$name")
+                val rel = treeRelativePath(prefix, name) ?: throw IOException("来源名称无法可靠定位：${child.uri}")
                 val extensionless = name.substringAfterLast('.', "").isEmpty()
                 if (child.isDirectory || (child.mimeType == null && extensionless)) {
-                    walk(child.documentId, depth + 1)
+                    walk(child.documentId, "$rel/", depth + 1)
                 } else if (isDirTextEntry(name)) {
-                    out += child
+                    out += TreeEntry(rel, child)
                 }
             }
         }
-        walk(rootId, 0)
+        walk(rootId, "", 0)
         return out.sortedWith(
-            compareBy(ArchivedMangaReader.naturalComparator()) { relativePathOf(rootId, it) ?: safName(it) }
+            compareBy(ArchivedMangaReader.naturalComparator()) { it.relativePath }
         )
     }
 
@@ -407,7 +403,7 @@ object NovelImporter {
         }
 
     private fun safName(child: SafDocumentTreeReader.Child): String =
-        child.displayName ?: child.documentId.substringAfterLast('/').substringAfterLast(':')
+        child.displayName ?: throw IOException("提供器未返回来源名称：${child.uri}")
 
     private fun imageExtension(mimeType: String?): String? = when (mimeType?.lowercase(Locale.ROOT)) {
         "image/jpeg", "image/jpg" -> "jpg"
@@ -421,23 +417,15 @@ object NovelImporter {
         else -> null
     }
 
-    /**
-     * 文档 → **相对树根**的路径（拿不到 / 不在树内返回 null）。
-     *
-     * `DocumentsContract.getDocumentId` 对 `content://…/document/primary%3ABooks%2Fn%2Fimages%2Fa.jpg`
-     * 给出 `primary:Books/n/images/a.jpg`，而树根是 `primary:Books/n` → 相对路径 `images/a.jpg`。
-     */
-    private fun relativePathOf(rootId: String, doc: SafDocumentTreeReader.Child): String? {
-        val id = runCatching { DocumentsContract.getDocumentId(doc.uri) }.getOrNull() ?: return null
-        if (!id.startsWith("$rootId/")) return null
-        return sanitizeRelPath(id.removePrefix("$rootId/"))
-    }
+    /** Retain the traversal prefix while treating each provider name as one untrusted path segment. */
+    private fun treeRelativePath(prefix: String, name: String): String? =
+        safeSegment(name, "").takeIf { it.isNotBlank() }?.let { sanitizeRelPath(prefix + it) }
 
     /**
      * 相对路径消毒（纯函数，可单测）：只留安全的普通路径段，其余一律返回 null。
      *
      * ⚠️ **这是安全边界**：路径来自 DocumentsProvider（不受我们控制）。放行 `..`、绝对路径、
-     * 带盘符/冒号的段，就能把写入目标挪出 `novel_import/<id>/`（覆盖别的书、封面、日志）。
+     * 带盘符/冒号的段，就能把写入目标挪出 `novel_import/<UUID>/`（覆盖别的书、封面、日志）。
      * 与 [safeSegment] 同一套思路，只是这里允许多层子目录。
      */
     internal fun sanitizeRelPath(rel: String?): String? {
@@ -524,6 +512,7 @@ object NovelImporter {
             onProgress(ImportProgress(ImportPhase.SCANNING))
             val format = NovelFormatDetector.detect(dest)
                 ?: throw NovelWrongFormatException(isManga = looksLikeMangaArchive(dest))
+            requireStandaloneHtml(format, dest)
             val book = NovelParsers.forFormat(format).parse(dest)
             if (book.chapters.isEmpty()) throw IllegalStateException(ERROR_NO_TEXT_CHAPTER)
 
@@ -558,6 +547,10 @@ object NovelImporter {
     fun deleteBookFiles(context: Context, id: Long) {
         runCatching { NovelStorageDir.bookDir(context, id).deleteRecursively() }
             .onFailure { LogCollector.w(TAG, "删除书籍目录失败 id=$id", it) }
+        deleteCoverFiles(context, id)
+    }
+
+    private fun deleteCoverFiles(context: Context, id: Long) {
         runCatching {
             // ⚠️ 只清 `novel_` 前缀的 —— 同 id 的**漫画**封面（无前缀）不能误删
             NovelStorageDir.coversDir(context).listFiles()
@@ -566,19 +559,32 @@ object NovelImporter {
         }.onFailure { LogCollector.w(TAG, "删除封面失败 id=$id", it) }
     }
 
-    /** Remove a directly scanned app-owned source when the user deletes that shelf entry. */
-    internal fun deleteScannedSource(context: Context, id: Long, localRoot: String) {
-        val source = File(localRoot).canonicalFile
+    /** Shelf ids do not imply ownership of novel_import/<id>; scanned sources may live elsewhere. */
+    internal fun deleteShelfBookFiles(context: Context, novel: ImportedNovel) {
+        val source = File(novel.localRoot).canonicalFile
         val appRoot = (context.getExternalFilesDir(null) ?: context.filesDir).canonicalFile
-        val bookDir = NovelStorageDir.bookDir(context, id).canonicalFile
-        val sourcePath = source.path
-        val inAppFiles = sourcePath.startsWith(appRoot.path + File.separator)
-        val inImportedBookDir = sourcePath == bookDir.path ||
-            sourcePath.startsWith(bookDir.path + File.separator)
-        if (!inAppFiles || inImportedBookDir) return
-        if (source.exists() && !source.deleteRecursively()) {
-            throw IOException("无法删除自动扫描的小说来源：${source.absolutePath}")
+        val bookDir = NovelStorageDir.bookDir(context, novel.id).canonicalFile
+        val others = NovelStore.load(context).filter { it.id != novel.id }
+            .map { File(it.localRoot).canonicalFile }
+        fun contains(parent: File, child: File): Boolean =
+            child == parent || child.path.startsWith(parent.path + File.separator)
+        fun isShared(target: File): Boolean = others.any {
+            contains(target, it) || (it.isDirectory && contains(it, target))
         }
+
+        if (source != appRoot && contains(appRoot, source)) {
+            // Whole-directory cleanup is allowed only when the book's actual source lives there.
+            // Existing overlapping shelf entries also protect each other's source files.
+            val target = if (contains(bookDir, source) && !isShared(bookDir)) bookDir else source
+            if (!isShared(target) && target.exists() && !target.deleteRecursively()) {
+                throw IOException("无法删除小说来源：${target.absolutePath}")
+            }
+        }
+        val cache = NovelStorageDir.imageCacheDir(NovelStorageDir.root(context), novel).canonicalFile
+        if (contains(appRoot, cache) && !isShared(cache) && cache.exists() && !cache.deleteRecursively()) {
+            throw IOException("无法删除小说插图缓存：${cache.absolutePath}")
+        }
+        deleteCoverFiles(context, novel.id)
     }
 
     /** 判「这是不是漫画包」，用于给出对得上的提示（「请到漫画书架导入」 vs 「格式不支持」）。 */
@@ -660,12 +666,13 @@ object NovelImporter {
     }
 
     private fun openNovelDestination(file: File): OutputStream {
+        val destination = if (com.moe.starflow.library.LibrarySessions.findFile(file)?.first?.storage is com.moe.starflow.library.FileLibraryStorage) "书库目录" else "内部暂存目录"
         val stream = try {
             FileOutputStream(file)
         } catch (e: Exception) {
             throw NovelImportIoException(
                 NovelImportIoException.Kind.DESTINATION_WRITE,
-                "无法创建应用小说文件：${file.absolutePath}",
+                "无法创建$destination 小说文件：${file.absolutePath}",
                 e,
             )
         }
@@ -676,7 +683,7 @@ object NovelImporter {
                 } catch (e: java.io.IOException) {
                     throw NovelImportIoException(
                         NovelImportIoException.Kind.DESTINATION_WRITE,
-                        "写入应用小说文件失败：${file.absolutePath}",
+                        "写入$destination 小说文件失败：${file.absolutePath}",
                         e,
                     )
                 }
@@ -688,7 +695,7 @@ object NovelImporter {
                 } catch (e: java.io.IOException) {
                     throw NovelImportIoException(
                         NovelImportIoException.Kind.DESTINATION_WRITE,
-                        "写入应用小说文件失败：${file.absolutePath}",
+                        "写入$destination 小说文件失败：${file.absolutePath}",
                         e,
                     )
                 }
@@ -700,7 +707,7 @@ object NovelImporter {
                 } catch (e: java.io.IOException) {
                     throw NovelImportIoException(
                         NovelImportIoException.Kind.DESTINATION_WRITE,
-                        "刷新应用小说文件失败：${file.absolutePath}",
+                        "刷新$destination 小说文件失败：${file.absolutePath}",
                         e,
                     )
                 }
@@ -712,7 +719,7 @@ object NovelImporter {
                 } catch (e: java.io.IOException) {
                     throw NovelImportIoException(
                         NovelImportIoException.Kind.DESTINATION_WRITE,
-                        "关闭应用小说文件失败：${file.absolutePath}",
+                        "关闭$destination 小说文件失败：${file.absolutePath}",
                         e,
                     )
                 }
@@ -758,12 +765,19 @@ object NovelImporter {
 
     private fun saveCover(context: Context, bmp: Bitmap, id: Long): String {
         val dir = NovelStorageDir.coversDir(context).apply { mkdirs() }
-        cleanCover(context, id)
         // 唯一命名 `novel_<id>_<ts>.jpg`：避免 Glide 按路径缓存导致重导后仍显示旧封面
-        val out = File(dir, "novel_${id}_${System.currentTimeMillis()}.jpg")
+        val out = File(dir, "novel_${id}_${java.util.UUID.randomUUID()}.jpg")
         val scaled = if (bmp.width == COVER_SIZE && bmp.height == COVER_SIZE) bmp
         else Bitmap.createScaledBitmap(bmp, COVER_SIZE, COVER_SIZE, true)
-        FileOutputStream(out).use { scaled.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+        try {
+            FileOutputStream(out).use { stream ->
+                if (!scaled.compress(Bitmap.CompressFormat.JPEG, 85, stream)) throw IOException("封面压缩失败：${out.path}")
+                stream.fd.sync()
+            }
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(out.path, bounds)
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw IOException("封面写入不完整：${out.path}")
+        } catch (e: Exception) { out.delete(); throw e }
         if (scaled !== bmp) {
             scaled.recycle()
             bmp.recycle()

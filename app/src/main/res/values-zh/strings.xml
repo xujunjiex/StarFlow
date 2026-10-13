@@ -13,12 +13,12 @@
          否则会出现「导入 | 小说」这种一边是动作、一边是品类的错位。 -->
     <string name="import_tab_manga">漫画</string>
     <string name="display_options">显示选项</string>
-    <string name="import_manga_empty_hint">还没有漫画\n把漫画放入下面的目录，或点右下角 + 导入；下拉即可重新扫描。\n漫画目录：%1$s\n应用 files 根目录：%2$s\n支持 ZIP/CBZ/RAR/CBR/7z/PDF；图片文件夹可用子文件夹分章。</string>
-    <string name="import_auto_scan_failed_title">自动扫描未能加入部分内容</string>
-    <string name="import_auto_scan_failed_message">有 %1$d 项未加入书架，具体原因如下：\n%2$s</string>
+    <string name="import_manga_empty_hint">还没有漫画\n把漫画放入 %1$s，然后点 + → 扫描。\n每部漫画一个文件夹，子文件夹可分章。</string>
+    <string name="import_auto_scan_failed_title">部分书库操作未完成</string>
+    <string name="import_auto_scan_failed_message">有 %1$d 项书库操作未完成，具体原因如下：\n%2$s</string>
     <string name="import_auto_scan_failed_hint">应用会显示具体路径和系统权限信息。内容可滚动查看，也可复制完整详情。</string>
     <string name="import_auto_scan_copy">复制详情</string>
-    <string name="import_auto_scan_copied">扫描详情已复制</string>
+    <string name="import_auto_scan_copied">详细信息已复制</string>
     <string name="import_manga_deleted">已删除</string>
     <string name="import_manga_option_files">导入文件（zip/cbz/rar/cbr/7z/pdf）</string>
     <string name="import_manga_option_single_dir">导入文件夹（整个文件夹 = 一部漫画）</string>
@@ -653,7 +653,7 @@
 
 
     <string name="sr_low_res_tip">💡 超分只对真正低分辨率的图源有明显效果。宽度 1000px 以上的页面几乎看不出变化，网点重的页还可能被重新绘制。图源不小就别开。</string>
-    <string name="sr_storage_note">📁 模型存放位置：Android/data/com.moe.starflow/files/sr/（删掉这里的文件就等于卸载模型，设备端会显示为「未下载」）。\n🎯 超分只对「漫画阅读器」生效：截屏翻译、录屏翻译、小说阅读都不做超分，OCR 也始终识别原图。\n🗂 超分结果是 2x 图片，按页缓存在 files/sr_cache/；换模型会覆盖同一页，删除漫画时会连它一起删掉。</string>
+    <string name="sr_storage_note">📁 模型存放位置：Android/data/com.moe.starflow/files/sr/（删掉这里的文件就等于卸载模型，设备端会显示为「未下载」）。\n🎯 超分只对「漫画阅读器」生效：截屏翻译、录屏翻译、小说阅读都不做超分，OCR 也始终识别原图。\n🗂 超分结果是 2x 图片，按页保存在 files/sr_cache/；每页重做成功后替换旧结果，失败时保留旧图。不设容量上限，不会自动淘汰；可主动清空，删除漫画时一起删除。</string>
     <string name="sr_no_model_selected">尚未选择超分模型——请在下方下载</string>
     <string name="sr_srmd_group">SRMD（2x）</string>
     <string name="sr_srmd_group_desc">用单个模型应对多种退化（模糊、噪点、缩放），分「带降噪 / 不降噪」两档。</string>
@@ -1498,7 +1498,7 @@
     <string name="error_screenshot_interval">截图频率过高，已自动降速</string>
     <string name="error_screenshot_display">截图失败：无效显示器</string>
     <string name="error_screenshot_code">截图失败：错误码 %1$d</string>
-    <string name="error_ocr_memory">OCR 内存不足或文字区域过大，请缩小框选区域后重试。</string>
+    <string name="error_ocr_memory">OCR 内存分配失败，本次翻译已停止，详细错误已记录到日志。</string>
     <string name="error_rec_model_exception">识别模型异常：%1$s</string>
     <string name="error_translate_failed">翻译失败：%1$s</string>
     <string name="error_text_too_long">待翻译文本过长（超过模型上下文限制）</string>
@@ -1777,7 +1777,7 @@
     <string name="novel_cover_failed">这张图没法用作封面</string>
 
     <!-- ===== 小说书架管理 ===== -->
-    <string name="novel_shelf_empty">还没有小说\n把小说放入下面的目录，或点右下角 + 导入；下拉即可重新扫描。\n小说目录：%1$s\n应用 files 根目录：%2$s\n支持 TXT/EPUB/HTML/HTM/XHTML、含章节的 ZIP；章节可放在子文件夹中。</string>
+    <string name="novel_shelf_empty">还没有小说\n把小说放入 %1$s，然后点 + → 扫描。\n一个文件或一个章节文件夹为一本小说。</string>
     <string name="novel_manage_rename">重命名</string>
     <string name="novel_manage_mark_read">标为已读</string>
     <string name="novel_manage_mark_unread">标为未读</string>
@@ -1786,10 +1786,10 @@
     <string name="import_already_done">这次导入已经完成了</string>
 
     <!-- ===== 导入弹窗的选项说明（措辞与 koto 统一；只保留「文件」「文件夹(单部)」，不含多部入口）===== -->
-    <string name="import_desc_files_manga">选择一个或多个 CBZ/ZIP/CBR/RAR/7z/PDF 文件，每个文件一本漫画；ZIP/CBZ保留原包，RAR/CBR/7z解压，PDF按页读取。也会自动扫描上方目录及应用 files 根目录中的漫画包/PDF和作品文件夹。</string>
-    <string name="import_desc_dir_manga">选择一个包含单部漫画的文件夹，子文件夹作为章节，最外层散图作为第0章。自动扫描文件夹时，图片格式为 jpg/jpeg/png/webp/gif/bmp；每部漫画请单独放一个文件夹。</string>
+    <string name="import_desc_files_manga">选择 ZIP/CBZ/RAR/CBR/7z/PDF；每次导入创建独立副本。保留原包并按需读取页面。放入 manga_import 的作品需要点击“扫描”识别。</string>
+    <string name="import_desc_dir_manga">选择一个包含单部漫画的文件夹，子文件夹作为章节，最外层散图作为第0章。点击扫描识别文件夹时，图片格式为 jpg/jpeg/png/webp/gif/bmp；每部漫画请单独放一个文件夹。</string>
     <string name="import_desc_files_novel">选择一个或多个 TXT / EPUB / ZIP（内含 HTML/XHTML/TXT 的小说包）/ HTML / HTM / XHTML 文件，每个文件一本小说。单个 HTML 不包含同目录插图；有插图请使用文件夹。</string>
-    <string name="import_desc_dir_novel">选择一个包含单部小说的文件夹。根目录及章节子文件夹中的 TXT/HTML/HTM/XHTML 都会按自然序作为章节，每个 EPUB 是一个分卷；HTML 插图按相对路径读取。自动扫描也支持这类章节子文件夹。</string>
+    <string name="import_desc_dir_novel">选择一个包含单部小说的文件夹。根目录及章节子文件夹中的 TXT/HTML/HTM/XHTML 都会按自然序作为章节，每个 EPUB 是一个分卷；HTML 插图按相对路径读取。手动扫描也支持这类章节子文件夹。</string>
     <string name="import_option_dir_manga_single">导入文件夹（单部漫画）</string>
     <string name="import_option_dir_novel_single">导入文件夹（单部小说）</string>
     <!-- ⚠️ 小说侧的「导入文件」按钮**必须**用自己的 key：曾经复用 import_manga_option_files，
@@ -1875,4 +1875,18 @@
     <string name="reader_sr_setting_off">关闭</string>
     <string name="reader_sr_delete">删除超分结果</string>
     <string name="reader_sr_detail_conversion">解码 %1$ss · RGB 打包 %2$ss · RGB 回填 %3$ss\n设备：%4$s · 分块等待累计：%5$dms\n原图 %6$sMP · 输入 %7$sMP · 输出 %8$sMP</string>
+    <string name="library_switch_wait">正在等待任务结束并检查保存状态…</string>
+    <string name="library_storage_title">书库存储目录</string>
+    <string name="library_current_path">当前存储位置</string>
+    <string name="library_space">剩余空间：%1$s</string>
+    <string name="library_space_unknown">无法获取</string>
+    <string name="library_choose_folder">选择自定义目录</string>
+    <string name="library_default_folder">恢复默认位置</string>
+    <string name="library_retry_save">重试保存书库数据</string>
+    <string name="library_scan">扫描当前书库</string>
+    <string name="library_saving">正在保存到书库…</string>
+    <string name="library_unsaved">未保存到书库</string>
+    <string name="library_scan_progress">正在扫描 %1$d/%2$d</string>
+    <string name="library_delete_failed">删除未完成</string>
+    <string name="library_folder_help">将漫画放入 manga_import/，小说放入 novel_import/，然后点击扫描。已导入作品不支持在应用外改名、移动或编辑。</string>
 </resources>

@@ -37,10 +37,10 @@ object MangaPageOrderMigrator {
         val alreadyApplied = plan != null && manga.pageOrderPlan == planKey
         var rekeyed = false
         if (plan != null && !alreadyApplied) {
-            val db = TranslationHistoryDatabase.getInstance(context)
+            val db = com.moe.starflow.library.LibrarySessions.current(context)
             val dao = db.importedPageTranslationDao()
             val rows = runCatching { dao.countFor(manga.id, manga.translationKey) }.getOrDefault(0)
-            db.withTransaction {
+            db.database.withTransaction {
                 db.importedPageSrDao().rekeyPages(manga.id,manga.translationKey,plan)
                 if(rows>0)dao.rekeyPages(manga.id,manga.translationKey,plan)
             }
@@ -64,7 +64,9 @@ object MangaPageOrderMigrator {
             lastReadPage = mappedPage.coerceIn(0, (source.size - 1).coerceAtLeast(0)),
             pageOrderPlan = planKey,
         )
-        runCatching { ImportedMangaStore.update(context, updated) }
+        runCatching { ImportedMangaStore.patch(context, manga) { current -> current.copy(pageOrderVersion = updated.pageOrderVersion,
+            pageOrderPlan = planKey, lastReadPage = (if (alreadyApplied) current.lastReadPage else MangaPageOrder.mapPage(plan, current.lastReadPage))
+                .coerceIn(0, (source.size - 1).coerceAtLeast(0))) } }
             .onFailure { LogCollector.w(TAG, "页序迁移：回写清单失败（下次打开会再试一次）", it) }
         LogCollector.i(
             TAG,

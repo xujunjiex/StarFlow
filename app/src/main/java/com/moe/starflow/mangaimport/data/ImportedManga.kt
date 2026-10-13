@@ -46,9 +46,9 @@ data class ImportedManga(
     /**
      * 页序版本（见 [MangaPageOrder]）：小于 [MangaPageOrder.CURRENT_VERSION] 表示这本书的译文行
      * 可能还是**旧页序**（章节系统之前）存下的 → 阅读器打开时做一次性重排。
-     * 默认 0；老清单没有这个字段，反序列化后即 0。
+     * 新导入使用当前页序；旧清单无字段时按 0 读取，升级时重置进度并归档旧处理记录。
      */
-    val pageOrderVersion: Int = 0,
+    val pageOrderVersion: Int = MangaPageOrder.CURRENT_VERSION,
     /**
      * **已施加过的页序置换**（`MangaPageOrder.legacyToNewPlan` 的结果，逗号分隔）。
      *
@@ -58,6 +58,9 @@ data class ImportedManga(
      * （置换不是幂等的）→ 译文整体挪到别的图上，而且用户完全无从察觉。
      */
     val pageOrderPlan: String = "",
+    val bookUuid: String = "",
+    val libraryLocationId: String = "",
+    val deletionError: String? = null,
 ) {
     /** 章数（至少 1：单章漫画也算一章）。 */
     val chapterCount: Int get() = chapters.size.coerceAtLeast(1)
@@ -72,5 +75,5 @@ data class ImportedManga(
      * 必须用**同一个值**，否则一处改了另一处会静默失配。漫画 id 是「当前最大 id + 1」，
      * 删除后再导入会复用同一个 id，靠这个指纹区分「同一 id 的不同书」。
      */
-    val translationKey: String get() = addedAt.toString()
+    val translationKey: String get() = if (bookUuid.isEmpty()) addedAt.toString() else "$libraryLocationId:manga:$bookUuid"
 }

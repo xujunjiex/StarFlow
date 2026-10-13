@@ -2,6 +2,10 @@
 
 > 范围：本文记录 `data/` 的当前实现约束。跨模块规则见仓库根目录 `AGENTS.md` 和 `CLAUDE.md`。源码与测试为准；实现变化后同步更新本文。
 
+## 书库工作数据库
+
+漫画/小说使用 `library/LibraryDatabase`，按本机实际存储位置分库；当前 schema v1，无破坏性回退。作品键为目录身份、类型和 UUID；记录修改与待写操作同一 Room 事务提交，随后立即写回目录。全局 `translation_history.db` 仍保存截图历史；其中旧书库表只作为只读迁移输入，不再为阅读器提供活动记录。协议见 [书库存储指南](../library/CLAUDE.md)。
+
 ## 缓存与历史
 
 `TranslationCacheManager` — 统一管理游戏/漫画翻译缓存

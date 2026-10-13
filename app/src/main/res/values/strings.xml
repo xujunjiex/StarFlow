@@ -13,12 +13,12 @@
          否则会出现「导入 | 小说」这种一边是动作、一边是品类的错位。 -->
     <string name="import_tab_manga">Manga</string>
     <string name="display_options">Display</string>
-    <string name="import_manga_empty_hint">No manga yet\nAdd manga to the folder below or tap + to import; pull down to scan again.\nManga folder: %1$s\nApp files root: %2$s\nSupports ZIP/CBZ/RAR/CBR/7z/PDF; image subfolders can organize chapters.</string>
-    <string name="import_auto_scan_failed_title">Some files could not be added by auto-scan</string>
-    <string name="import_auto_scan_failed_message">%1$d item(s) were not added. Exact reasons:\n%2$s</string>
+    <string name="import_manga_empty_hint">No manga yet\nAdd manga to %1$s, then tap + and Scan.\nOne folder per manga; subfolders organize chapters.</string>
+    <string name="import_auto_scan_failed_title">Some library operations failed</string>
+    <string name="import_auto_scan_failed_message">%1$d library operation(s) could not be completed. Details:\n%2$s</string>
     <string name="import_auto_scan_failed_hint">The report includes exact paths and system permission details. Scroll to inspect or copy the full report.</string>
     <string name="import_auto_scan_copy">Copy details</string>
-    <string name="import_auto_scan_copied">Scan details copied</string>
+    <string name="import_auto_scan_copied">Details copied</string>
     <string name="import_manga_deleted">Deleted</string>
     <string name="import_manga_option_files">Import files (zip/cbz/rar/cbr/7z/pdf)</string>
     <string name="import_manga_option_single_dir">Import folder (whole folder = one manga)</string>
@@ -719,7 +719,7 @@
 
 
     <string name="sr_low_res_tip">💡 Super resolution can only help genuinely low-resolution sources. Pages already 1000px+ wide barely change, and heavy screentone may be re-drawn. Keep it off unless the source is small.</string>
-    <string name="sr_storage_note">📁 Models live in Android/data/com.moe.starflow/files/sr/ — deleting those files uninstalls the model (the app will show it as "not downloaded").\n🎯 Super resolution only applies to the manga reader. Screenshot/recording translation and the novel reader never upscale, and OCR always reads the original page.\n🗂 Upscaled pages are 2x images cached per page in files/sr_cache/. Switching model overwrites the same page, and deleting a manga removes them too.</string>
+    <string name="sr_storage_note">📁 Models live in Android/data/com.moe.starflow/files/sr/ — deleting those files uninstalls the model (the app will show it as "not downloaded").\n🎯 Super resolution only applies to the manga reader. Screenshot/recording translation and the novel reader never upscale, and OCR always reads the original page.\n🗂 Upscaled pages are 2x images saved per page in files/sr_cache/. A successful rerun replaces the previous result; a failed rerun keeps it. There is no size limit or automatic eviction. Results can be cleared manually and are removed when the manga is deleted.</string>
     <string name="sr_no_model_selected">No super-resolution model selected — download one below</string>
     <string name="sr_srmd_group">SRMD (2x)</string>
     <string name="sr_srmd_group_desc">A single model that handles several degradations at once (blur, noise, rescaling). Two levels: with denoise / without denoise.</string>
@@ -1497,7 +1497,7 @@
     <string name="error_screenshot_interval">Screenshots are too frequent; the capture rate has been reduced</string>
     <string name="error_screenshot_display">Screenshot failed: invalid display</string>
     <string name="error_screenshot_code">Screenshot failed: error code %1$d</string>
-    <string name="error_ocr_memory">OCR memory is insufficient or the text region is too large. Select a smaller area and try again.</string>
+    <string name="error_ocr_memory">OCR memory allocation failed. This translation has stopped; details have been recorded in the log.</string>
     <string name="error_rec_model_exception">Recognition model error: %1$s</string>
     <string name="error_translate_failed">Translation failed: %1$s</string>
     <string name="error_text_too_long">Input text too long (exceeds model context)</string>
@@ -1779,7 +1779,7 @@
     <string name="novel_cover_failed">Could not use that image as the cover.</string>
 
     <!-- ===== 小说书架管理 ===== -->
-    <string name="novel_shelf_empty">No novels yet\nAdd a novel to the folder below or tap + to import; pull down to scan again.\nNovel folder: %1$s\nApp files root: %2$s\nSupports TXT/EPUB/HTML/HTM/XHTML and ZIP chapter packs; chapters may be grouped in subfolders.</string>
+    <string name="novel_shelf_empty">No novels yet\nAdd novels to %1$s, then tap + and Scan.\nOne file or chapter folder per novel.</string>
     <string name="novel_manage_rename">Rename</string>
     <string name="novel_manage_mark_read">Mark as read</string>
     <string name="novel_manage_mark_unread">Mark as unread</string>
@@ -1788,10 +1788,10 @@
     <string name="import_already_done">That import already finished</string>
 
     <!-- ===== 导入弹窗的选项说明（措辞与 koto 统一；只保留「文件」「文件夹(单部)」，不含多部入口）===== -->
-    <string name="import_desc_files_manga">Pick CBZ/ZIP/CBR/RAR/7z/PDF files; each becomes one manga. ZIP/CBZ stays archived, RAR/CBR/7z is extracted, and PDF is read page by page. The app also scans this folder and matching manga files/folders directly under its files directory.</string>
-    <string name="import_desc_dir_manga">Pick one folder per manga. Subfolders become chapters and loose root images become chapter 0. Auto-scan image extensions: jpg/jpeg/png/webp/gif/bmp. Keep each manga in its own folder.</string>
+    <string name="import_desc_files_manga">Pick ZIP/CBZ/RAR/CBR/7z/PDF files; each creates an independent copy. Archives stay intact and pages are read on demand. Files placed in manga_import are recognized only when you tap Scan.</string>
+    <string name="import_desc_dir_manga">Pick one folder per manga. Subfolders become chapters and loose root images become chapter 0. Manual scan image extensions: jpg/jpeg/png/webp/gif/bmp. Keep each manga in its own folder.</string>
     <string name="import_desc_files_novel">Pick TXT / EPUB / ZIP (novel pack containing HTML/XHTML/TXT) / HTML / HTM / XHTML files; each file becomes one novel. A standalone HTML file cannot access sibling illustrations; use folder import when it has pictures.</string>
-    <string name="import_desc_dir_novel">Pick one folder per novel. TXT/HTML/HTM/XHTML files in the root or chapter subfolders become chapters in natural order; each EPUB is a volume. HTML illustrations use relative paths. Auto-scan also supports chapter subfolders.</string>
+    <string name="import_desc_dir_novel">Pick one folder per novel. TXT/HTML/HTM/XHTML files in the root or chapter subfolders become chapters in natural order; each EPUB is a volume. HTML illustrations use relative paths. Manual scanning also supports chapter subfolders.</string>
     <string name="import_option_dir_manga_single">Import folder (single manga)</string>
     <string name="import_option_dir_novel_single">Import folder (single novel)</string>
     <!-- ⚠️ 小说侧的「导入文件」按钮**必须**用自己的 key：曾经复用 import_manga_option_files，
@@ -1877,4 +1877,18 @@
     <string name="reader_sr_setting_off">Off</string>
     <string name="reader_sr_delete">Delete SR result</string>
     <string name="reader_sr_detail_conversion">Decode %1$ss · RGB pack %2$ss · RGB unpack %3$ss\nDevice: %4$s · Tile waits: %5$dms\nSource %6$sMP · Input %7$sMP · Output %8$sMP</string>
+    <string name="library_switch_wait">Waiting for tasks and saving before switching…</string>
+    <string name="library_storage_title">Library storage</string>
+    <string name="library_current_path">Current storage location</string>
+    <string name="library_space">Available space: %1$s</string>
+    <string name="library_space_unknown">Unavailable</string>
+    <string name="library_choose_folder">Choose a custom folder</string>
+    <string name="library_default_folder">Use the default folder</string>
+    <string name="library_retry_save">Retry saving library data</string>
+    <string name="library_scan">Scan this library</string>
+    <string name="library_saving">Saving to the library…</string>
+    <string name="library_unsaved">Not saved to the library</string>
+    <string name="library_scan_progress">Scanning %1$d/%2$d</string>
+    <string name="library_delete_failed">Deletion unfinished</string>
+    <string name="library_folder_help">Place manga in manga_import/ and novels in novel_import/, then tap Scan. External renaming, moving or editing of imported works is not supported.</string>
 </resources>

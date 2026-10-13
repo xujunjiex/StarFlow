@@ -23,10 +23,8 @@ data class ImportedPageTranslation(
     val failMessage: String? = null,     // 给人看的文案
     val updatedAtMs: Long = 0L,
     /**
-     * 漫画身份指纹（`title|addedAt`）。
-     * ⚠️ 必要性：漫画 id = 书架当前最大 id + 1，**删除后再导入会复用旧 id**，
-     * 而删除时若残留旧记录（孤儿行），`forManga(旧id)` 会把**已删除漫画的译图层错误映射到新漫画**。
-     * 指纹随每次导入唯一（addedAt），不匹配的记录一律不采用 → 从根上杜绝 id 复用串数据。
+     * 作品运行键 = 目录身份 + manga + UUID。数字 id 只在当前书库中有效，
+     * 所有读写、删除和任务结果提交必须同时校验运行键；旧标题/时间键仅供归档。
      */
     val mangaKey: String? = null,
     /** 翻译器显示名（如 OpenAITranslation(gpt-4o) | PP-OCRv5+PPOcrV5）。详情面板展示用。 */

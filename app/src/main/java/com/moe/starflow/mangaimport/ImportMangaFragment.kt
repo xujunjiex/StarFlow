@@ -19,15 +19,12 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.GridLayoutManager
 import com.moe.starflow.R
 import com.moe.starflow.databinding.FragmentImportMangaBinding
-import com.moe.starflow.data.TranslationHistoryDatabase
 import com.moe.starflow.mangaimport.data.ImportEvent
 import com.moe.starflow.mangaimport.data.ImportFailureReason
 import com.moe.starflow.mangaimport.data.ImportManager
 import com.moe.starflow.mangaimport.data.ImportTab
 import com.moe.starflow.mangaimport.data.ImportedManga
 import com.moe.starflow.mangaimport.data.ImportedMangaStore
-import com.moe.starflow.mangaimport.data.MangaChapterMigrator
-import com.moe.starflow.mangaimport.data.MangaLibraryScanner
 import com.moe.starflow.mangaimport.data.MangaImporter
 import com.moe.starflow.mangaimport.data.ShelfCleanup
 import com.moe.starflow.mangaimport.data.StorageDirStore
@@ -92,7 +89,6 @@ class ImportMangaFragment : Fragment() {
     // refresh() 的「文件丢失」推导缓存：进度回调高频调 refresh 时复用，避免反复 stat 磁盘
     private var cachedStored: List<ImportedManga> = emptyList()
     private var cachedStoredWithLost: List<ImportedManga> = emptyList()
-    private var appFileScanJob: Job? = null
 
     // 返回键：多选模式下退出多选
     private lateinit var backCallback: OnBackPressedCallback
@@ -161,7 +157,9 @@ class ImportMangaFragment : Fragment() {
                         )
                     )
                 },
-                onPickSingleDir = { pickDirLauncher.launch(null) }
+                onPickSingleDir = { pickDirLauncher.launch(null) },
+                onScan = { com.moe.starflow.library.LibraryScanner.start(requireContext(), "manga") },
+                onStorage = { com.moe.starflow.library.LibraryStorageDialog().show(parentFragmentManager, "library-storage") }
             )
         }
 
@@ -194,35 +192,16 @@ class ImportMangaFragment : Fragment() {
         requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, backCallback)
 
         // 下拉刷新：重新加载清单，立即反映编辑/阅读进度等状态
-        binding.swipeRefresh.setOnRefreshListener {
-            scanAppFiles()
-        }
+        binding.swipeRefresh.setOnRefreshListener { refreshLibraryState() }
         binding.tvEmpty.text = getString(
             R.string.import_manga_empty_hint,
-            StorageDirStore.root(requireContext()).absolutePath,
-            (requireContext().getExternalFilesDir(null) ?: requireContext().filesDir).absolutePath,
+            com.moe.starflow.library.LibrarySessions.current(requireContext()).storage.displayPath + "/manga_import",
         )
 
         refresh()
 
-        // 一次性迁移 + 清理孤儿翻译记录：
-        //  - 旧版 filesDir 目录搬到外部专属目录（Android/data/<pkg>/files）；
-        //  - 已删除漫画的 imported_page_translation 旧行（书架删了但 DB 没清 → id 复用会把旧译图
-        //    错误映射到新导入的漫画）按「当前书架不存在的 mangaId」批量清掉（根因修复，删除时也会即时清）。
-        val appContext = requireContext().applicationContext
-        viewLifecycleOwner.lifecycleScope.launch {
-            val scan = withContext(Dispatchers.IO) {
-                StorageDirStore.migrate(appContext)
-                val result = MangaLibraryScanner.scan(appContext)
-                purgeOrphanTranslations(appContext)
-                // 老条目回填章节表（导入时还没分章概念的那批）：只影响清单里 chapters 为空的项，
-                // 之后是幂等短路 —— 不补的话书架上永远看不到「共N章」
-                MangaChapterMigrator.ensureChapters(appContext)
-                result
-            }
-            refresh()
-            enqueueScanFailures(scan.failures)
-        }
+        com.moe.starflow.library.LibraryShelfBinding.observe(this, "manga", binding.libraryStatus,
+            { refresh() }, ::enqueueScanFailures, { adapter.exitSelection() })
 
         // 导入进度：占位卡片实时刷新（tasks 由进程级 ImportManager 持有，与 View 生命周期解耦，
         // 旋转/切页不会中断导入；回到本页时这里立刻收到当前进度）
@@ -247,33 +226,17 @@ class ImportMangaFragment : Fragment() {
     override fun onResume() {
         super.onResume()
         refresh()
-        scanAppFiles()
     }
 
-    /** Scan app-owned storage on entry/resume and explicit pull-to-refresh. */
-    private fun scanAppFiles() {
-        val app = context?.applicationContext ?: return
-        if (appFileScanJob?.isActive == true) return
-        appFileScanJob = viewLifecycleOwner.lifecycleScope.launch {
-            try {
-                val scan = withContext(Dispatchers.IO) {
-                    StorageDirStore.migrate(app)
-                    val result = MangaLibraryScanner.scan(app)
-                    purgeOrphanTranslations(app)
-                    result
-                }
-                if (_binding != null) {
-                    refresh()
-                    enqueueScanFailures(scan.failures)
-                }
-            } catch (e: Exception) {
-                LogCollector.e("MangaLibraryScanner", "扫描应用漫画目录失败", e)
-            } finally {
-                appFileScanJob = null
-                _binding?.swipeRefresh?.isRefreshing = false
-            }
+    /** Refresh indexed status without source recognition. */
+    private fun refreshLibraryState() {
+        val pinned = com.moe.starflow.library.LibrarySessions.pin(requireContext())
+        com.moe.starflow.library.LibrarySessions.launch(pinned, viewLifecycleOwner.lifecycleScope) {
+            try { com.moe.starflow.library.LibrarySessions.refreshSources(pinned); refresh() }
+            finally { _binding?.swipeRefresh?.isRefreshing = false }
         }
     }
+
 
     private fun enqueueScanFailures(failures: List<String>) {
         if (failures.isEmpty() || _binding == null) return
@@ -407,12 +370,14 @@ class ImportMangaFragment : Fragment() {
 
     private fun openReader(manga: ImportedManga) {
         // 本地文件可能已被手动删除：先拦下，避免进阅读器读到「文件丢失」又退回
-        if (!File(manga.localRoot).exists()) {
+        if (!com.moe.starflow.library.LibrarySessions.sourceExists(File(manga.localRoot))) {
             AppNotice.show(requireContext(), getString(R.string.reader_file_lost), AppNotice.Style.BRIEF_ERROR)
             return
         }
         val intent = Intent(requireContext(), MangaReaderActivity::class.java)
         intent.putExtra(MangaReaderActivity.EXTRA_MANGA_ID, manga.id)
+        intent.putExtra("library_location", manga.libraryLocationId)
+        intent.putExtra("library_book_uuid", manga.bookUuid)
         startActivity(intent)
     }
 
@@ -447,7 +412,7 @@ class ImportMangaFragment : Fragment() {
                     AppNotice.show(requireContext(), getString(R.string.import_rename_empty))
                     return@setOnClickListener
                 }
-                ImportedMangaStore.update(requireContext(), manga.copy(title = name))
+                ImportedMangaStore.patch(requireContext(), manga) { it.copy(title = name) }
                 dialog.dismiss()
                 // 确认后再刷新，立即显示新标题
                 refresh()
@@ -464,13 +429,18 @@ class ImportMangaFragment : Fragment() {
         val id = adapter.selectedIds().firstOrNull() ?: return
         val manga = ImportedMangaStore.load(requireContext()).firstOrNull { it.id == id } ?: return
         adapter.exitSelection()
-        viewLifecycleOwner.lifecycleScope.launch {
-            val newCover = withContext(Dispatchers.IO) {
-                MangaImporter.replaceCover(requireContext(), id, uri)
+        val pinned = com.moe.starflow.library.LibrarySessions.forLocation(requireContext(), manga.libraryLocationId).context()
+        com.moe.starflow.library.LibrarySessions.launch(pinned, viewLifecycleOwner.lifecycleScope) {
+            val changed = withContext(Dispatchers.IO) {
+                com.moe.starflow.library.LibrarySources.acquire(File(manga.localRoot)).use {
+                    runCatching {
+                        val cover = MangaImporter.replaceCover(pinned, id, uri) ?: return@runCatching false
+                        ImportedMangaStore.patch(pinned, manga) { it.copy(coverPath = cover) }
+                        true
+                    }.onFailure { LogCollector.w("ImportMangaFragment", "更换封面失败", it) }.getOrDefault(false)
+                }
             }
-            if (newCover != null) {
-                ImportedMangaStore.update(requireContext(), manga.copy(coverPath = newCover))
-            }
+            if (!changed) com.moe.starflow.utils.AppNotice.show(requireContext(), getString(R.string.novel_cover_failed))
             refresh()
         }
     }
@@ -500,10 +470,7 @@ class ImportMangaFragment : Fragment() {
             .create()
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                ImportedMangaStore.update(
-                    requireContext(),
-                    manga.copy(description = editText.text.toString().trim())
-                )
+                ImportedMangaStore.patch(requireContext(), manga) { it.copy(description = editText.text.toString().trim()) }
                 dialog.dismiss()
                 // 确认后再刷新，简介立即更新到详情列表
                 refresh()
@@ -524,7 +491,7 @@ class ImportMangaFragment : Fragment() {
             val m = list.firstOrNull { it.id == id } ?: return@forEach
             val target = if (read) (m.pageCount - 1).coerceAtLeast(0) else 0
             if (target != m.lastReadPage) {
-                ImportedMangaStore.update(requireContext(), m.copy(lastReadPage = target))
+                ImportedMangaStore.patch(requireContext(), m) { it.copy(lastReadPage = target) }
             }
         }
         adapter.exitSelection()
@@ -567,7 +534,10 @@ class ImportMangaFragment : Fragment() {
         }
         val builder = AlertDialog.Builder(requireContext())
             .setTitle(R.string.import_delete)
-            .setMessage(message)
+            .setMessage(message + "\n\n" + toDelete.joinToString("\n") { book ->
+                val session = com.moe.starflow.library.LibrarySessions.forLocation(requireContext(), book.libraryLocationId)
+                session.storage.displayPath + "/" + session.relative(File(book.localRoot))
+            })
             .setPositiveButton(R.string.import_delete) { _, _ -> performDelete(toDelete) }
             .setNegativeButton(R.string.cancel, null)
         // 「先去导出」只在单选时给出（多选时点了不知道该导哪本）：点了不删，直接进阅读器
@@ -585,51 +555,10 @@ class ImportMangaFragment : Fragment() {
 
     /** 执行删除：① 清单 ② 本地副本（同步，书架立刻反映）③ 翻译记录（进程级作用域，按 (id, 指纹) 删）。 */
     private fun performDelete(toDelete: List<ImportedManga>) {
-        toDelete.forEach { manga ->
-            ImportedMangaStore.remove(requireContext(), manga.id)
-            deleteImportedFiles(manga)
-        }
+        val pinned = com.moe.starflow.library.LibrarySessions.forLocation(requireContext(), toDelete.first().libraryLocationId).context()
+        com.moe.starflow.library.LibraryDeletion.start(pinned, "manga", toDelete.map { it.id }, toDelete.associate { it.id to it.bookUuid })
         adapter.exitSelection()
         refresh()
-        AppNotice.show(requireContext(), getString(R.string.import_manga_deleted))
-        // ⚠️ 翻译记录不能放 lifecycleScope：确认后立刻切页/旋转会把协程取消掉，DELETE 就永不执行
-        // （清单已同步删，书架上看不出来 → 静默孤儿行）。走进程级作用域；
-        // 且必须把整条条目传过去：删除按 (id, 指纹) 成对进行，见 ShelfCleanup.purgeTranslations。
-        ShelfCleanup.purgeTranslations(requireContext(), toDelete)
-    }
-
-    /** 删除导入的本地内容（应用专属目录 getExternalFilesDir/manga_import/<id>/ 复制件 + 封面）。 */
-    private fun deleteImportedFiles(manga: ImportedManga) {
-        try {
-            runCatching { MangaImporter.deleteScannedArchiveSource(requireContext(), manga.localRoot) }
-                .onFailure { LogCollector.w("ImportMangaFragment", "删除漫画原始压缩包失败: ${manga.id}", it) }
-            val local = File(manga.localRoot)
-            if (local.isDirectory) local.deleteRecursively() else local.delete()
-            manga.coverPath?.let { File(it).delete() }
-        } catch (e: Exception) {
-            LogCollector.w("ImportMangaFragment", "删除导入文件失败: ${manga.id}", e)
-        }
-    }
-
-    /** 删除书架里已不存在的漫画的孤儿翻译记录（防止旧译图因 id 复用串到新漫画）。 */
-    private suspend fun purgeOrphanTranslations(context: android.content.Context) {
-        try {
-            val dao = TranslationHistoryDatabase.getInstance(context).importedPageTranslationDao()
-            val validIds = ImportedMangaStore.load(context).map { it.id }.toSet()
-            val orphanIds = dao.allMangaIds().filter { it !in validIds }
-            orphanIds.forEach { id ->
-                try {
-                    // ⚠️ 逐个二次确认：本方法也是异步的，期间用户完全可能刚好导入了一本复用同 id 的新书
-                    // （id = 清单最大 id + 1）。不再确认就按 id 删，会删掉新书的翻译行。
-                    if (ImportedMangaStore.load(context).any { it.id == id }) return@forEach
-                    dao.deleteManga(id)
-                } catch (e: Exception) {
-                    LogCollector.w("ImportMangaFragment", "清理孤儿翻译记录失败 id=$id", e)
-                }
-            }
-        } catch (e: Exception) {
-            LogCollector.w("ImportMangaFragment", "孤儿翻译记录清理失败", e)
-        }
     }
 
     // ===== 显示选项 =====
@@ -763,14 +692,22 @@ class ImportMangaFragment : Fragment() {
      *   下拉刷新 / onResume / 编辑后调用走默认 true（用户可能刚从文件管理器删过文件）。
      */
     private fun refresh(forceLostCheck: Boolean = true) {
-        val list0 = ImportedMangaStore.load(requireContext())
+        if (!isAdded || _binding == null) return
+        binding.tvEmpty.text = getString(R.string.import_manga_empty_hint,
+            com.moe.starflow.library.LibrarySessions.current(requireContext()).storage.displayPath + "/manga_import")
+        val list0 = try { ImportedMangaStore.load(requireContext()) }
+            catch (e: Exception) {
+                val session = com.moe.starflow.library.LibrarySessions.current(requireContext())
+                session.saveState.value = session.saveState.value.copy(error = e.message ?: e.javaClass.simpleName)
+                return
+            }
         // 推导「文件丢失」标记（瞬态，不入库）：localRoot 不存在 → lost=true。
         // 放入 data class 参与 DiffUtil 相等比较，文件被删/恢复后对应格子自动重绘。
         // ⚠️ 导入中的占位不算：它 localRoot 为空，按此判据会全部标成「文件丢失」
         val withLost = if (!forceLostCheck && list0 == cachedStored) {
             cachedStoredWithLost
         } else {
-            list0.map { m -> if (m.importing) m else m.copy(lost = !File(m.localRoot).exists()) }
+            list0.map { m -> if (m.importing) m else m.copy(lost = m.lost || !com.moe.starflow.library.LibrarySessions.sourceExists(File(m.localRoot))) }
                 .also {
                     cachedStored = list0
                     cachedStoredWithLost = it

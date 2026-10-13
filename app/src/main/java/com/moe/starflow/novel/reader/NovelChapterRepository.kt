@@ -2,6 +2,7 @@ package com.moe.starflow.novel.reader
 
 import android.util.LruCache
 import com.moe.starflow.novel.data.ImportedNovel
+import com.moe.starflow.novel.data.NovelStorageDir
 import com.moe.starflow.novel.model.NovelChapterMeta
 import com.moe.starflow.novel.parser.ChapterSource
 import com.moe.starflow.novel.parser.NovelParsers
@@ -100,7 +101,7 @@ data class ChapterContent(
 class NovelChapterRepository(
     /**
      * 插图落盘根目录（生产路径传 `NovelStorageDir.root(context)`，即 `novel_import/`；
-     * 落到 `novel_import/<书 id>/images/` 下，**删书时跟着一起清掉**）。
+     * 落到 `novel_import/.image_cache/<书 id>_<addedAt>/` 下，删书时一起清掉）。
      *
      * null = 不解图（翻译任务、导出、单测都不需要）：`load` 里的 `images` 恒为空表，
      * 图片段回落成占位文本 —— 与这次改动之前的行为完全一致。
@@ -127,7 +128,7 @@ class NovelChapterRepository(
     private val chapterImages = LruCache<String, Map<Int, NovelImage>>(MAX_CACHED_CHAPTERS)
 
     /** 书的身份键：书籍 id 会被复用，必须带 addedAt 指纹。 */
-    private fun bookKey(book: ImportedNovel) = "${book.id}:${book.addedAt}"
+    private fun bookKey(book: ImportedNovel) = book.translationKey
 
     /** 段数缓存（与段落缓存分开：章行要段数要得很频繁，不值得每次取整个列表）。 */
     private val paraCounts = java.util.concurrent.ConcurrentHashMap<String, Int>()
@@ -207,7 +208,7 @@ class NovelChapterRepository(
      * 也在标签没有地址时占一个空位，两边的下标因此永远对得上。
      *
      * ### 落盘
-     * 图片按**内容哈希**命名写进 `novel_import/<书 id>/images/`：同一张图被多章引用只落一份，
+     * 图片按**内容哈希**命名写进独立的隐藏缓存目录：同一张图被多章引用只落一份，
      * 重复加载同一章也不会重写（长度一致就跳过）。真实像素尺寸在这里顺手量好
      * （`inJustDecodeBounds`，不解整张图）——分页要用它，且**分页与绘制必须是同一个数**。
      */
@@ -226,7 +227,7 @@ class NovelChapterRepository(
                 LogCollector.e(TAG, "读章插图失败 ch=$chapterIndex locator=${meta.locator}", it)
             }.getOrDefault(ChapterSource.EMPTY)
 
-            val dir = File(File(root, book.id.toString()), "images").apply { mkdirs() }
+            val dir = NovelStorageDir.imageCacheDir(root, book).apply { mkdirs() }
             val out = HashMap<Int, NovelImage>()
             var i = 0
             for (p in paras) {
@@ -248,6 +249,7 @@ class NovelChapterRepository(
             }
         }
         if (!file.isFile) return null
+        com.moe.starflow.library.LibrarySessions.findFile(file)?.let { (session, _) -> session.publishArtifact(file) }
         val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
         android.graphics.BitmapFactory.decodeFile(file.absolutePath, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {

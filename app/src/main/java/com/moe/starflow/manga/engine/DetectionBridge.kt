@@ -749,23 +749,25 @@ object DetectionBridge {
     ): List<TextBlockInfo> {
         val det = DetEngine.fromValue(detEngine)
         val ocr = OcrEngine.fromValue(ocrEngine)
-        return when (det) {
-            DetEngine.MLKIT -> {
-                LogCollector.d(TAG, "使用 ML Kit 检测+识别, language=$language")
-                OCRBridge.recognizeWithLocation(language, bitmap)
-            }
-            DetEngine.RT_DETR_V2 -> {
-                val keep = resolveKeepTextFree(context, keepTextFree)
-                LogCollector.d(TAG, "使用 RT-DETR-V2 检测, ocr=$ocr, language=$language, keepTextFree=$keep")
-                detectWithRTDetrV2(bitmap, language, context, keep, rtDirection)
-            }
-            DetEngine.PP_OCR_V5 -> {
-                LogCollector.d(TAG, "使用 PP-OCRv5 独立检测+识别, language=$language")
-                detectWithPPOcrV5(bitmap, language, context)
-            }
-            DetEngine.PP_OCR_V6 -> {
-                LogCollector.d(TAG, "使用 PP-OCRv6 独立检测+识别, language=$language")
-                detectWithPPOcrV6(bitmap, language, context)
+        return PpRecRecognizer.withMemoryGuard(context, TAG, "OCR det=$det ocr=$ocr image=${bitmap.width}x${bitmap.height}") {
+            when (det) {
+                DetEngine.MLKIT -> {
+                    LogCollector.d(TAG, "使用 ML Kit 检测+识别, language=$language")
+                    OCRBridge.recognizeWithLocation(language, bitmap)
+                }
+                DetEngine.RT_DETR_V2 -> {
+                    val keep = resolveKeepTextFree(context, keepTextFree)
+                    LogCollector.d(TAG, "使用 RT-DETR-V2 检测, ocr=$ocr, language=$language, keepTextFree=$keep")
+                    detectWithRTDetrV2(bitmap, language, context, keep, rtDirection)
+                }
+                DetEngine.PP_OCR_V5 -> {
+                    LogCollector.d(TAG, "使用 PP-OCRv5 独立检测+识别, language=$language")
+                    detectWithPPOcrV5(bitmap, language, context)
+                }
+                DetEngine.PP_OCR_V6 -> {
+                    LogCollector.d(TAG, "使用 PP-OCRv6 独立检测+识别, language=$language")
+                    detectWithPPOcrV6(bitmap, language, context)
+                }
             }
         }
     }
@@ -837,53 +839,61 @@ object DetectionBridge {
         bitmap: Bitmap,
         verticalDirection: TextDirection
     ): List<CroppedTextLine> = withContext(Dispatchers.IO) {
-        LogCollector.d(TAG, "detectAndCropPPOcrV5Lines: 开始检测")
+        PpRecRecognizer.withMemoryGuard(context, TAG, "PP-OCRv5 detection/crop image=${bitmap.width}x${bitmap.height}") {
+            LogCollector.d(TAG, "detectAndCropPPOcrV5Lines: 开始检测")
 
-        // det 检测全部文字行框
-        val boxes = PPOcrV5Engine.runDetForBoxes(context, bitmap)
-        if (boxes.isEmpty()) {
-            LogCollector.d(TAG, "detectAndCropPPOcrV5Lines: 未检测到文字区域")
-            return@withContext emptyList()
-        }
-        LogCollector.d(TAG, "detectAndCropPPOcrV5Lines: 检测到 ${boxes.size} 个文字行")
-
-        // 逐行裁剪（透视校正）
-        val result = boxes.map { box ->
-            var xMin = Float.MAX_VALUE; var yMin = Float.MAX_VALUE
-            var xMax = Float.MIN_VALUE; var yMax = Float.MIN_VALUE
-            for (k in box.indices step 2) {
-                if (box[k] < xMin) xMin = box[k]
-                if (box[k] > xMax) xMax = box[k]
+            // det 检测全部文字行框
+            val boxes = PPOcrV5Engine.runDetForBoxes(context, bitmap)
+            if (boxes.isEmpty()) {
+                LogCollector.d(TAG, "detectAndCropPPOcrV5Lines: 未检测到文字区域")
+                return@withContext emptyList()
             }
-            for (k in 1 until box.size step 2) {
-                if (box[k] < yMin) yMin = box[k]
-                if (box[k] > yMax) yMax = box[k]
+            LogCollector.d(TAG, "detectAndCropPPOcrV5Lines: 检测到 ${boxes.size} 个文字行")
+
+            // 逐行裁剪（透视校正）
+            val result = mutableListOf<CroppedTextLine>()
+            try {
+                for (box in boxes) {
+                    var xMin = Float.MAX_VALUE; var yMin = Float.MAX_VALUE
+                    var xMax = Float.MIN_VALUE; var yMax = Float.MIN_VALUE
+                    for (k in box.indices step 2) {
+                        if (box[k] < xMin) xMin = box[k]
+                        if (box[k] > xMax) xMax = box[k]
+                    }
+                    for (k in 1 until box.size step 2) {
+                        if (box[k] < yMin) yMin = box[k]
+                        if (box[k] > yMax) yMax = box[k]
+                    }
+                    val rect = Rect(
+                        xMin.toInt().coerceAtLeast(0),
+                        yMin.toInt().coerceAtLeast(0),
+                        xMax.toInt().coerceAtMost(bitmap.width - 1),
+                        yMax.toInt().coerceAtMost(bitmap.height - 1)
+                    )
+                    // 从 QuadBox 计算倾斜角
+                    val tl = PointF(box[0], box[1])
+                    val tr = PointF(box[2], box[3])
+                    val topDx = tr.x - tl.x
+                    val topDy = tr.y - tl.y
+                    var angle = Math.toDegrees(kotlin.math.atan2(topDy, topDx).toDouble()).toFloat()
+                    if (kotlin.math.abs(angle) <= 3f) angle = 0f
+
+                    val pts = PPOcrV5Engine.boxToQuadPointsPublic(box)
+                    val crop = PPOcrDetGeometry.getRotateCropImage(bitmap, pts)
+                    result.add(CroppedTextLine(crop, rect, angle, rect.exactCenterX(), rect.exactCenterY()))
+                }
+
+                // 按漫画阅读顺序排序（横排上→下恒左→右；竖排列序随设置）
+                // ⚠️ 收敛到 MangaSpatialGrouping.sortByReadingOrder —— 本处曾自写一份比较器并写死右→左
+                val sorted = MangaSpatialGrouping.sortByReadingOrder(result, { it.rect }, verticalDirection)
+
+                LogCollector.d(TAG, "detectAndCropPPOcrV5Lines: ${boxes.size} 行裁剪完成")
+                sorted
+            } catch (e: Throwable) {
+                result.forEach { if (!it.croppedBitmap.isRecycled) it.croppedBitmap.recycle() }
+                throw e
             }
-            val rect = Rect(
-                xMin.toInt().coerceAtLeast(0),
-                yMin.toInt().coerceAtLeast(0),
-                xMax.toInt().coerceAtMost(bitmap.width - 1),
-                yMax.toInt().coerceAtMost(bitmap.height - 1)
-            )
-            // 从 QuadBox 计算倾斜角
-            val tl = PointF(box[0], box[1])
-            val tr = PointF(box[2], box[3])
-            val topDx = tr.x - tl.x
-            val topDy = tr.y - tl.y
-            var angle = Math.toDegrees(kotlin.math.atan2(topDy, topDx).toDouble()).toFloat()
-            if (kotlin.math.abs(angle) <= 3f) angle = 0f
-
-            val pts = PPOcrV5Engine.boxToQuadPointsPublic(box)
-            val crop = PPOcrDetGeometry.getRotateCropImage(bitmap, pts)
-            CroppedTextLine(crop, rect, angle, rect.exactCenterX(), rect.exactCenterY())
         }
-
-        // 按漫画阅读顺序排序（横排上→下恒左→右；竖排列序随设置）
-        // ⚠️ 收敛到 MangaSpatialGrouping.sortByReadingOrder —— 本处曾自写一份比较器并写死右→左
-        val sorted = MangaSpatialGrouping.sortByReadingOrder(result, { it.rect }, verticalDirection)
-
-        LogCollector.d(TAG, "detectAndCropPPOcrV5Lines: ${boxes.size} 行裁剪完成")
-        sorted
     }
 
     /**
@@ -904,53 +914,61 @@ object DetectionBridge {
         bitmap: Bitmap,
         verticalDirection: TextDirection
     ): List<CroppedTextLine> = withContext(Dispatchers.IO) {
-        LogCollector.d(TAG, "detectAndCropPPOcrV6Lines: 开始检测")
+        PpRecRecognizer.withMemoryGuard(context, TAG, "PP-OCRv6 detection/crop image=${bitmap.width}x${bitmap.height}") {
+            LogCollector.d(TAG, "detectAndCropPPOcrV6Lines: 开始检测")
 
-        // det 检测全部文字行框
-        val boxes = PPOcrV6Engine.runDetForBoxes(context, bitmap)
-        if (boxes.isEmpty()) {
-            LogCollector.d(TAG, "detectAndCropPPOcrV6Lines: 未检测到文字区域")
-            return@withContext emptyList()
-        }
-        LogCollector.d(TAG, "detectAndCropPPOcrV6Lines: 检测到 ${boxes.size} 个文字行")
-
-        // 逐行裁剪（透视校正）
-        val result = boxes.map { box ->
-            var xMin = Float.MAX_VALUE; var yMin = Float.MAX_VALUE
-            var xMax = Float.MIN_VALUE; var yMax = Float.MIN_VALUE
-            for (k in box.indices step 2) {
-                if (box[k] < xMin) xMin = box[k]
-                if (box[k] > xMax) xMax = box[k]
+            // det 检测全部文字行框
+            val boxes = PPOcrV6Engine.runDetForBoxes(context, bitmap)
+            if (boxes.isEmpty()) {
+                LogCollector.d(TAG, "detectAndCropPPOcrV6Lines: 未检测到文字区域")
+                return@withContext emptyList()
             }
-            for (k in 1 until box.size step 2) {
-                if (box[k] < yMin) yMin = box[k]
-                if (box[k] > yMax) yMax = box[k]
+            LogCollector.d(TAG, "detectAndCropPPOcrV6Lines: 检测到 ${boxes.size} 个文字行")
+
+            // 逐行裁剪（透视校正）
+            val result = mutableListOf<CroppedTextLine>()
+            try {
+                for (box in boxes) {
+                    var xMin = Float.MAX_VALUE; var yMin = Float.MAX_VALUE
+                    var xMax = Float.MIN_VALUE; var yMax = Float.MIN_VALUE
+                    for (k in box.indices step 2) {
+                        if (box[k] < xMin) xMin = box[k]
+                        if (box[k] > xMax) xMax = box[k]
+                    }
+                    for (k in 1 until box.size step 2) {
+                        if (box[k] < yMin) yMin = box[k]
+                        if (box[k] > yMax) yMax = box[k]
+                    }
+                    val rect = Rect(
+                        xMin.toInt().coerceAtLeast(0),
+                        yMin.toInt().coerceAtLeast(0),
+                        xMax.toInt().coerceAtMost(bitmap.width - 1),
+                        yMax.toInt().coerceAtMost(bitmap.height - 1)
+                    )
+                    // 从 QuadBox 计算倾斜角
+                    val tl = PointF(box[0], box[1])
+                    val tr = PointF(box[2], box[3])
+                    val topDx = tr.x - tl.x
+                    val topDy = tr.y - tl.y
+                    var angle = Math.toDegrees(kotlin.math.atan2(topDy, topDx).toDouble()).toFloat()
+                    if (kotlin.math.abs(angle) <= 3f) angle = 0f
+
+                    val pts = PPOcrV6Engine.boxToQuadPointsPublic(box)
+                    val crop = PPOcrDetGeometry.getRotateCropImage(bitmap, pts)
+                    result.add(CroppedTextLine(crop, rect, angle, rect.exactCenterX(), rect.exactCenterY()))
+                }
+
+                // 按漫画阅读顺序排序（横排上→下恒左→右；竖排列序随设置）
+                // ⚠️ 收敛到 MangaSpatialGrouping.sortByReadingOrder —— 本处曾自写一份比较器并写死右→左
+                val sorted = MangaSpatialGrouping.sortByReadingOrder(result, { it.rect }, verticalDirection)
+
+                LogCollector.d(TAG, "detectAndCropPPOcrV6Lines: ${boxes.size} 行裁剪完成")
+                sorted
+            } catch (e: Throwable) {
+                result.forEach { if (!it.croppedBitmap.isRecycled) it.croppedBitmap.recycle() }
+                throw e
             }
-            val rect = Rect(
-                xMin.toInt().coerceAtLeast(0),
-                yMin.toInt().coerceAtLeast(0),
-                xMax.toInt().coerceAtMost(bitmap.width - 1),
-                yMax.toInt().coerceAtMost(bitmap.height - 1)
-            )
-            // 从 QuadBox 计算倾斜角
-            val tl = PointF(box[0], box[1])
-            val tr = PointF(box[2], box[3])
-            val topDx = tr.x - tl.x
-            val topDy = tr.y - tl.y
-            var angle = Math.toDegrees(kotlin.math.atan2(topDy, topDx).toDouble()).toFloat()
-            if (kotlin.math.abs(angle) <= 3f) angle = 0f
-
-            val pts = PPOcrV6Engine.boxToQuadPointsPublic(box)
-            val crop = PPOcrDetGeometry.getRotateCropImage(bitmap, pts)
-            CroppedTextLine(crop, rect, angle, rect.exactCenterX(), rect.exactCenterY())
         }
-
-        // 按漫画阅读顺序排序（横排上→下恒左→右；竖排列序随设置）
-        // ⚠️ 收敛到 MangaSpatialGrouping.sortByReadingOrder —— 本处曾自写一份比较器并写死右→左
-        val sorted = MangaSpatialGrouping.sortByReadingOrder(result, { it.rect }, verticalDirection)
-
-        LogCollector.d(TAG, "detectAndCropPPOcrV6Lines: ${boxes.size} 行裁剪完成")
-        sorted
     }
 
     /**

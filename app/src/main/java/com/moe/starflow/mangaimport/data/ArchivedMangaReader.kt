@@ -52,7 +52,14 @@ object ArchivedMangaReader {
     fun listImageFilesInDir(dir: File): List<String> {
         if (!dir.isDirectory) return emptyList()
         val out = mutableListOf<String>()
-        dir.walkTopDown().forEach { f ->
+        val boundary = dir.canonicalPath + File.separator
+        dir.walkTopDown().onEnter { folder ->
+            if (java.nio.file.Files.isSymbolicLink(folder.toPath()) ||
+                folder.canonicalFile != dir.canonicalFile && !folder.canonicalPath.startsWith(boundary))
+                throw java.io.IOException("图片目录包含链接或越界来源：${folder.path}")
+            true
+        }.onFail { folder, error -> throw java.io.IOException("无法枚举图片目录：${folder.path}", error) }.forEach { f ->
+            if (java.nio.file.Files.isSymbolicLink(f.toPath())) throw java.io.IOException("图片来源包含链接：${f.path}")
             if (f.isFile && isImageFile(f.name)) {
                 out.add(f.relativeTo(dir).path.replace('\\', '/'))
             }

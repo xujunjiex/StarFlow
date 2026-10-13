@@ -10,6 +10,10 @@ import com.moe.starflow.mangaimport.data.PdfPageKeys
 import com.moe.starflow.mangaimport.data.PdfPageRenderer
 import com.moe.starflow.mangaimport.data.PdfRasterPolicy
 import java.io.File
+import com.moe.starflow.library.LibrarySources
+import com.moe.starflow.mangaimport.data.ArchiveTypes
+import com.moe.starflow.mangaimport.data.ArchiveKind
+import com.moe.starflow.mangaimport.data.LibraryArchiveReader
 import java.util.concurrent.ConcurrentHashMap
 import com.moe.starflow.utils.LogCollector
 import java.util.zip.ZipFile
@@ -55,7 +59,15 @@ class ReaderPageSource(
      *    （Kotlin 属性初始化按**声明顺序**执行，声明晚了读到的就是未初始化字段 → NPE）。
      *    构造本身**不打开文件**（`PdfPageRenderer` 首次使用时才开 FD），所以这里代价为 0。
      */
-    private val pdf: PdfPageRenderer? = if (isPdf) PdfPageRenderer(File(localRoot)) else null
+    private val sourceLease = LibrarySources.acquire(File(localRoot))
+    private val inputFile by lazy { LibrarySources.file(File(localRoot)) }
+    private val nativeArchive = try {
+        if (isArchive && ArchiveTypes.detect(inputFile) in setOf(ArchiveKind.RAR, ArchiveKind.SEVEN_ZIP))
+            LibraryArchiveReader.acquire(inputFile) else null
+    } catch (e: Exception) { sourceLease.close(); throw e }
+    @Volatile private var cachedZip: ZipFile? = null
+    private val pdf: PdfPageRenderer? = try { if (isPdf) PdfPageRenderer(inputFile) else null }
+        catch (e: Exception) { nativeArchive?.close(); sourceLease.close(); throw e }
 
     /**
      * **只用来查页面尺寸**的第二个渲染器（同一个文件的另一份 FD）。
@@ -72,7 +84,7 @@ class ReaderPageSource(
      * 那会让 Webtoon 行高退回 `WRAP_CONTENT`（模块文档里记过的「页面一直跳」）。
      */
     private val pdfGeometry: PdfPageRenderer? by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        if (isPdf) PdfPageRenderer(File(localRoot)) else null
+        if (isPdf) PdfPageRenderer(inputFile) else null
     }
 
     /** 关闭 = **终态**（见 [close]）：之后所有读取直接返回空，不再打开文件。 */
@@ -83,10 +95,11 @@ class ReaderPageSource(
      *
      * ⚠️ 必须与导入侧用**同一个切分器**（[MangaChapterSplitter]）：它同时负责「按章分组」
      * 与「章内自然排序」，两边算出来不一样的话章区间就会错位（点第3章跳到别人的页）。
-     * 清单里那份只给书架显示章数用，阅读器这份才是权威 —— 两者不一致时以这份为准并回写清单。
+     * 清单里的章节仅用于书架显示；当前页序供读取，不回写外部编辑。
      */
     /** 原始页 key（**未排序**）：分章/排序的输入，页序迁移也要用它算旧顺序。 */
-    private val rawKeys: List<String> = resolveRawPages()
+    private val rawKeys: List<String> = try { resolveRawPages() }
+        catch (e: Exception) { nativeArchive?.close(); cachedZip?.close(); pdf?.close(); sourceLease.close(); throw e }
 
     private val split: MangaChapterSplitter.Result = MangaChapterSplitter.split(rawKeys)
 
@@ -122,13 +135,12 @@ class ReaderPageSource(
     //    `ReaderSrThreadingTest` 用源码级断言钉死这一条。
 
     // 复用一个打开的 ZipFile：避免每页都重新读中央目录（400 页漫画的关键开销）
-    @Volatile private var cachedZip: ZipFile? = null
-
     private fun zip(): ZipFile? {
+        if (nativeArchive != null) return null
         cachedZip?.let { return it }
         return synchronized(this) {
             cachedZip ?: try {
-                ZipFile(File(localRoot)).also { cachedZip = it }
+                ZipFile(inputFile).also { cachedZip = it }
             } catch (e: Exception) {
                 null
             }
@@ -189,6 +201,8 @@ class ReaderPageSource(
         return pdf?.renderSampledToWidth(position, targetWidth)
     }
 
+    private val readErrors = ConcurrentHashMap<Int, String>()
+    fun pageError(position: Int): String? = readErrors[position]
     val size: Int get() = pageKeys.size
 
     /** 某页对应的存储 key（zip 内 entry 名 / 目录相对路径），供导出等场景。 */
@@ -196,43 +210,13 @@ class ReaderPageSource(
 
     /** 载入全尺寸页图（应在 IO 线程调用）。 */
     fun loadFull(position: Int): Bitmap? {
-        val key = pageKeys.getOrNull(position)
-        if (key == null) {
-            // ⚠️ 以前这里静默返回 null：调用方只知道"图没了"，不知道是"页号越界 / 页表为空"。
-            // 阅读器翻译在 cbz 上"点了没反应、日志一片空白"就是被这类静默 return 埋掉的。
-            LogCollector.w(TAG, "loadFull: 页号越界 position=$position（size=${pageKeys.size}）")
-            return null
-        }
-        // 关闭后一律不服务（终态，见 close()）：既防 FD 复活，也让"退出后还在跑的调用"自然落空
-        if (closed) return null
-        // ⚠️ 这里**不再有超分缓存快路径**：v2 架构把超分整体移出了 loadFull
-        //    （主线程推理会 ANR；且用户口径是「OCR 永远在原图上做，超分只做显示底图」）。
-        //    合并时 master 侧的 enhanceCachedOrNull 调用随已删除的实现一起作废。
+        if (closed || pageKeys.getOrNull(position) == null) return null
         return try {
-            val bmp = if (isPdf) {
-                // PDF：按 `PdfRasterPolicy` 的权威尺寸现渲（缓存命中则给副本）
-                pdfLoadFull(position)
-            } else if (isArchive) {
-                // 复用缓存的 ZipFile（与 openEntry 同一条路径）：每次新开都要重读中央目录，
-                // 大包上尤其亏（原来这里每次 loadFull 都 new 一个）
-                val zip = zip()
-                if (zip == null) {
-                    LogCollector.w(TAG, "loadFull: 压缩包打不开 isArchive=true path=$localRoot key=$key")
-                    null
-                } else {
-                    decodeZipEntry(zip, key, 1)
-                }
-            } else {
-                BitmapFactory.decodeFile(File(localRoot, key).absolutePath)
-            }
-            if (bmp == null) LogCollector.w(TAG, "loadFull: 解码失败（返回 null）key=$key")
-            // ⚠️ 这里**只解码、不增强**：超分/Anime4K 一律不在此处做（见上方大段注释）。
-            //    本函数的调用方包含 onBindViewHolder（主线程），任何重计算都会 ANR。
-            bmp
+            if (isPdf) pdfLoadFull(position)
+            else openEntry(position)?.use { BitmapFactory.decodeStream(it) }
         } catch (e: Exception) {
-            // ⚠️ **不能再静默吞掉**：解不出来必须留下可供排查的原因（条目缺失/流被关/解码异常）。
-            // 这条 W 日志是"cbz 无法翻译"这类问题的第一现场证据。
-            LogCollector.w(TAG, "loadFull: 解码异常 key=$key（${e.javaClass.simpleName}: ${e.message}）")
+            readErrors[position] = "${pageKeys.getOrNull(position)}：${e.javaClass.simpleName}：${e.message}"
+            LogCollector.w(TAG, "读取原图失败 position=$position path=$localRoot", e)
             null
         }
     }
@@ -253,15 +237,15 @@ class ReaderPageSource(
         val key = pageKeys.getOrNull(position) ?: return null
         if (isPdf) return pdfEntryStream(position)
         return try {
-            if (isArchive) {
+            if (nativeArchive != null) nativeArchive.reader.openEntry(key)
+            else if (isArchive) {
                 val zip = zip() ?: return null
                 val entry = zip.getEntry(key) ?: return null
                 zip.getInputStream(entry)
-            } else {
-                val file = File(localRoot, key)
-                if (file.isFile) file.inputStream() else null
-            }
+            } else LibrarySources.open(File(localRoot, key))
         } catch (e: Exception) {
+            readErrors[position] = "$key：${e.javaClass.simpleName}：${e.message}"
+            LogCollector.w(TAG, "读取页面失败：$key", e)
             null
         }
     }
@@ -321,27 +305,15 @@ class ReaderPageSource(
     }
 
     private fun decodeWebtoon(position: Int, targetWidth: Int): Bitmap? {
-        val key = pageKeys.getOrNull(position) ?: return null
         if (closed) return null
         return try {
-            if (isPdf) {
-                // ⚠️ 采样口径复用**同一套**判据（目标宽 + 12:1 高宽比 + 12M 像素，见 PdfRasterPolicy.sampleFor），
-                //    尺寸计算在渲染器内部一次 openPage 内完成
-                pdfRenderToWidth(position, targetWidth)
-            } else if (isArchive) {
-                val zip = zip() ?: return null
-                val entry = zip.getEntry(key) ?: return null
+            if (isPdf) pdfRenderToWidth(position, targetWidth)
+            else {
                 val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                zip.getInputStream(entry).use { BitmapFactory.decodeStream(it, null, bounds) }
-                decodeZipEntry(zip, key, computeSample(bounds.outWidth, bounds.outHeight, targetWidth))
-            } else {
-                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeFile(File(localRoot, key).absolutePath, bounds)
-                decodeFileScaled(File(localRoot, key), computeSample(bounds.outWidth, bounds.outHeight, targetWidth))
+                openEntry(position)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+                decodeEntryScaled(position, computeSample(bounds.outWidth, bounds.outHeight, targetWidth))
             }
-        } catch (e: Exception) {
-            null
-        }
+        } catch (e: Exception) { LogCollector.w(TAG, "读取采样页失败", e); null }
     }
 
     /** 页图**原始**尺寸缓存（只读元数据，不解码像素）。0 = 读不到。
@@ -356,7 +328,8 @@ class ReaderPageSource(
      * `采样图宽 ÷ 原图宽` 等比缩放，否则译文会整体偏移、字号也不对。
      */
     fun originalWidth(position: Int): Int {
-        ensureOriginalSize(position)
+        if (nativeArchive == null && (isArchive || isPdf || com.moe.starflow.library.LibrarySessions.findFile(File(localRoot))?.first?.storage !is com.moe.starflow.library.SafLibraryStorage)
+            || android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) ensureOriginalSize(position)
         return originalWidths[position] ?: 0
     }
 
@@ -372,15 +345,13 @@ class ReaderPageSource(
      * 0 → 面板显示 `-`（`ReaderSrStateAdapter.fmtBytes` 的既有口径）。
      */
     fun pageBytes(position: Int): Long {
-        if (closed) return 0L
-        val key = pageKeys.getOrNull(position) ?: return 0L
-        if (isPdf) return 0L
-        return try {
-            if (isArchive) zip()?.getEntry(key)?.size ?: 0L
-            else File(localRoot, key).length()
-        } catch (e: Throwable) {
-            0L
-        }
+        if (closed || isPdf) return 0
+        val key = pageKeys.getOrNull(position) ?: return 0
+        return runCatching {
+            if (nativeArchive != null) 0L
+            else if (isArchive) zip()?.getEntry(key)?.size ?: 0L
+            else LibrarySources.file(File(localRoot, key)).length()
+        }.getOrDefault(0)
     }
 
     /** 原始页 key（未排序）—— 只给页序迁移用（[com.moe.starflow.mangaimport.data.MangaPageOrder]）。 */
@@ -391,47 +362,25 @@ class ReaderPageSource(
 
     /** 该页**原图**高度。用途：适配器按原始宽高比把行高**钉死**，见 [WebtoonAdapter] 的绑定注释。 */
     fun originalHeight(position: Int): Int {
-        ensureOriginalSize(position)
+        if (nativeArchive == null && (isArchive || isPdf || com.moe.starflow.library.LibrarySessions.findFile(File(localRoot))?.first?.storage !is com.moe.starflow.library.SafLibraryStorage)
+            || android.os.Looper.myLooper() != android.os.Looper.getMainLooper()) ensureOriginalSize(position)
         return originalHeights[position] ?: 0
     }
 
     @Synchronized
     private fun ensureOriginalSize(position: Int) {
-        if (originalWidths.containsKey(position)) return
-        if (closed) return
-        val key = pageKeys.getOrNull(position) ?: return
-        var w = 0
-        var h = 0
-        try {
+        if (closed || originalWidths.containsKey(position)) return
+        var w = 0; var h = 0
+        runCatching {
             if (isPdf) {
-                // ⚠️ PDF 的"原生尺寸"就是 PdfRasterPolicy 的权威像素尺寸 ——
-                //    适配器钉行高、译图缩放、气泡坐标都靠这一个数字。
-                //    走 [pdfGeometry]（**独立渲染器**）：主线程会调到这里，不能和 IO 上的渲染抢锁。
                 val size = pdfCanonicalSize(position)
-                w = size?.get(0) ?: 0
-                h = size?.get(1) ?: 0
-                originalWidths[position] = w
-                originalHeights[position] = h
-                return
-            }
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            if (isArchive) {
-                val zip = zip()
-                val entry = zip?.getEntry(key)
-                if (zip != null && entry != null) {
-                    zip.getInputStream(entry).use { BitmapFactory.decodeStream(it, null, bounds) }
-                    w = bounds.outWidth
-                    h = bounds.outHeight
-                }
+                w = size?.get(0) ?: 0; h = size?.get(1) ?: 0
             } else {
-                BitmapFactory.decodeFile(File(localRoot, key).absolutePath, bounds)
-                w = bounds.outWidth
-                h = bounds.outHeight
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                openEntry(position)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+                w = bounds.outWidth; h = bounds.outHeight
             }
-        } catch (e: Exception) {
-            w = 0
-            h = 0
-        }
+        }.onFailure { LogCollector.w(TAG, "读取原图尺寸失败", it) }
         originalWidths[position] = w
         originalHeights[position] = h
     }
@@ -444,21 +393,14 @@ class ReaderPageSource(
         PdfRasterPolicy.sampleFor(boundsW, boundsH, targetWidth)
 
     private fun decodeThumb(position: Int): Bitmap? {
-        val key = pageKeys.getOrNull(position) ?: return null
-        return try {
-            if (isPdf) {
-                pdfRenderSampled(position, THUMB_SAMPLE)
-            } else if (isArchive) {
-                ZipFile(File(localRoot)).use { zip ->
-                    decodeZipEntry(zip, key, THUMB_SAMPLE)
-                }
-            } else {
-                decodeFileScaled(File(localRoot, key), THUMB_SAMPLE)
-            }
-        } catch (e: Exception) {
-            null
-        }
+        if (closed) return null
+        return runCatching { if (isPdf) pdfRenderSampled(position, THUMB_SAMPLE)
+            else decodeEntryScaled(position, THUMB_SAMPLE) }.getOrNull()
     }
+
+    private fun decodeEntryScaled(position: Int, sample: Int): Bitmap? =
+        openEntry(position)?.use { BitmapFactory.decodeStream(it, null,
+            BitmapFactory.Options().apply { inSampleSize = sample.coerceAtLeast(1) }) }
 
     private fun decodeZipEntry(zip: ZipFile, name: String, sample: Int): Bitmap? {
         val entry = zip.getEntry(name) ?: return null
@@ -496,10 +438,11 @@ class ReaderPageSource(
             }
             return PdfPageKeys.all(count)
         }
+        nativeArchive?.let { return it.reader.entries.filter(ArchivedMangaReader::isImageFile) }
         return if (isArchive) {
             val out = mutableListOf<String>()
             try {
-                ZipFile(File(localRoot)).use { zip ->
+                ZipFile(inputFile).use { zip ->
                     val entries = zip.entries()
                     while (entries.hasMoreElements()) {
                         val e = entries.nextElement()
@@ -512,7 +455,7 @@ class ReaderPageSource(
                 emptyList()
             }
         } else {
-            ArchivedMangaReader.listImageFilesInDir(File(localRoot))
+            LibrarySources.listImages(File(localRoot)) ?: ArchivedMangaReader.listImageFilesInDir(File(localRoot))
         }
     }
 
@@ -536,6 +479,8 @@ class ReaderPageSource(
         runCatching { cachedZip?.close() }
         cachedZip = null
         runCatching { pdfFullCache.evictAll() }
+        nativeArchive?.close()
+        sourceLease.close()
     }
 
     private companion object {

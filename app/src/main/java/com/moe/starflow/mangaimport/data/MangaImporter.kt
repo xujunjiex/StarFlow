@@ -5,7 +5,6 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.DocumentsContract
-import android.util.Base64
 import com.moe.starflow.utils.LogCollector
 import com.moe.starflow.utils.SafDocumentMetadata
 import com.moe.starflow.utils.SafDocumentTreeReader
@@ -22,7 +21,6 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
-import java.security.MessageDigest
 import java.util.zip.ZipFile
 import kotlin.coroutines.coroutineContext
 
@@ -52,17 +50,9 @@ object MangaImporter {
     /** 进度上报节流：距上次上报不足此毫秒数就跳过（避免每 64KB 刷一次 StateFlow）。 */
     private const val REPORT_INTERVAL_MS = 80L
 
-    fun nextId(context: Context): Long =
-        (ImportedMangaStore.load(context).maxOfOrNull { it.id } ?: 0L) + 1L
+    fun nextId(context: Context): Long = com.moe.starflow.library.LibrarySessions.current(context).nextId("manga")
 
-    /**
-     * 条目时间戳。**它同时是翻译记录的身份指纹**（[ImportedManga.translationKey]），必须唯一：
-     * 漫画 id 会被复用（`nextId` = 清单最大 id + 1），删书后立刻重导就会拿到同一个 id ——
-     * 若时间戳也相同，新书会被判定成"同一本书"，旧译图/旧记录会映射到新书上。
-     *
-     * 所以取 `max(now, 清单里最大 addedAt + 1)`：同一毫秒内连删带导也保证单调递增，
-     * 代价只是一次清单读取（导入本来就要读）。
-     */
+    /** Import timestamp; processing identity uses the library UUID reference. */
     private fun freshAddedAt(context: Context): Long {
         val maxExisting = ImportedMangaStore.load(context).maxOfOrNull { it.addedAt } ?: 0L
         return maxOf(System.currentTimeMillis(), maxExisting + 1L)
@@ -70,33 +60,6 @@ object MangaImporter {
 
     private fun coverDir(context: Context): File =
         StorageDirStore.coversDir(context)
-
-    /** Expected reader path for a source found by the app-directory scanner. */
-    internal fun scannedLocalRoot(context: Context, source: File): File {
-        if (source.isDirectory) return source.canonicalFile
-        return when (ArchiveTypes.detect(source)) {
-            ArchiveKind.RAR, ArchiveKind.SEVEN_ZIP -> scanExtractionDir(context, source)
-            else -> source.canonicalFile
-        }
-    }
-
-    /** Delete the original archive behind an auto-scanned RAR/7z entry when the user deletes it. */
-    internal fun deleteScannedArchiveSource(context: Context, localRoot: String) {
-        val cacheDir = File(localRoot).canonicalFile
-        if (!cacheDir.name.startsWith(".starflow_scan_")) return
-        val stamp = File(cacheDir, ".source_stamp")
-        val lines = runCatching { stamp.readLines() }.getOrNull() ?: return
-        val encodedPath = lines.lastOrNull()?.takeIf { it.isNotBlank() } ?: return
-        val sourcePath = runCatching {
-            String(Base64.decode(encodedPath, Base64.NO_WRAP), Charsets.UTF_8)
-        }.getOrNull() ?: return
-        val source = File(sourcePath).canonicalFile
-        // The stamp is app-managed input; validate both its cache hash and source location before deletion.
-        if (scanExtractionDir(context, source).canonicalFile != cacheDir) return
-        val appRoot = (context.getExternalFilesDir(null) ?: context.filesDir).canonicalFile
-        if (!source.path.startsWith(appRoot.path + File.separator) || !source.isFile) return
-        if (!source.delete()) throw IOException("无法删除扫描漫画的原始压缩包：${source.absolutePath}")
-    }
 
     /** Parse an already-present app file/folder without copying or deleting the user's source. */
     internal suspend fun inspectLocalSource(
@@ -113,7 +76,7 @@ object MangaImporter {
             ArchiveKind.ZIP -> importZipArchive(context, source, id, title, coverPathOverride)
             ArchiveKind.PDF -> importPdf(context, source, id, title, coverPathOverride)
             ArchiveKind.RAR, ArchiveKind.SEVEN_ZIP ->
-                inspectExtractedSource(context, source, id, title, coverPathOverride)
+                inspectRawArchive(context, source, id, title, coverPathOverride)
             ArchiveKind.UNKNOWN -> throw IllegalArgumentException("不支持的漫画文件内容：${source.name}")
         }
     }
@@ -125,10 +88,10 @@ object MangaImporter {
         title: String,
         coverPathOverride: String?,
     ): ImportedManga {
-        val split = MangaChapterSplitter.split(ArchivedMangaReader.listImageFilesInDir(dir))
+        val split = MangaChapterSplitter.split(com.moe.starflow.library.LibrarySources.listImages(dir) ?: ArchivedMangaReader.listImageFilesInDir(dir))
         val coverPath = coverPathOverride ?: split.keys.firstOrNull()
             ?.let { File(dir, it) }
-            ?.let { extractThumbnailFromFile(context, it, id) }
+            ?.let { extractThumbnailFromFile(context, com.moe.starflow.library.LibrarySources.file(it), id) }
         val size = dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
         return ImportedManga(
             id = id,
@@ -144,64 +107,31 @@ object MangaImporter {
         )
     }
 
-    private suspend fun inspectExtractedSource(
-        context: Context,
-        source: File,
-        id: Long,
-        title: String,
-        coverPathOverride: String?,
+    private fun inspectRawArchive(
+        context: Context, source: File, id: Long, title: String, coverPathOverride: String? = null,
     ): ImportedManga {
-        val extractDir = scanExtractionDir(context, source)
-        val stamp = File(extractDir, ".source_stamp")
-        val signature = "${source.length()}\n${source.lastModified()}"
-        val stampValue = signature + "\n" + Base64.encodeToString(source.canonicalPath.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
-        if (!extractDir.isDirectory || !stamp.isFile || runCatching { stamp.readText() }.getOrNull() != stampValue ||
-            ArchivedMangaReader.listImageFilesInDir(extractDir).isEmpty()
-        ) {
-            extractDir.deleteRecursively()
-            if (!extractDir.mkdirs()) {
-                throw ImportOperationException(
-                    ImportFailureReason.DESTINATION_WRITE_FAILED,
-                    "无法创建漫画扫描解压目录：${extractDir.absolutePath}",
-                )
+        LibraryArchiveReader.acquire(source).use { lease ->
+            val reader = lease.reader
+            val split = MangaChapterSplitter.split(reader.entries.filter(ArchivedMangaReader::isImageFile))
+            val cover = coverPathOverride ?: split.keys.firstOrNull()?.let {
+                reader.openEntry(it).use { input -> android.graphics.BitmapFactory.decodeStream(input) }
+            }?.let { bitmap -> try { extractThumbnail(context, bitmap, id) } finally { bitmap.recycle() } }
+            val metadata = reader.entries.filter(ComicMetadataParser::isMetadataEntry).mapNotNull { name ->
+                runCatching { reader.openEntry(name, ComicMetadataParser.MAX_METADATA_BYTES.toLong()).use {
+                    readTextCapped(it, -1)?.let { text -> name to text }
+                } }.getOrNull()
             }
-            LibArchiveExtractor.extract(
-                archive = source,
-                destDir = extractDir,
-                filter = { ArchivedMangaReader.isImageFile(it) || ComicMetadataParser.isMetadataEntry(it) },
-            )
-            stamp.writeText(stampValue)
+            return ImportedManga(id = id, title = title, localRoot = source.path, isArchive = true,
+                coverPath = cover, pageCount = split.keys.size, addedAt = freshAddedAt(context),
+                sizeBytes = source.length(), chapters = split.chapters,
+                description = ComicMetadataParser.descriptionOf(context, metadata))
         }
-        // Extraction is cached in a hidden app-managed directory. Keep the original user file intact.
-        val split = MangaChapterSplitter.split(ArchivedMangaReader.listImageFilesInDir(extractDir))
-        val coverPath = coverPathOverride ?: split.keys.firstOrNull()
-            ?.let { File(extractDir, it) }
-            ?.let { extractThumbnailFromFile(context, it, id) }
-        return ImportedManga(
-            id = id,
-            title = title,
-            localRoot = extractDir.canonicalPath,
-            isArchive = false,
-            coverPath = coverPath,
-            pageCount = split.keys.size,
-            addedAt = freshAddedAt(context),
-            sizeBytes = extractDir.walkTopDown().filter { it.isFile && it != stamp }.sumOf { it.length() },
-            description = ComicMetadataParser.descriptionOf(context, readDirMetadataTexts(extractDir)),
-            chapters = split.chapters,
-        )
-    }
-
-    private fun scanExtractionDir(context: Context, source: File): File {
-        val digest = MessageDigest.getInstance("SHA-256")
-            .digest(source.canonicalPath.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
-        return File(StorageDirStore.root(context), ".starflow_scan_$digest")
     }
 
     /** 某次导入的本地目录（也是取消/失败时的清理对象）。 */
     private fun localDir(context: Context, id: Long): File =
         try {
-            File(StorageDirStore.root(context), id.toString())
+            StorageDirStore.bookDir(context, id)
         } catch (e: SecurityException) {
             throw ImportOperationException(
                 ImportFailureReason.DESTINATION_WRITE_FAILED,
@@ -286,7 +216,7 @@ object MangaImporter {
             return when (ArchiveTypes.detect(archiveFile)) {
                 ArchiveKind.ZIP -> importZipArchive(context, archiveFile, id, title)
                 ArchiveKind.RAR, ArchiveKind.SEVEN_ZIP ->
-                    importExtractedArchive(context, archiveFile, destDir, id, title, onProgress)
+                    inspectRawArchive(context, archiveFile, id, title)
                 // ⚠️ PDF **不转图**：原文件就是页源，页图按需栅格化（见 importPdf 的注释）
                 ArchiveKind.PDF -> importPdf(context, archiveFile, id, title)
                 ArchiveKind.UNKNOWN -> throw IllegalArgumentException("不支持的压缩包格式: $name")
@@ -390,65 +320,6 @@ object MangaImporter {
         )
     }
 
-    /**
-     * rar/cbr/7z：用 libarchive 解压成 `manga_import/<id>/pages/` 目录，之后按**文件夹导入**处理。
-     *
-     * ⚠️ 解压成功后**删掉原压缩包副本**：rar/7z 没有中央目录、随机读一页要顺序扫整包，
-     * 留着读取体验极差；而漫画本来就是「导入即复制」，解压结果才是真正要读的东西。
-     * 不删的话同一本书要占两份空间（几百 MB 级）。
-     */
-    private suspend fun importExtractedArchive(
-        context: Context,
-        archiveFile: File,
-        destDir: File,
-        id: Long,
-        title: String,
-        onProgress: (ImportProgress) -> Unit
-    ): ImportedManga {
-        val extractDir = File(destDir, EXTRACT_DIR)
-        val extracted = LibArchiveExtractor.extract(
-            archive = archiveFile,
-            destDir = extractDir,
-            // 图片之外**顺带把元数据文件也解出来**（ComicInfo.xml / meta.json，都是几 KB）：
-            // rar/7z 没法像 zip 那样随手读一个条目，解出来再读是最省事、也最省 CPU 的做法。
-            // 解出来后**留在 pages/ 里不删** —— 阅读侧只枚举图片，不受影响；留着还能让用户
-            // 在 Android/data 下看到原始元数据
-            filter = { ArchivedMangaReader.isImageFile(it) || ComicMetadataParser.isMetadataEntry(it) },
-            onProgress = { consumed, total ->
-                // ⚠️ 参数按**名字**给：ImportProgress 的前两位是「文件数」(Int)，
-                // 顺序传 Long 会被推断成文件数 → 编译不过 / 语义错
-                onProgress(
-                    ImportProgress(ImportPhase.COPYING, copiedBytes = consumed, totalBytes = total)
-                )
-            }
-        )
-        archiveFile.delete()
-        // 解压完重新枚举（保留子目录结构 → 分章白拿）
-        // ⚠️ 包内没有图片**不是异常**：照旧产出一条 0 页漫画，由 ImportManager 决定提示
-        // （与 zip 链路一致 —— 那里也是 pageCount=0 走 NoImages 事件）
-        val split = MangaChapterSplitter.split(ArchivedMangaReader.listImageFilesInDir(extractDir))
-        if (split.keys.isEmpty()) {
-            LogCollector.w(TAG, "压缩包里没有图片: ${archiveFile.name} (extracted=$extracted)")
-        }
-        val coverPath = split.keys.firstOrNull()
-            ?.let { File(extractDir, it) }
-            ?.let { extractThumbnailFromFile(context, it, id) }
-        val size = extractDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
-        return ImportedManga(
-            id = id,
-            title = title,
-            localRoot = extractDir.absolutePath,
-            isArchive = false,
-            coverPath = coverPath,
-            pageCount = split.keys.size,
-            addedAt = freshAddedAt(context),
-            sizeBytes = size,
-            // 解出来的 ComicInfo.xml / meta.json → 自动填简介（与 zip 链路同一条规则）
-            description = ComicMetadataParser.descriptionOf(context, readDirMetadataTexts(extractDir)),
-            chapters = split.chapters
-        )
-    }
-
     // ===== 导入图片文件夹 =====
 
     /**
@@ -465,6 +336,8 @@ object MangaImporter {
         id: Long = nextId(context),
         onProgress: (ImportProgress) -> Unit = {}
     ): ImportedManga = withContext(Dispatchers.IO) {
+        (com.moe.starflow.library.LibrarySessions.current(context).storage as? com.moe.starflow.library.SafLibraryStorage)
+            ?.requireImportOutsideDestination(treeUri, "manga")
         val rootDocumentId = try {
             DocumentsContract.getTreeDocumentId(treeUri)
         } catch (e: SecurityException) {
@@ -511,6 +384,7 @@ object MangaImporter {
 
             // ⚠️ 章节切分在这里就定下来：它同时产出**权威页序**（按章分组、章内自然排序），
             // 落盘顺序即阅读顺序 —— 阅读侧 `ReaderPageSource` 用同一个切分器，两边不会错位。
+            if (entries.map { it.second }.toSet().size != entries.size) throw IOException("来源包含重复名称，无法完整复制漫画")
             val split = MangaChapterSplitter.split(entries.map { it.second })
             val pageOrder = split.keys.withIndex().associate { (i, key) -> key to i }
             val ordered = entries.sortedBy { pageOrder[it.second] ?: Int.MAX_VALUE }
@@ -604,13 +478,16 @@ object MangaImporter {
             val children = SafDocumentTreeReader.listChildren(context, treeUri, documentId, TAG)
             children.forEachIndexed { index, child ->
                 coroutineContext.ensureActive()
-                val providerName = child.displayName ?: child.documentId.substringAfterLast('/')
+                val providerName = child.displayName ?: throw IOException("提供器未返回来源名称：${child.uri}")
                 val imageExtension = imageExtension(child.mimeType)
                 val isImage = ArchivedMangaReader.isImageFile(providerName) ||
                     (imageExtension != null && child.mimeType?.startsWith("image/") == true)
                 val isDirectory = child.isDirectory ||
                     (child.mimeType == null && !isImage && providerName.substringAfterLast('.', "").isEmpty())
                 if (isDirectory) {
+                    if (com.moe.starflow.library.LibrarySessions.current(context).database.catalog().allMeta()
+                        .any { it.name.startsWith("importing:manga:") && it.value.substringAfterLast('/') == providerName })
+                        throw IOException("导入来源包含本次目标目录，已停止递归复制：$providerName")
                     val dirName = safeSegment(providerName) ?: "folder_${index + 1}"
                     collectImageDocs(context, treeUri, child.documentId, "$prefix$dirName/", out)
                 } else if (isImage) {
@@ -879,7 +756,7 @@ object MangaImporter {
         return out
     }
 
-    /** 读目录里的元数据条目文本（rar/7z 解压出来的 `pages/`，见 [importExtractedArchive]）。 */
+    /** 读取图片文件夹内的元数据文本。 */
     internal fun readDirMetadataTexts(dir: File): List<Pair<String, String>> {
         if (!dir.isDirectory) return emptyList()
         val out = mutableListOf<Pair<String, String>>()
@@ -948,11 +825,17 @@ object MangaImporter {
     private fun extractThumbnail(context: Context, bmp: Bitmap, id: Long): String? {
         val dir = coverDir(context).apply { mkdirs() }
         // 唯一命名 covers/<id>_<ts>.jpg：避免 Glide 按路径缓存导致重导后显示旧图
-        dir.listFiles()?.filter { it.name.startsWith("${id}_") }?.forEach { it.delete() }
-        val ts = System.currentTimeMillis()
-        val out = File(dir, "${id}_$ts.jpg")
+        val out = File(dir, "${id}_${java.util.UUID.randomUUID()}.jpg")
         val scaled = Bitmap.createScaledBitmap(bmp, COVER_WIDTH, COVER_WIDTH, true)
-        FileOutputStream(out).use { scaled.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+        try {
+            FileOutputStream(out).use { stream ->
+                if (!scaled.compress(Bitmap.CompressFormat.JPEG, 85, stream)) throw IOException("封面压缩失败：${out.path}")
+                stream.fd.sync()
+            }
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(out.path, bounds)
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw IOException("封面写入不完整：${out.path}")
+        } catch (e: Exception) { out.delete(); throw e }
         if (scaled !== bmp) scaled.recycle()
         return out.absolutePath
     }

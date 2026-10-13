@@ -142,7 +142,7 @@ class NovelChapterJobHost(
         val api = TranslatorFactory.createForText(app, CustomPreference.getInstance(app))
             ?: throw IllegalStateException("no translation engine")
         NovelChapterTranslator(
-            dao = TranslationHistoryDatabase.getInstance(app).novelParagraphTranslationDao(),
+            dao = com.moe.starflow.library.LibrarySessions.current(app).novelParagraphTranslationDao(),
             engine = NovelTranslationEngine(TranslationTextApiAdapter(api)),
             splitVersion = NovelParagraphSplitter.SPLIT_VERSION,
             warnGate = NovelBatchWarnGate(
@@ -359,6 +359,11 @@ class NovelChapterJobHost(
 
     fun cancel(chapterIndex: Int) = runner.cancel(chapterIndex)
 
+    suspend fun shutdownAndJoin() {
+        runner.shutdownAndJoin()
+        shutdownAll()
+    }
+
     /** 停掉这本书的全部章节任务（换书 / 退出且不留任务）。 */
     fun shutdownAll() {
         runner.shutdown()
@@ -516,7 +521,7 @@ class NovelChapterJobHost(
         if (runner.jobs.value.any { it.isActive }) return
         scope.launch {
             runCatching {
-                TranslationHistoryDatabase.getInstance(app).novelParagraphTranslationDao()
+                com.moe.starflow.library.LibrarySessions.current(app).novelParagraphTranslationDao()
                     .resetTranslating(book.id, book.translationKey)
             }.onFailure { LogCollector.w(TAG, "清理残留翻译中状态失败", it) }
         }
@@ -528,6 +533,8 @@ class NovelChapterJobHost(
         ActiveChapterJob(
             kind = TranslationJobKind.NOVEL,
             bookId = book.id,
+            libraryLocationId = book.libraryLocationId,
+            bookUuid = book.bookUuid,
             bookTitle = book.title,
             chapterIndex = job.chapterIndex,
             chapterLabel = job.label,
@@ -592,12 +599,14 @@ object NovelTranslationHub : ChapterJobSource {
     override val key: String = "novel"
 
     /** 应用级 scope：进程活多久它活多久（后台任务靠的就是它）。 */
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + kotlinx.coroutines.CoroutineExceptionHandler { _, error ->
+        LogCollector.e(TAG, "书库任务已结束或提交失败", error)
+    })
 
-    private val hosts = ConcurrentHashMap<Long, NovelChapterJobHost>()
+    private val hosts = ConcurrentHashMap<String, NovelChapterJobHost>()
 
     /** 每个宿主一个「任务状态变化」收集协程；回收宿主时必须一并取消（照漫画那份）。 */
-    private val collectors = ConcurrentHashMap<Long, Job>()
+    private val collectors = ConcurrentHashMap<String, Job>()
 
     init {
         TranslationJobRegistry.register(this)
@@ -609,23 +618,23 @@ object NovelTranslationHub : ChapterJobSource {
         // ⚠️ 与漫画侧同一个理由：小说 id 也是"清单最大 id + 1"，删书后重导会**复用 id**，
         // 而译文身份是 `addedAt`（novelKey）。只按 id 命中会把旧宿主（连同旧书的 repo 缓存、
         // 旧 novelKey）交给新书 → 新书按旧指纹读写译文（看着正常、重启后译文"消失"且清不掉）。
-        hosts[book.id]?.let { cached ->
+        hosts[book.translationKey]?.let { cached ->
             if (cached.translationKeyOf() == book.translationKey) return cached
             LogCollector.i("NovelChapterJob", "novelId=${book.id} 身份指纹变了（删除后复用 id）→ 重建宿主")
             // ⚠️ 必须**无条件**摘掉：走 releaseIfIdle 的话，旧宿主正在跑任务/还挂着 UI 时它会直接
             // return，而我们紧接着就把 hosts/collectors 覆盖掉 —— 旧宿主从此不可达、它的 runner
             // 还在烧额度、收集协程永远活着（漫画侧 ReaderTranslationHub 就是无条件 remove+cancel）。
-            hosts.remove(book.id)
-            collectors.remove(book.id)?.cancel()
+            hosts.remove(book.translationKey)
+            collectors.remove(book.translationKey)?.cancel()
             cached.shutdownAll()
         }
-        val host = NovelChapterJobHost(context.applicationContext, book, scope)
-        hosts[book.id] = host
-        collectors[book.id] = scope.launch {
+        val host = NovelChapterJobHost(com.moe.starflow.library.LibrarySessions.forLocation(context, book.libraryLocationId).context(), book, scope)
+        hosts[book.translationKey] = host
+        collectors[book.translationKey] = scope.launch {
             host.chapterJobs.collect {
                 TranslationJobRegistry.notifyChanged()
                 if (!host.everAttached) return@collect
-                if (!host.uiAttached && !host.isRunning()) releaseIfIdle(book.id)
+                if (!host.uiAttached && !host.isRunning()) releaseIfIdle(book.id, book.translationKey)
             }
         }
         LogCollector.i(TAG, "创建小说章节翻译宿主 id=${book.id} title=${book.title}")
@@ -638,11 +647,12 @@ object NovelTranslationHub : ChapterJobSource {
      * ⚠️ 必须判 `uiAttached`：阅读器正开着时不能回收。
      */
     @Synchronized
-    fun releaseIfIdle(novelId: Long) {
-        val host = hosts[novelId] ?: return
+    fun releaseIfIdle(novelId: Long, bookKey: String? = null) {
+        val mapKey = bookKey ?: hosts.values.firstOrNull { it.snapshotOfBook().any { job -> job.bookId == novelId } }?.translationKeyOf() ?: return
+        val host = hosts[mapKey] ?: return
         if (host.uiAttached || host.isRunning()) return
-        hosts.remove(novelId)
-        collectors.remove(novelId)?.cancel()
+        hosts.remove(mapKey)
+        collectors.remove(mapKey)?.cancel()
         host.shutdownAll()
         TranslationJobRegistry.notifyChanged()
         LogCollector.i(TAG, "回收小说章节翻译宿主 id=$novelId（无 UI 且无任务）")
@@ -650,13 +660,22 @@ object NovelTranslationHub : ChapterJobSource {
 
     // ===== ChapterJobSource =====
 
+    suspend fun shutdownBook(key: String) {
+        val host = synchronized(this) {
+            collectors.remove(key)?.cancel()
+            hosts.remove(key)
+        } ?: return
+        host.shutdownAndJoin()
+        TranslationJobRegistry.notifyChanged()
+    }
+
     override fun snapshot(): List<ActiveChapterJob> = hosts.values.flatMap { it.snapshotOfBook() }
 
     override fun onAction(action: JobAction, job: ActiveChapterJob): Boolean {
         if (job.kind != TranslationJobKind.NOVEL) return false
-        val host = hosts[job.bookId] ?: return false
+        val host = hosts[job.runtimeKey] ?: return false
         val handled = host.onAction(action, job)
-        if (action == JobAction.CANCEL) releaseIfIdle(job.bookId)
+        if (action == JobAction.CANCEL) releaseIfIdle(job.bookId, job.runtimeKey)
         return handled
     }
 

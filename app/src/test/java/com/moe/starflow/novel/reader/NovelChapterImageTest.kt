@@ -2,10 +2,12 @@ package com.moe.starflow.novel.reader
 
 import android.graphics.Bitmap
 import com.moe.starflow.novel.data.ImportedNovel
+import com.moe.starflow.novel.data.NovelStorageDir
 import com.moe.starflow.novel.model.NovelFormat
 import com.moe.starflow.novel.translate.NovelParagraphType
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -80,7 +82,7 @@ class NovelChapterImageTest {
     )
 
     /**
-     * 整条链路：epub 里的 `<img>` → 落盘到 `imagesRoot/7/images/` → 量出原始像素尺寸
+     * 整条链路：epub 里的 `<img>` → 落盘到独立隐藏缓存 → 量出原始像素尺寸
      * → 进 `ChapterContent.images`（按段号）。
      */
     @Test
@@ -96,7 +98,7 @@ class NovelChapterImageTest {
         assertNotNull("插图必须被解出来（否则这一段只会显示 📷 [图片] 占位文本）", image)
         assertEquals("必须量出真实宽度", 60, image!!.width)
         assertEquals("必须量出真实高度", 90, image.height)
-        assertTrue("图片必须落在书本自己的目录下", image.file.path.startsWith(root.canonicalPath))
+        assertTrue("图片必须落在书本自己的目录下", image.file.path.contains(".starflow${File.separator}books${File.separator}"))
         assertTrue("图片文件必须真的写出来了", image.file.isFile && image.file.length() > 0)
         // 三段都在（正文一段都不能少）
         assertTrue(content.pages.flatMap { it.segments }.map { it.paraIndex }.contains(imagePara.index))
@@ -122,10 +124,27 @@ class NovelChapterImageTest {
         val repo = NovelChapterRepository(imagesRoot = root)
         val b = bookOf(epub)
         repo.load(b, 0, emptyMap(), NovelDisplayMode.TRANSLATED, style, 600, 900)
-        val dir = File(File(root, "7"), "images")
+        val dir = NovelStorageDir.imageCacheDir(root, bookOf(epub))
         val first = dir.listFiles()!!.map { it.name }.sorted()
         repo.evictAll()
         repo.load(b, 0, emptyMap(), NovelDisplayMode.TRANSLATED, style, 600, 900)
         assertEquals("第二次加载不该多出文件", first, dir.listFiles()!!.map { it.name }.sorted())
+    }
+
+    @Test
+    fun `扫描书的插图缓存不占用另一部作品的数字目录`() = runBlocking {
+        val source = epub("OEBPS/img.png" to pngBytes(30, 30))
+        val root = tmp.newFolder("scanned_novels")
+        val otherDirectory = File(root, "7").apply { mkdirs() }
+        val otherSource = File(otherDirectory, "other.txt").apply { writeText("Keep another book") }
+        val book = bookOf(source)
+        val repo = NovelChapterRepository(imagesRoot = root)
+
+        val images = repo.imagesOf(book, 0)
+
+        assertTrue(images.isNotEmpty())
+        assertTrue(images.values.all { it.file.parentFile == NovelStorageDir.imageCacheDir(root, book) })
+        assertEquals("Keep another book", otherSource.readText())
+        assertFalse(File(otherDirectory, "images").exists())
     }
 }

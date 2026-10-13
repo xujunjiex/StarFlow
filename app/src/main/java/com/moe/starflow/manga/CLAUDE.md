@@ -175,9 +175,9 @@
 - `render/VerticalGlyphRules` 只决定竖排显示字形、旋转与位置；`VerticalTextRenderer` 在字符格内绘制。原文、译文共用，横排保持原字符；已有竖排字符不重复旋转，不改 OCR 输出或持久化文本。
 - 竖排符号优先使用当前字体的竖排字形；缺字时尝试 Android 默认字体的对应竖排字形，只有没有竖排形式时才旋转原字符。逗号、顿号和句点在格内定位；字符格步距、气泡坐标及持久化文本不变。
 - OCR 返回检测几何，不是真实字号。PP-OCRv5/v6 在合并前有单行检测框时，根据其几何估算原文字号并随合并结果传递；RT-DETR + MangaOCR 不调用 ML Kit 补框。缺少可用字号时，自动模式按原文长度和文字区域几何估计动态上限，再由 `LayoutEngine` 缩小译文以适配原区域；不使用固定像素或手动字号偏好作自动上限。固定模式仍使用用户选择的字号。
-- PPv5/v6 识别共用 `engine/PpRecRecognizer` 与 `PpRecBatching`：按补齐后的宽度分组，单张探测实际输出形状，再在 32 MiB 或可用 Java 堆四分之一的较小预算内选择批量。预算含输入、预处理临时图/像素、原生输出及 Java 输出副本；设置的批量只是上限，结果按原索引恢复。
-- ORT 1.19 的 `getFloatBuffer()` 会复制完整张量，必须先检查形状和预算。`PpRecCtcDecoder` 按偏移读取同一缓冲区，不逐张复制预测数组。
-- `OcrMemoryException` 是终止本次 OCR 的可恢复错误；增量管线重抛，不能返回 `NotApplicable` 后回退重跑。先结束并行 OCR，再回收裁剪图；普通 `runOCR` 同样在识别的 `finally` 回收自有裁剪图。
+- PPv5/v6 识别共用 `engine/PpRecRecognizer` 与 `PpRecBatching`：按补齐后的宽度分组，按配置批量识别，结果按原索引恢复。禁止增加应用自定的内存预算、文字行尺寸阈值或主动拒绝门槛；只有真实分配失败才缩小当前批量重试。
+- ORT 1.19 的 `getFloatBuffer()` 会复制完整张量。识别使用预分配输出让 ORT 直接写入可复用的 direct 缓冲区，`PpRecCtcDecoder` 按偏移读取，不复制整个输出或逐张预测数组。每个 session/宽度首次用单行探测输出形状，释放探测结果后再分配输出；缓存不持有已释放的 session。
+- Java `OutOfMemoryError` 与 ORT 实际分配失败转换为 `OcrMemoryException`，记录阶段、输入/输出形状、分配字节数、堆状态及原始异常；重试成功也保留失败日志。单行仍发生真实分配失败时结束本次翻译，不让异常逃出任务；增量管线重抛，不能返回 `NotApplicable` 后回退重跑。先结束并行 OCR，再回收裁剪图；普通 `runOCR` 同样在识别的 `finally` 回收自有裁剪图。
 
 ### 增量渲染（分批 OCR+翻译）
 

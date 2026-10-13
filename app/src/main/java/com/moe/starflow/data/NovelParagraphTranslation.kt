@@ -15,8 +15,8 @@ import androidx.room.Query
  *    参考实现 (Kototoro) 存了 `Map<Int, String>` 却在渲染时改用原文文本做 key，
  *    于是同章里重复的段落（`"……"`、短对白）会共用同一条译文。
  *
- * 2. **`novelKey` 是身份指纹（= `addedAt`）**。书籍 id = 书架最大 id + 1，删书后重导会
- *    复用同一 id；不带指纹就会把上一本书的译文串到新书上。删除也必须按 (id, key) **成对**删。
+ * 2. **`novelKey` = 目录身份 + novel + UUID**。数字 id 只在当前书库中有效；
+ *    读写、任务和删除必须按 (id, key) **成对**校验，旧时间键仅供归档。
  *
  * 3. **`splitVersion`**：段落切分规则一改，旧 `paraIndex` 整体错位、且**看不出错**
  *    （译文还在，只是对错了段）。切分规则变更时递增 `NovelParagraphSplitter.SPLIT_VERSION`，

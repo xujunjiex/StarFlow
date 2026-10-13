@@ -20,7 +20,10 @@ object ImportDialog {
     fun show(
         context: Context,
         onPickFiles: () -> Unit,
-        onPickSingleDir: () -> Unit
+        onPickSingleDir: () -> Unit,
+        onScan: () -> Unit = {},
+        onStorage: () -> Unit = {},
+        novel: Boolean = false
     ) {
         val view = LayoutInflater.from(context).inflate(R.layout.dialog_import_manga, null, false)
         // 选项说明：措辞与 koto 的导入介绍统一（两个书架共用同一份布局，各自填自己的文案）
@@ -32,8 +35,18 @@ object ImportDialog {
         // 存储位置提示：方便用户知道导入的漫画保存在哪
         view.findViewById<TextView>(R.id.tv_storage_hint).text =
             context.getString(R.string.import_storage_hint, StorageDirStore.root(context).absolutePath)
+        if (novel) {
+            view.findViewById<TextView>(R.id.btn_import_file).setText(R.string.import_novel_option_files)
+            view.findViewById<TextView>(R.id.btn_import_single_dir).setText(R.string.import_option_dir_novel_single)
+            view.findViewById<TextView>(R.id.tv_import_file_desc).setText(R.string.import_desc_files_novel)
+            view.findViewById<TextView>(R.id.tv_import_dir_desc).setText(R.string.import_desc_dir_novel)
+        }
+        view.findViewById<TextView>(R.id.tv_storage_hint).text =
+            context.getString(R.string.import_storage_hint,
+                com.moe.starflow.library.LibrarySessions.current(context).storage.displayPath +
+                    if (novel) "/novel_import" else "/manga_import")
         val dialog = AlertDialog.Builder(context)
-            .setTitle(R.string.import_tab_manga)
+            .setTitle(if (novel) R.string.novel_shelf_title else R.string.import_tab_manga)
             .setView(view)
             .setNegativeButton(R.string.cancel, null)
             .create()
@@ -47,6 +60,8 @@ object ImportDialog {
             dialog.dismiss()
         }
 
+        view.findViewById<TextView>(R.id.btn_library_scan).setOnClickListener { onScan(); dialog.dismiss() }
+        view.findViewById<TextView>(R.id.btn_library_storage).setOnClickListener { onStorage(); dialog.dismiss() }
         dialog.show()
         dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
     }

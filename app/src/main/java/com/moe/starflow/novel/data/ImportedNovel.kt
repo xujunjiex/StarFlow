@@ -34,7 +34,10 @@ data class ImportedNovel(
     val importing: Boolean = false,
     val importPhase: ImportPhase? = null,
     val importPercent: Int = -1,
+    val bookUuid: String = "",
+    val libraryLocationId: String = "",
+    val deletionError: String? = null,
 ) {
     /** 译文身份指纹。与 `ImportedManga.translationKey` 同构。 */
-    val translationKey: String get() = addedAt.toString()
+    val translationKey: String get() = if (bookUuid.isEmpty()) addedAt.toString() else "$libraryLocationId:novel:$bookUuid"
 }

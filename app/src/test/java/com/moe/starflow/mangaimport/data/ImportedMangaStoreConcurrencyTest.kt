@@ -33,7 +33,7 @@ class ImportedMangaStoreConcurrencyTest {
     private fun manga(id: Long) = ImportedManga(
         id = id,
         title = "漫画$id",
-        localRoot = "/data/manga_import/$id",
+        localRoot = com.moe.starflow.library.LibrarySessions.current(context).local("manga_import/$id").path,
         isArchive = false,
         coverPath = null,
         pageCount = 3,

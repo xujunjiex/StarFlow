@@ -78,6 +78,11 @@ object ReaderTranslationNotify {
     private fun openReaderIntent(context: Context, novelId: Long, chapterIndex: Int): PendingIntent {
         val intent = Intent(context, NovelReaderActivity::class.java).apply {
             putExtra(NovelReaderActivity.EXTRA_NOVEL_ID, novelId)
+            val session = com.moe.starflow.library.LibrarySessions.current(context)
+            val book = session.database.catalog().book("novel", novelId)
+            putExtra("library_location", session.locationId)
+            putExtra("library_book_uuid", book?.uuid)
+            data = android.net.Uri.parse("starflow://library/${session.locationId}/novel/${book?.uuid}")
             putExtra(NovelReaderActivity.EXTRA_CHAPTER_INDEX, chapterIndex)
         }
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)

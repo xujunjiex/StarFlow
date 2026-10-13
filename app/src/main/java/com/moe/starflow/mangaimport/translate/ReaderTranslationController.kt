@@ -248,7 +248,7 @@ class ReaderTranslationController(
     /** 队列正在翻译的页（-1 = 空闲）。供状态浮层显示"正在翻译第 N 页"。 */
     val queuePage = MutableStateFlow(-1)
 
-    private val db = TranslationHistoryDatabase.getInstance(context)
+    private val db = com.moe.starflow.library.LibrarySessions.current(context)
     private val dao = db.importedPageTranslationDao()
     private val cacheManager = TranslationCacheManager(context)
     private val rows = MutableStateFlow<Map<Int, ImportedPageTranslation>>(emptyMap())
@@ -332,17 +332,7 @@ class ReaderTranslationController(
         LogCollector.d(TAG, "渲染参数已变更 → 作废已渲染译图（代次 $renderGeneration）")
     }
 
-    /**
-     * 漫画身份指纹。
-     *
-     * ⚠️ **只用 `addedAt`，绝不要把 `title` 拼进来**：书架有「重命名」功能
-     * （`ImportMangaFragment.renameSelected` → `manga.copy(title = name)`），
-     * 一旦标题变化，含 title 的指纹就全部失配 → 整本书的译文读不出来（数据还在库里，
-     * 但显示为未翻译，且 `purgeOrphanTranslations` 也清不到它们，会永久堆积）。
-     * `addedAt` 每次导入唯一，本身已足够区分。
-     *
-     * 推导收敛在 [ImportedManga.translationKey]（书架删除前的「有没有译文」提示用同一个值）。
-     */
+    /** Captured physical library, kind and UUID. Titles do not affect processing identity. */
     private val mangaKey: String = manga.translationKey
 
     private val renderLru = object : LruCache<String, Bitmap>(RENDER_CACHE_KB) {
@@ -585,7 +575,7 @@ class ReaderTranslationController(
 
     fun srActionOf(pageIndex: Int): SrAction {
         if (!SrSettings.isEnabledForReader(appPrefs)) return SrAction.HIDDEN
-        if (SrProcessor.isRunning(manga.id, pageIndex)) return SrAction.BUSY
+        if (SrProcessor.isRunning(manga.id, pageIndex, mangaKey)) return SrAction.BUSY
         val active = SrModelManager.getActiveKey(appPrefs)?.name
         if (active == null || srModelByPage[pageIndex] != active) return SrAction.ENHANCE
         return if (isSrVisualOn(pageIndex)) SrAction.SHOW_ORIGINAL else SrAction.SHOW_SR
@@ -1078,6 +1068,7 @@ class ReaderTranslationController(
     // 必须 @Volatile：否则（JMM 无 happens-before）unbindUi() 之后后台仍可能看到旧 lambda
     // → 继续调用已销毁 Activity 的页图加载器/浮层回调（正是这段注释声称要避免的泄漏）。
     @Volatile private var loadFull: (Int) -> Bitmap? = { ownSource.loadFull(it) }
+    @Volatile private var loadError: (Int) -> String? = { ownSource.pageError(it) }
     @Volatile private var loadWebtoon: ((Int) -> Bitmap?)? = null
     @Volatile private var originalWidthOf: ((Int) -> Int)? = null
     @Volatile private var currentPageProvider: () -> Int = { -1 }
@@ -1152,8 +1143,10 @@ class ReaderTranslationController(
         currentPage: () -> Int,
         pageCount: () -> Int,
         displayWidth: () -> Int = { 0 },
+        pageError: (Int) -> String? = { ownSource.pageError(it) },
     ) {
         this.loadFull = loadFull
+        this.loadError = pageError
         this.currentPageProvider = currentPage
         this.pageCount = pageCount
         this.displayWidthProvider = displayWidth
@@ -1183,6 +1176,7 @@ class ReaderTranslationController(
     fun unbindUi() {
         uiAttached = false
         loadFull = { ownSource.loadFull(it) }
+        loadError = { ownSource.pageError(it) }
         loadWebtoon = null
         originalWidthOf = null
         displayWidthProvider = { 0 }
@@ -1313,6 +1307,15 @@ class ReaderTranslationController(
     }
 
     /** 彻底停掉（连章节批量任务一起）—— 换书 / 控制器被回收时用。 */
+    suspend fun shutdownAndJoin() {
+        closed = true
+        val running = listOfNotNull(queueJob, manualJob, partialJob, webtoonPrewarmJob, srChapterJobTask) + autoSrJobs.values.toList()
+        running.forEach { it.cancel() }
+        chapterRunner.shutdownAndJoin()
+        shutdownAll()
+        running.forEach { it.join() }
+    }
+
     fun shutdownAll() {
         srStoreObserver?.cancel()
         autoSrJobs.values.forEach { it.cancel() }
@@ -1330,7 +1333,7 @@ class ReaderTranslationController(
         //    放在 `unbindUi()` 之后：那里刚把 loadFull 换回 ownSource，先关再换就白关了。
         //    ⚠️ 只在**真创建过**时才关（见 [ownSourceCreated]）：直接 close() 会触发 lazy 初始化，
         //       对 PDF 等于"进程收尾时白解析整本 PDF 再立刻关掉"。
-        if (ownSourceCreated) runCatching { ownSource.close() }
+        if (ownSourceCreated) com.moe.starflow.library.LibrarySessions.release { ownSource.close() }
     }
 
     /**
@@ -2061,7 +2064,7 @@ class ReaderTranslationController(
             }
             val bitmap = loadFull(page)
             if (bitmap == null) {
-                val msg = context.getString(R.string.reader_translate_load_failed)
+                val msg = loadError(page) ?: context.getString(R.string.reader_translate_load_failed)
                 withContext(NonCancellable) { runCatching { fail(page, "PROCESS_EXCEPTION", msg) } }
                 return null
             }
@@ -2545,11 +2548,6 @@ class ReaderTranslationController(
         } catch (e: Exception) {
             LogCollector.e(TAG, "resetTranslating failed", e)
         }
-        try {
-            migrateLegacyMangaKey()
-        } catch (e: Exception) {
-            LogCollector.e(TAG, "migrateLegacyMangaKey failed", e)
-        }
         rows.value = dao.forManga(manga.id, mangaKey).associateBy { it.pageIndex }
         // 超分侧同款：先清残留的「超分中」（理由与 resetTranslating 完全一致），再载入。
         // 与运行中的写入共用一把 Mutex，否则启动队列可能先完成超分，随后这份旧查询快照
@@ -2566,24 +2564,6 @@ class ReaderTranslationController(
         refreshSrArtifacts()
         observeSrStore()
         version.value += 1
-    }
-
-    /**
-     * 一次性迁移旧指纹：`title|addedAt` → `addedAt`（见 [mangaKey] 的说明）。
-     *
-     * 不做的话，升级后老用户的译文会全部「消失」（行还在，但按新指纹查不到）。
-     * 以 `|addedAt` 后缀匹配旧行，因此**用户改过名也能救回来**（旧行里存的是改名前的标题）。
-     */
-    private suspend fun migrateLegacyMangaKey() {
-        val legacySuffix = "|${manga.addedAt}"
-        val keys = dao.mangaKeysFor(manga.id)
-        for (k in keys) {
-            if (k.isNullOrEmpty() || k == mangaKey) continue
-            if (k.endsWith(legacySuffix)) {
-                dao.rewriteMangaKey(manga.id, k, mangaKey)
-                LogCollector.d(TAG, "migrated legacy mangaKey '$k' → '$mangaKey'")
-            }
-        }
     }
 
     fun stateOf(pageIndex: Int): Int =
@@ -2712,7 +2692,7 @@ class ReaderTranslationController(
 
             val bitmap = loadFull(page)
             if (bitmap == null) {
-                val msg = context.getString(R.string.reader_translate_load_failed)
+                val msg = loadError(page) ?: context.getString(R.string.reader_translate_load_failed)
                 fail(page, "PROCESS_EXCEPTION", msg)
                 phase(ReaderTranslatePhase.FAILED, msg)
                 return

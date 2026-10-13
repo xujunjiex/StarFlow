@@ -31,6 +31,11 @@
                 android:text="@string/novel_shelf_title" />
         </LinearLayout>
 
+        <TextView android:id="@+id/library_status"
+            android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:padding="10dp" android:textColor="@color/text_primary"
+            android:visibility="gone" />
+
         <!-- 顶部栏：正常模式（标题 + 显示选项）/ 多选模式（已选数 + 关闭） -->
         <LinearLayout
             android:id="@+id/topBar"

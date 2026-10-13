@@ -10,11 +10,11 @@ import com.moe.starflow.novel.model.NovelFormat
  */
 object NovelParsers {
 
-    fun forFormat(format: NovelFormat): NovelParser = when (format) {
+    fun forFormat(format: NovelFormat): NovelParser = LibraryNovelParser(format, when (format) {
         NovelFormat.TXT -> TxtParser
         NovelFormat.EPUB -> EpubParser
         NovelFormat.ZIP_HTML -> ZipHtmlParser
         NovelFormat.HTML -> HtmlParser
         NovelFormat.FOLDER -> FolderNovelParser
-    }
+    })
 }

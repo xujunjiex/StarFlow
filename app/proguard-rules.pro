@@ -71,6 +71,14 @@
     @androidx.room.* <methods>;
 }
 
+# Portable library journals use stable entity field names, constructors and DAO method names.
+-keep class com.moe.starflow.data.ImportedPageTranslation { *; }
+-keep class com.moe.starflow.data.ImportedPageSr { *; }
+-keep class com.moe.starflow.data.NovelParagraphTranslation { *; }
+-keep interface com.moe.starflow.data.ImportedPageTranslationDao { *; }
+-keep interface com.moe.starflow.data.ImportedPageSrDao { *; }
+-keep interface com.moe.starflow.data.NovelParagraphTranslationDao { *; }
+
 # --- KeystoreManager (加密相关不能混淆) ---
 -keep class com.moe.starflow.utils.KeystoreManager { *; }
 

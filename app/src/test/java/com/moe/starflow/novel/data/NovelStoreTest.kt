@@ -26,9 +26,11 @@ class NovelStoreTest {
     private fun novel(id: Long, at: Long) = ImportedNovel(
         id = id,
         title = "书$id",
-        localRoot = "/tmp/$id",
+        localRoot = com.moe.starflow.library.LibrarySessions.current(ctx).local("novel_import/$id").path,
         format = NovelFormat.TXT,
         chapterCount = 3,
+        bookUuid = com.moe.starflow.library.LibrarySessions.current(ctx).uuid("novel", id),
+        libraryLocationId = com.moe.starflow.library.LibrarySessions.current(ctx).locationId,
         addedAt = at,
     )
 
@@ -43,7 +45,7 @@ class NovelStoreTest {
             author = "某作者",
             description = "简介",
             format = NovelFormat.EPUB,
-            coverPath = "/tmp/cover.jpg",
+            coverPath = com.moe.starflow.library.LibrarySessions.current(ctx).local(".starflow/books/${novel(1, 100).bookUuid}/cover/cover.jpg").path,
             sizeBytes = 12345,
             lastReadChapter = 2,
             lastReadParaIndex = 500,
@@ -99,7 +101,8 @@ class NovelStoreTest {
 
     @Test
     fun `没有本地路径的条目读不回来`() {
-        NovelStore.save(ctx, listOf(novel(1, 100), novel(2, 200).copy(localRoot = "")))
+        NovelStore.save(ctx, listOf(novel(1, 100)))
+        org.junit.Assert.assertThrows(IllegalArgumentException::class.java) { NovelStore.add(ctx, novel(2, 200).copy(localRoot = "")) }
         assertEquals(listOf(1L), NovelStore.load(ctx).map { it.id })
     }
 
@@ -107,7 +110,7 @@ class NovelStoreTest {
     fun `坏 JSON 不会崩只是读回空表`() {
         ctx.getSharedPreferences("novel_shelf", Context.MODE_PRIVATE)
             .edit().putString("imported_novel_list", "{ not json").apply()
-        assertEquals(emptyList<ImportedNovel>(), NovelStore.load(ctx))
+        org.junit.Assert.assertThrows(java.io.IOException::class.java) { NovelStore.loadLegacy(ctx) }
     }
 
     @Test
@@ -117,7 +120,7 @@ class NovelStoreTest {
                 "imported_novel_list",
                 """[{"id":1,"title":"x","localRoot":"/tmp/1","format":"MOBI","addedAt":5,"chapterCount":1}]""",
             ).apply()
-        assertEquals(NovelFormat.TXT, NovelStore.load(ctx).single().format)
+        assertEquals(NovelFormat.TXT, NovelStore.loadLegacy(ctx).single().format)
     }
 
     @Test
@@ -128,7 +131,7 @@ class NovelStoreTest {
                 """[{"id":1,"title":"x","localRoot":"/tmp/1","format":"TXT","addedAt":5,"chapterCount":1}]""",
             ).apply()
 
-        assertEquals(0, NovelStore.load(ctx).single().lastReadAt)
+        assertEquals(0, NovelStore.loadLegacy(ctx).single().lastReadAt)
     }
 
     /**
@@ -162,7 +165,8 @@ class NovelStoreTest {
 
     @Test
     fun `translationKey 就是 addedAt`() {
-        assertEquals("100", novel(1, 100).translationKey)
+        val n = novel(1, 100)
+        assertEquals("${n.libraryLocationId}:novel:${n.bookUuid}", n.translationKey)
     }
 
     /**
@@ -186,12 +190,12 @@ class NovelStoreTest {
     /** 非空值往返不能丢（别为了修 null 把正常值也吞掉）。 */
     @Test
     fun `非空的可空字段往返后不丢`() {
-        NovelStore.save(ctx, listOf(novel(1, 100).copy(author = "某作者", coverPath = "/covers/1.jpg")))
+        NovelStore.save(ctx, listOf(novel(1, 100).copy(author = "某作者", coverPath = com.moe.starflow.library.LibrarySessions.current(ctx).local(".starflow/books/${novel(1, 100).bookUuid}/cover/1.jpg").path)))
 
         val got = NovelStore.load(ctx).single()
 
         assertEquals("某作者", got.author)
-        assertEquals("/covers/1.jpg", got.coverPath)
+        assertEquals(com.moe.starflow.library.LibrarySessions.current(ctx).local(".starflow/books/${got.bookUuid}/cover/1.jpg").path, got.coverPath)
     }
 
     /**
@@ -203,11 +207,8 @@ class NovelStoreTest {
         ctx.getSharedPreferences("novel_shelf", Context.MODE_PRIVATE)
             .edit().putString("imported_novel_list", "{坏掉的 json").commit()
 
-        NovelStore.save(ctx, listOf(novel(1, 100)))
-
-        val backup = ctx.getSharedPreferences("novel_shelf", Context.MODE_PRIVATE)
-            .getString("novels_broken_backup", null)
-        assertEquals("{坏掉的 json", backup)
-        assertEquals(1, NovelStore.load(ctx).size)
+        org.junit.Assert.assertThrows(java.io.IOException::class.java) { NovelStore.loadLegacy(ctx) }
+        assertEquals("{坏掉的 json", ctx.getSharedPreferences("novel_shelf", Context.MODE_PRIVATE)
+            .getString("imported_novel_list", null))
     }
 }

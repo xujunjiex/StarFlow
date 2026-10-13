@@ -165,33 +165,38 @@ object PPOcrV6Engine {
      * rec 会话按需懒加载（首次调用 [getRecSession] 时）。
      */
     fun initialize(context: Context) {
-        synchronized(lock) {
-            if (isInitialized) return
-            try {
-                LogCollector.d(TAG, "开始初始化 PP-OCRv6 引擎...")
-                ortEnv = OrtEnvironment.getEnvironment()
-                val sessionOpts = OrtSession.SessionOptions().apply {
-                    setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
-                    setMemoryPatternOptimization(true)
-                    setCPUArenaAllocator(true)
-                    setIntraOpNumThreads(4)
+        PpRecRecognizer.withMemoryGuard(context, TAG, "PP-OCRv6 initialization") {
+            synchronized(lock) {
+                if (isInitialized) return
+                try {
+                    LogCollector.d(TAG, "开始初始化 PP-OCRv6 引擎...")
+                    ortEnv = OrtEnvironment.getEnvironment()
+                    val sessionOpts = OrtSession.SessionOptions().apply {
+                        setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+                        setMemoryPatternOptimization(true)
+                        setCPUArenaAllocator(true)
+                        setIntraOpNumThreads(4)
+                    }
+
+                    // det（tier 感知：medium 外部优先，small assets 兜底）
+                    val detBytes = loadDetModelBytes(context)
+                    detSession = ortEnv!!.createSession(detBytes, sessionOpts)
+
+                    // cls removed — direction classification is no longer used
+
+                    // 字典
+                    loadDictionary(context)
+
+                    isInitialized = true
+                    LogCollector.d(TAG, "PP-OCRv6 引擎初始化完成")
+                } catch (e: OutOfMemoryError) {
+                    release()
+                    throw e
+                } catch (e: Exception) {
+                    LogCollector.e(TAG, "PP-OCRv6 初始化失败", e)
+                    release()
+                    throw e
                 }
-
-                // det（tier 感知：medium 外部优先，small assets 兜底）
-                val detBytes = loadDetModelBytes(context)
-                detSession = ortEnv!!.createSession(detBytes, sessionOpts)
-
-                // cls removed — direction classification is no longer used
-
-                // 字典
-                loadDictionary(context)
-
-                isInitialized = true
-                LogCollector.d(TAG, "PP-OCRv6 引擎初始化完成")
-            } catch (e: Exception) {
-                LogCollector.e(TAG, "PP-OCRv6 初始化失败", e)
-                release()
-                throw e
             }
         }
     }
@@ -557,7 +562,7 @@ object PPOcrV6Engine {
         context: Context,
         bitmap: Bitmap,
         useDet: Boolean = true
-    ): OcrResult {
+    ): OcrResult = PpRecRecognizer.withMemoryGuard(context, TAG) {
         if (!isInitialized) throw IllegalStateException("PPOcrV6Engine 未初始化")
         if (bitmap.isRecycled) throw IllegalArgumentException("Bitmap 已回收")
 
@@ -604,14 +609,19 @@ object PPOcrV6Engine {
         val cropT0 = System.currentTimeMillis()
         val cropResults = mutableListOf<Triple<Bitmap, FloatArray, Int>>() // crop, box, originalIndex
 
-        for ((idx, box) in boxes.withIndex()) {
-            val pts = boxToQuadPoints(box)
-            try {
-                val crop = PPOcrDetGeometry.getRotateCropImage(bitmap, pts)
-                cropResults.add(Triple(crop, box, idx))
-            } catch (e: Exception) {
-                LogCollector.w(TAG, "裁剪失败 box[$idx]: ${e.message}")
+        try {
+            for ((idx, box) in boxes.withIndex()) {
+                val pts = boxToQuadPoints(box)
+                try {
+                    val crop = PPOcrDetGeometry.getRotateCropImage(bitmap, pts)
+                    cropResults.add(Triple(crop, box, idx))
+                } catch (e: Exception) {
+                    LogCollector.w(TAG, "裁剪失败 box[$idx]: ${e.message}")
+                }
             }
+        } catch (e: OutOfMemoryError) {
+            cropResults.forEach { (crop, _, _) -> if (!crop.isRecycled) crop.recycle() }
+            throw e
         }
         val cropTime = System.currentTimeMillis() - cropT0
 
@@ -823,7 +833,7 @@ object PPOcrV6Engine {
      * 公开检测方法：返回原始坐标系的 box 数组。
      * 用于增量渲染场景的 det 阶段。
      */
-    fun runDetForBoxes(context: Context, bitmap: Bitmap): List<FloatArray> {
+    fun runDetForBoxes(context: Context, bitmap: Bitmap): List<FloatArray> = PpRecRecognizer.withMemoryGuard(context, TAG) {
         if (!isInitialized) throw IllegalStateException("PPOcrV6Engine 未初始化")
         refreshParams(context)
         val boxes = runDet(bitmap)
@@ -835,7 +845,7 @@ object PPOcrV6Engine {
      * 调试用检测：返回保留和被丢弃的选区。
      * 丢弃原因：score<box_thresh、尺寸过小、unclip过小
      */
-    fun runDetForDebug(context: Context, bitmap: Bitmap): DebugDetResult {
+    fun runDetForDebug(context: Context, bitmap: Bitmap): DebugDetResult = PpRecRecognizer.withMemoryGuard(context, TAG) {
         if (!isInitialized) throw IllegalStateException("PPOcrV6Engine 未初始化")
         refreshParams(context)
 
@@ -852,8 +862,11 @@ object PPOcrV6Engine {
             ortEnv!!, buffer,
             longArrayOf(1, 3, detH.toLong(), detW.toLong())
         )
-        val results = detSession!!.run(mapOf("x" to inputTensor))
-        inputTensor.close()
+        val results = try {
+            detSession!!.run(mapOf("x" to inputTensor))
+        } finally {
+            inputTensor.close()
+        }
 
         try {
             var detOutputTensor: OnnxTensor? = null
@@ -866,11 +879,10 @@ object PPOcrV6Engine {
             }
             val outputData = detOutputTensor!!.floatBuffer.array()
             val outputShape = detOutputTensor.info.shape
-            detOutputTensor.close()
 
             val predH = outputShape[2].toInt()
             val predW = outputShape[3].toInt()
-            val pred = outputData.sliceArray(0 until predH * predW)
+            val pred = outputData
 
             return postprocessDetDebug(pred, predH, predW, bitmap.height, bitmap.width)
         } finally {
@@ -1003,8 +1015,11 @@ object PPOcrV6Engine {
             longArrayOf(1, 3, detH.toLong(), detW.toLong())
         )
 
-        val results = detSession!!.run(mapOf("x" to inputTensor))
-        inputTensor.close()
+        val results = try {
+            detSession!!.run(mapOf("x" to inputTensor))
+        } finally {
+            inputTensor.close()
+        }
 
         try {
             var detOutputTensor: OnnxTensor? = null
@@ -1017,11 +1032,10 @@ object PPOcrV6Engine {
             }
             val outputData = detOutputTensor!!.floatBuffer.array()
             val outputShape = detOutputTensor.info.shape // [1, 1, H, W]
-            detOutputTensor.close()
 
             val predH = outputShape[2].toInt()
             val predW = outputShape[3].toInt()
-            val pred = outputData.sliceArray(0 until predH * predW)
+            val pred = outputData
 
             postprocessDet(pred, predH, predW, bitmap.height, bitmap.width).boxes
         } finally {

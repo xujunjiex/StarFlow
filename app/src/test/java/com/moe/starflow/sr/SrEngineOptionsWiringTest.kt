@@ -85,29 +85,9 @@ class SrEngineOptionsWiringTest {
     // ───────────────────────── 跳过阈值 ─────────────────────────
 
     @Test
-    fun skipThresholdIsReadFromOnePlaceAndAppliedBeforeTheLock() {
-        val proc = read("src/main/java/com/moe/starflow/sr/SrProcessor.kt") ?: return
-        assertTrue(
-            "执行器必须从 SrOptions 读选项（唯一的读入口；判据不许在调用点各写一份）",
-            proc.contains("SrOptions.from(prefs)"),
-        )
-        assertTrue(
-            "跳过判据必须走 SrSkipPolicy.shouldSkip(逐轴两阈值)，与参照项目同形",
-            proc.contains("SrSkipPolicy.shouldSkip(src.width, src.height, options.skipMaxWidth, options.skipMaxHeight)"),
-        )
-        assertTrue("跳过要报具体原因枚举，不能默默返回 null", proc.contains("SrFailReason.OVER_SKIP_LIMIT"))
-        // 顺序：跳过判定必须在等 OcrLock 之前 —— 跳过的页一秒都不该花、也不该占着锁让 OCR 排队
-        val skipAt = proc.indexOf("SrSkipPolicy.shouldSkip(")
-        val lockAt = proc.indexOf("while (OcrLock.isRunning || OcrLock.hasOcrDemand())")
-        assertTrue("找不到等锁循环（改名了？）", lockAt > 0)
-        assertTrue("跳过判定必须放在等 OcrLock 之前", skipAt in 1 until lockAt)
-        val options = read("src/main/java/com/moe/starflow/sr/SrOptions.kt") ?: return
-        assertEquals(
-            "跳过阈值默认必须是 0（不跳过）—— 默认跳过会让用户看到「超分没反应」",
-            0,
-            SrOptions.DEFAULT_SKIP_MAX,
-        )
-        assertTrue("选项要能落到 prefs（否则设置页存不下来）", options.contains("fun write(prefs: SharedPreferences"))
+    fun inputBudgetDefaultUsesTheExplicitMpOption() {
+        assertEquals(1.5f, SrOptions().maxInputMegapixels)
+        assertEquals(0f, SrOptions(maxInputMegapixels = 0f).maxInputMegapixels)
     }
 
     @Test

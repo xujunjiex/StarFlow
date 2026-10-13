@@ -69,4 +69,10 @@
         android:textColor="@color/text_hint"
         android:text="@string/import_folder_hint"/>
 
+    <TextView android:id="@+id/btn_library_scan"
+        android:layout_width="match_parent" android:layout_height="48dp"
+        android:gravity="center_vertical" android:text="@string/library_scan" android:textColor="@color/text_primary" />
+    <TextView android:id="@+id/btn_library_storage"
+        android:layout_width="match_parent" android:layout_height="48dp"
+        android:gravity="center_vertical" android:text="@string/library_storage_title" android:textColor="@color/text_primary" />
 </LinearLayout>

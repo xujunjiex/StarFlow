@@ -2,7 +2,6 @@ package com.moe.starflow.novel.data
 
 import android.content.Context
 import android.net.Uri
-import com.moe.starflow.data.TranslationHistoryDatabase
 import com.moe.starflow.mangaimport.data.ImportFormat
 import com.moe.starflow.mangaimport.data.ImportPhase
 import com.moe.starflow.mangaimport.data.ImportProgress
@@ -68,7 +67,7 @@ object NovelImportManager {
 
     /** 导入若干文件（可多选）。每个文件一个独立任务：各自占位卡片、各自进度、各自可取消。 */
     fun importFiles(context: Context, uris: List<Uri>) {
-        val app = context.applicationContext
+        val app = com.moe.starflow.library.LibrarySessions.pin(context)
         uris.forEach { uri -> launchFileTask(app, uri) }
     }
 
@@ -76,16 +75,24 @@ object NovelImportManager {
      * 导入一个文件夹：**整个夹 = 一部小说**，夹内每个 txt 是一章（与漫画的「整个夹 = 一部」同一套心智）。
      */
     fun importDirectory(context: Context, treeUri: Uri) {
-        val app = context.applicationContext
-        scope.launch {
+        val app = com.moe.starflow.library.LibrarySessions.pin(context)
+        com.moe.starflow.library.LibrarySessions.launch(app, scope) {
+            try { com.moe.starflow.library.LibrarySessions.prepare(app) }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { emit(NovelImportEvent.Failed("书库存储", NovelImportFailureReason.UNKNOWN, failureDetail(e))); return@launch }
             val id = reserveId(app)
             // 占位标题只用 URI 本地回退；真实名称在 NovelImporter 中查询一次并记录诊断。
             val title = SafDocumentMetadata.fallbackName(treeUri) ?: "folder_$id"
             registerTask(id, title, ImportPhase.SCANNING, coroutineContext[Job])
             try {
+                com.moe.starflow.library.LibrarySessions.prepare(app)
+                com.moe.starflow.library.LibrarySessions.current(app).beginImport("novel", id)
                 val novel = NovelImporter.importDirectory(app, treeUri, id) { p -> updateProgress(id, p) }
                 ensureActive()
                 NovelStore.add(app, novel)
+                val savedSession = com.moe.starflow.library.LibrarySessions.current(app)
+                savedSession.flush()
+                savedSession.database.catalog().book("novel", id)?.let { savedSession.releaseBookCopies(it.uuid, it.source) }
                 LogCollector.i(TAG, "文件夹导入完成: ${novel.title} (${novel.chapterCount} 章)")
                 if (novel.chapterCount == 0) emit(NovelImportEvent.NoChapters(novel.title))
             } catch (e: CancellationException) {
@@ -124,16 +131,24 @@ object NovelImportManager {
     // ===== 内部 =====
 
     private fun launchFileTask(app: Context, uri: Uri) {
-        scope.launch {
+        com.moe.starflow.library.LibrarySessions.launch(app, scope) {
+            try { com.moe.starflow.library.LibrarySessions.prepare(app) }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { emit(NovelImportEvent.Failed("书库存储", NovelImportFailureReason.UNKNOWN, failureDetail(e))); return@launch }
             val id = reserveId(app)
             // 占位标题使用 URI 本地回退，避免重复触发一次会被吞掉的 provider 元数据查询。
             val name = SafDocumentMetadata.fallbackName(uri).orEmpty()
             val title = name.substringBeforeLast('.', name).ifBlank { "book_$id" }
             registerTask(id, title, ImportPhase.COPYING, coroutineContext[Job])
             try {
+                com.moe.starflow.library.LibrarySessions.prepare(app)
+                com.moe.starflow.library.LibrarySessions.current(app).beginImport("novel", id)
                 val novel = NovelImporter.importFile(app, uri, id) { p -> updateProgress(id, p) }
                 ensureActive()
                 NovelStore.add(app, novel)
+                val savedSession = com.moe.starflow.library.LibrarySessions.current(app)
+                savedSession.flush()
+                savedSession.database.catalog().book("novel", id)?.let { savedSession.releaseBookCopies(it.uuid, it.source) }
                 LogCollector.i(TAG, "导入完成: ${novel.title} (${novel.chapterCount} 章)")
                 if (novel.chapterCount == 0) emit(NovelImportEvent.NoChapters(novel.title))
             } catch (e: CancellationException) {
@@ -254,7 +269,9 @@ object NovelImportManager {
 
     /** 删掉本次导入的半成品目录与封面（取消/失败时；成功路径不会调）。 */
     private fun cleanup(context: Context, id: Long) {
+        if (com.moe.starflow.library.LibrarySessions.current(context).database.catalog().book("novel", id) != null) return
         NovelImporter.deleteBookFiles(context, id)
+        if (!NovelStorageDir.bookDir(context, id).exists()) com.moe.starflow.library.LibrarySessions.current(context).abandonImport("novel", id)
     }
 
     /**
@@ -319,64 +336,8 @@ object NovelImportManager {
      */
     fun deleteNovels(context: Context, novels: List<ImportedNovel>) {
         if (novels.isEmpty()) return
-        val app = context.applicationContext
-        markDeleting(novels)
-        // 清单先同步删：调用方紧接着的 refresh 必然看到「已删除」，不会闪回一张已经删掉的卡片
-        novels.forEach { NovelStore.remove(app, it.id) }
-        scope.launch {
-            try {
-                novels.forEach { n ->
-                    runCatching { NovelImporter.deleteBookFiles(app, n.id) }
-                        .onFailure { LogCollector.w(TAG, "删除书籍文件失败 id=${n.id}", it) }
-                    runCatching { NovelImporter.deleteScannedSource(app, n.id, n.localRoot) }
-                        .onFailure { LogCollector.w(TAG, "删除自动扫描的小说来源失败 id=${n.id}", it) }
-                }
-                try {
-                    val dao = TranslationHistoryDatabase.getInstance(app).novelParagraphTranslationDao()
-                    novels.forEach { n ->
-                        // 一部删除失败不影响其他书；孤儿行由 purgeOrphanTranslations 兜底。
-                        runCatching { dao.deleteForNovelScoped(n.id, n.translationKey) }
-                            .onFailure { LogCollector.w(TAG, "删除译文记录失败 id=${n.id}", it) }
-                    }
-                    LogCollector.i(TAG, "已删除 ${novels.size} 部小说: ${novels.map { it.id }}")
-                } catch (e: Exception) {
-                    // 连库都没拿到：文件已单独处理，孤儿行等下次进书架清理
-                    LogCollector.e(TAG, "删除译文记录失败: ${novels.map { it.id }}", e)
-                }
-            } finally {
-                clearDeleting(novels)
-            }
-        }
+        val pinned = com.moe.starflow.library.LibrarySessions.forLocation(context, novels.first().libraryLocationId).context()
+        com.moe.starflow.library.LibraryDeletion.start(pinned, "novel", novels.map { it.id }, novels.associate { it.id to it.bookUuid })
     }
 
-    /**
-     * 清理**孤儿译文行**：库里出现过、但书架清单里已经没有的 novelId（进程级作用域，幂等）。
-     *
-     * 必要性：删除是异步的（见 [deleteNovels]），进程被杀 / 崩溃 / 中途异常都会让那几条 DELETE
-     * 永远不执行；孤儿行虽然不会串到新书（读取按 (id, 指纹) 过滤），但每行都带着原文与译文，
-     * 只会白占空间。与漫画侧 `ImportMangaFragment.purgeOrphanTranslations` 同构。
-     */
-    fun purgeOrphanTranslations(context: Context) {
-        val app = context.applicationContext
-        scope.launch {
-            try {
-                val db = TranslationHistoryDatabase.getInstance(app)
-                val dao = db.novelParagraphTranslationDao()
-                val validIds = NovelStore.load(app).map { it.id }.toSet()
-                dao.allNovelIds().filter { it !in validIds }.forEach { id ->
-                    try {
-                        // ⚠️ 逐个二次确认：本方法也是异步的，期间用户完全可能刚好导入了一本复用同 id 的
-                        // 新书（id = 清单最大 id + 1）。不再确认就按 id 删，会删掉那本新书的翻译行。
-                        if (NovelStore.load(app).any { it.id == id }) return@forEach
-                        dao.deleteForNovelId(id)
-                        LogCollector.i(TAG, "已清理孤儿译文 id=$id")
-                    } catch (e: Exception) {
-                        LogCollector.w(TAG, "清理孤儿译文失败 id=$id", e)
-                    }
-                }
-            } catch (e: Exception) {
-                LogCollector.w(TAG, "孤儿译文清理失败", e)
-            }
-        }
-    }
 }

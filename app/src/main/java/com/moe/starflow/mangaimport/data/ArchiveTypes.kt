@@ -11,7 +11,7 @@ enum class ArchiveKind {
     /**
      * PDF（漫画扫描件 / 电子版）。
      *
-     * ⚠️ 它的处理方式与压缩包**相反**：zip 保留原包随机读、rar/7z 解压成目录，
+     * ⚠️ 它的处理方式与压缩包**相反**：ZIP/RAR/7z 都保留原包按需读，
      * 而 PDF **保留原文件 + 按需栅格化**（见 [PdfPageRenderer] / [PdfRasterPolicy]）——
      * pdfium 本来就支持按页随机渲染，导入时全量转图只会白占 2~3 倍空间。
      */
@@ -25,7 +25,7 @@ enum class ArchiveKind {
  * 压缩包 / PDF 格式识别：**按魔数判定，不看扩展名**。
  *
  * ⚠️ 为什么不信扩展名：`.cbr` 里塞的常常是改名的 zip，`.zip` 里也可能是 rar；
- * 而两条读取链路完全不同（zip 走 `ZipFile` 随机读、rar/7z 走 libarchive 顺序解压），
+ * 而两条读取链路完全不同（zip 走 `ZipFile` 随机读、RAR/7z 走 libarchive 串行读页），
  * 认错了就是「导入成功但一页都没有」或者「导入失败」。
  */
 object ArchiveTypes {
@@ -87,7 +87,4 @@ object ArchiveTypes {
         return -1
     }
 
-    /** 需要 libarchive 解压成目录的格式（zip 走 `ZipFile` 随机读、PDF 按需栅格化，都不解压）。 */
-    fun needsExtraction(kind: ArchiveKind): Boolean =
-        kind == ArchiveKind.RAR || kind == ArchiveKind.SEVEN_ZIP
 }

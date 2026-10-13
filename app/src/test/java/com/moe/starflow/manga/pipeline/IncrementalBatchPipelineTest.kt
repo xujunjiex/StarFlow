@@ -577,14 +577,14 @@ class IncrementalBatchPipelineTest {
         for ((det, ocr) in listOf(DetEngine.PP_OCR_V5 to OcrEngine.PPOcrV5, DetEngine.PP_OCR_V6 to OcrEngine.PPOcrV6)) {
             ops = FakeOps().apply {
                 lineCount = 10
-                recFailure = OcrMemoryException("simulated oversized output")
+                recFailure = OcrMemoryException("simulated allocation failure")
             }
             val host = FakeHost(ctx, FakeTranslator())
             try {
                 pipeline(host, config(det = det, ocr = ocr), this).run(bitmap())
                 org.junit.Assert.fail("memory failure must propagate instead of returning NotApplicable")
             } catch (e: OcrMemoryException) {
-                assertTrue(e.diagnostic.contains("oversized"))
+                assertTrue(e.diagnostic.contains("allocation"))
             }
             assertEquals(1, ops.calls.count { it.name.startsWith("recognizeV") })
             assertTrue(ops.ownedCrops.isNotEmpty())

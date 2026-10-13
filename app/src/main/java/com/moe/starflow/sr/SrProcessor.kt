@@ -12,13 +12,17 @@ import java.util.concurrent.ConcurrentHashMap
 object SrProcessor {
     private val inFlight=ConcurrentHashMap<String,Job>()
     private fun key(id: Long,page: Int,book: String)="$id:$book:$page"
-    fun isRunning(id: Long,page: Int): Boolean=inFlight.keys.any { it.startsWith("$id:") && it.endsWith(":$page") }
+    fun isRunning(id: Long,page: Int,book: String): Boolean=inFlight.containsKey(key(id,page,book))
     fun isBusy(): Boolean=inFlight.isNotEmpty()
     fun isStopping(id: Long,page: Int,book: String): Boolean=inFlight[key(id,page,book)]?.isCancelled==true
     fun cancelPage(id: Long,page: Int,book: String) {inFlight[key(id,page,book)]?.cancel()}
     fun cancelManga(id: Long,book: String) {inFlight.filterKeys { it.startsWith("$id:$book:") }.values.forEach { it.cancel() }}
-    const val KEY_CACHE_LIMIT_MB="sr_cache_limit_mb"
 
+    suspend fun stopManga(id: Long, book: String) {
+        val jobs = inFlight.filterKeys { it.startsWith("$id:$book:") }.values.toList()
+        jobs.forEach { it.cancel() }
+        jobs.joinAll()
+    }
     suspend fun preflight(context: Context,request: SrRequest): SuperResolutionEngines.EnginePick = withContext(Dispatchers.IO) {
         var token=0L
         var heartbeat: Job?=null
@@ -97,7 +101,7 @@ object SrProcessor {
             stage="saving";time=System.nanoTime()
             execution.put("totalMs",elapsed(begin)+execution.optLong("decodeMs"))
             val saved=SrStore.save(context,mangaId,page,product,request.model!!.name,mangaKey,
-                prefs.getInt(KEY_CACHE_LIMIT_MB,SrStore.DEFAULT_LIMIT_MB),request.fingerprint,execution,expectedGeneration) {job.isActive}
+                request.fingerprint,execution,expectedGeneration) {job.isActive}
             execution.put("saveMs",elapsed(time))
             if(!saved) {ensureActive();return@withContext SrOutcome.fail(SrFailReason.SAVE_FAILED,"atomic output commit failed")}
             SrOutcome.stored()

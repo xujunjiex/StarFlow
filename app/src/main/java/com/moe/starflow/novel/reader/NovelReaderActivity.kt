@@ -134,7 +134,11 @@ class NovelReaderActivity : AppCompatActivity() {
         private const val STATE_FROM_SETTINGS = "novel_state_from_settings"
 
         fun intent(context: Context, novelId: Long): Intent =
-            Intent(context, NovelReaderActivity::class.java).putExtra(EXTRA_NOVEL_ID, novelId)
+            Intent(context, NovelReaderActivity::class.java).putExtra(EXTRA_NOVEL_ID, novelId).apply {
+                val session = com.moe.starflow.library.LibrarySessions.current(context)
+                putExtra("library_location", session.locationId)
+                putExtra("library_book_uuid", session.database.catalog().book("novel", novelId)?.uuid)
+            }
     }
 
     private lateinit var binding: ActivityNovelReaderBinding
@@ -387,6 +391,8 @@ class NovelReaderActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        libraryReadLease
+
         // UI 同步字体（开关开启时）：挂 Factory2，inflate 即应用。须在 super.onCreate 前挂。
         com.moe.starflow.utils.FontSync.install(this)
         super.onCreate(savedInstanceState)
@@ -413,23 +419,32 @@ class NovelReaderActivity : AppCompatActivity() {
         rotateMode = prefs.getInt(KEY_ROTATE, 0)
 
         val id = intent.getLongExtra(EXTRA_NOVEL_ID, -1L)
-        val loaded = NovelStore.load(this).firstOrNull { it.id == id }
+        lifecycleScope.launch {
+        try {
+            com.moe.starflow.library.LibrarySessions.prepare(this@NovelReaderActivity)
+            com.moe.starflow.library.LibrarySessions.checkReaderIntent(this@NovelReaderActivity, intent, "novel", id)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            com.moe.starflow.utils.AppNotice.show(this@NovelReaderActivity, e.message ?: "入口已失效"); finish(); return@launch
+        }
+        val loaded = NovelStore.load(this@NovelReaderActivity).firstOrNull { it.id == id }
         if (loaded == null) {
             LogCollector.w(TAG, "找不到书籍 id=$id，关闭阅读器")
             finish()
-            return
+            return@launch
         }
         book = loaded
+        librarySourceLease = com.moe.starflow.library.LibrarySources.acquire(java.io.File(loaded.localRoot))
         chapterCount = loaded.chapterCount
 
         // ⚠️ 传 `novel_import/` 作为插图落盘根目录：epub 里的插图在这一层解出来，
-        // 落到 `novel_import/<书 id>/images/`（删书时跟着一起清掉，不会留孤儿文件）。
+        // 落到独立的隐藏图片缓存目录（按 id + addedAt 隔离，删书时一起清掉）。
         // 不传的话图片段就永远是占位文本 `📷 [图片]`（阅读器是唯一需要真图的地方）
-        repository = NovelChapterRepository(imagesRoot = NovelStorageDir.root(this))
+        repository = NovelChapterRepository(imagesRoot = NovelStorageDir.root(this@NovelReaderActivity))
         pageAdapter = NovelPageAdapter()
         scrollAdapter = NovelScrollAdapter()
         binding.novelPager.adapter = pageAdapter
-        binding.novelScroll.layoutManager = LinearLayoutManager(this)
+        binding.novelScroll.layoutManager = LinearLayoutManager(this@NovelReaderActivity)
         binding.novelScroll.adapter = scrollAdapter
 
         chapterIndex = loaded.lastReadChapter.coerceAtLeast(0)
@@ -452,7 +467,7 @@ class NovelReaderActivity : AppCompatActivity() {
         }
 
         // 章批量翻译的**应用级宿主**：同一本书永远只有一份（任务/进度不会分裂）
-        chapterHost = NovelTranslationHub.hostFor(this, loaded).also { host ->
+        chapterHost = NovelTranslationHub.hostFor(this@NovelReaderActivity, loaded).also { host ->
             host.bindUi(
                 confirmOversize = { estimate, threshold -> confirmOversizeOnUi(estimate, threshold) },
                 onChanged = { onChapterJobProgress() },
@@ -480,6 +495,7 @@ class NovelReaderActivity : AppCompatActivity() {
         // 那条链在「本章一句译文都没有」时会判定「没变化」直接返回，结果第一次进阅读器
         // 一片空白，必须切一次章才显示（用户实测反馈）。
         loadChapter(chapterIndex, anchor = pendingAnchor)
+        if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) onReaderStarted()
 
         lifecycleScope.launch {
             // 清理上次异常退出留下的「翻译中」标记（进程被杀时退出清理不会执行）
@@ -488,10 +504,16 @@ class NovelReaderActivity : AppCompatActivity() {
             refreshChapterStats()
             refreshTranslations()
         }
+        }
     }
 
     override fun onStart() {
         super.onStart()
+        if (!::repository.isInitialized) return
+        onReaderStarted()
+    }
+
+    private fun onReaderStarted() {
         // 提示条紧贴顶部胶囊下沿（与漫画同一个口径：不重叠、也不留大缝）。
         // ⚠️ 只覆盖顶距、不动用户的 `Status_Position` 设置；离开阅读器恢复（onStop）。
         pushNoticeTopBelowPill()
@@ -602,6 +624,10 @@ class NovelReaderActivity : AppCompatActivity() {
      */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        val current = book ?: return
+        try { com.moe.starflow.library.LibrarySessions.checkReaderIntent(this, intent, "novel", current.id) }
+        catch (e: Exception) { com.moe.starflow.utils.AppNotice.show(this, e.message ?: "入口已失效"); return }
+        if (intent.getLongExtra(EXTRA_NOVEL_ID, current.id) != current.id) return
         setIntent(intent)
         val target = intent.getIntExtra(EXTRA_CHAPTER_INDEX, -1)
         if (target < 0 || target >= chapterCount) return
@@ -643,6 +669,13 @@ class NovelReaderActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        val closingLease = librarySourceLease
+        librarySourceLease = null
+        val finishingLifecycle = lifecycleScope.coroutineContext[kotlinx.coroutines.Job]
+        com.moe.starflow.library.LibrarySessions.release {
+            finishingLifecycle?.join()
+            try { closingLease?.close() } finally { libraryReadLease.close() }
+        }
         queue?.stop()
         queueObserverJob?.cancel()
         enginePrefsListener?.let {
@@ -660,7 +693,7 @@ class NovelReaderActivity : AppCompatActivity() {
         // 兜底：`onStop` 没走到时（进程被杀之类）也别把查看器窗口留在系统里
         imageViewer?.dismiss()
         imageViewer = null
-        book?.let { NovelTranslationHub.releaseIfIdle(it.id) }
+        book?.let { NovelTranslationHub.releaseIfIdle(it.id, it.translationKey) }
         if (::repository.isInitialized) repository.evictAll()
         // ⚠️ 状态浮层是**进程级 TYPE_APPLICATION_OVERLAY 系统窗口**，不清会挂在桌面/别的应用上
         TranslationStatusOverlay.getInstance(this@NovelReaderActivity).dismiss()
@@ -681,7 +714,7 @@ class NovelReaderActivity : AppCompatActivity() {
 
     // ===== 依赖 =====
 
-    private fun db() = TranslationHistoryDatabase.getInstance(this)
+    private fun db() = com.moe.starflow.library.LibrarySessions.forLocation(this, book?.libraryLocationId.orEmpty())
 
     private fun translator() = NovelChapterTranslator(
         dao = db().novelParagraphTranslationDao(),
@@ -2735,7 +2768,7 @@ class NovelReaderActivity : AppCompatActivity() {
         val host = chapterHost ?: return
         host.cancel(index)
         showOverlayToast(getString(R.string.reader_translate_force_stopped), error = false)
-        book?.let { NovelTranslationHub.releaseIfIdle(it.id) }
+        book?.let { NovelTranslationHub.releaseIfIdle(it.id, it.translationKey) }
         pushPanelState()
     }
 
@@ -2836,7 +2869,7 @@ class NovelReaderActivity : AppCompatActivity() {
         val ch = chapterIndex
         if (chapterHost?.jobOf(ch)?.isActive == true) {
             chapterHost?.cancel(ch)
-            book?.let { NovelTranslationHub.releaseIfIdle(it.id) }
+            book?.let { NovelTranslationHub.releaseIfIdle(it.id, it.translationKey) }
         }
         showOverlayToast(getString(R.string.novel_translate_oversize_cancelled), error = false)
         pushPanelState()
@@ -3510,6 +3543,9 @@ class NovelReaderActivity : AppCompatActivity() {
      * ⚠️ 权威锚点是**章内段落号**而不是页号：页号随字号、行距、视口尺寸、甚至
      * 「译文到达后的重新分页」而变；段落号是内容本身的属性，永远指向同一处。
      */
+    private var librarySourceLease: java.io.Closeable? = null
+    private val libraryReadLease by lazy { com.moe.starflow.library.LibrarySessions.use() }
+
     private fun persistProgress() {
         val b = book ?: return
         val updated = b.copy(
@@ -3519,7 +3555,9 @@ class NovelReaderActivity : AppCompatActivity() {
             lastReadAt = System.currentTimeMillis(),
         )
         book = updated
-        NovelStore.update(this, updated)
+        NovelStore.patch(this, updated) { it.copy(lastReadChapter = updated.lastReadChapter,
+            lastReadParaIndex = updated.lastReadParaIndex, lastReadPage = updated.lastReadPage,
+            lastReadAt = updated.lastReadAt) }
     }
 
     // ===== 沉浸 =====

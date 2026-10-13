@@ -224,7 +224,7 @@ class NovelImagePipeline(
             OcrLock.heartbeat(token)
             val bubbles = DetectionBridge.ocrToBubbleRegions(
                 blocks,
-                RtTextDirection.resolve(det, rtDir, cfg.textDirection),
+                RtTextDirection.resolve(det, rtDir, cfg.textDirection)
             )
             LogCollector.d(TAG, "插图 OCR 完成：${blocks.size} 块 / ${bubbles.size} 气泡（${det.name}/${ocr.name}）")
             return bubbles

@@ -1,18 +1,11 @@
 package com.moe.starflow.mangaimport.data
 
 import android.content.Context
+import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
 
-/**
- * 导入漫画清单持久化（SharedPreferences + JSON）。
- * 清单是小数据（几十部漫画），不用 Room。
- *
- * ⚠️ **全部方法 @Synchronized**：写操作是「load → 改 → save」三步，不是原子的。
- * 导入改成「一个文件/文件夹一个并发任务」之后，两个任务同毫秒收尾就会互相覆盖
- * （各自读到不含对方的旧列表 → 后写的把先写的整条吞掉 = 书架少一部、占位卡片凭空消失）。
- * 同进程内共用一个监视器即可解决；跨进程不存在（只有一个应用进程写这份 prefs）。
- */
+/** Per-library Room records and portable commit journal. SharedPreferences is a legacy input only. */
 object ImportedMangaStore {
 
     private const val PREFS_NAME = "manga_import"
@@ -22,45 +15,104 @@ object ImportedMangaStore {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     @Synchronized
-    fun load(context: Context): List<ImportedManga> {
+    internal fun loadLegacy(context: Context): List<ImportedManga> {
         val raw = prefs(context).getString(KEY, null) ?: return emptyList()
         return try {
             val arr = JSONArray(raw)
             (0 until arr.length()).map { i -> arr.getJSONObject(i).toManga() }
-                // 迁移：旧版自定义 SAF 存储目录的条目（content:// localRoot）已不可读，丢弃
-                .filterNot { it.localRoot.startsWith("content://") }
         } catch (e: Exception) {
-            emptyList()
+            throw java.io.IOException("旧漫画清单损坏，已停止迁移并保留原资料", e)
+        }
+    }
+
+    @Synchronized
+    fun load(context: Context): List<ImportedManga> {
+        val session = com.moe.starflow.library.LibrarySessions.current(context)
+        return session.books("manga").map { row ->
+            val value = JSONObject(row.body).toManga()
+            value.copy(bookUuid = row.uuid, libraryLocationId = session.locationId,
+                localRoot = session.local(value.localRoot).path,
+                coverPath = value.coverPath?.let(session::cover),
+                lost = session.sourcePresence[row.source] == false || row.deleting,
+                deletionError = if (row.deleting) row.error ?: "删除未完成" else null)
         }
     }
 
     @Synchronized
     fun save(context: Context, list: List<ImportedManga>) {
-        val arr = JSONArray()
-        list.forEach { arr.put(it.toJson()) }
-        prefs(context).edit().putString(KEY, arr.toString()).apply()
+        val session = com.moe.starflow.library.LibrarySessions.current(context)
+        list.forEach { persist(context, it) }
+        session.books("manga").filter { row -> list.none { it.id == row.id } }
+            .forEach { session.removeBook("manga", it.id) }
+    }
+
+    private fun persist(context: Context, value: ImportedManga) {
+        val session = com.moe.starflow.library.LibrarySessions.forLocation(context, value.libraryLocationId)
+        val uuid = value.bookUuid.ifEmpty { session.uuid("manga", value.id) }
+        val json = value.toJson().put("bookUuid", uuid)
+            .put("localRoot", session.relative(File(value.localRoot)))
+        val old = session.database.catalog().book("manga", value.id)?.let { JSONObject(it.body) }
+        val cover = value.coverPath
+        if (!cover.isNullOrEmpty()) {
+            if (cover.startsWith("content://")) json.put("coverPath", old?.opt("coverPath") ?: JSONObject.NULL)
+            else {
+                val original = File(cover)
+                val path = ".starflow/books/$uuid/cover/${original.name}"
+                val target = session.local(path)
+                if (original.isFile && original.canonicalFile != target.canonicalFile) {
+                    target.parentFile?.mkdirs()
+                    if (!target.isFile) original.copyTo(target, overwrite = false)
+                }
+                json.put("coverPath", path)
+            }
+        }
+        session.putBook("manga", value.id, json, stagingCover = cover?.takeIf { !it.startsWith("content://") }
+            ?.let { runCatching { session.relative(File(it)) }.getOrNull() })
+        com.moe.starflow.library.LibrarySessions.changes.value += 1
     }
 
     @Synchronized
-    fun add(context: Context, manga: ImportedManga) {
-        val list = load(context).toMutableList()
-        list.add(manga)
-        save(context, list)
+    fun patch(context: Context, value: ImportedManga, change: (ImportedManga) -> ImportedManga) {
+        val session = com.moe.starflow.library.LibrarySessions.forLocation(context, value.libraryLocationId)
+        val pinned = session.context()
+        val latest = load(pinned).firstOrNull { it.id == value.id && (value.bookUuid.isEmpty() || it.bookUuid == value.bookUuid) } ?: return
+        persist(pinned, change(latest))
     }
+
+    @Synchronized
+    fun add(context: Context, value: ImportedManga) { persist(context, value) }
+
+    /** Merge only new scan results under the same monitor as manual imports and shelf edits. */
+    @Synchronized
+    internal fun mergeScanned(context: Context, scanned: List<ImportedManga>): Int {
+        val latest = load(context).toMutableList()
+        val ids = latest.mapTo(mutableSetOf()) { it.id }
+        val paths = latest.mapTo(mutableSetOf()) { canonical(it.localRoot) }
+        var added = 0
+        scanned.forEach { manga ->
+            val path = canonical(manga.localRoot)
+            if (manga.id !in ids && path !in paths) {
+                persist(context, manga)
+                latest += manga
+                ids += manga.id
+                paths += path
+                added++
+            }
+        }
+        return added
+    }
+
+    private fun canonical(path: String): String = runCatching { File(path).canonicalPath }.getOrDefault(path)
 
     @Synchronized
     fun remove(context: Context, id: Long) {
-        save(context, load(context).filterNot { it.id == id })
+        com.moe.starflow.library.LibrarySessions.current(context).removeBook("manga", id)
     }
 
     @Synchronized
-    fun update(context: Context, manga: ImportedManga) {
-        val list = load(context).toMutableList()
-        val idx = list.indexOfFirst { it.id == manga.id }
-        if (idx >= 0) {
-            list[idx] = manga
-            save(context, list)
-        }
+    fun update(context: Context, value: ImportedManga) {
+        val session = com.moe.starflow.library.LibrarySessions.forLocation(context, value.libraryLocationId)
+        if (session.database.catalog().book("manga", value.id) != null) persist(context, value)
     }
 
     /**
@@ -74,15 +126,13 @@ object ImportedMangaStore {
      */
     @Synchronized
     fun setChapters(context: Context, id: Long, chapters: List<MangaChapter>) {
-        val list = load(context).toMutableList()
-        val idx = list.indexOfFirst { it.id == id }
-        if (idx < 0) return
-        list[idx] = list[idx].copy(chapters = chapters)
-        save(context, list)
+        val value = load(context).firstOrNull { it.id == id } ?: return
+        persist(context, value.copy(chapters = chapters))
     }
 
     private fun ImportedManga.toJson(): JSONObject = JSONObject().apply {
         put("id", id)
+        put("bookUuid", bookUuid)
         put("title", title)
         put("localRoot", localRoot)
         put("isArchive", isArchive)
@@ -108,6 +158,7 @@ object ImportedMangaStore {
 
     private fun JSONObject.toManga(): ImportedManga = ImportedManga(
         id = getLong("id"),
+        bookUuid = optString("bookUuid", ""),
         title = getString("title"),
         localRoot = getString("localRoot"),
         isArchive = getBoolean("isArchive"),

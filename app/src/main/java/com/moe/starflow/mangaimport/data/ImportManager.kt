@@ -69,22 +69,30 @@ object ImportManager {
 
     /** 导入若干压缩包（可多选）。每个文件一个独立任务：各自占位卡片、各自进度、各自可取消。 */
     fun importArchives(context: Context, uris: List<Uri>) {
-        val app = context.applicationContext
+        val app = com.moe.starflow.library.LibrarySessions.pin(context)
         uris.forEach { uri -> launchArchiveTask(app, uri) }
     }
 
     /** 导入一个图片文件夹（整个夹 = 一部）。 */
     fun importDirectory(context: Context, treeUri: Uri) {
-        val app = context.applicationContext
-        scope.launch {
+        val app = com.moe.starflow.library.LibrarySessions.pin(context)
+        com.moe.starflow.library.LibrarySessions.launch(app, scope) {
+            try { com.moe.starflow.library.LibrarySessions.prepare(app) }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { emit(ImportEvent.Failed("书库存储", ImportFailureReason.UNKNOWN, failureDetail(e))); return@launch }
             val id = reserveId(app)
             // 标题元数据只在真正导入时查询并记录 provider 诊断；任务占位不再重复查询 SAF。
             val title = app.getString(R.string.default_manga_title, id.toString())
             registerTask(id, title, isArchive = false, phase = ImportPhase.SCANNING, job = coroutineContext[Job])
             try {
+                com.moe.starflow.library.LibrarySessions.prepare(app)
+                com.moe.starflow.library.LibrarySessions.current(app).beginImport("manga", id)
                 val manga = MangaImporter.importDirectory(app, treeUri, id) { p -> updateProgress(id, p) }
                 ensureActive()
                 ImportedMangaStore.add(app, manga)
+                val savedSession = com.moe.starflow.library.LibrarySessions.current(app)
+                savedSession.flush()
+                savedSession.database.catalog().book("manga", id)?.let { savedSession.releaseBookCopies(it.uuid, it.source) }
                 LogCollector.i(TAG, "导入目录完成: ${manga.title} (${manga.pageCount} 页)")
                 if (manga.pageCount == 0) emit(ImportEvent.NoImages(manga.title, isArchive = false))
             } catch (e: CancellationException) {
@@ -124,7 +132,10 @@ object ImportManager {
     // ===== 内部：任务生命周期 =====
 
     private fun launchArchiveTask(app: Context, uri: Uri) {
-        scope.launch {
+        com.moe.starflow.library.LibrarySessions.launch(app, scope) {
+            try { com.moe.starflow.library.LibrarySessions.prepare(app) }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { emit(ImportEvent.Failed("书库存储", ImportFailureReason.UNKNOWN, failureDetail(e))); return@launch }
             val id = reserveId(app)
             // 避免为占位标题重复查询 SAF；实际显示名在 MangaImporter 中单次查询并记录诊断。
             val name = SafDocumentMetadata.fallbackName(uri).orEmpty()
@@ -133,9 +144,14 @@ object ImportManager {
             }
             registerTask(id, title, isArchive = true, phase = ImportPhase.COPYING, job = coroutineContext[Job])
             try {
+                com.moe.starflow.library.LibrarySessions.prepare(app)
+                com.moe.starflow.library.LibrarySessions.current(app).beginImport("manga", id)
                 val manga = MangaImporter.importArchive(app, uri, id) { p -> updateProgress(id, p) }
                 ensureActive()
                 ImportedMangaStore.add(app, manga)
+                val savedSession = com.moe.starflow.library.LibrarySessions.current(app)
+                savedSession.flush()
+                savedSession.database.catalog().book("manga", id)?.let { savedSession.releaseBookCopies(it.uuid, it.source) }
                 LogCollector.i(TAG, "导入压缩包完成: ${manga.title} (${manga.pageCount} 页)")
                 if (manga.pageCount == 0) emit(ImportEvent.NoImages(manga.title, isArchive = true))
             } catch (e: CancellationException) {
@@ -222,8 +238,10 @@ object ImportManager {
 
     /** 删掉本次导入的半成品（取消/失败时；成功路径不会调）。同时清掉可能已生成的封面缩略图。 */
     private fun cleanup(context: Context, id: Long) {
+        if (com.moe.starflow.library.LibrarySessions.current(context).database.catalog().book("manga", id) != null) return
         try {
-            File(StorageDirStore.root(context), id.toString()).deleteRecursively()
+            StorageDirStore.bookDir(context, id).deleteRecursively()
+            if (!StorageDirStore.bookDir(context, id).exists()) com.moe.starflow.library.LibrarySessions.current(context).abandonImport("manga", id)
             // ⚠️ 封面也要清：目录导入是「复制 → 生成封面 → 返回」，取消可能落在生成封面之后、
             // 入库之前 → 只删目录会留下孤儿图（covers/<id>_<ts>.jpg，同 id 只会有一张）
             StorageDirStore.coversDir(context).listFiles()

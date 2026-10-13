@@ -283,11 +283,13 @@ class MangaGridAdapter(
         val lost = item.lost && !importing
         val isRead = !importing && !lost && item.pageCount > 0 && item.lastReadPage >= item.pageCount - 1
         readBadge.visibility = if (isRead) View.VISIBLE else View.GONE
-        lostBadge.visibility = if (lost) View.VISIBLE else View.GONE
+        lostBadge.visibility = if (lost || item.deletionError != null) View.VISIBLE else View.GONE
+        (lostBadge as? android.widget.TextView)?.setText(if (item.deletionError != null)
+            com.moe.starflow.R.string.library_delete_failed else com.moe.starflow.R.string.import_file_lost)
         // 文件丢失时封面压暗，提示为失效条目
         coverView.alpha = if (lost) 0.35f else 1f
 
-        val cover = item.coverPath?.let { File(it) }
+        val cover = item.coverPath?.let { if (it.startsWith("content://")) android.net.Uri.parse(it) else File(it) }
         Glide.with(root)
             .load(cover)
             .placeholder(R.drawable.import_manga_icon)

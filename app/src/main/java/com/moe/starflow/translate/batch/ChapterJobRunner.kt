@@ -364,6 +364,13 @@ class ChapterJobRunner<T>(
         inFlight.isNotEmpty() || runtimes.any { it.isActive && (it.queue.isNotEmpty() || it.done < it.total) }
     }
 
+    /** Deletion waits for cancellation cleanup and native calls before removing sources. */
+    suspend fun shutdownAndJoin() {
+        val running = synchronized(lock) { taskJobs.values.toList() + listOfNotNull(pumpJob, ocrJob) + workerJobs }
+        shutdown()
+        running.forEach { it.join() }
+    }
+
     /** 关掉这条流水线（换书 / 退出阅读器且不保留任务时调用）。 */
     fun shutdown() {
         // ⚠️ 被这一下掐掉的章必须**派发收尾事件**（cancelled=true）：否则那一刻标着「翻译中」的行

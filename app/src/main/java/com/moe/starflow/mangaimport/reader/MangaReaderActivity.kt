@@ -206,7 +206,9 @@ class MangaReaderActivity : AppCompatActivity() {
     private var webtoonTapDetector: GestureDetector? = null
     private var translationController: ReaderTranslationController? = null
 
+    private val libraryUse by lazy { com.moe.starflow.library.LibrarySessions.use() }
     override fun onCreate(savedInstanceState: Bundle?) {
+        libraryUse
         // UI 同步字体（开关开启时）：挂 Factory2，inflate 即应用。须在 super.onCreate 前挂。
         com.moe.starflow.utils.FontSync.install(this)
         super.onCreate(savedInstanceState)
@@ -225,133 +227,136 @@ class MangaReaderActivity : AppCompatActivity() {
         colorFilter = loadColor()
 
         val id = intent.getLongExtra(EXTRA_MANGA_ID, -1L)
-        manga = ImportedMangaStore.load(this).firstOrNull { it.id == id }
-            ?: run { finish(); return }
-        source = ReaderPageSource(manga.isArchive, manga.localRoot, isPdf = manga.isPdf)
-        if (source.size == 0) {
-            // 本地文件已丢失/损坏（可能被手动删除）：不再展示空白阅读器。
-            // ⚠️ 走「短时报错」：这里紧跟着就 finish()，`onDestroy` 那次浮层清屏会吃掉普通提示，
-            //    而底部 Toast 在 Activity 收尾时也常被系统吞掉 —— 那就是用户报的「点了没反应」。
-            notifyUser(getString(R.string.reader_file_lost), AppNotice.Style.BRIEF_ERROR)
-            finish()
-            return
-        }
-        chapters = source.chapters
-        // 自愈：清单里的章节表与实际文件不一致（老条目没回填、或文件被换过）→ 以实际为准回写，
-        // 这样书架的「共N章 / 第x章」不会长期显示旧数据。写清单是「读-改-写」，
-        // 放在 IO 线程做，别卡住开阅读器
-        if (chapters.isNotEmpty() && chapters != manga.chapters) {
-            val latest = chapters
-            manga = manga.copy(chapters = latest)
-            lifecycleScope.launch(Dispatchers.IO) {
-                // ⚠️ 用 setChapters（锁内只改这一个字段），**不要** update(manga.copy(...))：
-                //    那会拿"进入阅读器那一刻的整条快照"整条替换，把这期间写进去的
-                //    lastReadPage（翻页即写）回滚掉 —— 表现是「翻了几页后进度自己退回去」。
-                runCatching { ImportedMangaStore.setChapters(applicationContext, manga.id, latest) }
-            }
-        }
-
-        setupOverlays()
-        applyBackground()
-        updateRotateMode(rotateMode, persist = false)
-        applyPager()
-
-        // 重建（旋转 / 从设置页返回）时恢复现场：当前页、翻译模式、以及"这是从设置页返回"
-        if (savedInstanceState != null) {
-            returnedFromSettings = savedInstanceState.getBoolean(STATE_FROM_SETTINGS, false)
-            restoredTranslateMode = savedInstanceState.getInt(STATE_TRANSLATE_MODE, -1)
-            pendingRealignPage = savedInstanceState.getInt(STATE_CURRENT_PAGE, -1)
-        }
-        // 从设置返回触发的重建：回到用户当时那一页（lastReadPage 只在翻页时写库，可能滞后）
-        // 通知栏点进来时带 EXTRA_START_PAGE：优先落在那张（该章第一页）
-        val intentPage = intent.getIntExtra(EXTRA_START_PAGE, -1)
-        val startPage = when {
-            intentPage >= 0 -> intentPage
-            pendingRealignPage >= 0 -> pendingRealignPage
-            else -> manga.lastReadPage
-        }
-        goToPage(startPage.coerceIn(0, (source.size - 1).coerceAtLeast(0)))
-
-        // 阅读器内嵌翻译：载入每页记录（含失败/成功态），接右下角翻译按钮与进度条。
-        // ⚠️ 控制器从 **ReaderTranslationHub** 取（应用级 scope + 按书缓存）：章节批量任务是
-        // 后台任务，控制器不能在 Activity 销毁时一起消失；重进阅读器要拿回同一个实例
-        // （任务、页记录、渲染缓存都还在）。
-        // 把绑定抽成局部函数：bind 之后要自检一次「是不是刚被 hub 回收了」并重绑（见下）
-        fun bindController(c: ReaderTranslationController) {
-            c.bind(
-                loadFull = { source.loadFull(it) },
-                currentPage = { currentPage },
-                pageCount = { source.size },
-                // 上屏超采样倍率 = 显示宽 / 页图宽（见 ReaderTranslationController.renderScaleFor）。
-                // 取实际阅读区宽度；未布局时退回屏幕宽（两者在这套全屏布局里一致）。
-                displayWidth = {
-                    binding.viewPager.width.takeIf { it > 0 }
-                        ?: resources.displayMetrics.widthPixels
-                },
-            )
-            // Webtoon 译图走采样解码（超长页直接全解析会 OOM），气泡坐标按采样比例缩放
-            c.bindWebtoonSource(
-                loadWebtoon = { p ->
-                    val w = binding.webtoonList.width.takeIf { it > 0 }
-                        ?: resources.displayMetrics.widthPixels
-                    source.loadWebtoon(p, w)
-                },
-                originalWidth = { p -> source.originalWidth(p) },
-            )
-            c.onVisual = { runOnUiThread { applyPageVisual(currentPage) } }
-            c.onPhase = ::onTranslatePhase
-            // 超分提示（失败原因 / 其它）统一走 app 状态浮层。⚠️ 必须在主线程调：
-            // 控制器可能从 IO 协程发过来（它内部只在自动超分那条路径 `withContext(Main)`）。
-            c.onSrNotice = { text, isError ->
-                runOnUiThread { if (!isFinishing) showSrNotice(text, isError) }
-            }
-            // 超分「进行中」的开合（控制器保证 true/false 成对，含失败与取消）。同一约定：
-            // 回调已经在主线程，`runOnUiThread` 只是防御性兜底。
-            c.onSrProgress = { page, running ->
-                runOnUiThread { if (!isFinishing) showSrRunning(page, running) }
-            }
-            // Webtoon 显示态（原图/译文）落在控制器上：applyPager()/预热都按它决定渲不渲染
-            c.setWebtoonTranslated(webtoonTranslated)
-        }
-        var controller = ReaderTranslationHub.controllerFor(applicationContext, manga)
-        bindController(controller)
-        // ⚠️ `controllerFor()` 与 `bind()` 之间，hub 的收集协程可能已判定「无 UI 且无任务」把它回收
-        //（那一刻 `uiAttached` 还是 false）→ 手上这个实例已 shut down，之后「翻译本章」全都不动。
-        // 发现已关闭就换一个新实例重绑一次（hub 里那份也已被移除，controllerFor 会新建）。
-        if (controller.closed) {
-            controller = ReaderTranslationHub.controllerFor(applicationContext, manga)
-            bindController(controller)
-        }
-        translationController = controller
-        // ⚠️ 只有**确实是从设置页返回触发的重建**才恢复翻译模式（`>= 0` 就是那个判据）。
-        // 绝不能只看"模式 != 手动"：控制器是刚新建的，translateMode 恒为手动，
-        // 而 `restoredTranslateMode` 在全新进入阅读器时是 **-1**，
-        // `-1 != MODE_MANUAL` 为真 → 把 -1 当模式塞进控制器 → **一进阅读器就自动开翻**（踩过）。
-        if (restoredTranslateMode >= 0) {
-            translationController?.setMode(restoredTranslateMode)
-        }
         lifecycleScope.launch {
-            // ⚠️ **页序迁移必须在 load() 之前**：load() 一读就是按 `pageIndex` 取行，而章节系统
-            // 改变了权威页序（最外层散图排到第 0 章最前）→ 对「根散图 + 子目录混放」的老书，
-            // 同一个下标指向的是另一张图，不迁移就会把译文/气泡挂到错页上（详见 `MangaPageOrder`）。
-            runCatching { MangaPageOrderMigrator.migrateIfNeeded(applicationContext, manga, source) }
-                .onFailure { LogCollector.w("MangaReader", "页序迁移失败（不影响阅读）", it) }
-            translationController?.load()
-            refreshTranslationChrome()
-            refreshProgressTranslation()
-            // ⚠️ 启动就处于 Webtoon 时，onCreate 里的 applyPager() 早于控制器创建 → 那次预热是空跑。
-            // 等 load() 拿到记录后再预热一次（此时才知道哪些页是已翻译的）。
-            if (mode == 3) {
-                translationController?.prewarmWebtoon(currentPage)
-                refreshWebtoonRange(currentPage)
+            var opened: ReaderPageSource? = null
+            try {
+                withContext(Dispatchers.IO) {
+                    com.moe.starflow.library.LibrarySessions.prepare(this@MangaReaderActivity)
+                    com.moe.starflow.library.LibrarySessions.checkReaderIntent(this@MangaReaderActivity, intent, "manga", id)
+                    manga = ImportedMangaStore.load(this@MangaReaderActivity).firstOrNull { it.id == id }
+                        ?: throw java.io.IOException("作品入口已失效")
+                    opened = ReaderPageSource(manga.isArchive, manga.localRoot, isPdf = manga.isPdf)
+                }
+                source = opened!!
+            } catch (e: Exception) {
+                com.moe.starflow.library.LibrarySessions.release { opened?.close() }
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                notifyUser(e.message ?: getString(R.string.reader_file_lost), AppNotice.Style.BRIEF_ERROR)
+                finish(); return@launch
             }
+            if (source.size == 0) {
+                // 本地文件已丢失/损坏（可能被手动删除）：不再展示空白阅读器。
+                // ⚠️ 走「短时报错」：这里紧跟着就 finish()，`onDestroy` 那次浮层清屏会吃掉普通提示，
+                //    而底部 Toast 在 Activity 收尾时也常被系统吞掉 —— 那就是用户报的「点了没反应」。
+                notifyUser(getString(R.string.reader_file_lost), AppNotice.Style.BRIEF_ERROR)
+                finish()
+                return@launch
+            }
+            chapters = source.chapters
+            setupOverlays()
+            applyBackground()
+            updateRotateMode(rotateMode, persist = false)
+            applyPager()
+
+            // 重建（旋转 / 从设置页返回）时恢复现场：当前页、翻译模式、以及"这是从设置页返回"
+            if (savedInstanceState != null) {
+                returnedFromSettings = savedInstanceState.getBoolean(STATE_FROM_SETTINGS, false)
+                restoredTranslateMode = savedInstanceState.getInt(STATE_TRANSLATE_MODE, -1)
+                pendingRealignPage = savedInstanceState.getInt(STATE_CURRENT_PAGE, -1)
+            }
+            // 从设置返回触发的重建：回到用户当时那一页（lastReadPage 只在翻页时写库，可能滞后）
+            // 通知栏点进来时带 EXTRA_START_PAGE：优先落在那张（该章第一页）
+            val intentPage = intent.getIntExtra(EXTRA_START_PAGE, -1)
+            val startPage = when {
+                intentPage >= 0 -> intentPage
+                pendingRealignPage >= 0 -> pendingRealignPage
+                else -> manga.lastReadPage
+            }
+            goToPage(startPage.coerceIn(0, (source.size - 1).coerceAtLeast(0)))
+
+            // 阅读器内嵌翻译：载入每页记录（含失败/成功态），接右下角翻译按钮与进度条。
+            // ⚠️ 控制器从 **ReaderTranslationHub** 取（应用级 scope + 按书缓存）：章节批量任务是
+            // 后台任务，控制器不能在 Activity 销毁时一起消失；重进阅读器要拿回同一个实例
+            // （任务、页记录、渲染缓存都还在）。
+            // 把绑定抽成局部函数：bind 之后要自检一次「是不是刚被 hub 回收了」并重绑（见下）
+            fun bindController(c: ReaderTranslationController) {
+                c.bind(
+                    loadFull = { source.loadFull(it) },
+                    pageError = { source.pageError(it) },
+                    currentPage = { currentPage },
+                    pageCount = { source.size },
+                    // 上屏超采样倍率 = 显示宽 / 页图宽（见 ReaderTranslationController.renderScaleFor）。
+                    // 取实际阅读区宽度；未布局时退回屏幕宽（两者在这套全屏布局里一致）。
+                    displayWidth = {
+                        binding.viewPager.width.takeIf { it > 0 }
+                            ?: resources.displayMetrics.widthPixels
+                    },
+                )
+                // Webtoon 译图走采样解码（超长页直接全解析会 OOM），气泡坐标按采样比例缩放
+                c.bindWebtoonSource(
+                    loadWebtoon = { p ->
+                        val w = binding.webtoonList.width.takeIf { it > 0 }
+                            ?: resources.displayMetrics.widthPixels
+                        source.loadWebtoon(p, w)
+                    },
+                    originalWidth = { p -> source.originalWidth(p) },
+                )
+                c.onVisual = { runOnUiThread { applyPageVisual(currentPage) } }
+                c.onPhase = ::onTranslatePhase
+                // 超分提示（失败原因 / 其它）统一走 app 状态浮层。⚠️ 必须在主线程调：
+                // 控制器可能从 IO 协程发过来（它内部只在自动超分那条路径 `withContext(Main)`）。
+                c.onSrNotice = { text, isError ->
+                    runOnUiThread { if (!isFinishing) showSrNotice(text, isError) }
+                }
+                // 超分「进行中」的开合（控制器保证 true/false 成对，含失败与取消）。同一约定：
+                // 回调已经在主线程，`runOnUiThread` 只是防御性兜底。
+                c.onSrProgress = { page, running ->
+                    runOnUiThread { if (!isFinishing) showSrRunning(page, running) }
+                }
+                // Webtoon 显示态（原图/译文）落在控制器上：applyPager()/预热都按它决定渲不渲染
+                c.setWebtoonTranslated(webtoonTranslated)
+            }
+            var controller = ReaderTranslationHub.controllerFor(applicationContext, manga)
+            bindController(controller)
+            // ⚠️ `controllerFor()` 与 `bind()` 之间，hub 的收集协程可能已判定「无 UI 且无任务」把它回收
+            //（那一刻 `uiAttached` 还是 false）→ 手上这个实例已 shut down，之后「翻译本章」全都不动。
+            // 发现已关闭就换一个新实例重绑一次（hub 里那份也已被移除，controllerFor 会新建）。
+            if (controller.closed) {
+                controller = ReaderTranslationHub.controllerFor(applicationContext, manga)
+                bindController(controller)
+            }
+            translationController = controller
+            // ⚠️ 只有**确实是从设置页返回触发的重建**才恢复翻译模式（`>= 0` 就是那个判据）。
+            // 绝不能只看"模式 != 手动"：控制器是刚新建的，translateMode 恒为手动，
+            // 而 `restoredTranslateMode` 在全新进入阅读器时是 **-1**，
+            // `-1 != MODE_MANUAL` 为真 → 把 -1 当模式塞进控制器 → **一进阅读器就自动开翻**（踩过）。
+            if (restoredTranslateMode >= 0) {
+                translationController?.setMode(restoredTranslateMode)
+            }
+            lifecycleScope.launch {
+                // ⚠️ **页序迁移必须在 load() 之前**：load() 一读就是按 `pageIndex` 取行，而章节系统
+                // 改变了权威页序（最外层散图排到第 0 章最前）→ 对「根散图 + 子目录混放」的老书，
+                // 同一个下标指向的是另一张图，不迁移就会把译文/气泡挂到错页上（详见 `MangaPageOrder`）。
+                runCatching { MangaPageOrderMigrator.migrateIfNeeded(applicationContext, manga, source) }
+                    .onFailure { LogCollector.w("MangaReader", "页序迁移失败（不影响阅读）", it) }
+                translationController?.load()
+                refreshTranslationChrome()
+                refreshProgressTranslation()
+                // ⚠️ 启动就处于 Webtoon 时，onCreate 里的 applyPager() 早于控制器创建 → 那次预热是空跑。
+                // 等 load() 拿到记录后再预热一次（此时才知道哪些页是已翻译的）。
+                if (mode == 3) {
+                    translationController?.prewarmWebtoon(currentPage)
+                    refreshWebtoonRange(currentPage)
+                }
+            }
+            setupTranslationUi()
+            setupChapterBatchUi()
         }
-        setupTranslationUi()
-        setupChapterBatchUi()
     }
 
     override fun onStart() {
         super.onStart()
+        if (!::source.isInitialized) return
         // 提示条紧贴顶部胶囊下沿（用户口径：「放在当前章节胶囊的下面就行，不重叠就行，
         // 不要间隔那么大的空间」）。⚠️ 只覆盖顶距、不动用户的 `Status_Position` 设置。
         pushNoticeTopBelowPill()
@@ -441,6 +446,10 @@ class MangaReaderActivity : AppCompatActivity() {
      */
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        if (!::source.isInitialized || !::manga.isInitialized) return
+        try { com.moe.starflow.library.LibrarySessions.checkReaderIntent(this, intent, "manga", manga.id) }
+        catch (e: Exception) { notifyUser(e.message ?: "入口已失效"); return }
+        if (intent.getLongExtra(EXTRA_MANGA_ID, manga.id) != manga.id) return
         setIntent(intent)
         val target = intent.getIntExtra(EXTRA_START_PAGE, -1)
         if (target < 0 || target >= source.size) return
@@ -450,6 +459,7 @@ class MangaReaderActivity : AppCompatActivity() {
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
+        if (!::source.isInitialized) return
         if (hasFocus) {
             hideSystemBars()
             updateAutoTurn()
@@ -589,7 +599,7 @@ class MangaReaderActivity : AppCompatActivity() {
             currentPage = target
             if (animationMode == 0) animState.anchorPage = target
             lastTranslateClickMs = 0L
-            ImportedMangaStore.update(applicationContext, manga.copy(lastReadPage = target))
+            ImportedMangaStore.patch(applicationContext, manga) { it.copy(lastReadPage = target) }
             translationController?.onCurrentPageChanged()
             refreshOverlay()
         }
@@ -624,7 +634,7 @@ class MangaReaderActivity : AppCompatActivity() {
         // ⚠️ 关闭后再问一次 hub 能不能回收：任务跑完就再也没有 `chapterJobs` 发射了，
         // 只靠那个收集协程等不到这次机会 → 控制器（renderLru 预算 100MB）+ 页图数据源常驻到进程结束。
         // 有任务在跑时 `releaseIfIdle` 会自己判断并拒绝。
-        if (::manga.isInitialized) ReaderTranslationHub.onReaderClosed(manga.id)
+        if (::manga.isInitialized) ReaderTranslationHub.onReaderClosed(manga.id, manga.translationKey)
         // ⚠️ 必须清掉状态浮层：它是**进程级单例 + TYPE_APPLICATION_OVERLAY 系统窗口**，
         // 退出阅读器后「检测中…／翻译中…」会挂在桌面/其它页面上，且没有任何入口能消掉
         // （直到下一次翻译成功或失败）。翻译在途时退出阅读器就会触发。
@@ -638,7 +648,12 @@ class MangaReaderActivity : AppCompatActivity() {
         }
         // ⚠️ 释放本 Activity 自持的页数据源：PDF 的 `PdfRenderer` 占着 FD（有限资源）。
         //    控制器那份是**另一个实例**（它自己的 ownSource），在 `shutdownAll` 里释放 —— 两边各关各的。
-        runCatching { source.close() }
+        val closingSource = if (::source.isInitialized) source else null
+        val finishingLifecycle = lifecycleScope.coroutineContext[kotlinx.coroutines.Job]
+        com.moe.starflow.library.LibrarySessions.release {
+            finishingLifecycle?.join()
+            try { closingSource?.close() } finally { libraryUse.close() }
+        }
         super.onDestroy()
     }
 
@@ -689,7 +704,7 @@ class MangaReaderActivity : AppCompatActivity() {
             currentPage = position.coerceIn(0, (source.size - 1).coerceAtLeast(0))
             // 无动画模式：选中后锚点同步到新页，避免下次拖拽时还把上一页钉在中心
             if (animationMode == 0) animState.anchorPage = currentPage
-            ImportedMangaStore.update(applicationContext, manga.copy(lastReadPage = currentPage))
+            ImportedMangaStore.patch(applicationContext, manga) { it.copy(lastReadPage = currentPage) }
             // 翻页后重置双击判定窗口：否则「单击 → 翻页 → 300ms 内再单击」会被当成双击，
             // 直接取消翻译（连击状态在 Activity 这侧，controller 的 onCurrentPageChanged 管不到）
             lastTranslateClickMs = 0L
@@ -827,7 +842,7 @@ class MangaReaderActivity : AppCompatActivity() {
             // Webtoon：定位到顶部（scrollToPosition 不保证贴顶）
             (binding.webtoonList.layoutManager as? LinearLayoutManager)?.scrollToPositionWithOffset(p, 0)
             currentPage = p
-            ImportedMangaStore.update(applicationContext, manga.copy(lastReadPage = p))
+            ImportedMangaStore.patch(applicationContext, manga) { it.copy(lastReadPage = p) }
             refreshOverlay()
             return
         }
@@ -935,7 +950,7 @@ class MangaReaderActivity : AppCompatActivity() {
         val page = first.coerceIn(0, (source.size - 1).coerceAtLeast(0))
         if (page == currentPage) return
         currentPage = page
-        ImportedMangaStore.update(applicationContext, manga.copy(lastReadPage = currentPage))
+        ImportedMangaStore.patch(applicationContext, manga) { it.copy(lastReadPage = currentPage) }
         refreshOverlay()
         // 只预热当前位置上下几页：Webtoon 可能上百页，一次渲染全部会爆内存
         translationController?.prewarmWebtoon(currentPage)

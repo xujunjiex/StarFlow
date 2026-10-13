@@ -9,7 +9,7 @@ class VerticalGlyphRulesTest {
             '〖' to '︗', '〔' to '︹', '〈' to '︿', '》' to '︾', '「' to '﹁', '』' to '﹄',
             '｢' to '﹁', '…' to '︙', '‥' to '︰', '—' to '︱', '＿' to '︳', '、' to '︑')
         pairs.forEach { (source, target) ->
-            val glyph = VerticalGlyphRules.resolve(source) { true }
+            val glyph = VerticalGlyphRules.resolve(source, hasGlyph = { true })
             assertEquals(target.toString(), glyph.text)
             assertEquals(0f, glyph.rotation, 0f)
             assertFalse(glyph.corner)
@@ -18,7 +18,7 @@ class VerticalGlyphRulesTest {
 
     @Test fun absentVerticalGlyphRotatesOriginalShapeWhenDefaultFontAlsoLacksForm() {
         "()（）[]{}〔〕【】〖〗〈〉《》「」『』…‥—–_".forEach {
-            val glyph = VerticalGlyphRules.resolve(it) { false }
+            val glyph = VerticalGlyphRules.resolve(it, hasGlyph = { false })
             assertEquals(it.toString(), glyph.text)
             assertEquals(90f, glyph.rotation, 0f)
         }
@@ -38,13 +38,13 @@ class VerticalGlyphRulesTest {
 
     @Test fun otherQuotesDashesWavesAndProlongedSoundsRotateClockwise() {
         "〘〙〚〛“”‘’〝〞〟«»‹›‐‑‒―-－~～〜〰ーｰ゠".forEach {
-            assertEquals(90f, VerticalGlyphRules.resolve(it) { true }.rotation, 0f)
+            assertEquals(90f, VerticalGlyphRules.resolve(it, hasGlyph = { true }).rotation, 0f)
         }
     }
 
     @Test fun commasAndStopsUsePositionFallbackRatherThanRotation() {
         ",，、。．.､｡".forEach {
-            val glyph = VerticalGlyphRules.resolve(it) { false }
+            val glyph = VerticalGlyphRules.resolve(it, hasGlyph = { false })
             assertTrue(glyph.corner)
             assertEquals(0f, glyph.rotation, 0f)
         }
@@ -52,7 +52,7 @@ class VerticalGlyphRulesTest {
 
     @Test fun uprightAndAlreadyVerticalCharactersAreNeverRotated() {
         "!?！？‼⁇⁈⁉・中文あいうABC123︵︶﹁﹂︙︰︓︖".forEach {
-            val glyph = VerticalGlyphRules.resolve(it) { false }
+            val glyph = VerticalGlyphRules.resolve(it, hasGlyph = { false })
             assertEquals(it.toString(), glyph.text)
             assertEquals(0f, glyph.rotation, 0f)
             assertFalse(glyph.corner)

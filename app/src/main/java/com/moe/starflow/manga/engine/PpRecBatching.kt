@@ -1,104 +1,77 @@
 package com.moe.starflow.manga.engine
 
+import ai.onnxruntime.OrtException
 import com.moe.starflow.manga.types.RecResult
 
-/** A recoverable OCR allocation failure; callers must not retry the ordinary OCR route. */
+/** An actual OCR allocation failure; callers must not restart the entire OCR route. */
 internal class OcrMemoryException(
     val diagnostic: String,
     cause: Throwable? = null,
-    message: String = "OCR memory is insufficient. Reduce the selected area and try again.",
-) : Exception(message, cause)
+    message: String = "OCR memory allocation failed. The error has been recorded in the log.",
+) : Exception(message, cause) {
+    var logged = false
+}
 
-/** Shared PP recognition limits. The estimate includes native output and its Java copy. */
+/** Group equal-width inputs without imposing an application memory or image-size budget. */
 internal object PpRecBatching {
     const val HEIGHT = 48
-    const val MAX_BUDGET_BYTES = 32L * 1024 * 1024
 
     data class BatchOutput(val seqLen: Int, val numClasses: Int, val results: List<RecResult>)
-
-    fun budget(maxHeap: Long, allocatedHeap: Long, freeHeap: Long): Long =
-        minOf(MAX_BUDGET_BYTES, (maxHeap - allocatedHeap + freeHeap).coerceAtLeast(0L) / 4)
-
-    fun currentBudget(): Long = Runtime.getRuntime().let {
-        budget(it.maxMemory(), it.totalMemory(), it.freeMemory())
-    }
 
     fun normalizedWidth(width: Int, height: Int): Int {
         require(width > 0 && height > 0)
         val natural = (width.toLong() * HEIGHT + height - 1) / height
-        // Padding, not stretching: equal widths can share an observed output shape.
-        val padded = ((natural + 31) / 32) * 32
-        if (padded > Int.MAX_VALUE) throw OcrMemoryException("normalized width=$padded")
-        return padded.toInt().coerceAtLeast(32)
+        return Math.toIntExact(((natural + 31) / 32) * 32).coerceAtLeast(32)
     }
 
-    fun inputBytes(width: Int, batch: Int): Long = checked {
+    fun inputBytes(width: Int, batch: Int): Long =
         Math.multiplyExact(Math.multiplyExact(width.toLong(), batch.toLong()), 3L * HEIGHT * 4)
+
+    // ORT reports allocator failures as OrtException, not Java OutOfMemoryError.
+    // Do not classify unrelated inference/model errors as memory failures.
+    fun isAllocationFailure(message: String?): Boolean {
+        val text = message.orEmpty().lowercase()
+        return listOf("out of memory", "not enough memory", "failed to allocate memory",
+            "cannot allocate memory", "memory allocation failed", "std::bad_alloc", "bad allocation")
+            .any { it in text }
     }
 
-    private fun scratchBytes(width: Int): Long = width.toLong() * HEIGHT * 8
+    internal inline fun <T> guard(stage: String = "recognition", block: () -> T): T = guard({ stage }, block)
 
-    fun workingBytes(width: Int, batch: Int, seqLen: Int, numClasses: Int): Long = checked {
-        require(width > 0 && batch > 0 && seqLen > 0 && numClasses > 0)
-        val output = Math.multiplyExact(
-            Math.multiplyExact(batch.toLong(), seqLen.toLong()), numClasses.toLong() * 4
-        )
-        Math.addExact(Math.addExact(inputBytes(width, batch), Math.multiplyExact(output, 2)), scratchBytes(width))
-    }
-
-    fun requireInputFits(width: Int, batch: Int, budget: Long) {
-        val bytes = checked { Math.addExact(inputBytes(width, batch), scratchBytes(width)) }
-        requireFits(bytes, budget, "input width=$width batch=$batch")
-    }
-
-    fun requireFits(bytes: Long, budget: Long, diagnostic: String) {
-        if (bytes > budget) throw OcrMemoryException("$diagnostic workingBytes=$bytes budget=$budget")
-    }
-
-    private fun checked(block: () -> Long): Long = try {
-        block()
-    } catch (e: ArithmeticException) {
-        throw OcrMemoryException("recognition tensor size overflow", e)
-    }
-
-    fun <T> guard(block: () -> T): T = try {
+    internal inline fun <T> guard(stage: () -> String, block: () -> T): T = try {
         block()
     } catch (e: OutOfMemoryError) {
-        throw OcrMemoryException("recognition allocation failed", e)
+        throw OcrMemoryException("${stage()}: memory allocation failed", e)
+    } catch (e: OrtException) {
+        if (!isAllocationFailure(e.message)) throw e
+        throw OcrMemoryException("${stage()}: ORT memory allocation failed: ${e.message}", e)
     }
 
-    /** Probe each width with one real crop, then batch using the actual model output shape. */
+    /** Retry smaller batches only after a real allocator failure; always preserve input order. */
     fun recognize(
         widths: List<Int>,
         maxBatch: Int,
-        budget: () -> Long = ::currentBudget,
-        runBatch: (indices: List<Int>, width: Int, budgetBytes: Long) -> BatchOutput,
+        onAllocationFailure: (OcrMemoryException, Int, Int) -> Unit = { _, _, _ -> },
+        runBatch: (indices: List<Int>, width: Int) -> BatchOutput,
     ): List<RecResult> {
         if (widths.isEmpty()) return emptyList()
         require(maxBatch > 0 && widths.all { it > 0 })
         val restored = arrayOfNulls<RecResult>(widths.size)
         for ((width, indices) in widths.indices.groupBy { widths[it] }.toSortedMap()) {
-            val firstBudget = budget()
-            val first = guard { runBatch(listOf(indices.first()), width, firstBudget) }
-            require(first.results.size == 1 && first.seqLen > 0 && first.numClasses > 0)
-            requireFits(workingBytes(width, 1, first.seqLen, first.numClasses), firstBudget, "single width=$width")
-            restored[indices.first()] = first.results.single()
-            var cursor = 1
+            var cursor = 0
             var groupMaxBatch = maxBatch
             while (cursor < indices.size) {
-                val limit = budget()
                 var count = minOf(groupMaxBatch, indices.size - cursor)
-                while (count > 1 && workingBytes(width, count, first.seqLen, first.numClasses) > limit) count--
-                requireFits(workingBytes(width, count, first.seqLen, first.numClasses), limit, "width=$width batch=$count")
                 while (true) {
                     val batchIndices = indices.subList(cursor, cursor + count)
                     try {
-                        val output = guard { runBatch(batchIndices, width, limit) }
-                        require(output.results.size == count)
+                        val output = guard("recognition width=$width batch=$count") { runBatch(batchIndices, width) }
+                        require(output.results.size == count && output.seqLen > 0 && output.numClasses > 0)
                         batchIndices.forEachIndexed { i, index -> restored[index] = output.results[i] }
                         cursor += count
                         break
                     } catch (e: OcrMemoryException) {
+                        onAllocationFailure(e, width, count)
                         if (count == 1) throw e
                         count = (count / 2).coerceAtLeast(1)
                         groupMaxBatch = count

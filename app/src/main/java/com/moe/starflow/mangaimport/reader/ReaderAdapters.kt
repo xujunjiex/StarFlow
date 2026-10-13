@@ -215,6 +215,13 @@ class WebtoonAdapter(
         // 状态自己弹回去"。同理，切到原图时在途的译图取回后也会盖住新绑定的原图。
         holder.loadJob?.cancel()
         holder.loadJob = shared.scope.launch {
+            val dimensions = withContext(Dispatchers.IO) { source.originalWidth(position) to source.originalHeight(position) }
+            if (!isActive || holder.adapterPosition != position) return@launch
+            if (dimensions.first > 0 && dimensions.second > 0) {
+                img.layoutParams = img.layoutParams.apply {
+                    height = (targetW.toLong() * dimensions.second / dimensions.first).toInt().coerceIn(1, MAX_WEBTOON_ITEM_HEIGHT)
+                }
+            }
             // 已翻译页优先用渲染好的译图；否则回落到按宽度降采样的原图
             val bmp = runCatching {
                 withContext(Dispatchers.IO) {

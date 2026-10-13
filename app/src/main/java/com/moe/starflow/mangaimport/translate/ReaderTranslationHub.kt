@@ -36,12 +36,14 @@ object ReaderTranslationHub : ChapterJobSource {
     override val key: String = "manga"
 
     /** 应用级 scope：进程活多久它活多久（后台任务靠的就是它）。 */
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + kotlinx.coroutines.CoroutineExceptionHandler { _, error ->
+        LogCollector.e(TAG, "书库任务已结束或提交失败", error)
+    })
 
-    private val controllers = ConcurrentHashMap<Long, ReaderTranslationController>()
+    private val controllers = ConcurrentHashMap<String, ReaderTranslationController>()
 
     /** 每个控制器一个「任务状态变化」收集协程；回收控制器时必须一并取消，否则收集协程会留着。 */
-    private val collectors = ConcurrentHashMap<Long, Job>()
+    private val collectors = ConcurrentHashMap<String, Job>()
 
     init {
         TranslationJobRegistry.register(this)
@@ -54,27 +56,27 @@ object ReaderTranslationHub : ChapterJobSource {
         // （`书架最大id+1`），而控制器在构造时就捕获了 `mangaKey = manga.translationKey`
         // → 旧控制器若还活着，新书会按**旧指纹**读写译文（当场看着正常，重启后译文"消失"、
         // 书架删除也清不掉）。指纹不一致 → 丢掉旧实例、重建。
-        controllers[manga.id]?.let { cached ->
+        controllers[manga.translationKey]?.let { cached ->
             // 已关闭（被 releaseIfIdle 回收过）→ 不能再交出去
             if (!cached.closed && cached.translationKeyOf() == manga.translationKey) return cached
             LogCollector.i(TAG, "mangaId=${manga.id} 身份指纹变了（删除后复用 id）→ 重建控制器")
-            controllers.remove(manga.id)
-            collectors.remove(manga.id)?.cancel()
+            controllers.remove(manga.translationKey)
+            collectors.remove(manga.translationKey)?.cancel()
             cached.shutdownAll()
         }
-        val app = context.applicationContext
+        val app = com.moe.starflow.library.LibrarySessions.forLocation(context, manga.libraryLocationId).context()
         val controller = ReaderTranslationController(app, manga, scope)
-        controllers[manga.id] = controller
+        controllers[manga.translationKey] = controller
         // 任务状态变化 → 重新聚合给通知栏（控制器是唯一真值，这里只做汇总）；
         // 全部任务收尾且阅读器没开着 → 顺手回收控制器
-        collectors[manga.id] = scope.launch {
+        collectors[manga.translationKey] = scope.launch {
             controller.chapterJobs.collect {
                 TranslationJobRegistry.notifyChanged()
                 // ⚠️ `collect` 会**立刻收到一次当前值**，而那一刻阅读器还在 `bind()` 之前
                 //（`uiAttached` 仍 false）→ 不加 `everAttached` 判断就会把刚建好的控制器当场回收，
                 // Activity 手上留个已 shutdown 的实例、下次进来又新建（日志里的"创建→回收→再创建"）。
                 if (!controller.everAttached) return@collect
-                if (!controller.uiAttached && !controller.isChapterBatchRunning()) releaseIfIdle(manga.id)
+                if (!controller.uiAttached && !controller.isChapterBatchRunning()) releaseIfIdle(manga.id, manga.translationKey)
             }
         }
         LogCollector.i(TAG, "创建阅读器翻译控制器 mangaId=${manga.id} title=${manga.title}")
@@ -89,8 +91,8 @@ object ReaderTranslationHub : ChapterJobSource {
      * 而任务跑完就不会再有新值 —— 阅读器关掉（`uiAttached=false`）也等不到那次发射。
      * 结果每开一本书就常驻一份 `renderLru`（预算 100MB）+ 页图数据源，直到进程被杀。
      */
-    fun onReaderClosed(mangaId: Long) {
-        releaseIfIdle(mangaId)
+    fun onReaderClosed(mangaId: Long, mangaKey: String? = null) {
+        releaseIfIdle(mangaId, mangaKey)
     }
 
     /**
@@ -98,14 +100,24 @@ object ReaderTranslationHub : ChapterJobSource {
      * ⚠️ 必须判 `uiAttached`：阅读器正开着时不能回收。
      */
     @Synchronized
-    fun releaseIfIdle(mangaId: Long) {
-        val c = controllers[mangaId] ?: return
+    fun releaseIfIdle(mangaId: Long, mangaKey: String? = null) {
+        val mapKey = mangaKey ?: controllers.values.firstOrNull { it.mangaId == mangaId }?.translationKeyOf() ?: return
+        val c = controllers[mapKey] ?: return
         if (c.uiAttached || c.isChapterBatchRunning()) return
-        controllers.remove(mangaId)
-        collectors.remove(mangaId)?.cancel()
+        controllers.remove(mapKey)
+        collectors.remove(mapKey)?.cancel()
         c.shutdownAll()
         TranslationJobRegistry.notifyChanged()
         LogCollector.i(TAG, "回收阅读器翻译控制器 mangaId=$mangaId（无 UI 且无任务）")
+    }
+
+    suspend fun shutdownBook(key: String) {
+        val controller = synchronized(this) {
+            collectors.remove(key)?.cancel()
+            controllers.remove(key)
+        } ?: return
+        controller.shutdownAndJoin()
+        TranslationJobRegistry.notifyChanged()
     }
 
     // ===== ChapterJobSource =====
@@ -114,6 +126,8 @@ object ReaderTranslationHub : ChapterJobSource {
         c.chapterJobs.value.map { job ->
             ActiveChapterJob(
                 kind = TranslationJobKind.MANGA,
+                libraryLocationId = c.translationKeyOf().substringBefore(':', ""),
+                bookUuid = c.translationKeyOf().substringAfterLast(':', ""),
                 bookId = c.mangaId,
                 bookTitle = c.mangaTitle,
                 chapterIndex = job.chapterIndex,
@@ -128,13 +142,13 @@ object ReaderTranslationHub : ChapterJobSource {
 
     override fun onAction(action: JobAction, job: ActiveChapterJob): Boolean {
         if (job.kind != TranslationJobKind.MANGA) return false
-        val c = controllers[job.bookId] ?: return false
+        val c = controllers[job.runtimeKey] ?: return false
         when (action) {
             JobAction.PAUSE -> c.pauseChapterJob(job.chapterIndex)
             JobAction.RESUME -> c.resumeChapterJob(job.chapterIndex)
             JobAction.CANCEL -> {
                 c.cancelChapterJob(job.chapterIndex)
-                releaseIfIdle(job.bookId)
+                releaseIfIdle(job.bookId, job.runtimeKey)
             }
         }
         return true

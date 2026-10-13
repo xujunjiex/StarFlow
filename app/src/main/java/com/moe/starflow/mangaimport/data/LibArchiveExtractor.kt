@@ -183,7 +183,7 @@ object LibArchiveExtractor {
     }
 
     /** 建一个 libarchive 读句柄：全格式全过滤器 + UTF-8 文件名优先。 */
-    private fun open(input: InputStream): Long {
+    internal fun open(input: InputStream): Long {
         val archive = Archive.readNew()
         var ok = false
         try {
@@ -244,7 +244,7 @@ object LibArchiveExtractor {
      * 条目名：优先 libarchive 给的 UTF-8 名（RAR5 / 7z 都有）；拿不到就按原始字节解 ——
      * 先试严格 UTF-8，失败退回 GBK（老 RAR4 里的中文名是本地代码页）。
      */
-    private fun entryName(entry: Long): String? {
+    internal fun entryName(entry: Long): String? {
         ArchiveEntry.pathnameUtf8(entry)?.takeIf { it.isNotEmpty() }?.let { return it }
         val raw = ArchiveEntry.pathname(entry) ?: return null
         if (raw.isEmpty()) return null

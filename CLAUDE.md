@@ -17,6 +17,7 @@ Claude 只在动那个目录时才读：
 |---|---|
 | 漫画渲染 / 引擎 / 管线 / 状态机 / 自动翻页 | `app/src/main/java/com/moe/starflow/manga/CLAUDE.md` |
 | 漫画导入书架 + 阅读器 | `app/src/main/java/com/moe/starflow/mangaimport/CLAUDE.md` |
+| 书库会话、File/SAF 存储与目录持久化 | `app/src/main/java/com/moe/starflow/library/CLAUDE.md` |
 | 小说导入 + 阅读器 + 翻译 | `app/src/main/java/com/moe/starflow/novel/CLAUDE.md` |
 | 翻译服务 / 悬浮球 / 截图链路 | `app/src/main/java/com/moe/starflow/translate/CLAUDE.md` |
 | 数据、缓存、历史、DB | `app/src/main/java/com/moe/starflow/data/CLAUDE.md` |

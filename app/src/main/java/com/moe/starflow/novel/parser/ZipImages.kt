@@ -141,19 +141,19 @@ internal object ZipImages {
      * ⚠️ 解析出来的路径必须落在 [baseDir] 内（路径穿越守卫）：不然一份"小说"里写
      * `../../../../data/data/.../x.jpg` 就能让阅读器去读 app 私有目录里的任意文件。
      */
-    fun readLocalOne(baseDir: File, src: String): ByteArray? {
+    fun readLocalOne(baseDir: File, src: String, bookRoot: File = baseDir): ByteArray? {
         return try {
             if (src.startsWith("data:", ignoreCase = true)) {
                 decodeDataUri(src)
             } else {
-                val f = resolveLocal(baseDir, src)
+                val f = resolveLocal(baseDir, src, bookRoot)?.let { com.moe.starflow.library.LibrarySources.file(it) }
                 if (f == null || !f.isFile) {
                     null
                 } else {
                     val bytes = NovelReadLimits.readFile(f, NovelReadLimits.MAX_ZIP_ENTRY_BYTES)
                     if (looksLikeMarkup(bytes)) {
                         val inner = HtmlTextExtractor.firstImageSource(TextEncoding.decode(bytes))
-                        val innerFile = inner?.let { resolveLocal(f.parentFile ?: baseDir, it) }
+                        val innerFile = inner?.let { resolveLocal(f.parentFile ?: baseDir, it, bookRoot)?.let { at -> com.moe.starflow.library.LibrarySources.file(at) } }
                         innerFile?.takeIf { it.isFile }?.let {
                             NovelReadLimits.readFile(it, NovelReadLimits.MAX_ZIP_ENTRY_BYTES)
                         }
@@ -168,11 +168,11 @@ internal object ZipImages {
     }
 
     /** 本地文件版的地址解析：解百分号转义 + 去 `#` 片段 + **夹在 [baseDir] 内**（越界返回 null）。 */
-    fun resolveLocal(baseDir: File, href: String): File? {
+    fun resolveLocal(baseDir: File, href: String, bookRoot: File = baseDir): File? {
         val path = percentDecode(href).substringBefore('#').trim()
         if (path.isEmpty() || path.startsWith("//") || path.contains("://")) return null
-        val base = baseDir.canonicalFile
-        val f = File(base, path).canonicalFile
+        val base = bookRoot.canonicalFile
+        val f = File(baseDir, path).canonicalFile
         return f.takeIf { it.path == base.path || it.path.startsWith(base.path + File.separator) }
     }
 

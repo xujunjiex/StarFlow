@@ -2,19 +2,11 @@ package com.moe.starflow.novel.data
 
 import android.content.Context
 import com.moe.starflow.novel.model.NovelFormat
+import java.io.File
 import org.json.JSONArray
 import org.json.JSONObject
 
-/**
- * 小说书架清单持久化（SharedPreferences + JSON）。清单是小数据（几十部书），不用 Room。
- *
- * ⚠️ **全部公开方法 @Synchronized**：写操作是「load → 改 → save」三步，不是原子的。
- * 文件夹导入会并发产生多个任务，两个任务同毫秒收尾就会互相覆盖（各自读到不含对方的旧列表
- * → 后写的把先写的整条吞掉 = 书架少一部、占位卡片凭空消失）。
- *
- * 与漫画的 `ImportedMangaStore` 用**不同的 prefs 文件**（`novel_shelf`），互不干扰 ——
- * 两套 id 空间独立，共用一个清单会让「小说 id=1」和「漫画 id=1」互相顶掉。
- */
+/** Per-library Room records and portable commit journal; novel IDs have a separate namespace. */
 object NovelStore {
 
     private const val PREFS_NAME = "novel_shelf"
@@ -26,57 +18,109 @@ object NovelStore {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     @Synchronized
-    fun load(context: Context): List<ImportedNovel> {
+    internal fun loadLegacy(context: Context): List<ImportedNovel> {
         val raw = prefs(context).getString(KEY, null) ?: return emptyList()
         return try {
             val arr = JSONArray(raw)
-            (0 until arr.length())
-                // ⚠️ **逐条容错**：`toNovel()` 里 `id/addedAt/localRoot` 是严格取值，
-                // 一条坏数据会抛异常 —— 整份 catch 成 emptyList() 的话，下一次 `save()`
-                // （退出阅读器就会调）就把这份空清单覆盖落盘，书的文件还在但清单永久没了
-                .mapNotNull { i -> runCatching { arr.getJSONObject(i).toNovel() }.getOrNull() }
-                // 没有本地路径的条目不可用（占位条目从不入库，出现即脏数据）
-                .filterNot { it.localRoot.isBlank() }
+            (0 until arr.length()).map { i -> arr.getJSONObject(i).toNovel() }
         } catch (e: Exception) {
-            emptyList()
+            throw java.io.IOException("旧小说清单损坏，已停止迁移并保留原资料", e)
+        }
+    }
+
+    @Synchronized
+    fun load(context: Context): List<ImportedNovel> {
+        val session = com.moe.starflow.library.LibrarySessions.current(context)
+        return session.books("novel").map { row ->
+            val value = JSONObject(row.body).toNovel()
+            value.copy(bookUuid = row.uuid, libraryLocationId = session.locationId,
+                localRoot = session.local(value.localRoot).path,
+                coverPath = value.coverPath?.let(session::cover),
+                lost = session.sourcePresence[row.source] == false || row.deleting,
+                deletionError = if (row.deleting) row.error ?: "删除未完成" else null)
         }
     }
 
     @Synchronized
     fun save(context: Context, list: List<ImportedNovel>) {
-        // ⚠️ 整份清单解析不了时（不是单条坏、是整体坏了），先把原始串另存一份再覆盖：
-        // 否则这次 save 会把用户仅剩的清单原地抹掉，再也没有找回的余地
-        val raw = prefs(context).getString(KEY, null)
-        if (!raw.isNullOrEmpty() && runCatching { JSONArray(raw) }.isFailure) {
-            prefs(context).edit().putString(KEY_BROKEN, raw).apply()
+        val session = com.moe.starflow.library.LibrarySessions.current(context)
+        list.forEach { persist(context, it) }
+        session.books("novel").filter { row -> list.none { it.id == row.id } }
+            .forEach { session.removeBook("novel", it.id) }
+    }
+
+    private fun persist(context: Context, value: ImportedNovel) {
+        val session = com.moe.starflow.library.LibrarySessions.forLocation(context, value.libraryLocationId)
+        val uuid = value.bookUuid.ifEmpty { session.uuid("novel", value.id) }
+        val json = value.toJson().put("bookUuid", uuid)
+            .put("localRoot", session.relative(File(value.localRoot)))
+        val old = session.database.catalog().book("novel", value.id)?.let { JSONObject(it.body) }
+        val cover = value.coverPath
+        if (!cover.isNullOrEmpty()) {
+            if (cover.startsWith("content://")) json.put("coverPath", old?.opt("coverPath") ?: JSONObject.NULL)
+            else {
+                val original = File(cover)
+                val path = ".starflow/books/$uuid/cover/${original.name}"
+                val target = session.local(path)
+                if (original.isFile && original.canonicalFile != target.canonicalFile) {
+                    target.parentFile?.mkdirs()
+                    if (!target.isFile) original.copyTo(target, overwrite = false)
+                }
+                json.put("coverPath", path)
+            }
         }
-        val arr = JSONArray()
-        list.forEach { arr.put(it.toJson()) }
-        prefs(context).edit().putString(KEY, arr.toString()).apply()
+        session.putBook("novel", value.id, json, stagingCover = cover?.takeIf { !it.startsWith("content://") }
+            ?.let { runCatching { session.relative(File(it)) }.getOrNull() })
+        com.moe.starflow.library.LibrarySessions.changes.value += 1
     }
 
     @Synchronized
-    fun add(context: Context, novel: ImportedNovel) {
-        save(context, load(context) + novel)
+    fun patch(context: Context, value: ImportedNovel, change: (ImportedNovel) -> ImportedNovel) {
+        val session = com.moe.starflow.library.LibrarySessions.forLocation(context, value.libraryLocationId)
+        val pinned = session.context()
+        val latest = load(pinned).firstOrNull { it.id == value.id && (value.bookUuid.isEmpty() || it.bookUuid == value.bookUuid) } ?: return
+        persist(pinned, change(latest))
     }
+
+    @Synchronized
+    fun add(context: Context, value: ImportedNovel) { persist(context, value) }
+
+    /** Merge only new scan results under the same monitor as manual imports and shelf edits. */
+    @Synchronized
+    internal fun mergeScanned(context: Context, scanned: List<ImportedNovel>): Int {
+        val latest = load(context).toMutableList()
+        val ids = latest.mapTo(mutableSetOf()) { it.id }
+        val paths = latest.mapTo(mutableSetOf()) { canonical(it.localRoot) }
+        var added = 0
+        scanned.forEach { novel ->
+            val path = canonical(novel.localRoot)
+            if (novel.id !in ids && path !in paths) {
+                persist(context, novel)
+                latest += novel
+                ids += novel.id
+                paths += path
+                added++
+            }
+        }
+        return added
+    }
+
+    private fun canonical(path: String): String = runCatching { File(path).canonicalPath }.getOrDefault(path)
 
     @Synchronized
     fun remove(context: Context, id: Long) {
-        save(context, load(context).filterNot { it.id == id })
+        com.moe.starflow.library.LibrarySessions.current(context).removeBook("novel", id)
     }
 
     @Synchronized
-    fun update(context: Context, novel: ImportedNovel) {
-        val list = load(context).toMutableList()
-        val idx = list.indexOfFirst { it.id == novel.id }
-        if (idx >= 0) {
-            list[idx] = novel
-            save(context, list)
-        }
+    fun update(context: Context, value: ImportedNovel) {
+        val session = com.moe.starflow.library.LibrarySessions.forLocation(context, value.libraryLocationId)
+        if (session.database.catalog().book("novel", value.id) != null) persist(context, value)
     }
 
     private fun ImportedNovel.toJson(): JSONObject = JSONObject().apply {
         put("id", id)
+        put("bookUuid", bookUuid)
         put("title", title)
         put("author", author ?: JSONObject.NULL)
         put("localRoot", localRoot)
@@ -90,8 +134,6 @@ object NovelStore {
         put("lastReadParaIndex", lastReadParaIndex)
         put("lastReadPage", lastReadPage)
         put("lastReadAt", lastReadAt)
-        // ⚠️ lost / importing / importPhase / importPercent 刻意不写 —— 瞬态字段，
-        // 持久化会让「文件丢失」这种实时推导的结论变成过期缓存
     }
 
     /**
@@ -109,6 +151,7 @@ object NovelStore {
 
     private fun JSONObject.toNovel(): ImportedNovel = ImportedNovel(
         id = getLong("id"),
+        bookUuid = optString("bookUuid", ""),
         title = optString("title", ""),
         author = optNullableString("author"),
         localRoot = getString("localRoot"),
