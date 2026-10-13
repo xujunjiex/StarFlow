@@ -25,5 +25,6 @@
     <color name="text_tertiary">#999999</color>
     <color name="divider">#E0E0E0</color>
     <color name="success">#4CAF50</color>
+    <color name="library_location_selected">#E8F5FD</color>
 
 </resources>

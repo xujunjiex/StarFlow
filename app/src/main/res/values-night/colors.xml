@@ -10,4 +10,5 @@
     <color name="text_tertiary">#5A5A5F</color>
     <color name="divider">#333333</color>
     <color name="card_background">#2A2A2C</color>
+    <color name="library_location_selected">#26384A</color>
 </resources>

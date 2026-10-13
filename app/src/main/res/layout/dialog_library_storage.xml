@@ -1,26 +1,122 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="match_parent" android:layout_height="wrap_content"
-    android:orientation="vertical" android:padding="20dp">
-    <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="@string/library_current_path" android:textColor="@color/text_primary" />
-    <TextView android:id="@+id/library_path" android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:paddingTop="6dp" android:textIsSelectable="true" android:textColor="@color/text_primary" />
-    <TextView android:id="@+id/library_space" android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:paddingTop="10dp" android:text="@string/library_space_unknown" android:textColor="@color/text_primary" />
-    <RadioGroup android:id="@+id/library_location_choices"
-        android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical"
-        android:layout_marginTop="14dp">
-        <RadioButton android:id="@+id/library_default" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:paddingTop="8dp" android:paddingBottom="8dp" />
-        <RadioButton android:id="@+id/library_choose" android:layout_width="match_parent"
-            android:layout_height="wrap_content" android:paddingTop="8dp" android:paddingBottom="8dp" />
-    </RadioGroup>
-    <TextView android:id="@+id/library_custom_path" android:layout_width="match_parent"
-        android:layout_height="wrap_content" android:paddingStart="36dp" android:paddingBottom="8dp"
-        android:textColor="@color/text_secondary" android:visibility="gone" />
-    <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:paddingTop="4dp" android:text="@string/library_folder_help" android:textColor="@color/text_secondary" />
-    <TextView android:id="@+id/library_retry" android:layout_width="match_parent" android:layout_height="48dp"
-        android:gravity="center_vertical" android:text="@string/library_retry_save" android:textColor="@color/text_primary" />
-</LinearLayout>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_library_storage_dialog"
+    android:clipToOutline="true"
+    android:fillViewport="true"
+    android:overScrollMode="never">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+            <LinearLayout
+                android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="1" android:orientation="vertical">
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="@string/library_storage_title" android:textColor="@color/text_primary"
+                    android:textSize="20sp" android:textStyle="bold" />
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp" android:text="@string/library_storage_intro"
+                    android:textColor="@color/text_secondary" android:textSize="13sp" />
+            </LinearLayout>
+            <ImageButton android:id="@+id/library_close"
+                android:layout_width="40dp" android:layout_height="40dp"
+                android:layout_marginStart="8dp" android:background="?attr/selectableItemBackgroundBorderless"
+                android:contentDescription="@string/library_close" android:padding="10dp"
+                android:src="@drawable/ic_close" android:tint="@color/text_secondary" />
+        </LinearLayout>
+
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="18dp" android:background="@drawable/bg_library_storage_summary"
+            android:orientation="vertical" android:padding="14dp">
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:text="@string/library_current_path" android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
+            <TextView android:id="@+id/library_path" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:layout_marginTop="5dp"
+                android:maxLines="3" android:ellipsize="middle" android:textIsSelectable="true"
+                android:textColor="@color/text_primary" android:textSize="14sp" />
+            <TextView android:id="@+id/library_space" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:layout_marginTop="8dp"
+                android:text="@string/library_space_unknown" android:textColor="@color/text_secondary"
+                android:textSize="13sp" />
+        </LinearLayout>
+
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="20dp" android:layout_marginBottom="9dp"
+            android:text="@string/library_choose_location" android:textColor="@color/text_primary"
+            android:textSize="14sp" android:textStyle="bold" />
+
+        <LinearLayout android:id="@+id/library_default" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:background="@drawable/bg_library_location_card" android:clipToOutline="true"
+            android:clickable="true" android:focusable="true" android:foreground="?attr/selectableItemBackground"
+            android:gravity="center_vertical" android:minHeight="76dp" android:orientation="horizontal"
+            android:padding="12dp">
+            <FrameLayout android:layout_width="44dp" android:layout_height="44dp"
+                android:background="@drawable/bg_library_location_icon" android:foregroundGravity="center">
+                <ImageView android:layout_width="24dp" android:layout_height="24dp"
+                    android:layout_gravity="center" android:src="@drawable/ic_library_app_storage"
+                    android:tint="@color/primary" />
+            </FrameLayout>
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_marginStart="12dp" android:layout_weight="1" android:orientation="vertical">
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="@string/library_default_folder" android:textColor="@color/text_primary"
+                    android:textSize="14sp" android:textStyle="bold" />
+                <TextView android:id="@+id/library_default_path" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:layout_marginTop="4dp"
+                    android:ellipsize="middle" android:maxLines="2" android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
+            </LinearLayout>
+            <ImageView android:id="@+id/library_default_selected" android:layout_width="22dp"
+                android:layout_height="22dp" android:layout_marginStart="8dp"
+                android:src="@drawable/ic_check_circle" android:tint="@color/primary" android:visibility="gone" />
+        </LinearLayout>
+
+        <LinearLayout android:id="@+id/library_choose" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_marginTop="10dp"
+            android:background="@drawable/bg_library_location_card" android:clipToOutline="true" android:clickable="true"
+            android:focusable="true" android:foreground="?attr/selectableItemBackground"
+            android:gravity="center_vertical" android:minHeight="76dp" android:orientation="horizontal"
+            android:padding="12dp">
+            <FrameLayout android:layout_width="44dp" android:layout_height="44dp"
+                android:background="@drawable/bg_library_location_icon" android:foregroundGravity="center">
+                <ImageView android:layout_width="24dp" android:layout_height="24dp"
+                    android:layout_gravity="center" android:src="@drawable/ic_library_folder"
+                    android:tint="@color/primary" />
+            </FrameLayout>
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_marginStart="12dp" android:layout_weight="1" android:orientation="vertical">
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+                    android:text="@string/library_custom_folder" android:textColor="@color/text_primary"
+                    android:textSize="14sp" android:textStyle="bold" />
+                <TextView android:id="@+id/library_custom_path" android:layout_width="match_parent"
+                    android:layout_height="wrap_content" android:layout_marginTop="4dp"
+                    android:ellipsize="middle" android:maxLines="2" android:textColor="@color/text_secondary"
+                    android:textSize="12sp" />
+            </LinearLayout>
+            <ImageView android:id="@+id/library_custom_selected" android:layout_width="22dp"
+                android:layout_height="22dp" android:layout_marginStart="8dp"
+                android:src="@drawable/ic_check_circle" android:tint="@color/primary" android:visibility="gone" />
+        </LinearLayout>
+
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="14dp" android:text="@string/library_folder_help"
+            android:textColor="@color/text_secondary" android:textSize="12sp" android:lineSpacingExtra="2dp" />
+
+        <TextView android:id="@+id/library_retry" android:layout_width="match_parent"
+            android:layout_height="44dp" android:layout_marginTop="8dp"
+            android:background="@drawable/bg_action_bar" android:gravity="center"
+            android:text="@string/library_retry_save" android:textColor="@color/primary"
+            android:textSize="14sp" android:visibility="gone" />
+    </LinearLayout>
+</ScrollView>
