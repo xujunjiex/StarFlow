@@ -124,6 +124,12 @@
 # --- ColorPicker ---
 -keep class com.jaredrummler.colorpicker.** { *; }
 
+# --- Rhino（用户自定义翻译前/后处理脚本的 JS 引擎）---
+# ⚠️ 整包 keep：Rhino 内部大量用反射/类名拼接（ScriptRuntime、ClassCache、资源 Messages.properties），
+#    混淆或删类会在 release 上表现为「脚本静默不生效 / NoClassDefFoundError」，而 debug 完全正常。
+-keep class org.mozilla.javascript.** { *; }
+-dontwarn org.mozilla.javascript.**
+
 # --- kotlinx.coroutines ---
 -keepclassmembers class kotlinx.coroutines.** {
     volatile <fields>;

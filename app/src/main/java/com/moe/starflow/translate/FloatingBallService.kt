@@ -460,6 +460,12 @@ class FloatingBallService : LifecycleService() {
     // 重新翻译用：记录最近一次翻译的原文
     private var lastTranslatedSource: String? = null
 
+    // 用户自定义文本处理脚本（翻译前 / 翻译后），默认关闭；onCreate 读一次，prefs 变化时更新。
+    // 一次翻译用同一份快照：在途翻译不因中途改设置而前后半段用不同脚本。
+    private var textTransformEnabled = TextTransformScripts.DEFAULT_ENABLED
+    private var textTransformPreScript = TextTransformScripts.IDENTITY_SCRIPT
+    private var textTransformPostScript = TextTransformScripts.IDENTITY_SCRIPT
+
     // SharedPreferences listener（防止被 GC 回收）
     private var prefChangeListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
 
@@ -571,6 +577,8 @@ class FloatingBallService : LifecycleService() {
         // 读取 AI 上下文设置（预算档位 = token，不是轮数）
         contextEnabled = prefs.getBoolean("game_context_enabled", false)
         contextTokenBudget = ContextBudget.budgetOf(prefs)
+        // 文本处理脚本（翻译前 / 翻译后）
+        applyTextTransformPrefs()
 
         // 先初始化截图提供者，再检查权限（权限检查在悬浮球创建之前）
         initScreenshotProvider()
@@ -623,6 +631,10 @@ class FloatingBallService : LifecycleService() {
                 key in FloatingBallStyle.KEYS -> applyBallStyle()
                 // 主题切换：Service 不随 AppCompat 重建，在屏的悬浮球/弹窗要手动重建才跟上
                 key == ThemeManager.KEY -> rebuildThemedWindows()
+                // 文本处理脚本：改完下一次翻译即生效（在途翻译保持开始时的脚本）
+                key == TextTransformScripts.KEY_ENABLED ||
+                    key == TextTransformScripts.KEY_PRE ||
+                    key == TextTransformScripts.KEY_POST -> applyTextTransformPrefs()
                 key in styleKeys -> {
                     // 设置页改了字号/字体/颜色 → 立即应用到翻译结果 view
                     translationResultView.applyStyle()
@@ -2073,6 +2085,40 @@ class FloatingBallService : LifecycleService() {
         ContextBudget.clear(translatorText)
     }
 
+    /** 读一次文本处理脚本设置（onCreate 与 prefs 变化时调用）。 */
+    private fun applyTextTransformPrefs() {
+        textTransformEnabled = TextTransformScripts.isEnabled(prefs)
+        textTransformPreScript = TextTransformScripts.preScript(prefs)
+        textTransformPostScript = TextTransformScripts.postScript(prefs)
+    }
+
+    /**
+     * 翻译前处理：OCR 原文 → 送进翻译引擎的文本。总开关关闭时原样返回。
+     *
+     * ⚠️ 只改「喂给引擎的字符串」。缓存查找、历史 `sourceText`、LRU、AI 上下文仍用**原始**原文，
+     * 否则处理后的文本与库里存的原文对不上 → 同一个画面每轮都判「未命中」而反复重翻。
+     */
+    private fun preprocessSource(source: String): String {
+        if (!textTransformEnabled) return source
+        val processed = TextTransformer.apply(textTransformPreScript, source)
+        if (processed.isBlank()) {
+            // 脚本把文本处理空了（例如「删掉所有空白」碰上纯空白页）：没有可翻的内容，
+            // 退回原文，别把空串喂给引擎
+            LogCollector.w(TAG, "翻译前处理结果为空，改用原文")
+            return source
+        }
+        return processed
+    }
+
+    /**
+     * 翻译后处理：引擎返回的译文 → 最终译文（上屏 / 历史 / LRU / 上下文都用它）。
+     * 总开关关闭或在流式中间态时不处理（见 translateByText 的 onPartial）。
+     */
+    private fun postprocessTranslation(translated: String): String {
+        if (!textTransformEnabled) return translated
+        return TextTransformer.apply(textTransformPostScript, translated)
+    }
+
     // 文本翻译
     private fun translateByText(str: String) {
         val localTranslation = translatorText?.isLocalHeavyEngine() == true
@@ -2084,7 +2130,10 @@ class FloatingBallService : LifecycleService() {
         if (localTranslation) localTranslationHeld.set(true)
         val sourceLang = prefs.getString("Source_Language", "ja")
         val targetLang = prefs.getString("Target_Language", "zh")
-        LogCollector.d(TAG, "开始文本翻译: ${str.take(50)}..., $sourceLang → $targetLang")
+        // 用户自定义「翻译前处理」：只改**送进引擎的文本**，缓存/历史/上下文仍用原始 OCR 原文作键，
+        // 否则同一个画面每次都会因为处理后的文本对不上而反复重翻。
+        val engineInput = preprocessSource(str)
+        LogCollector.d(TAG, "开始文本翻译: ${engineInput.take(50)}..., $sourceLang → $targetLang")
 
         // 更新 AI 上下文（唯一入口）：网络 API 按设置的 token 预算裁剪，
         // 本地 LlamaCpp 忽略该设置、按模型自己的 ctx 裁剪（见 ContextBudget / ContextAwareTranslation）
@@ -2097,7 +2146,7 @@ class FloatingBallService : LifecycleService() {
 
         try {
             translatorText?.getTranslationStreaming(
-                str, sourceLang, targetLang,
+                engineInput, sourceLang, targetLang,
             onPhase = { phase ->
                 // 阶段提示：读取原文中 → 生成译文中
                 lifecycleScope.launch(Dispatchers.Main) {
@@ -2129,8 +2178,11 @@ class FloatingBallService : LifecycleService() {
                         LogCollector.d(TAG, "文本翻译成功: ${result.translatedText.take(50)}..., 耗时: ${elapsed}ms")
                         updateDebugStatus("【完成】", elapsedMs = elapsed)
 
+                        // 用户自定义「翻译后处理」：引擎返回值 → 最终译文（上屏 / 入库 / 上下文都用它）
+                        val finalText = postprocessTranslation(result.translatedText)
+
                         // 调试模式强制显示原文+译文，否则按个性设置（统一通过 composeResultText 走同一条路径）
-                        composeResultText(str, result.translatedText)?.let { translationResultView.setText(it) }
+                        composeResultText(str, finalText)?.let { translationResultView.setText(it) }
                         translationResultView.hideCacheIndicator()
                         lastTranslatedSource = str
 
@@ -2140,7 +2192,7 @@ class FloatingBallService : LifecycleService() {
                         }
 
                         // 更新缓存并进入 IDLE
-                        autoTranslateEngine?.onTranslationSuccess(str, result.translatedText)
+                        autoTranslateEngine?.onTranslationSuccess(str, finalText)
                         autoTranslateEngine?.markIdle()
                         ballStateManager?.setState(BallStateManager.State.Idle)
                         statusOverlay.showImmediate(getString(R.string.translating_done))
@@ -2150,13 +2202,13 @@ class FloatingBallService : LifecycleService() {
                         // 保存到历史
                         saveTranslationToCache(
                             sourceText = str,
-                            translatedText = result.translatedText,
+                            translatedText = finalText,
                             translatorName = translatorText?.javaClass?.simpleName ?: "Unknown"
                         )
 
                         // 更新 AI 上下文：支持上下文的引擎（OpenAI 兼容 / 本地 LlamaCpp）都累积
                         if (contextEnabled && translatorText is ContextAwareTranslation) {
-                            contextHistory.addLast(Pair(str, result.translatedText))
+                            contextHistory.addLast(Pair(str, finalText))
                             // 按 token 预算裁剪（唯一实现），旧的「按轮数 removeFirst」已删
                             val kept = ContextBudget.trimInPlace(contextHistory, contextTokenBudget)
                             LogCollector.d(TAG, "上下文已更新: $kept 轮（预算 $contextTokenBudget tok）")

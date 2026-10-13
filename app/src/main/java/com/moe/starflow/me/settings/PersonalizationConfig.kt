@@ -43,6 +43,8 @@ import com.moe.starflow.manga.config.TranslationTextRules
 import com.moe.starflow.sr.SrModelManager
 import com.moe.starflow.translate.screenshot.AccessibilityServiceManager
 import com.moe.starflow.translate.CustomLocale
+import com.moe.starflow.translate.TextTransformer
+import com.moe.starflow.translate.TextTransformScripts
 import com.moe.starflow.translate.widget.Dialogs
 import com.moe.starflow.translate.FloatingBallService
 import com.moe.starflow.manga.MangaFloatingService
@@ -261,6 +263,22 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
                 true
             }
         }
+
+        // 文本预处理 / 后处理脚本（默认关闭；脚本用 JavaScript 写，入参为字符串 s）
+        findPreference<SwitchPreference>(TextTransformScripts.KEY_ENABLED)?.apply {
+            setOnPreferenceChangeListener { _, newValue ->
+                prefs.setBoolean(TextTransformScripts.KEY_ENABLED, newValue as Boolean)
+                true
+            }
+        }
+        setupTextTransformScript(
+            key = TextTransformScripts.KEY_PRE,
+            titleRes = R.string.text_transform_pre_title
+        )
+        setupTextTransformScript(
+            key = TextTransformScripts.KEY_POST,
+            titleRes = R.string.text_transform_post_title
+        )
         // 上下文长度（token 预算，档位 4K~128K，默认 32K）——原来是「轮数」，已整体替换
         findPreference<ListPreference>(ContextBudget.KEY_TOKEN_BUDGET)?.apply {
             setOnPreferenceChangeListener { _, newValue ->
@@ -576,6 +594,87 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
     // 手势 key 列表，用于互换逻辑
     private val gestureKeys = listOf("Ball_Gesture_Single_Click", "Ball_Gesture_Double_Click", "Ball_Gesture_Long_Press")
     private val gesturePrefs = mutableListOf<ListPreference>()
+
+    // ==================== 文本预处理 / 后处理脚本 ====================
+
+    /**
+     * 「翻译前 / 翻译后处理」脚本的入口。
+     *
+     * 脚本只存在 prefs 里，翻译线程由 `FloatingBallService` 现读并交给 `TextTransformer`
+     * 执行（同步、有超时、失败按原文返回）——设置页只负责编辑与保存前的语法预检。
+     */
+    private fun setupTextTransformScript(key: String, titleRes: Int) {
+        val pref = findPreference<Preference>(key) ?: return
+        updateTextTransformScriptSummary(pref, key)
+        pref.setOnPreferenceClickListener {
+            showTextTransformScriptDialog(pref, key, titleRes)
+            true
+        }
+    }
+
+    private fun updateTextTransformScriptSummary(pref: Preference, key: String) {
+        val script = TextTransformScripts.normalize(prefs.getString(key, TextTransformScripts.IDENTITY_SCRIPT))
+        pref.summary = if (TextTransformScripts.isIdentity(script)) {
+            getString(R.string.text_transform_script_no_change)
+        } else {
+            // 摘要只给一眼能认出来的预览；完整脚本在编辑框里
+            script.replace('\n', ' ').trim().take(60)
+        }
+    }
+
+    private fun showTextTransformScriptDialog(pref: Preference, key: String, titleRes: Int) {
+        val ctx = requireContext()
+        val customView = LayoutInflater.from(ctx).inflate(R.layout.dialog_text_script, null)
+        val editor = customView.findViewById<EditText>(R.id.et_script).apply {
+            setText(TextTransformScripts.normalize(prefs.getString(key, TextTransformScripts.IDENTITY_SCRIPT)))
+            setSelection(text.length)
+        }
+        customView.findViewById<TextView>(R.id.tv_script_hint).text =
+            getString(R.string.text_transform_script_hint)
+        customView.findViewById<android.widget.Button>(R.id.btn_script_preset).setOnClickListener {
+            showTextScriptPresetPicker(editor)
+        }
+
+        val dialog = AlertDialog.Builder(ctx)
+            .setTitle(titleRes)
+            .setView(customView)
+            .setPositiveButton(R.string.save, null)
+            .setNegativeButton(R.string.user_cancel, null)
+            .create()
+        dialog.show()
+        dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
+        // 保存前先做语法检查：不通过就**不关**弹窗，让用户直接改
+        // （setPositiveButton 的默认行为是先关窗再回调，所以这里自己接管点击）
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val script = TextTransformScripts.normalize(editor.text.toString())
+            val error = TextTransformer.validate(script)
+            if (error != null) {
+                UiUtils.showToast(ctx, getString(R.string.text_transform_script_invalid, error), isShort = false)
+                return@setOnClickListener
+            }
+            prefs.setString(key, script)
+            updateTextTransformScriptSummary(pref, key)
+            dialog.dismiss()
+        }
+    }
+
+    /** 预置模板：选中只替换编辑框内容，不直接落库（用户还能接着改）。 */
+    private fun showTextScriptPresetPicker(editor: EditText) {
+        val names = TextTransformScripts.PRESET_NAME_RES
+            .map { getString(it) }
+            .toTypedArray()
+        val dialog = AlertDialog.Builder(requireContext())
+            .setTitle(R.string.text_transform_preset_label)
+            .setItems(names) { _, which ->
+                val script = TextTransformScripts.PRESET_SCRIPTS.getOrNull(which) ?: return@setItems
+                editor.setText(script)
+                editor.setSelection(editor.text.length)
+            }
+            .setNegativeButton(R.string.user_cancel, null)
+            .create()
+        dialog.show()
+        dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
+    }
 
     private fun setupGesturePreference(pref: ListPreference, key: String) {
         gesturePrefs.add(pref)

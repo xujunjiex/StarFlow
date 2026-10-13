@@ -126,6 +126,33 @@
     </PreferenceCategory>
 
     <PreferenceCategory
+        android:title="@string/text_transform_category"
+        app:iconSpaceReserved="false">
+
+        <!-- 用户自定义脚本：原文送进翻译引擎前、译文返回后各过一次。
+             默认关闭；脚本是 JavaScript 函数体（入参 s），预置模板即「直接 return s;」。 -->
+        <SwitchPreference
+            android:key="text_transform_enabled"
+            app:iconSpaceReserved="false"
+            android:defaultValue="false"
+            android:title="@string/text_transform_enabled_title"
+            android:summary="@string/text_transform_enabled_summary"/>
+
+        <Preference
+            android:key="text_transform_pre"
+            app:iconSpaceReserved="false"
+            android:title="@string/text_transform_pre_title"
+            android:dependency="text_transform_enabled"/>
+
+        <Preference
+            android:key="text_transform_post"
+            app:iconSpaceReserved="false"
+            android:title="@string/text_transform_post_title"
+            android:dependency="text_transform_enabled"/>
+
+    </PreferenceCategory>
+
+    <PreferenceCategory
         android:title="@string/manga_result_setting_title"
         app:iconSpaceReserved="false">
 

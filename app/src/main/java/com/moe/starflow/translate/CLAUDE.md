@@ -77,6 +77,40 @@ IDLE（跳过OCR）──像素变化──→ CHANGED ──稳定1帧──→
 
 **悬浮球长按延迟：** 默认 300ms（`FloatingBallConfig.LONG_PRESS_DELAY`）
 
+## 用户自定义「翻译前 / 后处理」脚本
+
+设置项在个性化页的「文本预处理与后处理」分类，键与预置模板都在 `translate/TextTransformScripts.kt`：
+
+| 键 | 默认 | 语义 |
+|---|---|---|
+| `text_transform_enabled` | `false` | 总开关；关闭时翻译路径完全不碰脚本 |
+| `text_transform_pre` | `return s;` | 原文脚本：**送进翻译引擎的文本** |
+| `text_transform_post` | `return s;` | 译文脚本：**引擎返回的译文 → 最终上屏/入库的译文** |
+
+执行器 `translate/TextTransformer.kt`（Rhino，纯 Java 的 JS 实现；用它的理由与 `compileFunction` 的
+坑见该文件注释）。接线只有两个方法：`FloatingBallService.preprocessSource()` 与
+`postprocessTranslation()`，两者都在总开关关闭时原样透传。
+
+**硬约束（改之前必读）**
+
+- ⚠️ **翻译前处理只改「喂给引擎的文本」**：缓存查找、历史 `sourceText`、LRU、AI 上下文仍然用
+  **原始 OCR 原文**。否则处理后的文本与库里存的原文对不上 → 同一个画面每轮都判「未命中」而反复重翻。
+- ⚠️ **只处理最终译文**：流式中间态（`onPartial`）不处理后处理 —— 逐段套用（如「加方括号」）会得到
+  一堆半截结果；最终 `callback` 的 Success 才处理一次。
+- ⚠️ **脚本失败一律按原文返回**（`apply` 里 catch Throwable + `LogCollector.w`）：翻译是主流程，
+  一段可选脚本不能让它失败。翻译前处理返回空文本时退回原文（空串喂引擎没有意义）。
+- ⚠️ **超时保护靠「全局 Context 工厂」**：Rhino 把指令计数回调发给 `cx.getFactory()`，而 `Context`
+  构造时就把 factory 记成 `ContextFactory.getGlobal()` —— 只用 `factory.enterContext()`（不 `initGlobal`）
+  时回调永远不触发，死循环会把翻译线程挂住（实测过）。所以 `TextTransformer` 在 init 块里
+  `ContextFactory.initGlobal(factory)`，并且**必须保持 `optimizationLevel = -1`**（解释模式才回调）。
+- ⚠️ 不要用 `Context.compileFunction(...)` 编译用户脚本：该版本不会把源码当**函数体**解析，
+  `return s;` 直接报 `EvaluatorException: invalid return`。现在是自己包一层
+  `function __starflow_transform(s) { ... }` 再取函数。
+- 作用域用 `initSafeStandardObjects()` + `ClassShutter` 全拒：脚本拿不到任何宿主 Java 类。
+- **作用范围**：目前只接在**游戏/视频的文本翻译**路径上（`translateByText`）。漫画气泡批翻
+  （`TranslateUtils.translateBubblesBatch`）与小说章节翻译**还没接**——那两处是「一次多段」的批处理，
+  需要各自决定「按段处理」还是「按批处理」，接之前先确认口径。
+
 **悬浮球手势自定义：**
 三个手势（单击/双击/长按）分配不同动作，互斥配置（不能重复）。
 - `Constants.BallAction`：TRANSLATE(0)、MENU(1)、AUTO_TRANSLATE(2)、**CLOSE_FLOATING(3)**
