@@ -12,7 +12,7 @@
 
 - **来源扫描**：进入或恢复小说页签、切换书库及下拉均触发 `LibraryScanner`，也可手动启动。仅枚举当前 `novel_import/`，逐本提交；已收录作品保留身份，不重复解析章节。文件夹按一本识别，章节保留相对路径。存储约束见 [书库存储指南](../library/CLAUDE.md)。
 - **简介元数据**：各格式导入与扫描共用 `library/BookMetadataReader`；支持包内或目录中的 `meta.json`/`ComicInfo.xml`、独立文件的同名元数据，以及单作品子目录的普通元数据。已有书库目录授权可用于复制文件来源的相邻元数据，单文件授权不推定兄弟文件可读。EPUB 读取 OPF 的 `dc:description` 与作者，HTML 读取 description/og:description，文件夹 EPUB 分卷提供缺失的作者、简介与封面。文件夹只枚举一次，按正文、插图和元数据分类复制。元数据有大小上限，坏数据不阻止正文导入；旧空简介按读取版本补齐，不覆盖非空用户修改。导入进度统一放在状态栏，书架仅显示实际书目。
-- **手动放置格式**：TXT / EPUB / HTML / HTM / XHTML；ZIP 包需含 HTML / HTM / XHTML / TXT 章节。作品目录内最多 6 层子目录中的文本/EPUB 文件按自然序作为章节；HTML 插图按 HTML 所在目录的相对路径读取。单 HTML 文件无法读取兄弟目录的图片，须以文件夹形式放置整本内容。
+- **手动放置格式**：TXT / EPUB / HTML / HTM / XHTML；ZIP 包需含 HTML / HTM / XHTML / TXT 章节。作品目录内最多 6 层子目录中的 TXT、HTML 和 EPUB/ZIP 小说卷按自然序作为章节；HTML 插图按 HTML 所在目录的相对路径读取。SAF 提供器可能只返回 MIME、不返回扩展名，目录导入须按扩展名与 MIME 两路识别；本地扫描与解析还要嗅探无扩展名、非标准扩展名和 TXT 内嵌 HTML。单 HTML 文件无法读取兄弟目录的图片，须以文件夹形式放置整本内容。
 - **外部目录访问诊断**：`File.listFiles() == null` 时报告 `File.canRead()`、应用 UID、目录 UID/GID 与权限模式。`getExternalFilesDir()` 无需存储权限；若 MTP/ADB 创建的子目录归 `shell` 所有且没有应用遍历权限，应用无法读取其子项，不能把它误报成 SAF 授权失败。
 - **导入目标创建**：目录和单文件导入共用 `FileAccessDiagnostics.ensureDirectory()`，保留底层创建异常，区分可读与可写；不能用重建书库记录替代权限修复。普通失败使用红色可复制详情和存储位置入口，批量失败全部汇总且保留未确认的弹窗内容。
 - 封面缩略图写入选定书库 `.starflow/books/<UUID>/cover/`；SAF 新文件先在内部持久目录暂存，验证并提交后释放副本。
@@ -88,16 +88,18 @@ Robolectric 的文本引擎是**桩**：`Paint.breakText` 不按宽度换行、�
 ### 支持格式与插图能力
 
 `NovelFormat` 只有 **5 种**：`TXT` / `EPUB` / `ZIP_HTML` / `HTML` / `FOLDER`
-（判定在 `NovelFormatDetector.detect`：**先按内容**试 zip 分流，再按扩展名；未知扩展名先嗅探内容，
-见文件顶部那条「先看内容再信扩展名」）。
+（判定在 `NovelFormatDetector.detect`：先检查 ZIP/EPUB 结构，再嗅探 HTML 与无扩展名文本，最后回退扩展名；
+TXT 内嵌 HTML 按 HTML 解析）。
 
 | 格式 | 导入入口 | 章节 | **插图** |
 |---|---|---|---|
 | `TXT` | 文件 | 按章节标记切；无标记 = 整本一章 | —（纯文本，没有图片的概念） |
 | `EPUB` | 文件 | spine 序（不是文件名字典序） | ✅ 包内图（整包复制进来） |
 | `ZIP_HTML` | 文件（.zip） | 包内 html/htm/xhtml/txt 条目，自然序 | ✅ 包内图（`ZipImages.read`） |
-| `HTML` | 文件（.html） | 整篇 = 一章 | ⚠️ **导不进来**：单文件授权只有那一个文件，兄弟图片拿不到 → 回落占位文本 |
-| `FOLDER` | 文件夹 | 根目录及最多 6 层子目录中的 txt / **html** / epub（epub 展开成卷） | ✅ html 按所在目录解析相对图片；epub 卷的图 ✅；txt 无图 |
+| `HTML` | 文件（.html/.htm/.xhtml，或按内容识别） | 整篇 = 一章 | HTML 正文可读；外部图片须用文件夹导入 |
+| `FOLDER` | 文件夹 | 根目录及最多 6 层子目录中的 TXT/HTML/EPUB/ZIP HTML（EPUB 与 ZIP 展开成卷） | ✅ HTML 按所在目录解析相对图片；EPUB/ZIP 卷的图 ✅；TXT 无图 |
+
+MOBI/AZW、FB2、PDF、RAR/7z 小说包当前没有对应解析器，不应在界面宣称为可读小说格式。ZIP 中只有图片而没有 HTML/TXT 章节时按漫画包处理，不是小说。
 
 - ⚠️ **小说侧不许复用漫画的导入文案**：`NovelShelfFragment.showImportDialog` 曾用
   `import_manga_option_files`（＝「导入文件（zip/cbz/cbr/7z）」）—— **cbr/cbz/7z 是漫画的格式**

@@ -3,6 +3,7 @@ package com.moe.starflow.novel.parser
 import com.moe.starflow.mangaimport.data.ArchivedMangaReader
 import com.moe.starflow.novel.model.NovelBook
 import com.moe.starflow.novel.model.NovelChapterMeta
+import com.moe.starflow.novel.model.NovelFormat
 import com.moe.starflow.novel.translate.NovelParagraphSplitter
 import com.moe.starflow.utils.FileAccessDiagnostics
 import com.moe.starflow.utils.LogCollector
@@ -11,7 +12,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
-import java.util.Locale
 
 /**
  * 文件夹子：**整个文件夹 = 一部小说**。
@@ -25,7 +25,8 @@ import java.util.Locale
  *   「一堆 html + 一个 images/ 目录」是小说下载最常见的分发形态；导入时图片也一起拷进来，
  *   所以这类章节的插图能显示（见 [loadChapterSource]）
  * - `.epub` → 当作**一卷**，内部章节原样展开，标题加卷名前缀（`卷名 · 章名`）
- *   这样「一部小说 = 若干卷 epub + 若干散章 txt」这种下载形态也能读
+ * - 含 HTML/TXT 章节的 `.zip` → 同样当作一卷，包内章节与插图按 ZIP 解析器读取
+ *   这样「一部小说 = 若干卷 epub/zip + 若干散章 txt/html」这种下载形态也能读
  * - 排序用**自然序**（`第10章` 在 `第2章` 之后）—— 字典序会把顺序弄乱
  *
  * 章节文本允许放在章节子文件夹中，保留相对路径并按自然序排列；最多递归 6 层。
@@ -36,9 +37,6 @@ object FolderNovelParser : NovelParser {
 
     private const val TAG = "FolderNovelParser"
 
-    private val TEXT_EXTS = setOf("txt")
-    private val HTML_EXTS = setOf("html", "htm", "xhtml")
-    private val VOLUME_EXTS = setOf("epub")
     private const val MAX_CHAPTER_DEPTH = 6
 
     /** locator 里「卷内定位」的分隔符。文件名理论上可能含 `|`，但那种文件极少见。 */
@@ -52,21 +50,22 @@ object FolderNovelParser : NovelParser {
 
         val chapters = mutableListOf<NovelChapterMeta>()
         val volumes = mutableListOf<NovelBook>()
-        val htmlHeader = children.firstOrNull { it.file.extension.lowercase(Locale.ROOT) in HTML_EXTS }?.file?.let { html ->
+        val htmlHeader = children.firstOrNull { it.format == NovelFormat.HTML }?.file?.let { html ->
             TextEncoding.decode(html.inputStream().use { NovelReadLimits.readAtMost(it, 64 * 1024) })
         }
-        for ((child, relativePath) in children) {
-            val ext = child.extension.lowercase(Locale.ROOT)
+        for ((child, relativePath, format) in children) {
             val chapterName = displayName(relativePath)
-            when {
-                ext in TEXT_EXTS || ext in HTML_EXTS -> chapters.add(
+            when (format) {
+                NovelFormat.TXT, NovelFormat.HTML -> chapters.add(
                     NovelChapterMeta(
                         index = chapters.size,
                         title = chapterName,
                         locator = relativePath,
                     )
                 )
-                ext in VOLUME_EXTS -> chapters.addAll(expandVolume(child, relativePath, chapterName, volumes))
+                NovelFormat.EPUB, NovelFormat.ZIP_HTML ->
+                    chapters.addAll(expandVolume(child, relativePath, chapterName, format, volumes))
+                else -> Unit
             }
         }
         if (chapters.isEmpty()) throw IllegalStateException("NO_TEXT_CHAPTER")
@@ -81,7 +80,7 @@ object FolderNovelParser : NovelParser {
         )
     }
 
-    private data class ChapterFile(val file: File, val relativePath: String)
+    private data class ChapterFile(val file: File, val relativePath: String, val format: NovelFormat)
 
     private fun collectChapterFiles(directory: File, rootPath: String, depth: Int): List<ChapterFile> {
         if (depth > MAX_CHAPTER_DEPTH) throw IOException("章节目录层级超过支持深度：${directory.path}")
@@ -97,16 +96,12 @@ object FolderNovelParser : NovelParser {
                 .replace(File.separatorChar, '/')
             if (child.isDirectory) {
                 out += collectChapterFiles(child, rootPath, depth + 1)
-            } else if (child.isFile && isChapterFile(child)) {
-                out += ChapterFile(child, relative)
+            } else if (child.isFile) {
+                val format = NovelFormatDetector.detect(child)
+                if (format != null && format in SUPPORTED_CHAPTER_FORMATS) out += ChapterFile(child, relative, format)
             }
         }
         return out
-    }
-
-    private fun isChapterFile(file: File): Boolean {
-        val ext = file.extension.lowercase(Locale.ROOT)
-        return ext in TEXT_EXTS || ext in HTML_EXTS || ext in VOLUME_EXTS
     }
 
     private fun displayName(relativePath: String): String {
@@ -120,10 +115,15 @@ object FolderNovelParser : NovelParser {
         epub: File,
         relativePath: String,
         volumeName: String,
+        format: NovelFormat,
         volumes: MutableList<NovelBook>,
     ): List<NovelChapterMeta> {
         val inner = try {
-            EpubParser.parse(epub)
+            when (format) {
+                NovelFormat.EPUB -> EpubParser.parse(epub)
+                NovelFormat.ZIP_HTML -> ZipHtmlParser.parse(epub)
+                else -> return emptyList()
+            }
         } catch (e: CancellationException) {
             // 取消（用户退出了导入 / 切走了）不是「坏卷」：吞掉它就变成「取消后照样导入成功，
             // 但少了一卷」—— 必须原样抛出去让协程正常结束
@@ -150,7 +150,7 @@ object FolderNovelParser : NovelParser {
     /**
      * 正文 + 图片。
      *
-     * - 夹里的 **epub 卷**：整条委托给 [EpubParser.loadChapterSource]（卷内插图照常显示）
+     * - 夹里的 **epub / ZIP HTML 卷**：整条委托给对应解析器（包内插图照常显示）
      * - 夹里的 **html**：与单 HTML 同一条路（[HtmlParser.loadChapterSource]）——
      *   基准目录就是 html 所在目录，
      *   而导入时 `images/` 这类子目录里的图片**已经递归拷进来了**，所以插图能显示
@@ -160,14 +160,18 @@ object FolderNovelParser : NovelParser {
         withContext(Dispatchers.IO) {
             val sep = locator.indexOf(INNER_SEP)
             if (sep >= 0) {
-                // 卷内章：交给 epub 解析器按卷内 locator 取
+                // 卷内章：按实际容器类型交给相应解析器
                 val volume = File(file, locator.substring(0, sep))
                 val inner = locator.substring(sep + 1)
-                return@withContext EpubParser.loadChapterSource(volume, inner)
+                return@withContext when (NovelFormatDetector.detect(volume)) {
+                    NovelFormat.EPUB -> EpubParser.loadChapterSource(volume, inner)
+                    NovelFormat.ZIP_HTML -> ZipHtmlParser.loadChapterSource(volume, inner)
+                    else -> ChapterSource.EMPTY
+                }
             }
             val target = File(file, locator)
             if (!target.isFile) return@withContext ChapterSource.EMPTY
-            if (target.extension.lowercase(Locale.ROOT) in HTML_EXTS) {
+            if (NovelFormatDetector.detect(target) == NovelFormat.HTML) {
                 // 图片基准 = html 的父目录；导入保留相对目录，
                 // 所以 `images/a.jpg` 与 `../` 都由 `ZipImages.resolveLocal`
                 // 做「夹在基准目录内」的越界守卫。
@@ -180,4 +184,8 @@ object FolderNovelParser : NovelParser {
                 )
             )
         }
+
+    private val SUPPORTED_CHAPTER_FORMATS = setOf(
+        NovelFormat.TXT, NovelFormat.HTML, NovelFormat.EPUB, NovelFormat.ZIP_HTML,
+    )
 }

@@ -246,9 +246,19 @@ object LibraryScanner {
         val active = if (kind == "manga") ImportManager.activeIdsForScanner() else NovelImportManager.activeIdsForScanner()
         val importing = active.map { "$root/${session.uuid(kind, it)}" }.toSet() +
             session.database.catalog().allMeta().filter { it.name.startsWith("importing:$kind:") && it.value.isNotEmpty() }.map { it.value }
-        fun supported(node: LibraryNode): Boolean = node.directory ||
-            node.path.substringAfterLast('.').lowercase() in if (kind == "manga")
-                setOf("zip", "cbz", "rar", "cbr", "7z", "pdf") else setOf("txt", "epub", "zip", "html", "htm", "xhtml")
+        fun supported(node: LibraryNode): Boolean {
+            if (node.directory) return true
+            val ext = node.path.substringAfterLast('.').lowercase()
+            val knownExtensions = if (kind == "manga")
+                setOf("zip", "cbz", "rar", "cbr", "7z", "pdf")
+            else setOf("txt", "epub", "zip", "html", "htm", "xhtml")
+            if (ext in knownExtensions) return true
+            // Novel imports also accept HTML/plain-text files with missing or nonstandard suffixes.
+            // Sniff only candidates missed by the cheap extension check; the detector reads a small prefix.
+            return kind == "novel" && runCatching {
+                com.moe.starflow.novel.parser.NovelFormatDetector.detect(session.local(node.path)) != null
+            }.getOrDefault(false)
+        }
         listings.getValue(root).forEach { node ->
             val name = node.path.substringAfterLast('/')
             if (name.startsWith('.') || (name == "sr_ncnn_benchmark.txt" || name == "sr_bench_out") || node.path in importing) return@forEach

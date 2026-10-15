@@ -4,6 +4,7 @@ import com.moe.starflow.novel.model.NovelBook
 import com.moe.starflow.novel.model.NovelFormat
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileInputStream
 import java.io.InputStream
 import java.util.Locale
 import java.util.zip.ZipEntry
@@ -71,6 +72,16 @@ object NovelFormatDetector {
 
     private val HTML_EXT = setOf("html", "htm", "xhtml")
     private val TXT_EXT = setOf("txt")
+    private val NON_TEXT_EXT = setOf(
+        "jpg", "jpeg", "png", "gif", "webp", "bmp", "avif", "heic", "svg",
+        "pdf", "mobi", "azw", "azw3", "fb2", "doc", "docx", "rtf", "odt", "json", "xml", "opf", "ncx",
+        "mp3", "m4a", "mp4", "mkv", "avi", "mov", "woff", "woff2", "ttf", "otf",
+        "apk", "exe", "dll", "so", "bin",
+    )
+    private val HTML_MARKUP = Regex(
+        """(?is)<!doctype\s+html\b|<(?:html|head|body|title|meta|p|div|h[1-6]|article|section|br|img|image|blockquote|pre|ul|ol|li|a|span|table)\b"""
+    )
+    private const val DETECT_SAMPLE_BYTES = 64 * 1024
 
     /** null = 不是受支持的文本格式（可能是漫画包，或完全不支持的文件）。 */
     fun detect(file: File): NovelFormat? {
@@ -78,11 +89,32 @@ object NovelFormatDetector {
         if (file.isDirectory) return NovelFormat.FOLDER
         zipKind(file)?.let { return it }
         val ext = file.extension.lowercase(Locale.ROOT)
+        if (ext in NON_TEXT_EXT) return null
+        val sample = runCatching {
+            FileInputStream(file).use { TextEncoding.decode(NovelReadLimits.readAtMost(it, DETECT_SAMPLE_BYTES)) }
+        }.getOrNull()
+        // 内容优先：下载器常把 HTML 正文存成 .txt，SAF 也可能不给出扩展名。
+        if (sample != null && HTML_MARKUP.containsMatchIn(sample)) return NovelFormat.HTML
         return when {
             ext in TXT_EXT -> NovelFormat.TXT
             ext in HTML_EXT -> NovelFormat.HTML
+            sample != null && looksLikePlainText(sample) -> NovelFormat.TXT
             else -> null
         }
+    }
+
+    private fun looksLikePlainText(sample: String): Boolean {
+        if (sample.isBlank() || '\u0000' in sample) return false
+        var visible = 0
+        var control = 0
+        for (char in sample) {
+            when {
+                char == '\n' || char == '\r' || char == '\t' || char == '\u000c' -> Unit
+                java.lang.Character.isISOControl(char) -> control++
+                char.isLetterOrDigit() -> visible++
+            }
+        }
+        return visible > 0 && control.toDouble() / sample.length.coerceAtLeast(1) <= 0.01
     }
 
     /**
@@ -96,6 +128,8 @@ object NovelFormatDetector {
      * 已删；文本优先这条规则本身没变 —— 图片包仍然走到最后的 `return null`。）
      */
     private fun zipKind(file: File): NovelFormat? {
+        // Most files in a novel folder are plain text or images. Avoid opening every one as ZipFile.
+        if (!hasZipSignature(file)) return null
         val names = try {
             ZipFile(file).use { zip ->
                 val out = mutableListOf<String>()
@@ -124,6 +158,17 @@ object NovelFormatDetector {
         // 其余（含纯图片包）：本链路不接
         return null
     }
+
+    private fun hasZipSignature(file: File): Boolean = runCatching {
+        FileInputStream(file).use { input ->
+            val a = input.read()
+            val b = input.read()
+            val c = input.read()
+            val d = input.read()
+            a == 0x50 && b == 0x4b &&
+                ((c == 0x03 && d == 0x04) || (c == 0x05 && d == 0x06) || (c == 0x07 && d == 0x08))
+        }
+    }.getOrDefault(false)
 }
 
 /**

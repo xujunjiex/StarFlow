@@ -50,17 +50,16 @@ object NovelImporter {
     private const val REPORT_INTERVAL_MS = 80L
 
     /**
-     * 文件夹子认可的**文本**扩展名。
+     * 文件夹子认可的正文与卷格式。
      *
      * txt / epub 与 koto 的小说文件夹导入一致（「内部 TXT 文件会作为章节导入；
-     * 每个 EPUB 文件会作为一个分卷导入」）。
+     * 每个 EPUB 文件会作为一个分卷导入」）。ZIP 小说包也按一卷处理，沿用 ZIP HTML 解析器。
      *
      * ⚠️ **html 系列是 2026-10-04 加的**（用户要求「所有支持的格式都支持图片预览」）：
      * 「一个夹里一堆 html + 一个 images/ 目录」是小说下载最常见的分发形态之一，
-     * 之前那种夹子会报「未找到可阅读的文本章节」。夹里的 zip 仍不读
-     * （避免把「随手丢在同一个夹里」的无关文件当成章节）。
+     * 之前那种夹子会报「未找到可阅读的文本章节」。
      */
-    private val DIR_TEXT_EXTS = setOf("txt", "epub", "html", "htm", "xhtml")
+    private val DIR_TEXT_EXTS = setOf("txt", "epub", "zip", "html", "htm", "xhtml")
 
     /** 夹内 html 的扩展名（决定「要不要连图片一起拷」，见 [importDirectory]）。 */
     private val DIR_HTML_EXTS = setOf("html", "htm", "xhtml")
@@ -247,10 +246,11 @@ object NovelImporter {
         try {
             ensureDestinationDirectory(destDir)
             val docs = collectDirectoryDocs(context, treeUri, rootId)
-            val textDocs = docs.filter { isDirTextEntry(it.relativePath) }
-            if (textDocs.isEmpty()) throw IllegalStateException(ERROR_NO_TEXT_CHAPTER)
+            val textDocs = docs.filter {
+                isDirTextEntry(it.relativePath, it.document.mimeType) || isExtensionlessCandidate(it)
+            }
             // 夹里有 html 才收图片；路径由遍历层级与显示名构造，documentId 仅用于查询/打开。
-            val hasHtml = textDocs.any { isDirHtmlEntry(it.relativePath) }
+            val hasHtml = textDocs.any { isDirHtmlEntry(it.relativePath, it.document.mimeType) }
             val imageDocs = if (hasHtml) docs.filter { isDirImageEntry(it.relativePath) || imageExtension(it.document.mimeType) != null }
                 .map { it.relativePath to it.document.uri } else emptyList()
             val metadataDocs = docs.filter { ComicMetadataParser.isMetadataEntry(it.relativePath) }
@@ -294,7 +294,10 @@ object NovelImporter {
             }
 
             onProgress(ImportProgress(ImportPhase.SCANNING))
-            val book = FolderNovelParser.parse(destDir)
+            // Match manga directory import: an empty or non-text-only directory is still a book.
+            // If supported chapter files were present but parsing yielded none, keep it as a failure.
+            val book = if (textDocs.isEmpty()) NovelBook(fallbackTitle, null, emptyList())
+                else FolderNovelParser.parse(destDir)
             val metadata = metadataOf(destDir, book)
 
             ImportedNovel(
@@ -330,16 +333,34 @@ object NovelImporter {
     }
 
     /** 这一条名字是不是文件夹导入认可的**文本**条目（纯函数，可单测）。 */
-    internal fun isDirTextEntry(name: String?): Boolean = extOf(name) in DIR_TEXT_EXTS
+    internal fun isDirTextEntry(name: String?, mimeType: String? = null): Boolean =
+        extOf(name) in DIR_TEXT_EXTS || normalizedMime(mimeType).orEmpty() in TEXT_MIME_TYPES
 
     /** 这一条名字是不是夹内 **html**（决定要不要连图片一起拷）。 */
-    internal fun isDirHtmlEntry(name: String?): Boolean = extOf(name) in DIR_HTML_EXTS
+    internal fun isDirHtmlEntry(name: String?, mimeType: String? = null): Boolean =
+        extOf(name) in DIR_HTML_EXTS || normalizedMime(mimeType).orEmpty() in HTML_MIME_TYPES
 
     /** 这一条名字是不是会**递归拷贝**的图片条目。 */
     internal fun isDirImageEntry(name: String?): Boolean = extOf(name) in DIR_IMAGE_EXTS
 
     private fun extOf(name: String?): String =
         name?.substringAfterLast('.', "")?.lowercase(Locale.ROOT).orEmpty()
+
+    private fun normalizedMime(mimeType: String?): String? =
+        mimeType?.substringBefore(';')?.trim()?.lowercase(Locale.ROOT)
+
+    private val TEXT_MIME_TYPES = setOf(
+        "text/plain", "text/html", "application/xhtml+xml", "application/epub+zip",
+        "application/zip", "application/x-zip-compressed",
+    )
+    private val HTML_MIME_TYPES = setOf("text/html", "application/xhtml+xml")
+
+    /** SAF 有时只给出 MIME 或完全不给扩展名；未知扩展名由本地解析器再按内容筛选。 */
+    private fun isExtensionlessCandidate(entry: TreeEntry): Boolean {
+        val mime = normalizedMime(entry.document.mimeType)
+        return extOf(entry.relativePath).isEmpty() && (mime == null || mime !in TEXT_MIME_TYPES) &&
+            mime?.startsWith("image/") != true
+    }
 
     private data class TreeEntry(val relativePath: String, val document: SafDocumentTreeReader.Child)
 
@@ -362,10 +383,11 @@ object NovelImporter {
                     .any { it.name.startsWith("importing:novel:") && it.value.substringAfterLast('/') == name })
                     throw IOException("导入来源包含本次目标目录，已停止递归复制：$name")
                 val rel = treeRelativePath(prefix, name) ?: throw IOException("来源名称无法可靠定位：${child.uri}")
-                val extensionless = name.substringAfterLast('.', "").isEmpty()
-                if (child.isDirectory || (child.mimeType == null && extensionless)) {
+                if (child.isDirectory) {
                     walk(child.documentId, "$rel/", depth + 1)
-                } else if (isDirTextEntry(name) || isDirImageEntry(name) || imageExtension(child.mimeType) != null || ComicMetadataParser.isMetadataEntry(name)) {
+                } else if (isDirTextEntry(name, child.mimeType) || isDirImageEntry(name) ||
+                    imageExtension(child.mimeType) != null || ComicMetadataParser.isMetadataEntry(name) ||
+                    (extOf(name).isEmpty() && child.mimeType?.startsWith("image/", ignoreCase = true) != true)) {
                     out += TreeEntry(rel, child)
                 }
             }
