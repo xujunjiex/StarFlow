@@ -37,7 +37,9 @@ object NovelStore {
                 localRoot = session.local(value.localRoot).path,
                 coverPath = value.coverPath?.let(session::cover),
                 lost = session.sourcePresence[row.source] == false || row.deleting,
-                deletionError = if (row.deleting) row.error ?: "删除未完成" else null)
+                deleting = row.deleting && row.error == null && com.moe.starflow.library.LibraryDeletion.isDeleting(session.locationId, "novel", row.uuid),
+                deletionError = if (row.deleting) row.error ?: if (com.moe.starflow.library.LibraryDeletion.isDeleting(session.locationId, "novel", row.uuid)) null
+                    else context.getString(com.moe.starflow.R.string.library_delete_failed) else null)
         }
     }
 
@@ -130,6 +132,7 @@ object NovelStore {
         put("addedAt", addedAt)
         put("sizeBytes", sizeBytes)
         put("description", description)
+        put("metadataVersion", metadataVersion)
         put("lastReadChapter", lastReadChapter)
         put("lastReadParaIndex", lastReadParaIndex)
         put("lastReadPage", lastReadPage)
@@ -162,6 +165,7 @@ object NovelStore {
         addedAt = getLong("addedAt"),
         sizeBytes = optLong("sizeBytes", 0),
         description = optString("description", ""),
+        metadataVersion = optInt("metadataVersion", 0),
         lastReadChapter = optInt("lastReadChapter", 0),
         lastReadParaIndex = optInt("lastReadParaIndex", 0),
         lastReadPage = optInt("lastReadPage", 0),

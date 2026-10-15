@@ -5,7 +5,7 @@ import com.moe.starflow.novel.data.ImportedNovel
 import com.moe.starflow.novel.model.NovelFormat
 
 /**
- * 导入任务 → 小说书架占位条目。
+ * 兼容旧调用的导入任务 → 小说瞬态模型；当前书架不使用占位条目。
  *
  * ⚠️ 占位条目的 `localRoot` 为空、`importing = true`：书架靠它区分「正在导入」与「真实条目」，
  * 并让占位**不参与**「文件丢失」推导（占位本来就没有本地路径，不排除的话每张占位卡片都会

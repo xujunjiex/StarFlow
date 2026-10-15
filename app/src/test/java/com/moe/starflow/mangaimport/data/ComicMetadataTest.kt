@@ -176,12 +176,28 @@ class ComicMetadataTest {
     @Test
     fun description_listsAuthorCircleSeriesTagsSource() {
         val desc = ComicMetadataParser.descriptionOf(ctx, listOf("ComicInfo.xml" to comicInfo))
-        assertEquals(5, desc.lines().size)
+        assertEquals(7, desc.lines().size)
         assertTrue(desc.contains("tamura-chan"))
         assertTrue(desc.contains("chikyuujin"))
         assertTrue(desc.contains("original"))
         assertTrue(desc.contains("lolicon"))
         assertTrue(desc.contains("https://nhentai.net/g/684364/"))
+        assertTrue(desc.contains("Title:"))
+        assertTrue(desc.contains("Pages: 22"))
+    }
+
+    @Test fun downloaderMetadataWithEpisodeFieldsProducesADescription() {
+        val json = """{"episode_id":"9253191255607512279","page_title":"[139話 前編]SPY×FAMILY - 遠藤達哉 | 少年ジャンプ＋","series_title":"SPY×FAMILY","episode_label":"139話 前編","page_count":17,"published_at":"2026-08-02T15:00:00Z","permalink":"https://shonenjumpplus.com/episode/9253191255607512279","note":"Personal reading copy"}"""
+        val meta = ComicMetadataParser.parse(listOf("meta.json" to json))!!
+        assertEquals("SPY×FAMILY", meta.series)
+        assertEquals("遠藤達哉", meta.writer)
+        assertEquals(17, meta.pageCount)
+        val description = ComicMetadataParser.buildDescription(ctx, meta)
+        assertTrue(description.contains("139話 前編"))
+        assertTrue(description.contains("遠藤達哉"))
+        assertTrue(description.contains("Pages: 17"))
+        assertTrue(description.contains("2026-08-02"))
+        assertTrue(description.contains("shonenjumpplus.com/episode/9253191255607512279"))
     }
 
     @Test

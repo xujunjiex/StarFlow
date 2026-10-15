@@ -131,7 +131,8 @@ internal object ReaderExport {
         try {
             ZipOutputStream(BufferedOutputStream(FileOutputStream(tempFile))).use { zip ->
                 for (page in pages) {
-                    val key = source.key(page)
+                    if (!source.pageAvailable(page)) { skipped++; continue }
+                    val key = source.exportKey(page)
                     // ⚠️ **先渲染译文，再写任何条目**：渲染不出来就整页跳过。反过来的话，
                     // 双语包里会留下一张没有 `_译文` 配对的孤儿原图（用户以为这页翻译丢了）
                     val bmp = if (key != null) controller.renderForExport(page) else null

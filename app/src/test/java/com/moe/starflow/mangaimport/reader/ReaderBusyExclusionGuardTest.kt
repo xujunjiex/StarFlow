@@ -176,7 +176,7 @@ class ReaderBusyExclusionGuardTest {
         assertTrue("translatePhase 必须有 allowAutoSr 开关", def.contains("allowAutoSr: Boolean = false"))
         assertTrue(
             "自动超分必须被 allowAutoSr 包住（不能无条件调 maybeStartAutoSr）",
-            def.contains("if (allowAutoSr) {") && def.contains("maybeStartAutoSr(page, prep)"),
+            Regex("if\\s*\\(allowAutoSr\\)\\s*(?:\\{\\s*)?srJob\\s*=\\s*maybeStartAutoSr\\(page,\\s*prep\\)").containsMatchIn(def),
         )
         assertTrue(
             "增量那条路必须显式传 allowAutoSr = true",

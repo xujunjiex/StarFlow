@@ -568,6 +568,12 @@
                     android:text="›" android:textSize="16sp" android:textColor="#BBBBBB"/>
             </LinearLayout>
             <View android:layout_width="match_parent" android:layout_height="1dp" android:background="#11000000"/>
+            <LinearLayout android:id="@+id/btn_book_data" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:padding="12dp" android:gravity="center_vertical" android:clickable="true">
+                <TextView android:id="@+id/tv_book_data_label" android:layout_width="0dp" android:layout_height="wrap_content"
+                    android:layout_weight="1" android:text="@string/book_data_title" android:textSize="14sp" android:textColor="#333333"/>
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:text="›" android:textSize="16sp" android:textColor="#BBBBBB"/>
+            </LinearLayout>
             <LinearLayout android:id="@+id/btn_settings" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:padding="12dp" android:gravity="center_vertical" android:clickable="true">
                 <TextView android:id="@+id/tv_settings_label" android:layout_width="0dp" android:layout_height="wrap_content"
                     android:layout_weight="1" android:text="@string/reader_settings" android:textSize="14sp" android:textColor="#333333"/>

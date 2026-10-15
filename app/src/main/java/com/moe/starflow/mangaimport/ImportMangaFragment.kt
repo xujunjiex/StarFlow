@@ -130,7 +130,11 @@ class ImportMangaFragment : Fragment() {
             displayMode,
             onItemClick = { manga -> openReader(manga) },
             onSelectionChanged = { mode, count -> showSelectionUi(mode, count) },
-            onCancelImport = { id -> confirmCancelImport(id) }
+            onCancelImport = { id -> confirmCancelImport(id) },
+            onExportRecords = { book -> com.moe.starflow.library.BookRecordExport.start(requireContext(),
+                com.moe.starflow.library.BookRef(book.libraryLocationId, "manga", book.bookUuid)) },
+            onBookData = { book -> com.moe.starflow.library.BookDataActivity.open(requireContext(),
+                com.moe.starflow.library.BookRef(book.libraryLocationId, "manga", book.bookUuid)) }
         )
         binding.recyclerView.adapter = adapter
 
@@ -195,13 +199,9 @@ class ImportMangaFragment : Fragment() {
         refresh()
 
         com.moe.starflow.library.LibraryShelfBinding.observe(this, "manga", binding.libraryStatus,
-            { refresh() }, ::enqueueScanFailures, { adapter.exitSelection() })
+            { refresh() }, ::enqueueScanFailures, { adapter.exitSelection() }, { currentTab == ImportTab.MANGA }, ::confirmCancelImport)
 
-        // 导入进度：占位卡片实时刷新（tasks 由进程级 ImportManager 持有，与 View 生命周期解耦，
-        // 旋转/切页不会中断导入；回到本页时这里立刻收到当前进度）
-        viewLifecycleOwner.lifecycleScope.launch {
-            ImportManager.tasks.collect { refresh(forceLostCheck = false) }
-        }
+        // LibraryShelfBinding shows import progress above the shelf; tasks never become book rows.
 
         // 导入结果：攒在 ImportManager 里的事件取出来排队弹窗
         viewLifecycleOwner.lifecycleScope.launch {
@@ -222,13 +222,10 @@ class ImportMangaFragment : Fragment() {
         refresh()
     }
 
-    /** Refresh indexed status without source recognition. */
+    /** Rescan the selected library without blocking the shelf UI. */
     private fun refreshLibraryState() {
-        val pinned = com.moe.starflow.library.LibrarySessions.pin(requireContext())
-        com.moe.starflow.library.LibrarySessions.launch(pinned, viewLifecycleOwner.lifecycleScope) {
-            try { com.moe.starflow.library.LibrarySessions.refreshSources(pinned); refresh() }
-            finally { _binding?.swipeRefresh?.isRefreshing = false }
-        }
+        com.moe.starflow.library.LibraryScanner.start(requireContext(), "manga")
+        _binding?.swipeRefresh?.isRefreshing = false
     }
 
 
@@ -338,6 +335,12 @@ class ImportMangaFragment : Fragment() {
                 .replace(R.id.novel_shelf_container, novelShelf!!, NOVEL_SHELF_TAG)
                 .commitNow()
         }
+        novelShelf?.let {
+            childFragmentManager.beginTransaction().setMaxLifecycle(it,
+                if (novel) androidx.lifecycle.Lifecycle.State.RESUMED else androidx.lifecycle.Lifecycle.State.STARTED).commitNow()
+        }
+        if (!novel && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED))
+            com.moe.starflow.library.LibraryScanner.start(requireContext(), "manga")
     }
 
     // ===== 多选管理（Koto 式）=====
@@ -362,14 +365,25 @@ class ImportMangaFragment : Fragment() {
         backCallback.isEnabled = mode
     }
 
-    private fun openReader(manga: ImportedManga) {
+    private fun openReader(manga: ImportedManga, sourceWarningShown: Boolean = false) {
         // 本地文件可能已被手动删除：先拦下，避免进阅读器读到「文件丢失」又退回
-        if (!com.moe.starflow.library.LibrarySessions.sourceExists(File(manga.localRoot))) {
-            AppNotice.show(requireContext(), getString(R.string.reader_file_lost), AppNotice.Style.BRIEF_ERROR)
+        if (manga.lost || !com.moe.starflow.library.LibrarySessions.sourceExists(File(manga.localRoot))) {
+            com.moe.starflow.library.BookRecoveryDialog.show(requireContext(), com.moe.starflow.library.BookRef(manga.libraryLocationId, "manga", manga.bookUuid))
             return
         }
+        if (manga.pageCount == 0) {
+            AppNotice.show(requireContext(), getString(R.string.library_empty_directory_hint))
+            return
+        }
+        if (!sourceWarningShown && com.moe.starflow.library.BookSourceChangeDialog.show(requireContext(), manga,
+                onRead = {
+                    val latest = ImportedMangaStore.load(requireContext()).firstOrNull { it.bookUuid == manga.bookUuid }
+                    if (latest != null) openReader(latest, sourceWarningShown = true)
+                })) return
         val intent = Intent(requireContext(), MangaReaderActivity::class.java)
         intent.putExtra(MangaReaderActivity.EXTRA_MANGA_ID, manga.id)
+        intent.putExtra("source_warning_shown", sourceWarningShown)
+        intent.putExtra("source_index_path", manga.sourceIndexPath)
         intent.putExtra("library_location", manga.libraryLocationId)
         intent.putExtra("library_book_uuid", manga.bookUuid)
         startActivity(intent)
@@ -406,7 +420,7 @@ class ImportMangaFragment : Fragment() {
                     AppNotice.show(requireContext(), getString(R.string.import_rename_empty))
                     return@setOnClickListener
                 }
-                ImportedMangaStore.patch(requireContext(), manga) { it.copy(title = name) }
+                ImportedMangaStore.patch(requireContext(), manga) { it.copy(title = name, titleOrigin = "user") }
                 dialog.dismiss()
                 // 确认后再刷新，立即显示新标题
                 refresh()
@@ -517,7 +531,10 @@ class ImportMangaFragment : Fragment() {
 
     /** 删除确认弹窗（有翻译记录时文案不同，且单选时多一个「先去导出」）。 */
     private fun showDeleteConfirm(toDelete: List<ImportedManga>, withRecords: List<ImportedManga>) {
-        val message = if (withRecords.isEmpty()) {
+        val missing = toDelete.count { it.lost || !com.moe.starflow.library.LibrarySessions.sourceExists(File(it.localRoot)) }
+        val message = if (missing > 0) {
+            getString(R.string.book_delete_missing, toDelete.size, missing, withRecords.size)
+        } else if (withRecords.isEmpty()) {
             getString(R.string.import_delete_selected_confirm, toDelete.size)
         } else {
             getString(
@@ -535,7 +552,9 @@ class ImportMangaFragment : Fragment() {
             .setPositiveButton(R.string.import_delete) { _, _ -> performDelete(toDelete) }
             .setNegativeButton(R.string.cancel, null)
         // 「先去导出」只在单选时给出（多选时点了不知道该导哪本）：点了不删，直接进阅读器
-        if (toDelete.size == 1 && withRecords.size == 1) {
+        if (missing > 0) {
+            builder.setNeutralButton(R.string.book_recovery_faq) { _, _ -> com.moe.starflow.library.BookRecoveryDialog.faq(requireContext()) }
+        } else if (toDelete.size == 1 && withRecords.size == 1) {
             builder.setNeutralButton(R.string.import_delete_export_first) { _, _ ->
                 adapter.exitSelection()
                 openReader(toDelete.single())
@@ -590,7 +609,7 @@ class ImportMangaFragment : Fragment() {
     // ===== 导入 =====
     //
     // 导入本身不在这里跑：[ImportManager]（进程级作用域）负责复制、进度、取消与入库，
-    // 本页只做两件事 —— ① 观察 tasks 渲染占位卡片（图片位显示进度）② 把结果事件排队弹窗。
+    // LibraryShelfBinding 显示任务进度；本页只显示实际书目并把结果事件排队弹窗。
     // 这样旋转/切页不会掐断导入（旧实现用 viewLifecycleOwner.lifecycleScope 跑导入，
     // 旋转即取消 → 文件复制一半、条目还没入库 → 孤儿目录）。
 
@@ -670,9 +689,14 @@ class ImportMangaFragment : Fragment() {
         }
         val onPositive = DialogInterface.OnClickListener { _, _ -> onFinished() }
         val onCancel = DialogInterface.OnCancelListener { onFinished() }
-        val dialog: Dialog = if (item.first == getString(R.string.import_auto_scan_failed_title)) {
+        val dialog: Dialog = if (item.first == getString(R.string.import_auto_scan_failed_title) ||
+            item.first == getString(R.string.import_result_failed_title)) {
             AutoScanFailureDialog.builder(requireContext(), item.first, item.second)
                 .setPositiveButton(R.string.confirm, onPositive)
+                .setNeutralButton(R.string.library_storage_title) { _, _ ->
+                    onFinished()
+                    com.moe.starflow.library.LibraryStorageDialog().show(parentFragmentManager, "library-storage")
+                }
                 .setOnCancelListener(onCancel)
                 .create()
         } else {
@@ -716,9 +740,7 @@ class ImportMangaFragment : Fragment() {
                     cachedStoredWithLost = it
                 }
         }
-        // 进行中的导入 → 占位卡片（在最前，导入完成的瞬间被同 id 的真实条目顶替，DiffUtil 原地刷新）
-        val placeholders = ImportManager.tasks.value.map { it.toPlaceholder() }
-        val all = placeholders + withLost
+        val all = withLost
         val list = if (sortByAdded) all.sortedByDescending { it.addedAt } else all.sortedBy { it.title }
         val cols = when (displayMode) {
             DisplayMode.GRID -> gridSize
@@ -733,6 +755,12 @@ class ImportMangaFragment : Fragment() {
         adapter.setDisplayMode(displayMode)
         adapter.submitList(list)
         binding.tvEmpty.visibility = if (list.isEmpty()) View.VISIBLE else View.GONE
+        if (currentTab == ImportTab.MANGA && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) &&
+            !dialogShowing && !adapter.isSelectionMode && !com.moe.starflow.library.LibraryScanner.state.value.running) {
+            list.firstOrNull { !it.lost && it.sourceNoticeId.isNotBlank() && it.sourceNoticeSeen != it.sourceNoticeId }?.let { book ->
+                com.moe.starflow.library.BookSourceChangeDialog.show(requireContext(), book, onDismiss = { refresh() })
+            }
+        }
     }
 
     override fun onDestroyView() {

@@ -49,7 +49,8 @@ class ReaderPageSource(
     private val isArchive: Boolean,
     private val localRoot: String,
     /** 见 [ImportedManga.isPdf]：PDF 源按需栅格化，不读 zip、不枚举目录。 */
-    private val isPdf: Boolean = false
+    private val isPdf: Boolean = false,
+    sourceIndex: com.moe.starflow.mangaimport.data.MangaSourceIndex? = null
 ) {
 
     /**
@@ -60,6 +61,11 @@ class ReaderPageSource(
      *    构造本身**不打开文件**（`PdfPageRenderer` 首次使用时才开 FD），所以这里代价为 0。
      */
     private val sourceLease = LibrarySources.acquire(File(localRoot))
+    private val persistedIndex: com.moe.starflow.mangaimport.data.MangaSourceIndex? = try {
+        sourceIndex ?: com.moe.starflow.mangaimport.data.MangaSourceIndex.forRoot(File(localRoot))
+    } catch (e: Exception) { sourceLease.close(); throw e }
+
+    private val sourceIndex = persistedIndex?.takeUnless { it.standalone || isArchive || isPdf }
     private val inputFile by lazy { LibrarySources.file(File(localRoot)) }
     private val nativeArchive = try {
         if (isArchive && ArchiveTypes.detect(inputFile) in setOf(ArchiveKind.RAR, ArchiveKind.SEVEN_ZIP))
@@ -101,7 +107,7 @@ class ReaderPageSource(
     private val rawKeys: List<String> = try { resolveRawPages() }
         catch (e: Exception) { nativeArchive?.close(); cachedZip?.close(); pdf?.close(); sourceLease.close(); throw e }
 
-    private val split: MangaChapterSplitter.Result = MangaChapterSplitter.split(rawKeys)
+    private val split: MangaChapterSplitter.Result = persistedIndex?.let { MangaChapterSplitter.Result(rawKeys, it.chapters) } ?: MangaChapterSplitter.split(rawKeys)
 
     private val pageKeys: List<String> = split.keys
 
@@ -201,18 +207,75 @@ class ReaderPageSource(
         return pdf?.renderSampledToWidth(position, targetWidth)
     }
 
+    private data class Child(val source: ReaderPageSource, var readers: Int = 0, var retired: Boolean = false)
+    private val children = LinkedHashMap<String, Child>(4, 0.75f, true)
+    private fun <T> indexed(position: Int, read: (ReaderPageSource, Int) -> T): T? {
+        val ref = sourceIndex?.pages?.getOrNull(position) ?: return null
+        var lease: Child? = null
+        return try {
+            check(!ref.missing) { "Missing chapter: ${ref.path}" }
+            check(ref.path !in sourceIndex.problems) { "Source page structure changed: ${ref.path}" }
+            val handle = synchronized(this) {
+                if (closed) return null
+                children.getOrPut(ref.path) {
+                    Child(ReaderPageSource(ref.kind != "PDF", File(localRoot, ref.path).path, ref.kind == "PDF"))
+                }.also { child ->
+                    child.readers++; lease = child
+                    while (children.size > 2) {
+                        val oldest = children.entries.first(); children.remove(oldest.key)
+                        oldest.value.retired = true
+                        if (oldest.value.readers == 0) oldest.value.source.close()
+                    }
+                }
+            }
+            val child = handle.source
+            val page = if (ref.kind == "PDF") {
+                check(child.size == sourceIndex.pages.count { it.path == ref.path }) { "PDF page count changed: ${ref.path}" }
+                ref.entry.toInt()
+            } else child.orderedPageKeys().indexOf(ref.entry)
+            check(page in 0 until child.size) { "Missing source page: ${ref.path}/${ref.entry}" }
+            read(child, page)
+        } catch (e: Exception) {
+            readErrors[position] = "${ref.path}: ${e.message}"
+            LogCollector.w(TAG, "Indexed page read failed", e)
+            null
+        } finally {
+            lease?.let { child -> synchronized(this) {
+                child.readers--
+                if (child.retired && child.readers == 0) child.source.close()
+            } }
+        }
+    }
+
     private val readErrors = ConcurrentHashMap<Int, String>()
-    fun pageError(position: Int): String? = readErrors[position]
+    fun pageProblem(position: Int): String? {
+        val index = persistedIndex ?: return null
+        val page = index.pages.getOrNull(position) ?: return null
+        return when {
+            page.missing -> "Missing source page: ${page.path}${page.entry.takeIf { it.isNotBlank() }?.let { " :: $it" }.orEmpty()}"
+            page.path in index.problems -> "PDF pagination changed: ${page.path}"
+            else -> null
+        }
+    }
+    fun pageAvailable(position: Int): Boolean = pageKeys.getOrNull(position) != null && pageProblem(position) == null
+    fun pageError(position: Int): String? = pageProblem(position) ?: readErrors[position]
     val size: Int get() = pageKeys.size
 
     /** 某页对应的存储 key（zip 内 entry 名 / 目录相对路径），供导出等场景。 */
     fun key(position: Int): String? = pageKeys.getOrNull(position)
+    fun exportKey(position: Int): String? {
+        val ref = sourceIndex?.pages?.getOrNull(position) ?: return key(position)
+        return if (ref.kind == "IMAGE") ref.path else ref.path + "/" +
+            (if (ref.kind == "PDF") com.moe.starflow.mangaimport.data.PdfPageKeys.of(ref.entry.toInt()) else ref.entry)
+    }
+
 
     /** 载入全尺寸页图（应在 IO 线程调用）。 */
     fun loadFull(position: Int): Bitmap? {
-        if (closed || pageKeys.getOrNull(position) == null) return null
+        if (closed || !pageAvailable(position)) return null
         return try {
-            if (isPdf) pdfLoadFull(position)
+            if (sourceIndex?.pages?.getOrNull(position)?.kind == "PDF") indexed(position) { child, page -> child.loadFull(page) }
+            else if (isPdf) pdfLoadFull(position)
             else openEntry(position)?.use { BitmapFactory.decodeStream(it) }
         } catch (e: Exception) {
             readErrors[position] = "${pageKeys.getOrNull(position)}：${e.javaClass.simpleName}：${e.message}"
@@ -233,8 +296,15 @@ class ReaderPageSource(
      * 遇到 PDF 时不至于交白卷。
      */
     fun openEntry(position: Int): java.io.InputStream? {
+        if (!pageAvailable(position)) return null
         if (closed) return null
         val key = pageKeys.getOrNull(position) ?: return null
+        if (sourceIndex != null) {
+            val ref = sourceIndex.pages.getOrNull(position) ?: return null
+            if (ref.kind == "IMAGE") return LibrarySources.open(File(localRoot, ref.path))
+            // Return detached bytes; an LRU eviction cannot close a stream in use by another caller.
+            return indexed(position) { child, page -> child.openEntry(page)?.use { java.io.ByteArrayInputStream(it.readBytes()) } }
+        }
         if (isPdf) return pdfEntryStream(position)
         return try {
             if (nativeArchive != null) nativeArchive.reader.openEntry(key)
@@ -267,6 +337,7 @@ class ReaderPageSource(
 
     /** 载入缩略图（应在 IO 线程调用），缓存命中直接返回。 */
     fun loadThumb(position: Int): Bitmap? {
+        if (!pageAvailable(position)) return null
         if (closed) return null
         thumbCache.get(position)?.let { return it }
         val bmp = decodeThumb(position) ?: return null
@@ -284,6 +355,7 @@ class ReaderPageSource(
     var webtoonWidth = 0
 
     fun loadWebtoon(position: Int, targetWidth: Int): Bitmap? {
+        if (!pageAvailable(position)) return null
         if (closed) return null
         webtoonCache.get(position)?.let { return it }
         val bmp = decodeWebtoon(position, targetWidth)
@@ -307,7 +379,8 @@ class ReaderPageSource(
     private fun decodeWebtoon(position: Int, targetWidth: Int): Bitmap? {
         if (closed) return null
         return try {
-            if (isPdf) pdfRenderToWidth(position, targetWidth)
+            if (sourceIndex?.pages?.getOrNull(position)?.kind == "PDF") indexed(position) { child, page -> child.loadWebtoon(page, targetWidth) }
+            else if (isPdf) pdfRenderToWidth(position, targetWidth)
             else {
                 val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 openEntry(position)?.use { BitmapFactory.decodeStream(it, null, bounds) }
@@ -345,6 +418,10 @@ class ReaderPageSource(
      * 0 → 面板显示 `-`（`ReaderSrStateAdapter.fmtBytes` 的既有口径）。
      */
     fun pageBytes(position: Int): Long {
+        if (sourceIndex != null) {
+            val ref = sourceIndex.pages.getOrNull(position) ?: return 0
+            return if (ref.kind == "IMAGE") ref.bytes else indexed(position) { child, page -> child.pageBytes(page) } ?: 0
+        }
         if (closed || isPdf) return 0
         val key = pageKeys.getOrNull(position) ?: return 0
         return runCatching {
@@ -369,10 +446,12 @@ class ReaderPageSource(
 
     @Synchronized
     private fun ensureOriginalSize(position: Int) {
-        if (closed || originalWidths.containsKey(position)) return
+        if (closed || !pageAvailable(position) || originalWidths.containsKey(position)) return
         var w = 0; var h = 0
         runCatching {
-            if (isPdf) {
+            if (sourceIndex?.pages?.getOrNull(position)?.kind == "PDF") {
+                indexed(position) { child, page -> w = child.originalWidth(page); h = child.originalHeight(page) }
+            } else if (isPdf) {
                 val size = pdfCanonicalSize(position)
                 w = size?.get(0) ?: 0; h = size?.get(1) ?: 0
             } else {
@@ -394,7 +473,8 @@ class ReaderPageSource(
 
     private fun decodeThumb(position: Int): Bitmap? {
         if (closed) return null
-        return runCatching { if (isPdf) pdfRenderSampled(position, THUMB_SAMPLE)
+        return runCatching { if (sourceIndex?.pages?.getOrNull(position)?.kind == "PDF") indexed(position) { child, page -> child.loadThumb(page) }
+            else if (isPdf) pdfRenderSampled(position, THUMB_SAMPLE)
             else decodeEntryScaled(position, THUMB_SAMPLE) }.getOrNull()
     }
 
@@ -427,6 +507,8 @@ class ReaderPageSource(
 
     /** 枚举原始页 key（未排序：排序与分章都由 [MangaChapterSplitter] 一处负责）。 */
     private fun resolveRawPages(): List<String> {
+        sourceIndex?.let { return it.pages.map { page -> page.key } }
+        persistedIndex?.takeIf { it.standalone }?.let { return if (isPdf) PdfPageKeys.all(it.pages.size) else it.pages.map { page -> page.entry } }
         // PDF：页序就是 page tree 的顺序（**权威且固定**，不需要按文件名猜顺序），
         // 所以直接按页数生成合成 key（规则见 [PdfPageKeys]，纯函数、有单测）。
         if (isPdf) {
@@ -474,6 +556,7 @@ class ReaderPageSource(
     @Synchronized
     fun close() {
         closed = true
+        children.values.forEach { it.retired = true; if (it.readers == 0) it.source.close() }; children.clear()
         runCatching { pdf?.close() }
         runCatching { pdfGeometry?.close() }
         runCatching { cachedZip?.close() }

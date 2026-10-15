@@ -61,6 +61,18 @@ data class ImportedManga(
     val bookUuid: String = "",
     val libraryLocationId: String = "",
     val deletionError: String? = null,
+    val metadataVersion: Int = 0,
+    val sourceIndexPath: String = "",
+    val titleOrigin: String = "source",
+    val sourceName: String = "",
+    val deleting: Boolean = false,
+    val missingPages: Int = 0,
+    val changedPages: Int = 0,
+    val sourceNotice: String = "",
+    val sourceNoticeId: String = "",
+    val sourceNoticeSeen: String = "",
+    val missingRecordKeys: String = "[]",
+    val ignoredMissingRecordKeys: String = "[]",
 ) {
     /** 章数（至少 1：单章漫画也算一章）。 */
     val chapterCount: Int get() = chapters.size.coerceAtLeast(1)

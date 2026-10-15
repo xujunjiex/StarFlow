@@ -21,6 +21,8 @@ object ZipHtmlParser : NovelParser {
     private val TEXT_EXTS = setOf("html", "htm", "xhtml", "txt")
 
     override suspend fun parse(file: File): NovelBook = withContext(Dispatchers.IO) {
+        var description = ""
+        var author: String? = null
         val entries = ZipFile(file).use { zip ->
             // 条目数先封顶，再开始迭代（见 NovelReadLimits）
             NovelReadLimits.checkEntryCount(zip)
@@ -35,6 +37,16 @@ object ZipHtmlParser : NovelParser {
             out
         }
         val sorted = ArchivedMangaReader.sortNaturally(entries)
+        // A package may keep its book metadata in the first HTML document's head.
+        sorted.firstOrNull { !it.endsWith(".txt", true) }?.let { name ->
+            ZipFile(file).use { zip ->
+                val entry = zip.getEntry(name) ?: return@use
+                val head = zip.getInputStream(entry).use { NovelReadLimits.readAtMost(it, 64 * 1024) }
+                val raw = TextEncoding.decode(head)
+                description = HtmlParser.descriptionOf(raw)
+                author = HtmlParser.authorOf(raw)
+            }
+        }
         val chapters = sorted.mapIndexed { i, name ->
             NovelChapterMeta(
                 index = i,
@@ -44,8 +56,9 @@ object ZipHtmlParser : NovelParser {
         }
         NovelBook(
             title = file.nameWithoutExtension.ifBlank { "Untitled" },
-            author = null,
+            author = author,
             chapters = chapters,
+            description = description,
         )
     }
 

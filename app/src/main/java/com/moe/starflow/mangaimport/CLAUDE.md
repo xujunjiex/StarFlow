@@ -8,7 +8,8 @@
 - 存储由 `library/LibrarySession` 固定到启动时的根目录；默认 File 与自定义 SAF 共用 `manga_import/` 和 `.starflow/books/<UUID>/`。约束见 [书库存储指南](../library/CLAUDE.md)。
 - 一次性迁移 `StorageDirStore.migrate()`：把旧版存于 `filesDir` 的漫画文件搬到外部专属目录并重写清单路径（Fragment 启动时后台执行，幂等）；封面缓存保留在应用私有目录；Manifest 已移除废弃的 READ/WRITE/MANAGE_EXTERNAL_STORAGE（漫画导入走 SAF，无需存储权限）
 - 手动导入创建独立 UUID 副本，复制到选定书库；封面使用 `.starflow/books/<UUID>/cover/` 内的新修订，提交成功后清理旧修订。SAF 待写文件保存在内部持久目录，确认提交后释放读取副本。
-- `ImportedMangaStore` 使用当前书库工作数据库与目录提交日志，SharedPreferences 仅作为旧资料迁移输入。
+- `ImportedMangaStore` 使用按位置隔离的 App 内部数据库，SharedPreferences 仅作为旧资料迁移输入。
+- 漫画、小说共用 `FileAccessDiagnostics.ensureDirectory()` 创建导入目录，保留系统原因和父目录写权限诊断。普通导入失败与扫描失败均显示红色可复制详情及存储位置入口；App 不自动改权限或重建来源目录。
 - 长按**多选管理**：已读/未读（改 `lastReadPage`）/删除（连同 `filesDir` 副本+封面）/重命名/换封面（photo picker 复制进 covers）/编辑简介；顶部「全选」图标按钮 + 返回键退出多选
 - 下拉刷新 `SwipeRefreshLayout`；显示选项**即时生效**（详细信息列表 = 默认 / 网格，列数 = 网格尺寸；紧凑网格与纯列表已删除）
 - ⚠️ 简介/重命名确认后再 `refresh()`（曾在弹窗打开时就 refresh 导致改了不显示）
@@ -120,10 +121,10 @@
   导入侧（`MangaImporter`）与阅读侧（`ReaderPageSource`）都调它 —— 这是「导入顺序 = 阅读顺序」的唯一保证，
   改扩展名白名单或排序规则**必须改那一处**，别在两边各写一份。
 
-- **导入跑在进程级 `ImportManager`（`mangaimport/data/`），不在 Fragment 的 lifecycleScope**：旧实现旋转/切页会取消导入 → 复制一半、条目没入库 = 孤儿目录。现在 View 只观察 `tasks`（占位卡片：图片位进度条 + 百分比 + ✕）与 `events`（结果弹窗，`drainEvents()` 取走）。
+- **导入跑在进程级 `ImportManager`（`mangaimport/data/`），不在 Fragment 的 lifecycleScope**：旋转或切页不取消导入。`LibraryShelfBinding` 观察 `tasks` 显示状态栏进度和取消入口，书架不插入临时卡片；Fragment 观察 `events` 显示结果（`drainEvents()` 取走）。
 - **导入失败按实际阶段分类**：SAF 来源的拒绝访问、打开失败、读取失败，应用目标目录写入失败，以及文件夹枚举失败分别映射；失败弹窗附最深层异常类型/消息。不要再把 `FileNotFoundException`、`SecurityException` 混成「权限不足或文件被移动」。
 - SAF 的 `DISPLAY_NAME` / `SIZE` 是 DocumentsProvider 查询返回的可选列，不等于内容流权限。通过 `SafDocumentMetadata` 先合并查询，provider 不接受合并投影时分别查缺失列；记录 authority、URI、缺列/null cursor/异常。树选择器返回 tree URI，查询根目录名称时必须先构造具体 document URI；文件名最终可回退 URI，大小未知时显示不确定进度。只有 `openInputStream` / `read` 失败才阻止复制，失败弹窗保留操作阶段和根异常。
-- 来源扫描只由导入弹窗触发，限于当前 `manga_import/`；进入、恢复和下拉不识别新来源。扫描先枚举，再逐本提交；失效来源保留占位，按相对路径复用身份。
+- 来源扫描限于当前 `manga_import/`；进入、恢复、切回漫画页签、切换书库与下拉均重新扫描，也可手动启动。扫描先枚举，再逐本提交；失效来源保留占位，按相对路径复用身份，已收录作品不重新解码封面或解析页序。
 - **外部目录权限诊断**：`File.listFiles() == null` 时记录 `canRead()`、应用 UID、目录 UID/GID 与权限模式。`getExternalFilesDir()` 无需存储权限；若 MTP/ADB 创建的子目录归 `shell` 所有且没有应用遍历权限，应用无法读取其子项，不能把它误报成 SAF 授权失败。
 - 手动漫画扫描排除包含 `META-INF/container.xml` 的 EPUB 小说包，即使扩展名被改为 ZIP。扫描结果通过 `ImportedMangaStore.mergeScanned()` 在存储锁内合并，只新增 id 和规范路径均未收录的条目，保留并发导入及最新书架编辑。
 - ⚠️ **并发导入了 → 清单写入必须同步**：`importArchives` 每个 uri 一个并发任务，而 `ImportedMangaStore.add/remove/update` 是 `load→改→save` 三步。**全部方法已 `@Synchronized`**；去掉同步 = 两个任务同毫秒收尾互相覆盖 → **整条导入静默消失**（占位卡片没了、书架也没条目）。守卫：`ImportedMangaStoreConcurrencyTest`（8 线程 × 20 次 add，必须有 160 条）。
@@ -138,7 +139,8 @@
 
 ### 章节与压缩包格式
 
-- **章节切分只有一个来源**：`mangaimport/data/MangaChapter.kt` 的 `MangaChapterSplitter`。
+- **复合目录**：`MangaSourceIndex` 保存跨图片目录、PDF、ZIP/RAR/7z 的章节与稳定页键，导入与阅读共用，不将容器转为图片目录。外层目录名是默认书名，用户标题以 `titleOrigin=user` 保留。来源索引为不可变 UUID 产物，读页仅缓存最近两个容器；在途读取租约结束前不能关闭被淘汰容器。
+- **独立压缩包章节切分只有一个来源**：`mangaimport/data/MangaChapter.kt` 的 `MangaChapterSplitter`。
   它**同时**决定「章区间」与**权威页序**（按章分组 + 章内自然排序）—— 导入侧（`MangaImporter`）与
   阅读侧（`ReaderPageSource`）都调它。两边各算一份，章区间立刻错位（点第 3 章跳到别人的页）。
   ⚠️ 别退回「`sortNaturally(完整路径)`」：散图与子目录会交错（`ch1/a.jpg` 排在 `z.jpg` 前面），
@@ -150,11 +152,11 @@
   同一约定），没标题才用「第N章」兜底。
 - **封面 = 阅读顺序的第一页**：有第0章就是第0章的第一张，否则第1章的第一张（用户口径）。
 - ZIP/RAR/7z 保留原包，统一通过 `ReaderPageSource` 按需读页；RAR/7z 的 `LibraryArchiveReader` 按作品共享串行原生游标，只缓存实际请求的最多 4 页。构造数据源和首次读尺寸在 IO 上执行；关闭与原生读取串行，不能永久整本解压。
-- **清单里的 `chapters` 只给书架显示用**：导入时算好并持久化（`ImportedMangaStore` 存 JSON 串，
+- **独立文件清单里的 `chapters` 只给书架显示用**：导入时算好并持久化（`ImportedMangaStore` 存 JSON 串，
   空串 = 旧条目）；旧资料迁移时重置进度并归档处理行；书架进入不再打开所有来源回填。
   ⚠️ 不许「读全表 → 改 → 整表 save」：那会与并发导入的收尾写入互相覆盖。阅读器打开时按**实际文件**
   推导页序供读取，不回写外部编辑，也不修复章节清单。
-- 旧书迁移重置进度、设置当前页序版本，并把旧 OCR、译文和超分记录归档失效；不能通过阅读器重新启用这些记录。当前书库不支持外部增删页或更改文件内容。
+- 旧书迁移重置进度、设置当前页序版本，并把旧 OCR、译文和超分记录归档失效；不能通过阅读器重新启用这些记录。目录新增章节使用 `MangaSourceIndex` 与 `MangaDirectoryUpdates` 事务重排处理记录并重置阅读进度；被移走的来源保留稳定键及记录。已有 PDF 分页改变时拒绝复用旧页号，不自动识别外部改名或不同内容。
 - 资料修改使用 `ImportedMangaStore.patch` 或具体字段接口，从最新记录修改单个字段；异步任务不能提交旧实体快照。
 
 - **阅读器**：顶部胶囊 = `章标题 · 章内第几页/本章共几页`（`reader_page_indicator_chapter`），
@@ -663,8 +665,7 @@
 
 - **只做一件事**：导入时读包里的 `ComicInfo.xml`（ComicRack 标准）与 `meta.json`（nhentai 等下载器），
   生成简介写进 `ImportedManga.description`。⚠️ **不改书名**（书名仍取文件名）、不改阅读方向、
-  不往书架行加字段、**不回填老条目**（用户口径：只管新导入，也没有「手改后被覆盖」的风险 ——
-  生成只在导入那一次，之后用户照旧在「编辑简介」里改）。
+  不往书架行加字段。旧条目仅在简介为空且元数据版本落后时补齐，之后照旧在「编辑简介」里改；同版本重新扫描不覆盖手动简介，也不恢复已手动清空的简介。
 - **两种格式都在时 ComicInfo 优先、meta.json 只补空**，且**同一格式内浅层目录优先**。
   ⚠️ 优先级**不能只按目录深度排**：两者常常都在根目录（深度都是 0），只比深度就成了
   「谁在列表里靠前谁说了算」—— 调用方换个遍历顺序，作者/系列就换了个来源（单测抓到过）。
@@ -681,6 +682,11 @@
 - 读取路径按格式分两条，都收敛在 `MangaImporter`：
   - **zip/cbz**：`readZipMetadataTexts` 直接从 `ZipFile` 读条目（不解压）
   - **rar/cbr/7z**：通过串行 `LibraryArchiveReader` 按需读取元数据，关闭后释放临时页；不永久展开来源包。
+  - **图片目录**：手动导入同时复制有限大小的元数据文件；SAF 扫描直接读取原提供器中的元数据，与页数及体积统计复用一次目录枚举。
+  - **独立文件（含 PDF）**：扫描可读取同名 `作品.meta.json` 或 `作品.ComicInfo.xml`；单文件 SAF 授权不包含兄弟文件。
+    只包含一本作品的独立子目录也读取普通 `meta.json`/`ComicInfo.xml`。通过文件选择器导入时，可复用已有书库目录授权复制相邻元数据；不额外获取授权或改写来源。
+  - `Summary`/`description`/`summary` 等简介字段优先显示正文；普通 JSON 的作者、系列、标签与来源字段同样支持。
+    下载器字段 `page_title`、`series_title`、`episode_label`、`page_count`、`published_at`、`permalink` 和 `note` 映射到简介，标题不覆盖书架命名。
   - 都按 **basename** 匹配（忽略大小写与所在目录）：不同工具写的位置/大小写都不一样
   - 条目超过 `MAX_METADATA_BYTES`（256KB）直接跳过 —— 有条目自称 `meta.json` 其实是几百 MB 时
     不能整个读进内存

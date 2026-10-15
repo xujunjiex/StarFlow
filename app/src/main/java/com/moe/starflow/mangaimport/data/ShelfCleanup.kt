@@ -8,6 +8,6 @@ object ShelfCleanup {
     suspend fun mangasWithTranslations(context: Context, mangas: List<ImportedManga>): List<ImportedManga> =
         mangas.filter { book ->
             val dao = LibrarySessions.forLocation(context, book.libraryLocationId).importedPageTranslationDao()
-            dao.countFor(book.id, book.translationKey) > 0
+            dao.countFor(book.id, book.translationKey) > 0 || LibrarySessions.forLocation(context, book.libraryLocationId).database.catalog().resolutionCount(book.id, book.translationKey) > 0
         }
 }

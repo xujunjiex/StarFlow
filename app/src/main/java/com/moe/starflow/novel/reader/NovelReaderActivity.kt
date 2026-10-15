@@ -3319,6 +3319,8 @@ class NovelReaderActivity : AppCompatActivity() {
                     updateAutoTurn()
                 },
                 onRotate = { updateRotateMode((rotateMode + 1) % 3, persist = true) },
+                onBookData = { com.moe.starflow.library.BookDataActivity.open(this,
+                    com.moe.starflow.library.BookRef(book!!.libraryLocationId, "novel", book!!.bookUuid), runtimePages = content?.pages?.size) },
                 onSettings = {
                     returnedFromSettings = true
                     startActivity(

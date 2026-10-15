@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="library_import_readonly">导入目录不可写：%1$s。已有作品仍可读取。请选择可写存储位置，或修复目录权限；覆盖重建书库记录不能修复文件系统权限。</string>
+    <string name="library_reinitialize_title">覆盖并重建此书库？</string>
+    <string name="library_reinitialize_action">覆盖并重建</string>
+    <string name="library_reinitialize_message">目录：%1$s\n\n遇到的问题：%2$s\n\n重建会覆盖书库管理信息，永久清除此目录对应的旧内部书目、翻译、OCR、超分和阅读记录，然后重新扫描现有漫画和小说。\n\n漫画、小说原文件保持原样，其他书库保留。\n\n如果目录授权已失效，请重新选择目录并授权。若仍需旧记录，请取消；清除后无法恢复。</string>
+    <string name="library_recovery_choose">重新选择目录</string>
+    <string name="library_rebuild_manual">根据现有漫画、小说原文件重新建立书库管理信息。</string>
+    <string name="book_data_actions">更多操作</string>
+    <string name="book_data_records">处理记录</string>
+    <string name="book_data_storage_help">数据保存说明</string>
+    <string name="book_data_layout_pages">当前章节排版页数</string>
+    <string name="book_data_progress">阅读进度</string>
+    <string name="book_data_not_read">尚未开始</string>
+    <string name="book_data_manga_progress">第 %1$d 章 · 第 %2$d 页</string>
+    <string name="book_data_novel_progress">第 %1$d 章 · 第 %2$d 段</string>
+    <string name="book_data_saved">记录已保存在 App 内部</string>
+    <string name="book_data_pending_files">记录已保存 · 待保存文件操作 %1$d 项</string>
+    <string name="book_data_deleting">正在删除书目</string>
+    <string name="book_data_source_expand">身份与来源 · 展开</string>
+    <string name="book_data_source_collapse">身份与来源 · 收起</string>
+    <string name="book_data_copy_hint">长按文字后拖动选区，可复制任意范围。</string>
+    <string name="book_data_library_label">书库目录</string>
+    <string name="book_data_path_label">原相对路径</string>
+    <string name="book_data_category_count">%1$s（%2$d）</string>
+    <string name="book_data_no_records">此分类暂无记录</string>
+    <string name="book_data_range">%1$d–%2$d / %3$d 条 · 点“详情”查看记录</string>
+    <string name="book_data_load_failed">记录加载失败，可在右上角菜单刷新重试。</string>
+    <string name="book_data_page_number">第 %1$d 页</string>
+    <string name="book_data_artifact_available">产物可用</string>
+    <string name="book_data_artifact_missing">产物不可用</string>
+    <string name="book_data_artifact_unknown">产物可用性未记录</string>
+    <string name="book_data_no_text">暂无已保存文本</string>
+    <string name="book_data_yes">是</string>
+    <string name="book_data_no">否</string>
+    <string name="book_record_translation_ocr">翻译／OCR</string>
+    <string name="book_record_formatted">格式化详情</string>
+    <string name="book_record_select_hint">长按文字后拖动选区，可跨字段框选并使用系统菜单复制。</string>
+    <string name="book_record_overview">记录概况</string>
+    <string name="book_record_status">处理状态</string>
+    <string name="book_record_failure">失败详情</string>
+    <string name="book_record_identity">身份与定位</string>
+    <string name="book_record_other">其他已保存字段</string>
+    <string name="book_record_block">文字块 %1$d</string>
+    <string name="book_record_original">识别原文</string>
+    <string name="book_record_translated">翻译结果</string>
+    <string name="book_record_text">原文与译文</string>
+    <string name="book_record_region">识别区域</string>
+    <string name="book_record_regions">识别区域与排版</string>
+    <string name="book_record_unreadable">这份已保存数据无法解析，可从菜单切换“原始数据”查看完整内容。</string>
+    <string name="book_record_images">图片与产物</string>
+    <string name="book_record_source_image">原始图片</string>
+    <string name="book_record_output_image">超分图片</string>
+    <string name="book_record_timings">分阶段耗时</string>
+    <string name="book_record_parameters">请求与结果参数</string>
+    <string name="book_record_actual">实际执行参数</string>
+    <string name="book_record_seconds">%1$s 秒</string>
+    <string name="book_record_vertical_rl">竖排（从右向左）</string>
+    <string name="book_record_vertical_lr">竖排（从左向右）</string>
+    <string name="book_record_horizontal">横排</string>
+    <string-array name="book_record_extra_labels">
+        <item>状态代码</item><item>处理状态</item><item>作品编号</item><item>作品记录键</item><item>作品编号</item><item>作品记录键</item>
+        <item>请求模型</item><item>权重版本</item><item>放大倍率</item><item>请求分块大小</item><item>请求存储精度</item><item>请求 FP16 算术</item>
+        <item>性能档</item><item>分块间等待</item><item>输入压缩阈值（MP）</item><item>任务标识</item><item>使用旧配置</item>
+        <item>保留产物模型</item><item>保留产物宽度</item><item>保留产物高度</item><item>模型输入宽度</item><item>模型输入高度</item><item>输出宽度</item><item>输出高度</item>
+        <item>执行阶段</item><item>总耗时</item><item>图片解码</item><item>等待</item><item>初始化</item><item>预处理</item><item>RGB 打包</item><item>模型推理</item><item>RGB 回填</item><item>产物保存</item>
+        <item>执行后端</item><item>执行设备</item><item>实际分块大小</item><item>实际存储精度</item><item>实际 FP16 算术</item><item>线程数</item><item>分块等待累计</item>
+        <item>左边界</item><item>上边界</item><item>右边界</item><item>下边界</item><item>字号</item><item>文字方向</item><item>角度</item><item>中心 X</item><item>中心 Y</item>
+    </string-array>
+    <string-array name="book_data_detail_labels">
+        <item>名称</item><item>简介</item><item>章节数</item><item>页数</item>
+        <item>最近阅读</item><item>导入时间</item><item>格式</item><item>来源索引</item>
+        <item>缺失页数</item><item>需核对页数</item><item>页面索引（从 0 开始）</item><item>章节索引（从 0 开始）</item><item>段落索引（从 0 开始）</item>
+        <item>原文</item><item>译文</item><item>气泡坐标</item><item>失败代码</item><item>失败原因</item>
+        <item>更新时间</item><item>更新时间</item><item>翻译器</item><item>源语言</item><item>目标语言</item><item>OCR 模型</item>
+        <item>超分模型</item><item>原图宽度</item><item>原图高度</item><item>原图字节数</item><item>产物宽度</item><item>产物高度</item><item>产物字节数</item>
+        <item>开始时间</item><item>完成时间</item><item>稳定页面标识</item><item>执行详情</item><item>产物是否可用</item>
+        <item>相对路径</item><item>来源类型</item><item>压缩包条目／PDF 页号</item><item>章节来源</item><item>字节数</item><item>页面是否缺失</item><item>修改时间</item><item>来源容器是否缺失</item>
+        <item>段落切分版本</item><item>插图翻译数据</item><item>来源结构是否变化</item>
+    </string-array>
+</resources>

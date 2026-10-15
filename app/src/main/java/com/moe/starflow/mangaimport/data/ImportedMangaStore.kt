@@ -34,7 +34,9 @@ object ImportedMangaStore {
                 localRoot = session.local(value.localRoot).path,
                 coverPath = value.coverPath?.let(session::cover),
                 lost = session.sourcePresence[row.source] == false || row.deleting,
-                deletionError = if (row.deleting) row.error ?: "删除未完成" else null)
+                deleting = row.deleting && row.error == null && com.moe.starflow.library.LibraryDeletion.isDeleting(session.locationId, "manga", row.uuid),
+                deletionError = if (row.deleting) row.error ?: if (com.moe.starflow.library.LibraryDeletion.isDeleting(session.locationId, "manga", row.uuid)) null
+                    else context.getString(com.moe.starflow.R.string.library_delete_failed) else null)
         }
     }
 
@@ -91,7 +93,9 @@ object ImportedMangaStore {
         var added = 0
         scanned.forEach { manga ->
             val path = canonical(manga.localRoot)
-            if (manga.id !in ids && path !in paths) {
+            if (manga.id !in ids && paths.none { existing ->
+                    path == existing || path.startsWith(existing + File.separator) || existing.startsWith(path + File.separator)
+                }) {
                 persist(context, manga)
                 latest += manga
                 ids += manga.id
@@ -143,6 +147,17 @@ object ImportedMangaStore {
         put("addedAt", addedAt)
         put("sizeBytes", sizeBytes)
         put("description", description)
+        put("metadataVersion", metadataVersion)
+        put("sourceIndexPath", sourceIndexPath)
+        put("titleOrigin", titleOrigin)
+        put("sourceName", sourceName)
+        put("missingPages", missingPages)
+        put("changedPages", changedPages)
+        put("sourceNotice", sourceNotice)
+        put("sourceNoticeId", sourceNoticeId)
+        put("sourceNoticeSeen", sourceNoticeSeen)
+        put("missingRecordKeys", missingRecordKeys)
+        put("ignoredMissingRecordKeys", ignoredMissingRecordKeys)
         put("translatedPath", translatedPath ?: JSONObject.NULL)
         put("lastReadPage", lastReadPage)
         // ⚠️ 页序迁移标记**必须持久化**：不写的话读回恒为默认 0，`MangaPageOrderMigrator`
@@ -168,6 +183,17 @@ object ImportedMangaStore {
         addedAt = getLong("addedAt"),
         sizeBytes = optLong("sizeBytes", 0),
         description = optString("description", ""),
+        metadataVersion = optInt("metadataVersion", 0),
+        sourceIndexPath = optString("sourceIndexPath"),
+        titleOrigin = optString("titleOrigin", "user"),
+        sourceName = optString("sourceName"),
+        missingPages = optInt("missingPages"),
+        changedPages = optInt("changedPages"),
+        sourceNotice = optString("sourceNotice"),
+        sourceNoticeId = optString("sourceNoticeId"),
+        sourceNoticeSeen = optString("sourceNoticeSeen"),
+        missingRecordKeys = optString("missingRecordKeys", "[]"),
+        ignoredMissingRecordKeys = optString("ignoredMissingRecordKeys", "[]"),
         translatedPath = if (isNull("translatedPath")) null else getString("translatedPath"),
         lastReadPage = optInt("lastReadPage", 0),
         // 缺失 = 0 = 还没迁移（老条目语义），与 toJson 的「非 0 才写」配对

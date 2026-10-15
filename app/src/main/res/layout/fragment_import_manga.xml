@@ -39,9 +39,14 @@
                 style="?android:attr/progressBarStyleSmall" android:layout_width="20dp" android:layout_height="20dp"
                 android:layout_marginEnd="8dp" android:indeterminate="true" android:visibility="gone" />
             <TextView android:id="@+id/library_status"
-                android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content"
                 android:paddingTop="10dp" android:paddingBottom="10dp" android:textColor="@color/text_primary"
                 android:visibility="gone" />
+            <ImageView android:id="@+id/library_import_cancel"
+                android:layout_width="40dp" android:layout_height="40dp" android:padding="10dp"
+                android:src="@drawable/ic_close" app:tint="@color/text_secondary"
+                android:contentDescription="@string/import_cancel_title"
+                android:background="?attr/selectableItemBackgroundBorderless" android:visibility="gone" />
         </LinearLayout>
 
         <!-- 顶部栏：正常模式（标题 + 显示选项）/ 多选模式（已选数 + 关闭） -->

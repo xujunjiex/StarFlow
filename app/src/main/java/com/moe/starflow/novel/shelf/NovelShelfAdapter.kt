@@ -24,15 +24,18 @@ import java.util.Locale
  * ⚠️ **绑定的是漫画书架的同一批布局**（`item_import_manga_card` / `item_import_manga_row`）：
  * 封面尺寸、卡片圆角、已读/丢失徽章、勾选遮罩、导入进度遮罩、标题与信息行的字号全都直接共用，
  * 两边不可能各自跑偏。这里只是把「页数」换成「章数」、把「阅读进度（页）」换成
- * 「阅读进度（章）」，并且不绑定小说没有的简介。
+ * 「阅读进度（章）」，简介非空时共用同一位置。
  *
- * 多选语义与漫画完全一致（Koto 式）：长按进入多选，点选/长按增减，导入中的占位不可选。
+ * 多选语义与漫画完全一致（Koto 式）：长按进入多选，点选/长按增减。
+ * 当前书架仅提交实际书目；旧瞬态模型的占位仍不可选。
  */
 class NovelShelfAdapter(
     displayMode: DisplayMode,
     private val onItemClick: (ImportedNovel) -> Unit,
     private val onSelectionChanged: (Boolean, Int) -> Unit,
     private val onCancelImport: (Long) -> Unit = {},
+    private val onExportRecords: (ImportedNovel) -> Unit = {},
+    private val onBookData: (ImportedNovel) -> Unit = {},
 ) : ListAdapter<ImportedNovel, RecyclerView.ViewHolder>(Diff()) {
 
     private var displayMode = displayMode
@@ -74,7 +77,7 @@ class NovelShelfAdapter(
      * ⚠️ 导入中的占位不可选中（还没有本地文件，选中会让「标为已读/删除」作用在半成品上）。
      */
     fun toggleSelection(id: Long) {
-        if (currentList.firstOrNull { it.id == id }?.importing == true) return
+        if (currentList.firstOrNull { it.id == id }?.let { it.importing || it.deleting } == true) return
         if (!selectionMode) {
             enterSelection(id)
             return
@@ -96,7 +99,7 @@ class NovelShelfAdapter(
 
     /** 是否已全选。**只统计可选项**：导入中的占位不参与。 */
     fun isAllSelected(): Boolean {
-        val selectable = currentList.count { !it.importing }
+        val selectable = currentList.count { !it.importing && !it.deleting }
         return selectionMode && selectable > 0 && selectedIds.size == selectable
     }
 
@@ -106,7 +109,7 @@ class NovelShelfAdapter(
             exitSelection()
             return
         }
-        val ids = currentList.filterNot { it.importing }.map { it.id }
+        val ids = currentList.filterNot { it.importing || it.deleting }.map { it.id }
         if (ids.isEmpty()) return
         selectionMode = true
         selectedIds.addAll(ids)
@@ -172,6 +175,20 @@ class NovelShelfAdapter(
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
         val item = getItem(position)
+        holder.itemView.findViewById<View>(R.id.btn_export_records)?.apply {
+            visibility = if (item.lost && !item.deleting && !selectionMode) View.VISIBLE else View.GONE
+            setOnClickListener { onExportRecords(item) }
+            if (holder is CardVH) {
+                val endPadding = ((if (visibility == View.VISIBLE) 56 else 8) * resources.displayMetrics.density).toInt()
+                listOf(holder.binding.tvTitle, holder.binding.tvPageCount).forEach { label ->
+                    label.setPaddingRelative(label.paddingStart, label.paddingTop, endPadding, label.paddingBottom)
+                }
+            }
+        }
+        holder.itemView.findViewById<View>(R.id.btn_book_data)?.apply {
+            visibility = if (!item.importing && !item.deleting && !selectionMode) View.VISIBLE else View.GONE
+            setOnClickListener { onBookData(item) }
+        }
         when (holder) {
             is CardVH -> bindCard(holder, item)
             is RowVH -> bindRow(holder, item)
@@ -288,9 +305,14 @@ class NovelShelfAdapter(
         val isRead = !importing && !lost && item.chapterCount > 0 &&
             item.lastReadChapter >= item.chapterCount - 1 && item.lastReadParaIndex > 0
         readBadge.visibility = if (isRead) View.VISIBLE else View.GONE
-        lostBadge.visibility = if (lost || item.deletionError != null) View.VISIBLE else View.GONE
-        (lostBadge as? android.widget.TextView)?.setText(if (item.deletionError != null)
-            com.moe.starflow.R.string.library_delete_failed else com.moe.starflow.R.string.import_file_lost)
+        lostBadge.visibility = if (lost || item.deleting || item.deletionError != null) View.VISIBLE else View.GONE
+        (lostBadge as? android.widget.TextView)?.setText(when {
+            item.deletionError != null -> R.string.library_delete_failed
+            item.deleting -> R.string.library_deleting
+            else -> R.string.import_file_lost
+        })
+        lostBadge.backgroundTintList = android.content.res.ColorStateList.valueOf(androidx.core.content.ContextCompat.getColor(root.context,
+            if (item.deleting && item.deletionError == null) R.color.primary else R.color.red))
         coverView.alpha = if (lost) 0.35f else 1f
 
         val cover = item.coverPath?.let { if (it.startsWith("content://")) android.net.Uri.parse(it) else File(it) }
@@ -320,12 +342,16 @@ class NovelShelfAdapter(
         check.visibility = if (selected) View.VISIBLE else View.GONE
 
         root.setOnClickListener {
-            if (item.importing) return@setOnClickListener
+            if (item.importing || item.deleting) return@setOnClickListener
+            if (!selectionMode && item.deletionError != null) {
+                com.moe.starflow.utils.AppNotice.show(root.context, item.deletionError, com.moe.starflow.utils.AppNotice.Style.ERROR)
+                return@setOnClickListener
+            }
             titleView.isSelected = true
             if (selectionMode) toggleSelection(item.id) else onItemClick(item)
         }
         root.setOnLongClickListener {
-            if (item.importing) return@setOnLongClickListener false
+            if (item.importing || item.deleting) return@setOnLongClickListener false
             toggleSelection(item.id)
             true
         }

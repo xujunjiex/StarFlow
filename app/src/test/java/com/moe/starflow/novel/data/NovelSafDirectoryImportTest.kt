@@ -72,6 +72,7 @@ class NovelSafDirectoryImportTest {
             Document("chapter-1", "01.txt", "text/plain", "root-1"),
             Document("chapter-2", "01.html", "text/html", "folder-9"),
             Document("image-7", "picture.png", "image/png", "image-folder"),
+            Document("metadata", "meta.json", "application/json", "root-1"),
         )
         val treeUri = DocumentsContract.buildTreeDocumentUri("opaque-novel", "root-1")
         ShadowContentResolver.registerProviderInternal("opaque-novel", TreeProvider(documents))
@@ -80,6 +81,7 @@ class NovelSafDirectoryImportTest {
             "chapter-1" to "Root chapter body".toByteArray(),
             "chapter-2" to """<p>Nested chapter body</p><img src="images/picture.png"/>""".toByteArray(),
             "image-7" to png,
+            "metadata" to """{"summary":"Folder summary","author":"Folder writer"}""".toByteArray(),
         )
         bodies.forEach { (id, bytes) ->
             val uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, id)
@@ -91,11 +93,31 @@ class NovelSafDirectoryImportTest {
         val chapters = FolderNovelParser.parse(folder).chapters
 
         assertEquals(listOf("01.txt", "Volume2/01.html"), chapters.map { it.locator })
+        assertTrue(book.description.contains("Folder summary"))
+        assertEquals("Folder writer", book.author)
+        assertTrue(File(folder, "meta.json").isFile)
         assertEquals("Root chapter body", FolderNovelParser.loadChapter(folder, chapters[0].locator))
         val nested = FolderNovelParser.loadChapterSource(folder, chapters[1].locator)
         assertTrue(nested.text.contains("Nested chapter body"))
         assertArrayEquals(png, nested.images.single())
         assertArrayEquals(png, File(folder, "Volume2/images/picture.png").readBytes())
+    }
+
+    @Test fun mangaDirectoryImportCopiesMetadataAndFillsItsDescription() = runBlocking {
+        val documents = listOf(Document("root", "Manga", DocumentsContract.Document.MIME_TYPE_DIR, null),
+            Document("page", "001.png", "image/png", "root"),
+            Document("metadata", "ComicInfo.xml", "text/xml", "root"))
+        val tree = DocumentsContract.buildTreeDocumentUri("manga-metadata", "root")
+        ShadowContentResolver.registerProviderInternal("manga-metadata", TreeProvider(documents))
+        val resolver = Shadows.shadowOf(context.contentResolver)
+        resolver.registerInputStream(DocumentsContract.buildDocumentUriUsingTree(tree, "page"), LibraryScanFixtures.png().inputStream())
+        resolver.registerInputStream(DocumentsContract.buildDocumentUriUsingTree(tree, "metadata"),
+            "<ComicInfo><Summary>Copied summary</Summary><Writer>Copied author</Writer></ComicInfo>".byteInputStream())
+        val manga = com.moe.starflow.mangaimport.data.MangaImporter.importDirectory(context, tree, 7)
+        assertEquals(1, manga.pageCount)
+        assertTrue(manga.description.contains("Copied summary"))
+        assertTrue(manga.description.contains("Copied author"))
+        assertTrue(File(manga.localRoot, "ComicInfo.xml").isFile)
     }
 
     @Test

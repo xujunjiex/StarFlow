@@ -47,11 +47,25 @@ object LibrarySessions {
         return FileLibraryStorage(File(path))
     }
     fun defaultDisplayPath(context: Context): String = defaultStorage(context.applicationContext).displayPath
-    private fun create(context: Context, storage: LibraryStorage): LibrarySession = sessions.getOrPut(storage.locationId) {
-        val database = Room.databaseBuilder(context, LibraryDatabase::class.java, "library_${storage.locationId}.db")
+    private fun databaseName(location: String, generation: String?) = "library_$location${generation?.let { "_$it" }.orEmpty()}.db"
+    internal fun openDatabase(context: Context, location: String, generation: String?): LibraryDatabase =
+        Room.databaseBuilder(context, LibraryDatabase::class.java, databaseName(location, generation))
             .openHelperFactory(LibraryOpenHelperFactory()).allowMainThreadQueries().build()
-        LibrarySession(context, storage, database, changes.value + 1)
+    private fun create(context: Context, storage: LibraryStorage): LibrarySession = sessions.getOrPut(storage.locationId) {
+        val generation = LibraryReinitialization.generation(context, storage.locationId)
+        LibrarySession(context, storage, openDatabase(context, storage.locationId, generation), changes.value + 1, generation)
     }
+    private fun sourceIdentities(session: LibrarySession) = org.json.JSONArray(
+        listOf("manga", "novel").flatMap(session::books).mapNotNull { book ->
+            runCatching {
+                require(LibraryCodec.UUID_PATTERN.matches(book.uuid) && book.kind in setOf("manga", "novel"))
+                require(safeLibraryPath(book.source).startsWith("${book.kind}_import/"))
+                val body = org.json.JSONObject(book.body)
+                org.json.JSONObject().put("format", 1).put("kind", book.kind).put("uuid", book.uuid)
+                    .put("source", book.source).put("sourceName", body.optString("sourceName").takeUnless { it.isBlank() || it == "null" }
+                        ?: body.optString("title"))
+            }.getOrNull()
+        })
     private fun knownSafRoots(context: Context): List<SafLibraryStorage> {
         val raw = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("knownTrees", "[]")!!
         val values = org.json.JSONArray(raw)
@@ -80,7 +94,10 @@ object LibrarySessions {
     fun pin(context: Context) = current(context).context(context.applicationContext)
     fun forLocation(context: Context, location: String): LibrarySession {
         val captured = (context as? LibraryContext)?.session ?: (context.applicationContext as? LibraryContext)?.session
-        if (captured != null && (location.isEmpty() || captured.locationId == location)) return captured
+        if (captured != null && (location.isEmpty() || captured.locationId == location)) {
+            if (captured.isClosed) throw IOException("书库会话已切换，请刷新后重试")
+            return captured
+        }
         return if (location.isEmpty()) current(context) else sessions[location]
             ?: throw IOException("此作品属于另一个书库，请先选择对应存储目录")
     }
@@ -92,6 +109,10 @@ object LibrarySessions {
             session.flush()
             changes.value += 1
         }
+    }
+    suspend fun prepareImport(context: Context, kind: String) {
+        prepare(context)
+        withContext(Dispatchers.IO) { LibraryImportAccess.check(current(context), kind) }
     }
     /** Checks only indexed sources; it never discovers or recognizes new works. */
     suspend fun refreshSources(context: Context) {
@@ -113,7 +134,7 @@ object LibrarySessions {
     fun launch(context: Context, caller: CoroutineScope = scope, block: suspend CoroutineScope.() -> Unit): Job {
         val lease = synchronized(this) {
             val captured = current(context)
-            if (switching || current(captured.app).locationId != captured.locationId) {
+            if (switching || current(captured.app) !== captured) {
                 return Job().apply { cancel(CancellationException("书库正在切换或捕获的会话已停止接受新操作")) }
             }
             use()
@@ -128,7 +149,17 @@ object LibrarySessions {
         val closed = java.util.concurrent.atomic.AtomicBoolean()
         return Closeable { if (closed.compareAndSet(false, true)) uses.decrementAndGet() }
     }
-    suspend fun select(context: Context, tree: Uri?) = withContext(Dispatchers.IO) {
+    internal fun inspectionLease(): Closeable {
+        check(!switching) { "正在切换书库，请等待切换完成" }
+        val lease = use()
+        if (switching) {
+            lease.close()
+            throw IOException("正在切换书库，请等待切换完成")
+        }
+        return lease
+    }
+    suspend fun select(context: Context, tree: Uri?, reinitialize: Boolean = false) = withContext(Dispatchers.IO) {
+        var resetLocation: String? = null
         synchronized(this@LibrarySessions) {
             check(!switching) { "正在切换书库，请等待切换完成" }
             switching = true
@@ -142,9 +173,9 @@ object LibrarySessions {
             val old = current(app)
             if (tree != null) app.contentResolver.takePersistableUriPermission(tree,
                 Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-            if (old.locationId == storage.locationId) {
+            if (old.locationId == storage.locationId && !reinitialize) {
                 rememberTree(app, tree)
-                old.prepare(); old.flush(); changes.value += 1
+                old.prepare(); LibraryMigration.migrate(app, old); old.flush()
                 return@synchronized
             }
             if (storage is SafLibraryStorage) {
@@ -158,8 +189,24 @@ object LibrarySessions {
                 val b = old.storage.root.canonicalPath
                 check(!a.startsWith(b + File.separator) && !b.startsWith(a + File.separator)) { "书库目录不能相互嵌套" }
             }
-            rejectNestedLibraries(storage)
-            val target = create(app, storage)
+            // The app's fixed default root also contains models/logs created by other tools.
+            // Those unrelated subdirectories must not prevent returning to this library.
+            if (storage is SafLibraryStorage) rejectNestedLibraries(storage)
+            var target = create(app, storage)
+            if (reinitialize) {
+                val previous = target
+                previous.withStorageLock {
+                    if (LibraryReinitialization.generation(app, storage.locationId) == previous.storageGeneration)
+                        LibraryReinitialization.start(app, storage, databaseName(storage.locationId, previous.storageGeneration),
+                            runCatching { previous.database.catalog().meta("manifestId") }.getOrNull(), previous.storageGeneration, sourceIdentities(previous))
+                    sessions.remove(storage.locationId, previous)
+                    target = create(app, storage)
+                    // Switch the same root's in-memory handle before closing its previous database.
+                    if (active === previous) active = target
+                    previous.close()
+                    resetLocation = storage.locationId
+                }
+            }
             target.prepare()
             LibraryMigration.migrate(app, target)
             runCatching { target.flush() }
@@ -178,24 +225,41 @@ object LibrarySessions {
                 if (tree == null) remove("tree") else putString("tree", tree.toString())
             }.commit()) { "无法保存存储目录选择" }
             active = target
-            changes.value += 1
         }
-        } finally { synchronized(this@LibrarySessions) { switching = false } }
+        } finally {
+            synchronized(this@LibrarySessions) { switching = false }
+            resetLocation?.let(LibraryScanner::discardReports)
+            // A reset replaces the session even at the same location, including a retryable cleanup failure.
+            changes.value += 1
+            active?.takeIf { it.locationId == resetLocation }?.let {
+                LibraryScanner.start(it.context(), "manga")
+                LibraryScanner.start(it.context(), "novel")
+            }
+        }
     }
     fun findFile(file: File): Pair<LibrarySession, String>? {
         val path = file.canonicalPath
-        return sessions.values.sortedByDescending { it.workingRoot.canonicalPath.length }.firstNotNullOfOrNull { session ->
-            val base = session.workingRoot.canonicalPath + File.separator
-            if (path.startsWith(base)) session to safeLibraryPath(file.canonicalFile.relativeTo(session.workingRoot.canonicalFile).invariantSeparatorsPath) else null
+        return sessions.values.map { it to it.workingRoot.canonicalPath }
+            .sortedByDescending { it.second.length }.firstNotNullOfOrNull { (session, base) ->
+            libraryRelativePath(base, path)?.let { session to it }
         }
     }
-    fun sourceExists(file: File): Boolean {
-        val located = findFile(file) ?: return file.exists()
-        val (session, path) = located
-        // Root errors must not turn every entry into a missing-file placeholder.
-        if (session.saveState.value.error != null) return true
-        if (session.storage is FileLibraryStorage) return file.exists()
-        return session.sourcePresence[path] ?: true
+    fun sourceExists(file: File): Boolean = try {
+        val located = findFile(file)
+        if (located == null) file.exists() else {
+            val (session, path) = located
+            // Root errors must not turn every entry into a missing-file placeholder.
+            if (session.saveState.value.error != null) true
+            else if (session.storage is FileLibraryStorage) file.exists()
+            else session.sourcePresence[path] ?: true
+        }
+    } catch (e: Exception) {
+        // A shelf probe must not crash the main thread or label an inaccessible library missing.
+        sessions.values.filter { runCatching {
+            libraryRelativePath(it.workingRoot.absolutePath, file.absolutePath) != null
+        }.getOrDefault(false) }
+            .forEach { it.saveState.value = it.saveState.value.copy(error = e.message ?: e.javaClass.simpleName) }
+        true
     }
     fun checkReaderIntent(context: Context, intent: Intent, kind: String, id: Long) {
         if (switching) throw IOException("正在切换书库，请等待切换完成")
@@ -222,6 +286,9 @@ object LibrarySources {
         val lease = LibrarySessions.use()
         val located = LibrarySessions.findFile(file)
         if (located == null) return lease
+        val owner = listOf("manga", "novel").flatMap(located.first::books).firstOrNull { it.source == located.second }
+        val recordLease = try { owner?.let { BookRecordLocks.acquire(BookRef(located.first.locationId, it.kind, it.uuid), source = true) } }
+            catch (e: Exception) { lease.close(); throw e }
         val key = file.canonicalPath
         synchronized(materialized) { references.computeIfAbsent(key) { AtomicInteger() }.incrementAndGet() }
         val closed = java.util.concurrent.atomic.AtomicBoolean()
@@ -237,19 +304,23 @@ object LibrarySources {
                         }
                         materialized.remove(file.path)
                     }
-                } } finally { lease.close() }
+                } } finally { recordLease?.close(); lease.close() }
             }
         }
     }
 
-    fun file(file: File, folderTexts: Boolean = false): File {
+    fun file(file: File, folderTexts: Boolean = false, forceReload: Boolean = false): File {
         val located = LibrarySessions.findFile(file) ?: return file
         val (session, path) = located
         if (session.storage is FileLibraryStorage) return session.local(session.assetPath(path))
         synchronized(materialized) {
             val actual = session.assetPath(path)
+            if (forceReload) {
+                check(!hasReaders(file)) { "Source is still in use" }
+                materialized.remove(file.path)
+            }
             if (file.exists() && materialized[file.path] == actual) return file
-            if (file.exists() && actual == path && session.database.catalog().pending().any { it.body.contains(path) }) return file // Durable staged source awaits publication.
+            if (!forceReload && file.exists() && actual == path && session.database.catalog().pending().any { it.body.contains(path) }) return file // Durable staged source awaits publication.
             if (file.isFile && actual == path && !session.storage.exists(path)) return file
             if (folderTexts) {
                 file.mkdirs()
@@ -277,19 +348,25 @@ object LibrarySources {
             throw IOException("读取或内部临时空间不足：${target.path}；${e.message}", e)
         }
     }
-    fun listImages(file: File): List<String>? {
+    fun listFiles(file: File): List<LibraryNode>? {
         val (session, root) = LibrarySessions.findFile(file) ?: return null
         if (session.storage is FileLibraryStorage) return null
-        val out = mutableListOf<String>()
+        val out = mutableListOf<LibraryNode>()
+        val seen = hashSetOf<String>()
         fun walk(path: String) {
+            if (!seen.add(session.storage.uri(path).toString())) throw IOException("提供器目录出现循环：$path")
             session.storage.list(path).forEach { node ->
                 if (node.directory) walk(node.path)
-                else if (com.moe.starflow.mangaimport.data.ArchivedMangaReader.isImageFile(node.path))
-                    out += node.path.removePrefix("$root/")
+                else out += node
             }
         }
         walk(root)
         return out
+    }
+    fun listImages(file: File): List<String>? {
+        val root = LibrarySessions.findFile(file)?.second ?: return null
+        return listFiles(file)?.filter { com.moe.starflow.mangaimport.data.ArchivedMangaReader.isImageFile(it.path) }
+            ?.map { it.path.removePrefix("$root/") }
     }
     fun open(file: File): java.io.InputStream {
         val (session, path) = LibrarySessions.findFile(file) ?: return file.inputStream()

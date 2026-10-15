@@ -62,6 +62,7 @@ class ChapterPrimaryButtonDisabledTest {
 
     private fun srSuccess(page: Int) = ImportedPageSr(
         mangaId = 1L, pageIndex = page, state = ImportedPageSr.STATE_SUCCESS,
+        executionJson = """{"artifactModel":"test"}""",
     )
 
     @Test

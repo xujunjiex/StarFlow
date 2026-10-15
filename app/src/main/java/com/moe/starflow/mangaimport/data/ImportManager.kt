@@ -30,13 +30,13 @@ import kotlin.coroutines.coroutineContext
  * 时随 View 一起被取消 —— 文件复制了一半、条目还没入库，留下孤儿目录。这里用**自己的进程级作用域**
  * 跑，View 只做观察者，导入过程与界面生命周期解耦：
  *
- * - [tasks]：进行中的导入（纯内存态），书架用它渲染**占位卡片**（图片位置显示进度）
+ * - [tasks]：进行中的导入（纯内存态），由书架上方状态栏显示进度与取消入口
  * - [events]：需要弹窗告知的结果（夹里没图 / 导入失败）；攒着等 UI 取走（[drainEvents]），
  *   旋转期间产生的事件不丢、也不会重复弹
  * - [cancel]：取消某次导入（删半成品目录，不产生条目）
  *
- * id 由 [reserveId] 预留（清单最大 id + 进行中预留集合去重），并发导入不撞 id；占位与最终条目
- * id 相同 → 书架 DiffUtil 原地替换，不闪。
+ * id 由 [reserveId] 预留（清单最大 id + 进行中预留集合去重），并发导入不撞 id；
+ * 书架仅在作品入库后显示条目。
  */
 object ImportManager {
 
@@ -67,7 +67,7 @@ object ImportManager {
 
     // ===== 对外入口 =====
 
-    /** 导入若干压缩包（可多选）。每个文件一个独立任务：各自占位卡片、各自进度、各自可取消。 */
+    /** 导入若干压缩包（可多选）。每个文件一个独立任务：各自进度、各自可取消。 */
     fun importArchives(context: Context, uris: List<Uri>) {
         val app = com.moe.starflow.library.LibrarySessions.pin(context)
         uris.forEach { uri -> launchArchiveTask(app, uri) }
@@ -77,9 +77,10 @@ object ImportManager {
     fun importDirectory(context: Context, treeUri: Uri) {
         val app = com.moe.starflow.library.LibrarySessions.pin(context)
         com.moe.starflow.library.LibrarySessions.launch(app, scope) {
-            try { com.moe.starflow.library.LibrarySessions.prepare(app) }
+            try { com.moe.starflow.library.LibrarySessions.prepareImport(app, "manga") }
             catch (e: CancellationException) { throw e }
-            catch (e: Exception) { emit(ImportEvent.Failed("书库存储", ImportFailureReason.UNKNOWN, failureDetail(e))); return@launch }
+            catch (e: Exception) { emit(ImportEvent.Failed("书库存储", if (e is com.moe.starflow.library.LibraryImportWriteException)
+                ImportFailureReason.DESTINATION_WRITE_FAILED else ImportFailureReason.UNKNOWN, failureDetail(e))); return@launch }
             val id = reserveId(app)
             // 标题元数据只在真正导入时查询并记录 provider 诊断；任务占位不再重复查询 SAF。
             val title = app.getString(R.string.default_manga_title, id.toString())
@@ -133,9 +134,10 @@ object ImportManager {
 
     private fun launchArchiveTask(app: Context, uri: Uri) {
         com.moe.starflow.library.LibrarySessions.launch(app, scope) {
-            try { com.moe.starflow.library.LibrarySessions.prepare(app) }
+            try { com.moe.starflow.library.LibrarySessions.prepareImport(app, "manga") }
             catch (e: CancellationException) { throw e }
-            catch (e: Exception) { emit(ImportEvent.Failed("书库存储", ImportFailureReason.UNKNOWN, failureDetail(e))); return@launch }
+            catch (e: Exception) { emit(ImportEvent.Failed("书库存储", if (e is com.moe.starflow.library.LibraryImportWriteException)
+                ImportFailureReason.DESTINATION_WRITE_FAILED else ImportFailureReason.UNKNOWN, failureDetail(e))); return@launch }
             val id = reserveId(app)
             // 避免为占位标题重复查询 SAF；实际显示名在 MangaImporter 中单次查询并记录诊断。
             val name = SafDocumentMetadata.fallbackName(uri).orEmpty()
@@ -285,13 +287,14 @@ object ImportManager {
     private fun failureDetail(error: Throwable): String? {
         val chain = mutableListOf<String>()
         val seen = mutableSetOf<Throwable>()
+        val messages = mutableSetOf<String>()
         var current: Throwable? = error
-        while (current != null && seen.add(current) && chain.size < 3) {
-            val message = current.localizedMessage?.replace(Regex("\\s+"), " ")?.trim()
-            chain += listOfNotNull(current.javaClass.simpleName.takeIf { it.isNotBlank() }, message)
-                .joinToString(": ")
+        while (current != null && seen.add(current) && seen.size <= 8 && chain.size < 3) {
+            val message = current.localizedMessage?.trim()
+            if (messages.add(message ?: current.javaClass.name)) chain +=
+                listOfNotNull(current.javaClass.simpleName.takeIf { it.isNotBlank() }, message).joinToString(": ")
             current = current.cause
         }
-        return chain.filter { it.isNotBlank() }.joinToString(" ← ").take(500).ifBlank { null }
+        return chain.filter { it.isNotBlank() }.joinToString("\n\n").take(4096).ifBlank { null }
     }
 }

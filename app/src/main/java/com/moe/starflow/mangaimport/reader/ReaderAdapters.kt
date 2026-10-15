@@ -86,9 +86,19 @@ private fun loadTo(
     }
     shared.scope.launch {
         val bmp = withContext(Dispatchers.IO) {
-            shared.pageImage?.invoke(slot) ?: shared.source.loadFull(slot)
+            if (!shared.source.pageAvailable(slot)) null else shared.pageImage?.invoke(slot) ?: shared.source.loadFull(slot)
         }
-        if (bmp != null && isCurrent()) img.setImageBitmap(bmp)
+        if (isCurrent()) {
+            val error = (img.parent as? View)?.findViewById<android.widget.TextView>(R.id.source_page_error)
+            if (bmp != null) { img.setImageBitmap(bmp); error?.visibility = View.GONE }
+            else {
+                img.setImageBitmap(null)
+                error?.apply {
+                    visibility = View.VISIBLE
+                    text = context.getString(R.string.manga_source_page_placeholder, slot + 1, shared.source.pageError(slot).orEmpty())
+                }
+            }
+        }
     }
 }
 
@@ -133,6 +143,10 @@ class ReaderPageAdapter(
         resetItemTransform(holder.itemView)
         // 记页面索引：供高级/仿真动画按索引判定（与左右/上下物理方向无关 → RTL/竖排通用）
         holder.itemView.tag = position
+        holder.binding.sourcePageError.apply {
+            visibility = if (source.pageAvailable(position)) View.GONE else View.VISIBLE
+            text = context.getString(R.string.manga_source_page_placeholder, position + 1, source.pageError(position).orEmpty())
+        }
         bindImageCommon(holder.binding.zoomableImage, shared, position) {
             holder.adapterPosition == position
         }
@@ -179,6 +193,19 @@ class WebtoonAdapter(
     override fun onBindViewHolder(holder: VH, position: Int) {
         val img = holder.binding.webtoonImage
         val loading = holder.binding.webtoonLoading
+        holder.binding.sourcePageError.visibility = View.GONE
+        if (!source.pageAvailable(position)) {
+            holder.loadJob?.cancel()
+            holder.boundPage = position
+            img.setImageDrawable(null)
+            img.layoutParams = img.layoutParams.apply { height = (240 * img.resources.displayMetrics.density).toInt() }
+            loading.visibility = View.GONE
+            holder.binding.sourcePageError.apply {
+                visibility = View.VISIBLE
+                text = context.getString(R.string.manga_source_page_placeholder, position + 1, source.pageError(position).orEmpty())
+            }
+            return
+        }
         // 按实际/屏幕宽度降采样解码（大漫画防卡死）；宽在首次绑定可能为 0，回退屏幕宽度
         val targetW = (img.width.takeIf { it > 0 }
             ?: holder.itemView.context.resources.displayMetrics.widthPixels).coerceAtLeast(1)
@@ -225,13 +252,21 @@ class WebtoonAdapter(
             // 已翻译页优先用渲染好的译图；否则回落到按宽度降采样的原图
             val bmp = runCatching {
                 withContext(Dispatchers.IO) {
-                    shared.pageImage?.invoke(position) ?: shared.source.loadWebtoon(position, targetW)
+                    if (!shared.source.pageAvailable(position)) null else shared.pageImage?.invoke(position) ?: shared.source.loadWebtoon(position, targetW)
                 }
             }.getOrNull()
             if (!isActive) return@launch
             // 校验 holder 仍绑定同一 position，避免复用 holder 残留旧页图/转圈状态
             if (holder.adapterPosition == position) {
                 if (bmp != null) img.setImageBitmap(bmp)
+                else {
+                    img.setImageDrawable(null)
+                    img.layoutParams = img.layoutParams.apply { height = (240 * img.resources.displayMetrics.density).toInt() }
+                    holder.binding.sourcePageError.apply {
+                        visibility = View.VISIBLE
+                        text = context.getString(R.string.manga_source_page_placeholder, position + 1, source.pageError(position).orEmpty())
+                    }
+                }
                 loading.visibility = View.GONE
             }
         }

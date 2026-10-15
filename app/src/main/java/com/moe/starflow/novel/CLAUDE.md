@@ -4,11 +4,17 @@
 
 ## 导入、书架与阅读器
 
+书目、阅读进度与段落／插图处理记录统一保存在按书库隔离的 App 内部数据库；目录保存原文件、索引和图片产物，不保存记录同步副本。作品数据页支持单本导出。
+
+来源缺失的卡片显示独立记录导出按钮，点击卡片打开共享恢复弹窗；第四个“更多”面板和缺失弹窗均可进入 `library/BookDataActivity`，按捕获的书库与 UUID 查看数据，不为查看记录解析缺失原书。排版页数只报告当前章节，未知值明确标注。恢复、导出与删除互斥约束见 [书库存储指南](../library/CLAUDE.md)。
+
 **格式判定先看内容再信扩展名**（`NovelFormatDetector`）：`.txt` 里塞 HTML 的、无扩展名的都要认出来；编码（UTF-8/GBK/Big5）同理按字节判。
 
-- **手动扫描**：导入弹窗触发 `LibraryScanner`，仅枚举当前 `novel_import/`，逐本提交；进入、恢复和下拉仅显示当前书库状态。文件夹按一本识别，章节保留相对路径。存储约束见 [书库存储指南](../library/CLAUDE.md)。
+- **来源扫描**：进入或恢复小说页签、切换书库及下拉均触发 `LibraryScanner`，也可手动启动。仅枚举当前 `novel_import/`，逐本提交；已收录作品保留身份，不重复解析章节。文件夹按一本识别，章节保留相对路径。存储约束见 [书库存储指南](../library/CLAUDE.md)。
+- **简介元数据**：各格式导入与扫描共用 `library/BookMetadataReader`；支持包内或目录中的 `meta.json`/`ComicInfo.xml`、独立文件的同名元数据，以及单作品子目录的普通元数据。已有书库目录授权可用于复制文件来源的相邻元数据，单文件授权不推定兄弟文件可读。EPUB 读取 OPF 的 `dc:description` 与作者，HTML 读取 description/og:description，文件夹 EPUB 分卷提供缺失的作者、简介与封面。文件夹只枚举一次，按正文、插图和元数据分类复制。元数据有大小上限，坏数据不阻止正文导入；旧空简介按读取版本补齐，不覆盖非空用户修改。导入进度统一放在状态栏，书架仅显示实际书目。
 - **手动放置格式**：TXT / EPUB / HTML / HTM / XHTML；ZIP 包需含 HTML / HTM / XHTML / TXT 章节。作品目录内最多 6 层子目录中的文本/EPUB 文件按自然序作为章节；HTML 插图按 HTML 所在目录的相对路径读取。单 HTML 文件无法读取兄弟目录的图片，须以文件夹形式放置整本内容。
 - **外部目录访问诊断**：`File.listFiles() == null` 时报告 `File.canRead()`、应用 UID、目录 UID/GID 与权限模式。`getExternalFilesDir()` 无需存储权限；若 MTP/ADB 创建的子目录归 `shell` 所有且没有应用遍历权限，应用无法读取其子项，不能把它误报成 SAF 授权失败。
+- **导入目标创建**：目录和单文件导入共用 `FileAccessDiagnostics.ensureDirectory()`，保留底层创建异常，区分可读与可写；不能用重建书库记录替代权限修复。普通失败使用红色可复制详情和存储位置入口，批量失败全部汇总且保留未确认的弹窗内容。
 - 封面缩略图写入选定书库 `.starflow/books/<UUID>/cover/`；SAF 新文件先在内部持久目录暂存，验证并提交后释放副本。
 - 小说插图与封面放入 `.starflow/books/<UUID>/`；删除由 `LibraryDeletion` 持久化意图后执行，失败保留占位，不按数字 id 推断来源归属。
 - 扫描结果通过 `NovelStore.mergeScanned()` 在存储锁内合并，只新增 id 和规范路径均未收录的条目，保留并发导入及最新书架编辑。
@@ -102,7 +108,7 @@ Robolectric 的文本引擎是**桩**：`Paint.breakText` 不按宽度换行、�
   只覆盖那一个文件，同目录的兄弟图片读不了（构造兄弟 URI 也会 `SecurityException`）。
   所以 `import_desc_files_novel` 的文案里**明说**了「有插图请改用导入文件夹」。
   要真做成，只能再加一次 `ACTION_OPEN_DOCUMENT_TREE`（让用户把父目录授权一遍）——没做。
-- ⚠️ **夹内 html 的图片靠"导入时递归拷"**（`NovelImporter.collectImageDocs`）：html 里的
+- ⚠️ **夹内 html 的图片靠"导入时递归拷"**（`NovelImporter.collectDirectoryDocs`）：html 里的
   `images/a.jpg` 是**相对路径**，而 `resolveLocal` 的基准目录是书目录 —— 不把图拷进书目录，
   解析出来永远是 null。两条配套约束：
   1. **只有夹里有 html 才拷图片**（txt/epub 不需要外部图；纯 txt 夹不该被塞进一堆图）；

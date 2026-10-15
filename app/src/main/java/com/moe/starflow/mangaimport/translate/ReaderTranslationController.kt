@@ -716,6 +716,7 @@ class ReaderTranslationController(
      * @return 失败时 [SrOutcome.reason] 说明**具体**是哪里不行（没模型 / 文件不在 / 加载失败 / 图太大 / 推理失败…）
      */
     private suspend fun enhancePage(pageIndex: Int, request: SrRequest=SrRequest.capture(context,appPrefs)): SrOutcome {
+        if (!sourcePageAvailable(pageIndex)) return SrOutcome.fail(SrFailReason.PAGE_LOAD_FAILED)
         if (!SrSettings.isEnabledForReader(appPrefs)) return SrOutcome.fail(SrFailReason.DISABLED)
         val decodeStarted=System.currentTimeMillis()
         val expectedGeneration=captureSrStoreGeneration(pageIndex)
@@ -783,6 +784,7 @@ class ReaderTranslationController(
     }
     private suspend fun runSr(page: Int,src: Bitmap,request: SrRequest=SrRequest.capture(context,appPrefs),decodeMs: Long=0L,
         expectedGeneration: Long): SrOutcome {
+        if (!sourcePageAvailable(page)) return SrOutcome.fail(SrFailReason.PAGE_LOAD_FAILED)
         bindSrPages()
         val runId=SrRequest.nextRunId.incrementAndGet()
         val started=System.currentTimeMillis()
@@ -828,6 +830,7 @@ class ReaderTranslationController(
         }
     }
     private suspend fun loadSrSource(page: Int,request: SrRequest,started: Long,expectedGeneration: Long): Bitmap? {
+        if (!sourcePageAvailable(page)) return null
         var decoded: Bitmap?=null
         try {
             withContext(Dispatchers.IO) {ensureActive();decoded=loadFull(page);ensureActive()}
@@ -863,6 +866,7 @@ class ReaderTranslationController(
      * 就让用户看不到超分结果。
      */
     private suspend fun upsertSrRow(page: Int, expectedRunId: Long? = null, transform: (ImportedPageSr) -> ImportedPageSr) {
+        if (!sourcePageAvailable(page)) return
         srRowsMutex.withLock {
             if(expectedRunId!=null && srAttemptIds[page]!=expectedRunId)return@withLock
             val old = srRows.value[page] ?: ImportedPageSr(
@@ -1115,6 +1119,19 @@ class ReaderTranslationController(
      * 阅读器一关这个 lambda 就指向已销毁的 Activity（既拿不到图、又把 Activity 泄漏住）。
      * 后台任务改成用这条**自持**数据源后，OCR 阶段与 UI 完全解耦。
      */
+    /** Read the captured immutable index without creating a reader during shutdown or deletion. */
+    private val unavailableSourcePages: Set<Int> by lazy {
+        if (manga.sourceIndexPath.isBlank()) emptySet() else runCatching {
+            val session = com.moe.starflow.library.LibrarySessions.forLocation(context, manga.libraryLocationId)
+            val index = com.moe.starflow.mangaimport.data.MangaSourceIndex.load(session, manga.sourceIndexPath)
+                ?: error("Source index unavailable")
+            index.pages.mapIndexedNotNull { i, page ->
+                i.takeIf { page.missing || page.path in index.problems }
+            }.toSet()
+        }.getOrElse { (0 until manga.pageCount).toSet() }
+    }
+    private fun sourcePageAvailable(page: Int) = page !in unavailableSourcePages
+
     private val ownSource: ReaderPageSource by lazy {
         ownSourceCreated = true
         ReaderPageSource(manga.isArchive, manga.localRoot, isPdf = manga.isPdf)
@@ -1897,6 +1914,7 @@ class ReaderTranslationController(
      */
     /** 从已保存的 OCR 原文/坐标恢复准备页，翻译时不再重新 OCR。 */
     private suspend fun cachedPreparedPage(page: Int): PreparedPage? {
+        if (!sourcePageAvailable(page)) return null
         val row = rows.value[page] ?: return null
         if (row.state != ImportedPageTranslation.STATE_OCR && row.state != ImportedPageTranslation.STATE_FAILED) return null
         val source = row.sourceText ?: return null
@@ -2022,6 +2040,7 @@ class ReaderTranslationController(
      * 但整章翻译期间超分仍然跑得起来（用户口径：超分要和翻译中一起出现）。
      */
     private suspend fun ocrPhase(page: Int): PreparedPage? {
+        if (!sourcePageAvailable(page)) return null
         // 翻译模式下已有 OCR 载荷直接复用，避免重新调用 OCR；仅 OCR 模式只挑 IDLE 页。
         if (!isOcrOnlyMode()) {
             cachedPreparedPage(page)?.let { return it }
@@ -2136,6 +2155,10 @@ class ReaderTranslationController(
          */
         allowAutoSr: Boolean = false,
     ): Boolean {
+        if (!sourcePageAvailable(page)) {
+            if (!prep.bitmap.isRecycled) prep.bitmap.recycle()
+            return false
+        }
         // ⚠️ 声明在 try 之外：`finally` 里要 `join()` 它再回收 prep.bitmap
         //    （并行超分时那张图还在用）。—— 分支的超分接线，合并时保留
         var srJob: Job? = null
@@ -2594,6 +2617,11 @@ class ReaderTranslationController(
      * 后台预翻的页面渲染出来没人看，纯烧 CPU 和 100MB 渲染缓存。
      */
     private suspend fun runTranslate(page: Int, fromQueue: Boolean) {
+        if (!sourcePageAvailable(page)) {
+            if (!fromQueue || page == currentPageProvider())
+                onPhase(ReaderTranslatePhase.FAILED, context.getString(R.string.manga_source_page_placeholder, page + 1, ""))
+            return
+        }
         // 已有 OCR 的页在普通翻译模式下直接复用；仅 OCR 模式只执行 OCR 并上屏原文。
         if (isOcrOnlyMode()) {
             val prep = ocrPhase(page)
@@ -3150,6 +3178,7 @@ class ReaderTranslationController(
      * [srBaseFor] / [warmSrBase]（IO 侧），这里只 `LruCache.get`。
      */
     fun cachedDisplayBitmap(pageIndex: Int): Bitmap? {
+        if (!sourcePageAvailable(pageIndex)) return null
         val rendered = when (stateOf(pageIndex)) {
             ImportedPageTranslation.STATE_SUCCESS -> lastFullRender(pageIndex)
 
@@ -3226,6 +3255,7 @@ class ReaderTranslationController(
         pageIndex: Int,
         mode: TranslationCacheManager.OverlayMode,
     ): Bitmap? {
+        if (!sourcePageAvailable(pageIndex)) return null
         if (mode == TranslationCacheManager.OverlayMode.PLAIN) {
             val orig = loadFull(pageIndex) ?: return null
             val base = srBaseFor(pageIndex, orig, orig.width)
@@ -3268,6 +3298,7 @@ class ReaderTranslationController(
      * （内存/时间白花，见 manga/CLAUDE.md 的「低分辨率漫画译文模糊」一节里"导出/查看器一律传 1f"）。
      */
     fun renderForExport(pageIndex: Int): Bitmap? {
+        if (!sourcePageAvailable(pageIndex)) return null
         val row = rows.value[pageIndex] ?: return null
         if (row.state != ImportedPageTranslation.STATE_SUCCESS) return null
         val config = cacheManager.getOverlayConfig(appPrefs)
@@ -3664,6 +3695,7 @@ class ReaderTranslationController(
     // ========== 私有：写记录 ==========
 
     private suspend fun upsertState(pageIndex: Int, state: Int) {
+        if (!sourcePageAvailable(pageIndex)) return
         val old = rows.value[pageIndex]
         val row = ImportedPageTranslation(
             mangaId = manga.id, pageIndex = pageIndex, state = state,
@@ -3685,6 +3717,7 @@ class ReaderTranslationController(
     }
 
     private suspend fun fail(pageIndex: Int, code: String, message: String) {
+        if (!sourcePageAvailable(pageIndex)) return
         // ⚠️ **每次失败都记日志**：以前 fail() 只写库不记日志 —— 页被标失败后队列会**跳过**它
         // （队列只翻 IDLE），表现就是"自动/增量都没反应、日志里什么都没有"（cbz 那个问题）。
         LogCollector.w(TAG, "页失败 page=$pageIndex code=$code msg=$message")

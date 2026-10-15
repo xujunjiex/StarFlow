@@ -6,7 +6,7 @@ import java.io.IOException
 internal data class LibraryCommit(val sequence: Long, val token: String, val parent: String,
     val operation: JSONObject)
 
-/** A marker is accepted only after its immutable payload has been verified. */
+/** Read-only migration of the former directory journal; new record writes never use this format. */
 internal class LibraryJournal(private val storage: LibraryStorage) {
     private val verified = mutableMapOf<String, LibraryCommit>()
 

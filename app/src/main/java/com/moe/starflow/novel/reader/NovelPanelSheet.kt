@@ -99,6 +99,7 @@ class NovelPanelCallbacks(
     val onAutoTurn: (Boolean, Int) -> Unit,
     val onRotate: () -> Unit,
     val onSettings: () -> Unit,
+    val onBookData: () -> Unit = {},
     val onTranslateMode: (NovelTranslateMode) -> Unit = {},
 
     /**
@@ -600,6 +601,7 @@ class NovelPanelSheet(
             cb.onAutoTurn(swAutoTurn.isChecked, interval)
         }
 
+        view.findViewById<View>(R.id.btn_book_data).setOnClickListener { dismiss(); cb.onBookData() }
         view.findViewById<View>(R.id.btn_settings).setOnClickListener { dismiss(); cb.onSettings() }
 
         // 连续滚动下没有「翻页动画」这个概念（滚动即翻页）：置灰
@@ -727,7 +729,7 @@ class NovelPanelSheet(
     private val panelLabelIds = intArrayOf(
         R.id.tv_mode_label, R.id.tv_animation_label, R.id.tv_background_label,
         R.id.tv_translate_mode_label,
-        R.id.tv_rotate_label, R.id.tv_auto_turn_label, R.id.tv_settings_label, R.id.tv_download_label,
+        R.id.tv_rotate_label, R.id.tv_auto_turn_label, R.id.tv_settings_label, R.id.tv_book_data_label, R.id.tv_download_label,
         R.id.tv_translator_model_row,
         R.id.tv_source_lang_value, R.id.tv_target_lang_value,
         R.id.tv_debounce_label, R.id.tv_ahead_label, R.id.tv_batch_label,

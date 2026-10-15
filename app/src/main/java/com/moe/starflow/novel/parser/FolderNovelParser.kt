@@ -51,6 +51,10 @@ object FolderNovelParser : NovelParser {
             .sortedWith(compareBy(ArchivedMangaReader.naturalComparator()) { it.relativePath })
 
         val chapters = mutableListOf<NovelChapterMeta>()
+        val volumes = mutableListOf<NovelBook>()
+        val htmlHeader = children.firstOrNull { it.file.extension.lowercase(Locale.ROOT) in HTML_EXTS }?.file?.let { html ->
+            TextEncoding.decode(html.inputStream().use { NovelReadLimits.readAtMost(it, 64 * 1024) })
+        }
         for ((child, relativePath) in children) {
             val ext = child.extension.lowercase(Locale.ROOT)
             val chapterName = displayName(relativePath)
@@ -62,16 +66,18 @@ object FolderNovelParser : NovelParser {
                         locator = relativePath,
                     )
                 )
-                ext in VOLUME_EXTS -> chapters.addAll(expandVolume(child, relativePath, chapterName))
+                ext in VOLUME_EXTS -> chapters.addAll(expandVolume(child, relativePath, chapterName, volumes))
             }
         }
         if (chapters.isEmpty()) throw IllegalStateException("NO_TEXT_CHAPTER")
 
         NovelBook(
             title = file.name.ifBlank { "Untitled" },
-            author = null,
+            author = volumes.firstNotNullOfOrNull { it.author } ?: htmlHeader?.let(HtmlParser::authorOf),
             // index 必须等于列表位置（跨卷展开后重新编号）
             chapters = chapters.mapIndexed { i, c -> c.copy(index = i) },
+            description = volumes.firstOrNull { it.description.isNotBlank() }?.description ?: htmlHeader?.let(HtmlParser::descriptionOf).orEmpty(),
+            coverBytes = volumes.firstNotNullOfOrNull { it.coverBytes },
         )
     }
 
@@ -114,6 +120,7 @@ object FolderNovelParser : NovelParser {
         epub: File,
         relativePath: String,
         volumeName: String,
+        volumes: MutableList<NovelBook>,
     ): List<NovelChapterMeta> {
         val inner = try {
             EpubParser.parse(epub)
@@ -127,6 +134,7 @@ object FolderNovelParser : NovelParser {
             LogCollector.w(TAG, "卷解析失败，已跳过: ${epub.name}", e)
             null
         } ?: return emptyList()
+        volumes += inner
         return inner.chapters.map { c ->
             NovelChapterMeta(
                 index = 0, // 由调用方统一重编号

@@ -42,7 +42,7 @@ class LibraryMigrationTest {
         assertTrue(session.database.catalog().allTranslations().isEmpty())
         assertTrue(File(source, "001.png").isFile)
         assertEquals(raw, app.getSharedPreferences("manga_import", 0).getString("imported_manga_list", null))
-        val archive = session.local(".starflow/legacy/${books.first().bookUuid}/records.json").readText()
+        val archive = session.recordArchive(".starflow/legacy/${books.first().bookUuid}/records.json").readText()
         assertTrue(archive.contains("inactive legacy result"))
         assertFalse(JSONObject(archive).getBoolean("valid"))
         LibrarySessions.prepare(app)

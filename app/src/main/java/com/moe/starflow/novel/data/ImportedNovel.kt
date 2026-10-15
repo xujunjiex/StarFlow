@@ -37,6 +37,8 @@ data class ImportedNovel(
     val bookUuid: String = "",
     val libraryLocationId: String = "",
     val deletionError: String? = null,
+    val metadataVersion: Int = 0,
+    val deleting: Boolean = false,
 ) {
     /** 译文身份指纹。与 `ImportedManga.translationKey` 同构。 */
     val translationKey: String get() = if (bookUuid.isEmpty()) addedAt.toString() else "$libraryLocationId:novel:$bookUuid"

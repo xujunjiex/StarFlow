@@ -35,13 +35,14 @@ data class NovelBook(
     val author: String?,
     val chapters: List<NovelChapterMeta>,
     val coverBytes: ByteArray? = null,
+    val description: String = "",
 ) {
     // data class 带 ByteArray 必须手写 equals/hashCode，否则数组按引用比较
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is NovelBook) return false
         return title == other.title && author == other.author &&
-            chapters == other.chapters && (coverBytes contentEquals other.coverBytes)
+            chapters == other.chapters && (coverBytes contentEquals other.coverBytes) && description == other.description
     }
 
     override fun hashCode(): Int {
@@ -49,6 +50,7 @@ data class NovelBook(
         result = 31 * result + (author?.hashCode() ?: 0)
         result = 31 * result + chapters.hashCode()
         result = 31 * result + (coverBytes?.contentHashCode() ?: 0)
+        result = 31 * result + description.hashCode()
         return result
     }
 }

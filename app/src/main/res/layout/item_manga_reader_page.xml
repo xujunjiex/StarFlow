@@ -8,4 +8,9 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"/>
 
+    <TextView android:id="@+id/source_page_error" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:layout_gravity="center" android:gravity="center"
+        android:padding="24dp" android:textColor="@color/red" android:visibility="gone"
+        android:textIsSelectable="true" android:textSize="15sp" />
+
 </com.moe.starflow.mangaimport.reader.CurlPageView>

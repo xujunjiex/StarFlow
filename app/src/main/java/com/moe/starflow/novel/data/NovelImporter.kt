@@ -11,6 +11,10 @@ import android.provider.DocumentsContract
 import com.moe.starflow.mangaimport.data.ArchivedMangaReader
 import com.moe.starflow.mangaimport.data.ImportPhase
 import com.moe.starflow.mangaimport.data.ImportProgress
+import com.moe.starflow.mangaimport.data.ComicMetadata
+import com.moe.starflow.mangaimport.data.ComicMetadataParser
+import com.moe.starflow.library.BookMetadataReader
+import com.moe.starflow.novel.model.NovelBook
 import com.moe.starflow.novel.model.NovelFormat
 import com.moe.starflow.novel.parser.NovelFormatDetector
 import com.moe.starflow.novel.parser.FolderNovelParser
@@ -33,7 +37,7 @@ import kotlin.coroutines.coroutineContext
  * 小说导入：SAF 源 → 复制进 `novel_import/<UUID>/` → 解析 → 封面 → [ImportedNovel]。
  *
  * 职责边界与 `MangaImporter` 一致：**只做搬运 + 解析**，不写清单（入库由
- * [NovelImportManager] 统一做，这样占位卡片与最终条目由同一处编排，id 也能提前预留）。
+ * [NovelImportManager] 统一做，进度与最终入库由同一处编排，id 也能提前预留）。
  *
  * 取消：复制循环每轮 `ensureActive()`；协程被取消时抛 CancellationException → 走异常分支
  * 删掉半成品目录再抛出，不留「复制了一半又没有条目」的垃圾。
@@ -122,24 +126,32 @@ object NovelImporter {
         source: File,
         id: Long,
         fallbackTitle: String,
+        allowEmptyDirectory: Boolean = false,
     ): ImportedNovel = withContext(Dispatchers.IO) {
         val format = NovelFormatDetector.detect(source)
             ?: throw NovelWrongFormatException(isManga = false)
         requireStandaloneHtml(format, source)
-        val book = NovelParsers.forFormat(format).parse(source)
-        if (book.chapters.isEmpty()) throw IllegalStateException(ERROR_NO_TEXT_CHAPTER)
+        val book = try { NovelParsers.forFormat(format).parse(source) }
+        catch (e: IllegalStateException) {
+            if (!allowEmptyDirectory || format != NovelFormat.FOLDER || e.message != ERROR_NO_TEXT_CHAPTER) throw e
+            com.moe.starflow.novel.model.NovelBook(fallbackTitle, null, emptyList())
+        }
+        if (book.chapters.isEmpty() && !(allowEmptyDirectory && format == NovelFormat.FOLDER)) throw IllegalStateException(ERROR_NO_TEXT_CHAPTER)
         val title = if (format == NovelFormat.FOLDER) fallbackTitle else book.title.ifBlank { fallbackTitle }
+        val metadata = metadataOf(source, book)
         val coverPath = book.coverBytes?.let { decodeCover(context, it, id) }
             ?: placeholderCover(context, id, title)
         ImportedNovel(
             id = id,
             title = title,
-            author = book.author,
+            author = metadata.writer,
             localRoot = source.canonicalPath,
             format = format,
             coverPath = coverPath,
             chapterCount = book.chapters.size,
             addedAt = freshAddedAt(context),
+            description = ComicMetadataParser.buildDescription(context, metadata),
+            metadataVersion = BookMetadataReader.VERSION,
             sizeBytes = if (source.isDirectory) {
                 source.walkTopDown().filter { it.isFile }.sumOf { it.length() }
             } else source.length(),
@@ -233,17 +245,15 @@ object NovelImporter {
         val destDir = NovelStorageDir.bookDir(context, id)
 
         try {
-            if (!destDir.isDirectory && !destDir.mkdirs()) {
-                throw NovelImportIoException(
-                    NovelImportIoException.Kind.DESTINATION_WRITE,
-                    "无法创建应用小说目录：${destDir.absolutePath}",
-                )
-            }
-            val textDocs = collectTextDocs(context, treeUri, rootId)
+            ensureDestinationDirectory(destDir)
+            val docs = collectDirectoryDocs(context, treeUri, rootId)
+            val textDocs = docs.filter { isDirTextEntry(it.relativePath) }
             if (textDocs.isEmpty()) throw IllegalStateException(ERROR_NO_TEXT_CHAPTER)
             // 夹里有 html 才收图片；路径由遍历层级与显示名构造，documentId 仅用于查询/打开。
             val hasHtml = textDocs.any { isDirHtmlEntry(it.relativePath) }
-            val imageDocs = if (hasHtml) collectImageDocs(context, treeUri, rootId) else emptyList()
+            val imageDocs = if (hasHtml) docs.filter { isDirImageEntry(it.relativePath) || imageExtension(it.document.mimeType) != null }
+                .map { it.relativePath to it.document.uri } else emptyList()
+            val metadataDocs = docs.filter { ComicMetadataParser.isMetadataEntry(it.relativePath) }
             val relativeNames = textDocs.map { it.relativePath } + imageDocs.map { it.first }
             if (relativeNames.toSet().size != relativeNames.size) throw IOException("来源包含重复名称，无法完整复制小说")
             val total = textDocs.size + imageDocs.size
@@ -273,18 +283,32 @@ object NovelImporter {
             }
             coroutineContext.ensureActive()
 
+            for ((relative, doc) in metadataDocs) {
+                coroutineContext.ensureActive()
+                try {
+                    val text = openSafSource(context, doc.uri).use { BookMetadataReader.readText(it) } ?: continue
+                    val target = resolveInsideTree(destDir, relative) ?: continue
+                    openNovelDestination(target).use { it.write(text.toByteArray(Charsets.UTF_8)) }
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (e: Exception) { LogCollector.w(TAG, "读取目录元数据失败：$relative", e) }
+            }
+
             onProgress(ImportProgress(ImportPhase.SCANNING))
             val book = FolderNovelParser.parse(destDir)
+            val metadata = metadataOf(destDir, book)
 
             ImportedNovel(
                 id = id,
                 title = book.title.ifBlank { fallbackTitle },
-                author = null,
+                author = metadata.writer,
                 localRoot = destDir.absolutePath,
                 format = NovelFormat.FOLDER,
-                coverPath = placeholderCover(context, id, book.title.ifBlank { fallbackTitle }),
+                coverPath = book.coverBytes?.let { decodeCover(context, it, id) }
+                    ?: placeholderCover(context, id, book.title.ifBlank { fallbackTitle }),
                 chapterCount = book.chapters.size,
                 addedAt = freshAddedAt(context),
+                description = ComicMetadataParser.buildDescription(context, metadata),
+                metadataVersion = BookMetadataReader.VERSION,
                 sizeBytes = destDir.walkTopDown().filter { it.isFile }.sumOf { it.length() },
             )
         } catch (e: Exception) {
@@ -317,46 +341,13 @@ object NovelImporter {
     private fun extOf(name: String?): String =
         name?.substringAfterLast('.', "")?.lowercase(Locale.ROOT).orEmpty()
 
-    /**
-     * 递归收集夹内图片（只收 [DIR_IMAGE_EXTS]，深度封顶 [MAX_DIR_DEPTH]，张数封顶
-     * 完整复制），返回 `相对路径 -> 文档`。
-     *
-     * 路径逐层累计目录与文件的显示名；documentId 是不透明标识，不用于推导文件系统层级。
-     */
-    private suspend fun collectImageDocs(
-        context: Context,
-        treeUri: Uri,
-        rootId: String,
-    ): List<Pair<String, Uri>> {
-        val out = ArrayList<Pair<String, Uri>>()
-        suspend fun walk(parentDocumentId: String, prefix: String, depth: Int) {
-            if (depth > MAX_DIR_DEPTH) throw IOException("小说目录层级超过支持范围，未完整导入")
-            for (child in queryChildren(context, treeUri, parentDocumentId)) {
-                coroutineContext.ensureActive()
-
-                val name = safName(child)
-                if (child.isDirectory && com.moe.starflow.library.LibrarySessions.current(context).database.catalog().allMeta()
-                    .any { it.name.startsWith("importing:novel:") && it.value.substringAfterLast('/') == name })
-                    throw IOException("导入来源包含本次目标目录，已停止递归复制：$name")
-                val rel = treeRelativePath(prefix, name) ?: throw IOException("来源名称无法可靠定位：${child.uri}")
-                if (child.isDirectory || (child.mimeType == null && name.substringAfterLast('.', "").isEmpty())) {
-                    walk(child.documentId, "$rel/", depth + 1)
-                } else if (isDirImageEntry(name) || imageExtension(child.mimeType) != null) {
-                    out += rel to child.uri
-                }
-            }
-        }
-        walk(rootId, "", 0)
-        return out
-    }
-
     private data class TreeEntry(val relativePath: String, val document: SafDocumentTreeReader.Child)
 
     /**
      * 收集小说目录根及章节子目录里的文本/EPUB 文件，保留相对路径，最多递归 [MAX_DIR_DEPTH] 层。
      * 相对路径既用于安全复制，也作为阅读器 locator，保证章节分类目录不会被拍平。
      */
-    private suspend fun collectTextDocs(
+    private suspend fun collectDirectoryDocs(
         context: Context,
         treeUri: Uri,
         rootId: String,
@@ -374,7 +365,7 @@ object NovelImporter {
                 val extensionless = name.substringAfterLast('.', "").isEmpty()
                 if (child.isDirectory || (child.mimeType == null && extensionless)) {
                     walk(child.documentId, "$rel/", depth + 1)
-                } else if (isDirTextEntry(name)) {
+                } else if (isDirTextEntry(name) || isDirImageEntry(name) || imageExtension(child.mimeType) != null || ComicMetadataParser.isMetadataEntry(name)) {
                     out += TreeEntry(rel, child)
                 }
             }
@@ -462,7 +453,7 @@ object NovelImporter {
         val target = File(dir, rel).canonicalFile
         if (target.path == dir.path) return null
         if (!target.path.startsWith(dir.path + File.separator)) return null
-        target.parentFile?.mkdirs()
+        target.parentFile?.let(::ensureDestinationDirectory)
         return target
     }
 
@@ -477,12 +468,7 @@ object NovelImporter {
     ): ImportedNovel {
         val destDir = NovelStorageDir.bookDir(context, id)
         try {
-            if (!destDir.isDirectory && !destDir.mkdirs()) {
-                throw NovelImportIoException(
-                    NovelImportIoException.Kind.DESTINATION_WRITE,
-                    "无法创建应用小说目录：${destDir.absolutePath}",
-                )
-            }
+            ensureDestinationDirectory(destDir)
             // ===== 复制 =====
             val dest = resolveInside(destDir, displayName)
             onProgress(ImportProgress(ImportPhase.COPYING, totalBytes = totalBytes))
@@ -507,6 +493,7 @@ object NovelImporter {
             // 用户看到的是「未找到可阅读的文本章节」，而 EMPTY（「空文件」）永远不可达。
             // 判据取**复制后的字节数**：源 provider 报的 length() 不可信（可能是 0 或 -1）。
             if (dest.length() == 0L) throw IllegalStateException(ERROR_EMPTY)
+            BookMetadataReader.copyAuthorizedSidecars(context, uri, destDir, "novel")
 
             // ===== 解析 =====
             onProgress(ImportProgress(ImportPhase.SCANNING))
@@ -515,6 +502,7 @@ object NovelImporter {
             requireStandaloneHtml(format, dest)
             val book = NovelParsers.forFormat(format).parse(dest)
             if (book.chapters.isEmpty()) throw IllegalStateException(ERROR_NO_TEXT_CHAPTER)
+            val metadata = metadataOf(dest, book)
 
             // ===== 封面 =====
             val coverPath = book.coverBytes?.let { decodeCover(context, it, id) }
@@ -523,13 +511,15 @@ object NovelImporter {
             return ImportedNovel(
                 id = id,
                 title = book.title.ifBlank { fallbackTitle },
-                author = book.author,
+                author = metadata.writer,
                 localRoot = dest.absolutePath,
                 format = format,
                 coverPath = coverPath,
                 chapterCount = book.chapters.size,
                 addedAt = freshAddedAt(context),
                 sizeBytes = dest.length(),
+                description = ComicMetadataParser.buildDescription(context, metadata),
+                metadataVersion = BookMetadataReader.VERSION,
             )
         } catch (e: Exception) {
             // 半成品必须清掉：留着的话下次导入复用同一个 id，残件与新文件混在同一目录
@@ -537,6 +527,11 @@ object NovelImporter {
             LogCollector.e(TAG, "小说导入失败，已清理 $destDir: ${e.message}", e)
             throw e
         }
+    }
+
+    internal fun metadataOf(source: File, book: NovelBook): ComicMetadata {
+        val embedded = ComicMetadata(writer = book.author, summary = book.description.takeIf(String::isNotBlank))
+        return ComicMetadataParser.parse(BookMetadataReader.sourceTexts(source))?.let { ComicMetadataParser.merge(it, embedded) } ?: embedded
     }
 
     /**
@@ -665,7 +660,16 @@ object NovelImporter {
         }
     }
 
+    private fun ensureDestinationDirectory(directory: File) {
+        try {
+            com.moe.starflow.utils.FileAccessDiagnostics.ensureDirectory(directory)
+        } catch (e: IOException) {
+            throw NovelImportIoException(NovelImportIoException.Kind.DESTINATION_WRITE, e.message.orEmpty(), e)
+        }
+    }
+
     private fun openNovelDestination(file: File): OutputStream {
+        file.parentFile?.let(::ensureDestinationDirectory)
         val destination = if (com.moe.starflow.library.LibrarySessions.findFile(file)?.first?.storage is com.moe.starflow.library.FileLibraryStorage) "书库目录" else "内部暂存目录"
         val stream = try {
             FileOutputStream(file)

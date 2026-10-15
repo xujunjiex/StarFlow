@@ -82,9 +82,7 @@ class ReaderNoticeOutletTest {
             text.contains("import com.moe.starflow.utils.UiUtils"),
         )
         for (key in listOf(
-            "reader_file_lost",           // 本地文件丢失（打不开 → 红底短时报错）
             "import_rename_empty",        // 名称不能为空
-            "import_manga_deleted",       // 已删除
             "import_cancel_too_late",     // 取消得太晚，已经导入完成
         )) {
             assertTrue(
@@ -92,11 +90,7 @@ class ReaderNoticeOutletTest {
                 text.contains("AppNotice.show(requireContext(), getString(R.string.$key)"),
             )
         }
-        // 死路报错（用户说完多半马上离开这一页）要用 BRIEF_ERROR：系统窗口不会赖在别的应用上
-        assertTrue(
-            "文件丢失要用 BRIEF_ERROR 样式",
-            text.contains("getString(R.string.reader_file_lost), AppNotice.Style.BRIEF_ERROR)"),
-        )
+        assertTrue("文件丢失必须提供恢复入口", text.contains("BookRecoveryDialog.show("))
     }
 
     /** **唯一**允许 `UiUtils.showToast` 的 AppNotice：两条兜底判据必须都在。 */

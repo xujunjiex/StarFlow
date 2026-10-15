@@ -30,8 +30,9 @@ enum class DisplayMode { DETAILED_LIST, GRID }
  * 多选管理（Koto 式）：长按进入多选模式，点选/长按增减选中，卡片显示勾选态；
  * 非多选时点击卡片进阅读器。
  *
- * 导入中的占位（`ImportedManga.importing`）：封面位压一层进度遮罩（进度条 + 百分比 + ✕ 取消），
+ * 兼容旧瞬态模型（`ImportedManga.importing`）：封面位压一层进度遮罩（进度条 + 百分比 + ✕ 取消），
  * **不可打开、不可多选**（它还没有本地文件，选中会让「标为已读/删除」作用在半成品上）。
+ * 当前书架仅提交实际书目，导入任务由状态栏显示。
  *
  * @param onItemClick 非多选时点击卡片：进阅读器
  * @param onSelectionChanged 选中态变化回调（selectionMode, 已选数量），驱动顶部栏
@@ -41,7 +42,9 @@ class MangaGridAdapter(
     displayMode: DisplayMode,
     private val onItemClick: (ImportedManga) -> Unit,
     private val onSelectionChanged: (Boolean, Int) -> Unit,
-    private val onCancelImport: (Long) -> Unit = {}
+    private val onCancelImport: (Long) -> Unit = {},
+    private val onExportRecords: (ImportedManga) -> Unit = {},
+    private val onBookData: (ImportedManga) -> Unit = {}
 ) : ListAdapter<ImportedManga, RecyclerView.ViewHolder>(Diff()) {
 
     private var displayMode = displayMode
@@ -83,7 +86,7 @@ class MangaGridAdapter(
      * ⚠️ 导入中的占位不可选中（见类注释）。
      */
     fun toggleSelection(id: Long) {
-        if (currentList.firstOrNull { it.id == id }?.importing == true) return
+        if (currentList.firstOrNull { it.id == id }?.let { it.importing || it.deleting } == true) return
         if (!selectionMode) {
             enterSelection(id)
             return
@@ -109,7 +112,7 @@ class MangaGridAdapter(
 
     /** 是否已全选（用于全选按钮文案）。**只统计可选项**：导入中的占位不参与。 */
     fun isAllSelected(): Boolean {
-        val selectable = currentList.count { !it.importing }
+        val selectable = currentList.count { !it.importing && !it.deleting }
         return selectionMode && selectable > 0 && selectedIds.size == selectable
     }
 
@@ -119,7 +122,7 @@ class MangaGridAdapter(
             exitSelection()
             return
         }
-        val ids = currentList.filterNot { it.importing }.map { it.id }
+        val ids = currentList.filterNot { it.importing || it.deleting }.map { it.id }
         if (ids.isEmpty()) return
         selectionMode = true
         selectedIds.addAll(ids)
@@ -152,6 +155,20 @@ class MangaGridAdapter(
 
     override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
         val item = getItem(position)
+        holder.itemView.findViewById<View>(R.id.btn_export_records)?.apply {
+            visibility = if ((item.lost || item.missingPages > 0 || item.changedPages > 0) && !item.deleting && !selectionMode) View.VISIBLE else View.GONE
+            setOnClickListener { onExportRecords(item) }
+            if (holder is CardVH) {
+                val endPadding = ((if (visibility == View.VISIBLE) 56 else 8) * resources.displayMetrics.density).toInt()
+                listOf(holder.binding.tvTitle, holder.binding.tvPageCount).forEach { label ->
+                    label.setPaddingRelative(label.paddingStart, label.paddingTop, endPadding, label.paddingBottom)
+                }
+            }
+        }
+        holder.itemView.findViewById<View>(R.id.btn_book_data)?.apply {
+            visibility = if (!item.importing && !item.deleting && !selectionMode) View.VISIBLE else View.GONE
+            setOnClickListener { onBookData(item) }
+        }
         when (holder) {
             is CardVH -> bindCard(holder, item)
             is RowVH -> bindRow(holder, item)
@@ -281,11 +298,18 @@ class MangaGridAdapter(
         val importing = item.importing
         // 占位没有本地路径，绝不能被判成「文件丢失」
         val lost = item.lost && !importing
-        val isRead = !importing && !lost && item.pageCount > 0 && item.lastReadPage >= item.pageCount - 1
+        val isRead = !importing && !lost && item.missingPages == 0 && item.changedPages == 0 && item.pageCount > 0 && item.lastReadPage >= item.pageCount - 1
         readBadge.visibility = if (isRead) View.VISIBLE else View.GONE
-        lostBadge.visibility = if (lost || item.deletionError != null) View.VISIBLE else View.GONE
-        (lostBadge as? android.widget.TextView)?.setText(if (item.deletionError != null)
-            com.moe.starflow.R.string.library_delete_failed else com.moe.starflow.R.string.import_file_lost)
+        lostBadge.visibility = if (lost || item.missingPages > 0 || item.changedPages > 0 || item.deleting || item.deletionError != null) View.VISIBLE else View.GONE
+        (lostBadge as? android.widget.TextView)?.setText(when {
+            item.deletionError != null -> R.string.library_delete_failed
+            item.deleting -> R.string.library_deleting
+            lost -> R.string.import_file_lost
+            item.changedPages > 0 -> R.string.manga_source_page_changed
+            else -> R.string.manga_source_pages_missing
+        })
+        lostBadge.backgroundTintList = android.content.res.ColorStateList.valueOf(androidx.core.content.ContextCompat.getColor(root.context,
+            if (item.deleting && item.deletionError == null) R.color.primary else R.color.red))
         // 文件丢失时封面压暗，提示为失效条目
         coverView.alpha = if (lost) 0.35f else 1f
 
@@ -318,13 +342,17 @@ class MangaGridAdapter(
 
         root.setOnClickListener {
             // 导入中的占位不可打开（还没有本地文件）
-            if (item.importing) return@setOnClickListener
+            if (item.importing || item.deleting) return@setOnClickListener
+            if (!selectionMode && item.deletionError != null) {
+                com.moe.starflow.utils.AppNotice.show(root.context, item.deletionError, com.moe.starflow.utils.AppNotice.Style.ERROR)
+                return@setOnClickListener
+            }
             // 标题选中置位 → marquee 滚动显示完整标题；复用/取消时 bind 里复位
             titleView.isSelected = true
             if (selectionMode) toggleSelection(item.id) else onItemClick(item)
         }
         root.setOnLongClickListener {
-            if (item.importing) return@setOnLongClickListener false
+            if (item.importing || item.deleting) return@setOnLongClickListener false
             toggleSelection(item.id)
             true
         }

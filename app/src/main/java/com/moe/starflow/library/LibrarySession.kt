@@ -20,23 +20,30 @@ import kotlin.coroutines.intrinsics.startCoroutineUninterceptedOrReturn
 import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
 
 data class LibrarySaveState(val saving: Boolean = false, val pending: Int = 0, val error: String? = null)
+
+/** Identity failures retain local records until the user explicitly rebuilds the library. */
+class LibraryIdentityException(message: String, cause: Throwable? = null) : IOException(message, cause)
 data class BookRef(val locationId: String, val kind: String, val uuid: String) {
     val key get() = "$locationId:$kind:$uuid"
 }
 
 class LibrarySession internal constructor(val app: Context, val storage: LibraryStorage,
-    val database: LibraryDatabase, val generation: Long) {
+    val database: LibraryDatabase, val generation: Long, internal val storageGeneration: String? = null) {
     val locationId get() = storage.locationId
     val workingRoot: File = (storage as? FileLibraryStorage)?.root
-        ?: File(app.filesDir, "library_sources/$locationId").apply { mkdirs() }
+        ?: File(app.filesDir, "library_sources/$locationId${storageGeneration?.let { "_$it" }.orEmpty()}").apply { mkdirs() }
     val saveState = MutableStateFlow(LibrarySaveState())
     private val catalog get() = database.catalog()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val ioLock = Any()
+    private val catalogReadLock = Any()
     private val journal = LibraryJournal(storage)
     private var prepared = false
     private var readOnly = false
+    @Volatile private var closed = false
+    internal val isClosed get() = closed
     private val coverUris = java.util.concurrent.ConcurrentHashMap<String, String>()
+    val sourceIssues = java.util.concurrent.ConcurrentHashMap<String, String>()
     val sourcePresence = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
 
     fun context(base: Context = app): Context = object : ContextWrapper(base) {
@@ -46,54 +53,154 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
 
     fun local(path: String) = File(workingRoot, safeLibraryPath(path))
     fun relative(file: File): String {
-        val base = workingRoot.canonicalFile
-        val at = file.canonicalFile
-        require(at.path.startsWith(base.path + File.separator)) { "文件不属于当前书库：$file" }
-        return safeLibraryPath(at.relativeTo(base).invariantSeparatorsPath)
+        val base = workingRoot.canonicalPath
+        val at = file.canonicalPath
+        return requireNotNull(libraryRelativePath(base, at)) { "文件不属于当前书库：$file" }
     }
     fun cover(path: String): String = if (storage is FileLibraryStorage || local(path).isFile) local(path).path
         else coverUris[path] ?: local(path).path
 
     /** Runs on IO before a newly selected root is published. Failure never creates an empty catalog. */
     fun prepare() = synchronized(ioLock) {
-        if (prepared) return@synchronized
+        check(!closed) { "书库会话已切换，请刷新" }
+        var validationComplete = false
         try {
+            LibraryReinitialization.resume(app, storage)
+            storage.invalidateLookups()
+            if (prepared) {
+                val manifest = readManifest()
+                validateManifest(manifest)
+                validateStructure(manifest)
+                LibraryReinitialization.finish(app, storage, storageGeneration)
+                readOnly = false
+                return@synchronized
+            }
             storage.list("") // Distinguish inaccessible from an empty root before creating anything.
             if (storage.exists(".starflow") && !storage.exists(".starflow/library.json"))
-                throw IOException("书库管理目录存在，但身份记录缺失；已停止覆盖")
+                throw LibraryIdentityException("书库管理目录存在，但身份记录缺失；已停止覆盖")
             if (!storage.exists(".starflow/library.json")) {
                 if (catalog.meta("manifestId") != null || !catalog.pending().isEmpty())
-                    throw IOException("原书库身份记录缺失；已停止覆盖，本地资料保留")
-                listOf("manga_import", "novel_import", ".starflow/catalog", ".starflow/books", ".starflow/legacy")
+                    throw LibraryIdentityException("原书库身份记录缺失；已停止覆盖，本地资料保留")
+                listOf("manga_import", "novel_import", ".starflow/books")
                     .forEach(storage::mkdir)
                 val manifest = JSONObject().put("format", 1).put("libraryId", UUID.randomUUID().toString())
                 storage.writeNew(".starflow/library.json", "application/json").use { it.write(manifest.toString().toByteArray()) }
             }
-            val manifest = JSONObject(storage.read(".starflow/library.json").bufferedReader().use { it.readText() })
-            if (manifest.getInt("format") != 1) throw IOException("不支持此书库记录版本；已停止覆盖")
+            val manifest = readManifest()
+            if (catalog.meta("manifestId") == null && storage.exists(".starflow/storage.json"))
+                throw LibraryIdentityException("本机书库记录缺失，目录中仍有书库管理信息；可覆盖重建并重新扫描原文件")
             validateManifest(manifest)
-            restore()
+            validateStructure(manifest)
+            LibraryReinitialization.finish(app, storage, storageGeneration)
+            // Import portable records only when no authoritative local database exists yet.
+            if (catalog.meta("recordStorage") != "app-database") {
+                val hasLocalState = catalog.meta("head") != null || catalog.books("manga").isNotEmpty() ||
+                    catalog.books("novel").isNotEmpty() || catalog.pending().isNotEmpty()
+                if (!hasLocalState && !storage.exists(".starflow/storage.json") && storage.exists(".starflow/catalog")) restore()
+                database.runInTransaction {
+                    catalog.meta(LibraryMeta("recordStorage", "app-database"))
+                    catalog.meta(LibraryMeta("legacyDirectoryCleanup", "pending"))
+                }
+            }
             recoverInterruptedImports()
+            readOnly = false
             prepared = true
             // Cover handles are cheap; source archives and original image trees remain lazy.
             listOf("manga", "novel").flatMap { catalog.books(it) }.forEach { book ->
                 val p = JSONObject(book.body).optString("coverPath")
                 if (p.isNotEmpty() && p != "null") runCatching { coverUris[p] = storage.uri(p).toString() }
             }
+            validationComplete = true
             flush()
         } catch (e: Exception) {
-            readOnly = e is org.json.JSONException || e.message?.contains("停止覆盖") == true
+            readOnly = !validationComplete || e is LibraryIdentityException || e is org.json.JSONException || e.message?.contains("停止覆盖") == true
             saveState.value = LibrarySaveState(pending = runCatching { catalog.pending().size }.getOrDefault(saveState.value.pending), error = e.message ?: e.javaClass.simpleName)
-            if (!prepared || readOnly) throw e
+            if (!validationComplete || readOnly) throw e
         }
     }
 
+    private fun readManifest(): JSONObject {
+        if (!storage.exists(".starflow/library.json"))
+            throw LibraryIdentityException("原书库身份记录缺失；已停止覆盖，本地资料保留")
+        return try { JSONObject(storage.read(".starflow/library.json").bufferedReader().use { it.readText() }) }
+        catch (e: org.json.JSONException) { throw LibraryIdentityException("书库身份记录损坏；已停止覆盖", e) }
+    }
+    private fun validateStructure(manifest: JSONObject) {
+        if (storage.exists(".starflow/storage.json")) {
+            val mode = try { JSONObject(storage.read(".starflow/storage.json").bufferedReader().use { it.readText() }) }
+                catch (e: org.json.JSONException) { throw LibraryIdentityException("书库管理文件损坏：.starflow/storage.json", e) }
+            if (mode.optInt("format", -1) != 1 || mode.optString("records") != "app-database" ||
+                mode.optString("libraryId") != manifest.getString("libraryId"))
+                throw LibraryIdentityException("书库管理文件不匹配：.starflow/storage.json")
+        } else if (catalog.meta("recordStorage") == "app-database")
+            throw LibraryIdentityException("书库管理文件缺失：.starflow/storage.json")
+        val root = storage.list("")
+        listOf("manga_import", "novel_import").forEach { path ->
+            val node = root.singleOrNull { it.path == path }
+            if (node == null) {
+                // The identity was validated before this check. Recreate only empty source
+                // containers; missing books and their processing records remain in the catalog.
+                storage.mkdir(path)
+                if (storage.list("").singleOrNull { it.path == path }?.directory != true)
+                    throw IOException("无法重建书库入口目录：$path")
+            } else if (!node.directory) throw IOException("书库入口不是目录：$path；请重新选择存储目录，原文件保留")
+        }
+        val books = storage.list(".starflow").singleOrNull { it.path == ".starflow/books" }
+            ?: throw IOException("书库管理目录缺失：.starflow/books")
+        if (!books.directory) throw IOException("书库管理路径不是目录：.starflow/books")
+    }
+
+    /** Keep scheduled publication out of an explicitly confirmed identity replacement. */
+    internal fun <T> withStorageLock(block: () -> T): T = synchronized(ioLock) { block() }
+
+    /** Private historical records and durable page identities; never used as a second live database. */
+    internal fun recordArchive(path: String): File {
+        val safe = safeLibraryPath(path)
+        require(safe.startsWith(".starflow/"))
+        val identity = catalog.meta("manifestId") ?: throw IOException("书库身份尚未载入")
+        return File(app.filesDir, "library_record_archives/$locationId/$identity/$safe")
+    }
+
+    /** One-time verified evacuation of the former portable database. Originals/artifacts stay put. */
+    private fun migrateDirectoryRecords() {
+        val roots = mutableListOf(".starflow/catalog", ".starflow/legacy")
+        if (storage.exists(".starflow/books")) storage.list(".starflow/books").filter { it.directory }.forEach {
+            val uuid = it.path.substringAfterLast('/')
+            if (LibraryCodec.UUID_PATTERN.matches(uuid)) roots += "${it.path}/records"
+        }
+        fun archive(path: String) {
+            if (!storage.exists(path)) return
+            val parent = path.substringBeforeLast('/', "")
+            val node = storage.list(parent).single { it.path == path }
+            if (node.directory) storage.list(path).forEach { archive(it.path) }
+            else {
+                val target = recordArchive(path)
+                val digest = storage.read(path).use(LibraryCodec::digest)
+                if (target.isFile && target.inputStream().use(LibraryCodec::digest) == digest) return
+                target.parentFile!!.mkdirs()
+                val pending = File(target.parentFile, target.name + ".migrating")
+                try {
+                    storage.read(path).use { input -> pending.outputStream().use { output -> input.copyTo(output); output.fd.sync() } }
+                    if (pending.inputStream().use(LibraryCodec::digest) != digest) throw IOException("旧记录备份校验失败：$path")
+                    if (!pending.renameTo(target)) throw IOException("旧记录备份无法提交：$path")
+                } finally { pending.delete() }
+            }
+        }
+        roots.forEach(::archive)
+        listOf("manga", "novel").flatMap(catalog::books).map { JSONObject(it.body).optString("sourceIndexPath") }
+            .filter { it.startsWith(".starflow/books/") }.forEach(::archive)
+        val mode = JSONObject().put("format", 1).put("records", "app-database").put("libraryId", catalog.meta("manifestId"))
+        writeVerified(".starflow/storage.json", mode.toString().toByteArray(Charsets.UTF_8))
+        roots.forEach { if (storage.exists(it)) storage.delete(it) }
+        catalog.meta(LibraryMeta("legacyDirectoryCleanup", "complete"))
+    }
+
     private fun validateManifest(manifest: JSONObject) {
-        if (manifest.getInt("format") != 1) throw IOException("不支持此书库记录版本；已停止覆盖")
-        val identity = manifest.getString("libraryId")
-        if (!LibraryCodec.UUID_PATTERN.matches(identity)) throw IOException("书库身份记录损坏；已停止覆盖")
+        if (manifest.optInt("format", -1) != 1) throw LibraryIdentityException("不支持此书库记录版本；已停止覆盖")
+        val identity = manifest.optString("libraryId")
+        if (!LibraryCodec.UUID_PATTERN.matches(identity)) throw LibraryIdentityException("书库身份记录损坏；已停止覆盖")
         val previous = catalog.meta("manifestId")
-        if (previous != null && previous != identity) throw IOException("目录书库身份已更换；已停止覆盖，本地数据保留")
+        if (previous != null && previous != identity) throw LibraryIdentityException("目录书库身份已更换；已停止覆盖，本地数据保留")
         if (previous == null) catalog.meta(LibraryMeta("manifestId", identity))
     }
 
@@ -151,11 +258,15 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
         val cover = body.optString("coverPath")
         if (cover.isNotEmpty() && cover != "null" && !safeLibraryPath(cover).startsWith(".starflow/books/$uuid/"))
             throw IOException("书库封面定位越界；已停止覆盖")
+        val index = body.optString("sourceIndexPath")
+        if (index.isNotBlank() && index != "null" && !safeLibraryPath(index).startsWith(".starflow/books/$uuid/source-index/"))
+            throw IOException("Source index does not belong to this book")
         catalog.byUuid(uuid)?.let { if (it.kind != kind || it.id != id) throw IOException("书库作品 UUID 重复；已停止覆盖") }
     }
 
     private suspend fun applyOperation(operation: JSONObject) {
         when (operation.getString("component")) {
+            "layout" -> applyMangaLayout(operation)
             "checkpoint" -> restoreSnapshot(operation)
             "meta" -> catalog.meta(LibraryMeta(operation.getString("name"), operation.getString("value")))
             "asset" -> {
@@ -190,6 +301,33 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
         }
     }
 
+    private suspend fun applyMangaLayout(operation: JSONObject) {
+        val id = operation.getLong("id")
+        val body = operation.getJSONObject("book")
+        validateBook("manga", id, body)
+        val key = "$locationId:manga:${body.getString("bookUuid")}"
+        val values = operation.getJSONArray("mapping")
+        val mapping = IntArray(values.length()) { values.getInt(it) }
+        if (mapping.isNotEmpty()) {
+            database.translations().rekeyPages(id, key, mapping)
+            database.resolutions().rekeyPages(id, key, mapping)
+        }
+        catalog.put(LibraryBook("manga", id, body.getString("bookUuid"), body.toString(), body.getString("localRoot")))
+    }
+
+    suspend fun updateMangaLayout(expected: LibraryBook, body: JSONObject, mapping: IntArray) {
+        val operation = JSONObject().put("component", "layout").put("id", expected.id)
+            .put("book", body).put("mapping", org.json.JSONArray(mapping.toList()))
+        database.withTransaction {
+            val latest = catalog.book("manga", expected.id) ?: return@withTransaction
+            check(latest.uuid == expected.uuid && !latest.deleting && latest.body == expected.body) { "Book changed during source enumeration" }
+            applyMangaLayout(operation)
+            enqueue(operation)
+        }
+        scheduleFlush()
+        LibrarySessions.changes.value += 1
+    }
+
     internal fun beginImport(kind: String, id: Long) {
         val uuid = uuid(kind, id)
         catalog.meta(LibraryMeta("importing:$kind:$id", "${kind}_import/$uuid"))
@@ -216,11 +354,7 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
     }
 
     internal fun persistMeta(name: String, value: String) {
-        database.runInTransaction {
-            catalog.meta(LibraryMeta(name, value))
-            enqueue(JSONObject().put("component", "meta").put("name", name).put("value", value))
-        }
-        flush()
+        database.runInTransaction { catalog.meta(LibraryMeta(name, value)) }
     }
     internal fun releaseBookCopies(uuid: String, source: String) = synchronized(ioLock) {
         if (storage is FileLibraryStorage || catalog.pending().any { it.body.contains(uuid) }) return@synchronized
@@ -229,10 +363,19 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
         local(".starflow/books/$uuid").deleteRecursively()
     }
     internal fun close() = synchronized(ioLock) {
+        closed = true
+        readOnly = true
         scope.cancel()
-        database.close()
+        synchronized(catalogReadLock) { database.close() }
     }
-    fun books(kind: String): List<LibraryBook> = catalog.books(kind)
+    fun books(kind: String): List<LibraryBook> = synchronized(catalogReadLock) {
+        if (closed) emptyList() else try { catalog.books(kind) }
+        catch (e: Exception) {
+            readOnly = true
+            saveState.value = saveState.value.copy(error = e.message ?: e.javaClass.simpleName)
+            emptyList()
+        }
+    }
     fun assetPath(path: String): String = catalog.meta("asset:$path")?.takeIf { it.isNotEmpty() } ?: path
     fun publishArtifact(file: File) {
         val path = relative(file)
@@ -307,25 +450,32 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
             validateBook(kind, id, body)
             catalog.put(LibraryBook(kind, id, uuid, body.toString(), body.getString("localRoot"), deleting, error))
             catalog.meta(LibraryMeta("importing:$kind:$id", ""))
-            enqueue(operation)
+            if (deleting) discardBookFileOperations(uuid)
+            else {
+                val previous = old?.let { JSONObject(it.body) }
+                val artifacts = listOf("coverPath", "sourceIndexPath").mapNotNull { field ->
+                    body.optString(field).takeIf { it.isNotBlank() && it != "null" && it != previous?.optString(field) }
+                }
+                operation.put("artifacts", JSONArray(artifacts))
+                if (old == null || artifacts.isNotEmpty() || stagingCover != null) enqueue(operation)
+            }
         }
         scheduleFlush()
+    }
+    private fun discardBookFileOperations(uuid: String) {
+        catalog.pending().filter { it.body.contains(uuid) }.forEach { catalog.acknowledge(it.sequence) }
     }
     fun removeBook(kind: String, id: Long) {
         database.runInTransaction {
-            val uuid = catalog.book(kind, id)?.uuid
-            uuid?.let { catalog.meta(LibraryMeta("removed:$it", "1")) }
+            catalog.book(kind, id)?.uuid?.let { uuid ->
+                catalog.meta(LibraryMeta("removed:$uuid", "1"))
+                discardBookFileOperations(uuid)
+            }
             catalog.remove(kind, id)
-            enqueue(JSONObject().put("component", "book").put("kind", kind).put("id", id).put("remove", true).put("uuid", uuid))
         }
-        scheduleFlush()
+        LibrarySessions.changes.value += 1
     }
-    fun finishRemoval(kind: String, id: Long) {
-        database.runInTransaction {
-            enqueue(JSONObject().put("component", "book").put("kind", kind).put("id", id).put("remove", true))
-        }
-        flush()
-    }
+    fun finishRemoval(kind: String, id: Long) = removeBook(kind, id)
     internal fun enqueue(operation: JSONObject) {
         if (operation.optString("component") == "asset" && !operation.optBoolean("remove")) {
             val path = operation.getString("path")
@@ -344,75 +494,59 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
         catalog.enqueue(LibraryWrite(token = token, body = operation.toString()))
     }
     fun scheduleFlush() {
-        saveState.value = saveState.value.copy(saving = true, pending = catalog.pending().size)
+        val pending = catalog.pendingCount()
+        if (!prepared || pending == 0 && !catalog.hasPendingCleanup()) return
+        saveState.value = saveState.value.copy(saving = true, pending = pending)
         scope.launch { runCatching { flush() } }
     }
     fun flush() = synchronized(ioLock) {
         if (readOnly) throw IOException(saveState.value.error ?: "书库记录不可写；已停止覆盖")
         if (!prepared) return@synchronized
         try {
-            validateManifest(JSONObject(storage.read(".starflow/library.json").bufferedReader().use { it.readText() }))
-            val pending = catalog.pending()
-            saveState.value = LibrarySaveState(saving = pending.isNotEmpty(), pending = pending.size)
-            // A complete marker may precede the local ACK when the process was interrupted.
-            restore()
+            validateManifest(readManifest())
+            saveState.value = LibrarySaveState(saving = catalog.pending().isNotEmpty(), pending = catalog.pending().size)
+            if (catalog.meta("legacyDirectoryCleanup") == "pending") migrateDirectoryRecords()
             catalog.pending().forEach { write ->
                 val operation = JSONObject(write.body)
-                if (operation.optString("component") == "book" && !operation.optBoolean("remove") && !operation.optBoolean("deleting")) {
+                val component = operation.optString("component")
+                if (component == "book" && !operation.optBoolean("remove") && !operation.optBoolean("deleting")) {
                     val body = operation.getJSONObject("book")
-                    val source = body.getString("localRoot")
-                    if (operation.optBoolean("sourceRequired") || local(source).exists() || storage.exists(source)) publishTree(source)
-                    val cover = body.optString("coverPath")
-                    if (cover.isNotEmpty() && cover != "null") publishTree(cover)
-                }
-                if (operation.optString("component") == "asset" && !operation.optBoolean("remove"))
-                    publishTree(operation.getString("revision"))
-                val sequence = (catalog.meta("commitSequence")?.toLongOrNull() ?: 0) + 1
-                val payload = ".starflow/catalog/${write.token}.json"
-                val bytes = write.body.toByteArray(Charsets.UTF_8)
-                if (operation.optString("component") == "book" && !operation.optBoolean("remove") && !operation.optBoolean("deleting")) {
-                    val uuid = operation.getJSONObject("book").getString("bookUuid")
-                    writeVerified(".starflow/books/$uuid/records/${write.token}.json", bytes)
-                }
-                if (operation.optString("component") in setOf("manga", "sr", "novel")) {
-                    val owners = linkedSetOf<String>()
-                    fun collect(value: Any?) {
-                        when (value) {
-                            is JSONObject -> {
-                                if (value.has("bookKey")) owners += value.getString("bookKey")
-                                value.keys().forEach { collect(value.opt(it)) }
-                            }
-                            is JSONArray -> for (i in 0 until value.length()) collect(value.opt(i))
-                        }
-                    }
-                    collect(operation.opt("args"))
-                    owners.filter { catalog.byUuid(it) != null }.forEach { uuid ->
-                        if (!LibraryCodec.UUID_PATTERN.matches(uuid)) throw IOException("作品记录 UUID 损坏；已停止覆盖")
-                        writeVerified(".starflow/books/$uuid/records/${write.token}.json", bytes)
+                    if (operation.optBoolean("sourceRequired")) publishTree(body.getString("localRoot"))
+                    val identity = JSONObject().put("format", 1).put("kind", operation.getString("kind"))
+                        .put("uuid", body.getString("bookUuid")).put("source", body.getString("localRoot"))
+                        .put("sourceName", body.optString("sourceName").ifBlank { body.optString("title") })
+                    writeVerified(".starflow/books/${body.getString("bookUuid")}/source.json", identity.toString().toByteArray(Charsets.UTF_8))
+                    val artifacts = operation.optJSONArray("artifacts") ?: JSONArray(listOf("coverPath", "sourceIndexPath")
+                        .map(body::optString).filter { it.isNotBlank() && it != "null" })
+                    val latest = catalog.byUuid(body.getString("bookUuid"))?.let { JSONObject(it.body) }
+                    for (i in 0 until artifacts.length()) {
+                        val path = artifacts.getString(i)
+                        val stillReferenced = latest != null && listOf("coverPath", "sourceIndexPath").any { latest.optString(it) == path }
+                        if (stillReferenced && (operation.has("artifacts") || local(path).exists() || storage.exists(path))) publishTree(path)
                     }
                 }
-                writeVerified(payload, bytes)
-                val marker = JSONObject().put("sequence", sequence).put("token", write.token)
-                    .put("parent", catalog.meta("head") ?: "").put("payload", payload).put("digest", LibraryCodec.digest(bytes))
-                writeVerified(".starflow/catalog/${sequence.toString().padStart(20, '0')}-${write.token}.commit.json", marker.toString().toByteArray())
+                if (component == "layout") {
+                    val path = operation.getJSONObject("book").optString("sourceIndexPath")
+                    val body = operation.getJSONObject("book")
+                    val latest = catalog.byUuid(body.getString("bookUuid"))
+                    if (path.isNotBlank() && latest != null && !latest.deleting && JSONObject(latest.body).optString("sourceIndexPath") == path) publishTree(path)
+                }
+                if (component == "asset" && !operation.optBoolean("remove")) publishTree(operation.getString("revision"))
+                // Existing outbox rows are already applied to the authoritative local records.
+                // Only asset references and old deferred removals need their final local commit.
                 database.runInTransaction {
-                    if (operation.optString("component") == "book" && operation.optBoolean("remove")) {
+                    if (component == "book" && operation.optBoolean("remove")) {
                         val kind = operation.getString("kind")
                         val id = operation.getLong("id")
-                        (catalog.book(kind, id)?.uuid ?: operation.optString("uuid").takeIf { LibraryCodec.UUID_PATTERN.matches(it) })
-                        ?.let { catalog.meta(LibraryMeta("removed:$it", "1")) }
+                        catalog.book(kind, id)?.uuid?.let { catalog.meta(LibraryMeta("removed:$it", "1")) }
                         catalog.remove(kind, id)
                     }
-                    if (operation.optString("component") == "asset") {
-                        catalog.meta(LibraryMeta("asset:${operation.getString("path")}",
-                            if (operation.optBoolean("remove")) "" else operation.getString("revision")))
-                    }
+                    if (component == "asset") catalog.meta(LibraryMeta("asset:${operation.getString("path")}",
+                        if (operation.optBoolean("remove")) "" else operation.getString("revision")))
                     recordCleanup(operation)
-                    catalog.meta(LibraryMeta("head", write.token))
-                    catalog.meta(LibraryMeta("commitSequence", sequence.toString()))
                     catalog.acknowledge(write.sequence)
                 }
-                if (operation.optString("component") == "book" && !operation.optBoolean("remove")) {
+                if (component == "book" && !operation.optBoolean("remove")) {
                     val cover = operation.getJSONObject("book").optString("coverPath")
                     if (cover.isNotEmpty() && cover != "null") runCatching { coverUris[cover] = storage.uri(cover).toString() }
                 }
@@ -423,20 +557,22 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
             }
             catalog.allMeta().filter { it.name.startsWith("cleanup:") && it.value == "pending" }.forEach { item ->
                 val path = safeLibraryPath(item.name.removePrefix("cleanup:"))
+                val ownerUuid = path.removePrefix(".starflow/books/").substringBefore('/')
+                val owner = catalog.byUuid(ownerUuid)
+                if (owner != null && BookRecordLocks.exporting(BookRef(locationId, owner.kind, ownerUuid))) return@forEach
                 if (!path.startsWith(".starflow/books/")) throw IOException("产物清理定位越界；已停止覆盖")
                 storage.delete(path)
                 local(path).delete()
                 catalog.meta(LibraryMeta(item.name, "complete"))
             }
             saveState.value = LibrarySaveState(pending = catalog.pending().size)
-            if ((catalog.meta("commitSequence")?.toLongOrNull() ?: 0) % 100L == 0L) checkpoint()
         } catch (e: Exception) {
-            readOnly = e is org.json.JSONException || e.message?.contains("停止覆盖") == true
+            readOnly = e is LibraryIdentityException || e is org.json.JSONException || e.message?.contains("停止覆盖") == true
             saveState.value = LibrarySaveState(pending = runCatching { catalog.pending().size }.getOrDefault(saveState.value.pending), error = e.message ?: e.javaClass.simpleName)
             throw e
         }
     }
-    internal fun compact() = synchronized(ioLock) { checkpoint(compact = true) }
+    internal fun compact() = flush()
     private fun readSnapshot(commits: List<LibraryCommit>): JSONObject? {
         val tokens = commits.associateBy { it.token }
         return storage.list(".starflow/catalog").filter { it.path.endsWith(".snapshot.complete.json") }
@@ -464,57 +600,6 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
         val rows = snapshot.getJSONArray("rows")
         for (i in 0 until rows.length()) applyOperation(rows.getJSONObject(i))
     }
-    private fun checkpoint(compact: Boolean = false) {
-        val head = catalog.meta("head") ?: return
-        if (head.isEmpty() || !compact && catalog.meta("snapshotHead") == head) return
-        val oldChain = if (compact) journal.chain() else emptyList()
-        val history = oldChain.firstOrNull()?.operation?.optJSONArray("history")?.let { values ->
-            (0 until values.length()).mapTo(linkedSetOf()) { values.getString(it) }
-        } ?: linkedSetOf()
-        oldChain.forEach { history += it.token }
-        var snapshot: JSONObject? = null
-        database.runInTransaction {
-            if (catalog.pending().isNotEmpty()) return@runInTransaction
-            val books = JSONArray()
-            listOf("manga", "novel").flatMap(catalog::books).forEach { book ->
-                books.put(JSONObject().put("kind", book.kind).put("id", book.id).put("body", JSONObject(book.body))
-                    .put("deleting", book.deleting).put("error", book.error ?: JSONObject.NULL))
-            }
-            val rows = JSONArray()
-            fun row(component: String, value: Any) {
-                rows.put(JSONObject().put("component", component).put("method", "upsert")
-                    .put("args", JSONArray().put(LibraryCodec.encode(value, locationId))))
-            }
-            catalog.allTranslations().forEach { row("manga", it) }
-            catalog.allResolutions().forEach { row("sr", it) }
-            catalog.allParagraphs().forEach { row("novel", it) }
-            val meta = JSONObject()
-            val activeUuids = listOf("manga", "novel").flatMap(catalog::books).mapTo(hashSetOf()) { it.uuid }
-            catalog.allMeta().filter { it.name.startsWith("next:") || it.name.startsWith("removed:") || it.name.startsWith("legacySource:") || it.name == "legacyMigrated" || it.name.startsWith("cleanup:") && it.value == "pending" ||
-                it.name.startsWith("asset:") && it.name.removePrefix("asset:.starflow/books/").substringBefore('/') in activeUuids }
-                .forEach { meta.put(it.name, it.value) }
-            snapshot = JSONObject().put("sequence", catalog.meta("commitSequence")!!.toLong())
-                .put("books", books).put("rows", rows).put("meta", meta)
-            if (compact) enqueue(snapshot!!.put("component", "checkpoint").put("history", JSONArray(history)))
-        }
-        if (compact) {
-            if (snapshot == null) throw IOException("尚有待保存修改，不能完成记录清理")
-            flush()
-            val token = snapshot!!.getString("token")
-            if (catalog.pending().any { it.token == token }) throw IOException("清理提交尚未保存到书库")
-            storage.list(".starflow/catalog").filter { node -> history.any { node.path.contains(it) } }
-                .forEach { storage.delete(it.path) }
-            return
-        }
-        snapshot?.let { body ->
-            val prefix = ".starflow/catalog/${body.getLong("sequence").toString().padStart(20, '0')}-$head.snapshot"
-            val bytes = body.toString().toByteArray(Charsets.UTF_8)
-            writeVerified("$prefix.json", bytes)
-            writeVerified("$prefix.complete.json", JSONObject().put("head", head).put("payload", "$prefix.json")
-                .put("digest", LibraryCodec.digest(bytes)).toString().toByteArray(Charsets.UTF_8))
-            catalog.meta(LibraryMeta("snapshotHead", head))
-        }
-    }
     private fun writeVerified(path: String, bytes: ByteArray) {
         if (storage.exists(path)) {
             if (storage.read(path).use { it.readBytes() }.contentEquals(bytes)) return
@@ -526,6 +611,10 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
     fun publishTree(path: String) {
         if (storage is FileLibraryStorage) return
         val source = local(path)
+        if (!source.exists() && path.startsWith(".starflow/books/") && "/source-index/" in path) {
+            val retained = recordArchive(path)
+            if (retained.isFile) { source.parentFile!!.mkdirs(); retained.copyTo(source, overwrite = false) }
+        }
         if (!source.exists()) {
             if (!storage.exists(path)) throw IOException("书库来源或产物缺失：$path")
             return
@@ -583,16 +672,14 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
                     val values = args.dropLast(1).toTypedArray()
                     val operation: suspend () -> Any? = {
                         check(!readOnly) { "书库记录不可写" }
-                        val encoded = JSONArray().also { array -> values.forEach { array.put(LibraryCodec.encode(it, locationId)) } }
                         if (!method.name.startsWith("delete")) {
-                            encoded.toString().let { json -> catalog.books(if (component == "novel") "novel" else "manga")
-                                .filter { it.deleting && json.contains(it.uuid) }.forEach { throw IllegalStateException("作品正在删除，不能写入旧任务结果") } }
                             values.forEach { value ->
                                 val rows = if (value is Iterable<*>) value.toList() else listOf(value)
                                 rows.forEach { row -> when (row) {
                                     is ImportedPageTranslation -> assertWritable(row.mangaKey ?: throw IllegalStateException("作品引用缺失"))
                                     is ImportedPageSr -> assertWritable(row.mangaKey ?: throw IllegalStateException("作品引用缺失"))
                                     is NovelParagraphTranslation -> assertWritable(row.novelKey)
+                                    is String -> if (row.startsWith("$locationId:") && LibraryCodec.UUID_PATTERN.matches(row.substringAfterLast(':'))) assertWritable(row)
                                 } }
                             }
                         }
@@ -603,13 +690,12 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
                                     is ImportedPageTranslation -> assertWritable(row.mangaKey ?: throw IllegalStateException("作品引用缺失"))
                                     is ImportedPageSr -> assertWritable(row.mangaKey ?: throw IllegalStateException("作品引用缺失"))
                                     is NovelParagraphTranslation -> assertWritable(row.novelKey)
+                                    is String -> if (row.startsWith("$locationId:") && LibraryCodec.UUID_PATTERN.matches(row.substringAfterLast(':'))) assertWritable(row)
                                 } }
                             }
                             val returned = invokeSuspend(rawDao(component), method, values)
-                            enqueue(JSONObject().put("component", component).put("method", method.name).put("args", encoded))
                             returned
                         }
-                        scheduleFlush()
                         result
                     }
                     operation.startCoroutineUninterceptedOrReturn(continuation)

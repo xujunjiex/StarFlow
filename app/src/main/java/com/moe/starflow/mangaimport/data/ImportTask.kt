@@ -32,15 +32,14 @@ enum class ImportPhase { SCANNING, COPYING }
  * 导入内容的类型：属于哪个书架。
  *
  * 两个书架（漫画 / 小说）各有自己的 `ImportManager`，但共用 [ImportTask] 这类纯数据编排件；
- * 用这个枚举把「这条任务是谁的」标出来，避免两边的占位卡片串台。
+ * 状态栏按这个枚举显示所属书架的任务。
  */
 enum class ImportFormat { MANGA, NOVEL }
 
 /**
  * 进行中的导入任务。**纯内存态**：不落盘、不进 SharedPreferences、不随进程存活。
  *
- * 书架用 [toPlaceholder] 把它渲染成占位卡片（图片位置显示进度），导入完成后占位被真实条目
- * 顶替（id 相同 → DiffUtil 原地刷新，不闪）。
+ * 由书架上方状态栏显示进度；任务不加入书目列表。
  */
 data class ImportTask(
     val id: Long,
@@ -53,6 +52,7 @@ data class ImportTask(
 ) {
     val percent: Int get() = progress.percent
 
+    /** 兼容旧调用的瞬态模型；当前书架不使用占位条目。 */
     fun toPlaceholder(): ImportedManga = ImportedManga(
         id = id,
         title = title,

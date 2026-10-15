@@ -110,6 +110,7 @@ class ReaderMenuCallbacks(
     val onRotate: () -> Unit,
     val onDownload: () -> Unit,
     val onSettings: () -> Unit,
+    val onBookData: () -> Unit = {},
     /** 点击执行模式标记，跳转到全局翻译设置。 */
     val onOpenExecutionModeSettings: () -> Unit = {},
     val onTranslateMode: (Int) -> Unit = {},
@@ -524,6 +525,7 @@ class ReaderMenuSheet(
         // 更多
         view.findViewById<View>(R.id.btn_rotate).setOnClickListener { dismiss(); cb.onRotate() }
         view.findViewById<View>(R.id.btn_download).setOnClickListener { dismiss(); cb.onDownload() }
+        view.findViewById<View>(R.id.btn_book_data).setOnClickListener { dismiss(); cb.onBookData() }
         view.findViewById<View>(R.id.btn_settings).setOnClickListener { dismiss(); cb.onSettings() }
 
         val swAutoTurn = view.findViewById<Switch>(R.id.sw_auto_turn)
@@ -975,7 +977,7 @@ class ReaderMenuSheet(
         R.id.tv_translate_mode_label,
         R.id.tv_color_title, R.id.tv_color_inverted, R.id.tv_color_grayscale, R.id.tv_color_book,
         R.id.tv_brightness_label, R.id.tv_contrast_label,
-        R.id.tv_rotate_label, R.id.tv_auto_turn_label, R.id.tv_download_label, R.id.tv_settings_label,
+        R.id.tv_rotate_label, R.id.tv_auto_turn_label, R.id.tv_download_label, R.id.tv_settings_label, R.id.tv_book_data_label,
         R.id.tv_ocr_model_row, R.id.tv_translator_model_row,
         R.id.tv_sr_model_row, R.id.tv_sr_switch_label, R.id.tv_sr_auto_label, R.id.tv_anime4k_label,
         R.id.tv_source_lang_value, R.id.tv_target_lang_value,

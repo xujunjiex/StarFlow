@@ -1,5 +1,6 @@
 package com.moe.starflow.novel.shelf
 
+import com.moe.starflow.utils.AppNotice
 import android.app.AlertDialog
 import android.content.Context
 import android.os.Bundle
@@ -75,6 +76,8 @@ class NovelShelfFragment : Fragment() {
 
     /** 最近一次渲染的清单（长按菜单要拿完整条目）。 */
     private var rendered: List<ImportedNovel> = emptyList()
+    private val importResultMessages = mutableListOf<Pair<String, String>>()
+    private var importResultDialog: android.app.Dialog? = null
 
     private lateinit var backCallback: OnBackPressedCallback
 
@@ -100,6 +103,9 @@ class NovelShelfFragment : Fragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         loadDisplayPrefs()
+        if (importResultMessages.isEmpty()) savedInstanceState?.getStringArrayList("novelImportResults")?.let { saved ->
+            for (i in 0 until saved.size - 1 step 2) importResultMessages += saved[i] to saved[i + 1]
+        }
 
         // 返回键：多选模式下先退出多选（与漫画书架一致）。⚠️ 必须在 showSelectionUi 之前建好，
         // 那里会写 backCallback.isEnabled
@@ -112,9 +118,18 @@ class NovelShelfFragment : Fragment() {
 
         adapter = NovelShelfAdapter(
             displayMode = displayMode,
-            onItemClick = { novel -> startActivity(NovelReaderActivity.intent(requireContext(), novel.id)) },
+            onItemClick = { novel ->
+                if (novel.lost || !com.moe.starflow.library.LibrarySessions.sourceExists(File(novel.localRoot)))
+                    com.moe.starflow.library.BookRecoveryDialog.show(requireContext(), com.moe.starflow.library.BookRef(novel.libraryLocationId, "novel", novel.bookUuid))
+                else if (novel.chapterCount == 0) AppNotice.show(requireContext(), getString(R.string.library_empty_directory_hint))
+                else startActivity(NovelReaderActivity.intent(requireContext(), novel.id))
+            },
             onSelectionChanged = { mode, count -> showSelectionUi(mode, count) },
             onCancelImport = { id -> confirmCancelImport(id) },
+            onExportRecords = { book -> com.moe.starflow.library.BookRecordExport.start(requireContext(),
+                com.moe.starflow.library.BookRef(book.libraryLocationId, "novel", book.bookUuid)) },
+            onBookData = { book -> com.moe.starflow.library.BookDataActivity.open(requireContext(),
+                com.moe.starflow.library.BookRef(book.libraryLocationId, "novel", book.bookUuid)) },
         )
         binding.novelShelfList.adapter = adapter
         binding.novelShelfRefresh.setOnRefreshListener { refreshLibraryState() }
@@ -144,7 +159,7 @@ class NovelShelfFragment : Fragment() {
 
         observeImportTasks()
         com.moe.starflow.library.LibraryShelfBinding.observe(this, "novel", binding.libraryStatus,
-            { refresh() }, ::showScanFailures, { adapter.exitSelection() })
+            { refresh() }, ::showScanFailures, { adapter.exitSelection() }, cancelImport = ::confirmCancelImport)
         refresh()
     }
 
@@ -230,35 +245,34 @@ class NovelShelfFragment : Fragment() {
     }
 
     /**
-     * 观察导入任务。
-     *
-     * ⚠️ 只取 `format == NOVEL` 的任务：漫画与小说共用 [com.moe.starflow.mangaimport.data.ImportTask]
-     * 这个数据结构，不过滤会让两边的占位卡片串台。
+     * 观察导入结果事件；进度由 LibraryShelfBinding 的状态栏显示。
      */
     private fun observeImportTasks() {
-        viewLifecycleOwner.lifecycleScope.launch {
-            NovelImportManager.tasks.collect { refresh() }
-        }
         viewLifecycleOwner.lifecycleScope.launch {
             NovelImportManager.events.collect { drainAndShowEvents() }
         }
     }
 
-    private suspend fun drainAndShowEvents() {
-        val events = NovelImportManager.drainEvents()
-        if (events.isEmpty() || !isAdded || _binding == null) return
-        val event = events.first()
-        withContext(Dispatchers.Main) {
-            if (!isAdded || _binding == null) return@withContext
-            val (title, message) = event.toDialogText()
-            AlertDialog.Builder(requireContext())
-                .setTitle(title)
-                .setMessage(message)
-                .setPositiveButton(R.string.confirm, null)
-                .show()
-            // 事件是攒着取的，一次可能有多条；刷完再取一轮
-            if (events.size > 1) viewLifecycleOwner.lifecycleScope.launch { drainAndShowEvents() }
+    private fun drainAndShowEvents() {
+        if (!isAdded || _binding == null) return
+        importResultMessages += NovelImportManager.drainEvents().map { it.toDialogText() }
+        if (importResultMessages.isEmpty()) return
+        val message = importResultMessages.joinToString("\n\n") { it.second }
+        importResultDialog?.let { dialog ->
+            dialog.findViewById<TextView>(R.id.auto_scan_dialog_detail)?.text = message
+            return
         }
+        val dialog = AutoScanFailureDialog.builder(requireContext(), getString(R.string.novel_import_failed), message)
+            .setPositiveButton(R.string.confirm, null)
+            .setNeutralButton(R.string.library_storage_title) { _, _ ->
+                com.moe.starflow.library.LibraryStorageDialog().show(parentFragmentManager, "library-storage")
+            }.create()
+        importResultDialog = dialog
+        dialog.setOnDismissListener {
+            if (importResultDialog === dialog) { importResultDialog = null; importResultMessages.clear() }
+        }
+        dialog.show()
+        dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
     }
 
     private fun NovelImportEvent.toDialogText(): Pair<String, String> {
@@ -311,11 +325,7 @@ class NovelShelfFragment : Fragment() {
                 return@launch
             }
             if (!isAdded || _binding == null || com.moe.starflow.library.LibrarySessions.current(ctx).locationId != session.locationId) return@launch
-            val placeholders = NovelImportManager.tasks.value
-                .filter { it.format == ImportFormat.NOVEL }
-                .map { it.toNovelPlaceholder() }
-            val all = placeholders + stored.filterNot { s -> placeholders.any { it.id == s.id } }
-            val list = NovelShelfSort.sort(all, sortOrder)
+            val list = NovelShelfSort.sort(stored, sortOrder)
             val cols = if (displayMode == DisplayMode.GRID) gridSize else 1
             // ⚠️ 只在列数变化时重建 LayoutManager：refresh 会被进度回调高频调用，
             // 每次换 LayoutManager 会把列表滚回顶部
@@ -396,7 +406,9 @@ class NovelShelfFragment : Fragment() {
         AlertDialog.Builder(requireContext())
             .setTitle(R.string.novel_manage_delete)
             .setMessage(
-                (if (picked.size == 1) getString(R.string.novel_delete_confirm, picked[0].title)
+                (if (picked.any { it.lost }) getString(R.string.book_delete_missing, picked.size, picked.count { it.lost },
+                    picked.count { n -> com.moe.starflow.library.LibrarySessions.forLocation(requireContext(), n.libraryLocationId).database.catalog().paragraphCount(n.id, n.translationKey) > 0 })
+                else if (picked.size == 1) getString(R.string.novel_delete_confirm, picked[0].title)
                 else getString(R.string.novel_delete_confirm_multi, picked.size)) + "\n\n" + picked.joinToString("\n") { book ->
                     val session = com.moe.starflow.library.LibrarySessions.forLocation(requireContext(), book.libraryLocationId)
                     session.storage.displayPath + "/" + session.relative(File(book.localRoot))
@@ -412,6 +424,9 @@ class NovelShelfFragment : Fragment() {
                 NovelImportManager.deleteNovels(ctx, picked)
                 refresh()
             }
+            .apply { if (picked.any { it.lost }) setNeutralButton(R.string.book_recovery_faq) { _, _ ->
+                com.moe.starflow.library.BookRecoveryDialog.faq(requireContext())
+            } }
             .setNegativeButton(R.string.cancel, null)
             .show()
     }
@@ -503,13 +518,10 @@ class NovelShelfFragment : Fragment() {
             }
     }
 
-    /** Refresh indexed status without source recognition. */
+    /** Rescan the selected library without blocking the shelf UI. */
     private fun refreshLibraryState() {
-        val pinned = com.moe.starflow.library.LibrarySessions.pin(requireContext())
-        com.moe.starflow.library.LibrarySessions.launch(pinned, viewLifecycleOwner.lifecycleScope) {
-            try { com.moe.starflow.library.LibrarySessions.refreshSources(pinned); refresh() }
-            finally { _binding?.novelShelfRefresh?.isRefreshing = false }
-        }
+        com.moe.starflow.library.LibraryScanner.start(requireContext(), "novel")
+        _binding?.novelShelfRefresh?.isRefreshing = false
     }
 
 
@@ -526,7 +538,15 @@ class NovelShelfFragment : Fragment() {
             .also { it.show(); it.window?.setBackgroundDrawableResource(R.drawable.dialog_background) }
     }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putStringArrayList("novelImportResults", ArrayList(importResultMessages.flatMap { listOf(it.first, it.second) }))
+    }
+
     override fun onDestroyView() {
+        val result = importResultDialog
+        importResultDialog = null // Retain unacknowledged details across view recreation.
+        result?.dismiss()
         super.onDestroyView()
         _binding = null
     }

@@ -7,6 +7,7 @@
     app:cardCornerRadius="8dp"
     app:cardElevation="2dp">
 
+    <FrameLayout android:layout_width="match_parent" android:layout_height="wrap_content">
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
@@ -22,6 +23,12 @@
                 android:layout_height="match_parent"
                 android:scaleType="centerCrop"
                 android:contentDescription="@string/import_manga_page"/>
+
+            <androidx.appcompat.widget.AppCompatImageButton android:id="@+id/btn_book_data"
+                android:layout_width="48dp" android:layout_height="48dp" android:layout_gravity="top|end"
+                android:padding="13dp" android:src="@drawable/ic_param_info" app:tint="@color/primary"
+                android:background="@drawable/bg_action_bar" android:contentDescription="@string/book_data_title"
+                android:tooltipText="@string/book_data_title" />
 
             <!-- 多选选中遮罩 -->
             <View
@@ -135,11 +142,17 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="2dp"
             android:paddingStart="8dp"
-            android:paddingEnd="8dp"
+            android:paddingEnd="56dp"
             android:paddingBottom="8dp"
             android:textSize="12sp"
             android:textColor="@android:color/darker_gray"/>
 
     </LinearLayout>
+        <androidx.appcompat.widget.AppCompatImageButton android:id="@+id/btn_export_records"
+            android:layout_width="48dp" android:layout_height="48dp" android:layout_gravity="bottom|end"
+            android:visibility="gone" android:padding="12dp" android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_download" app:tint="@color/primary"
+            android:contentDescription="@string/book_records_export" android:tooltipText="@string/book_records_export" />
+    </FrameLayout>
 
 </com.google.android.material.card.MaterialCardView>

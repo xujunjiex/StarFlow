@@ -126,6 +126,79 @@ class SafLibraryStorageTest {
         assertThrows(Exception::class.java) { storage.exists("manga_import") }
     }
 
+    @Test fun displayUsesReadableNameInsteadOfPercentEncodedUri() {
+        storage.list("")
+        assertEquals("Chosen", storage.displayPath)
+        val chinese = SafLibraryStorage(app, DocumentsContract.buildTreeDocumentUri(AUTHORITY, "primary:间谍过家家"))
+        assertEquals("primary:间谍过家家", chinese.displayPath)
+        assertFalse(chinese.displayPath.contains("%"))
+    }
+
+    @Test fun returningToDefaultIgnoresUnrelatedNestedAppDirectories() = kotlinx.coroutines.runBlocking {
+        app.getSharedPreferences("library_locations", 0).edit().putString("tree", storage.tree.toString()).commit()
+        val original = LibrarySessions.current(app)
+        original.prepare()
+        val target = File(LibrarySessions.defaultDisplayPath(app))
+        // It is outside the library sources and must never be traversed on a default switch.
+        File(target, "models/unrelated/.starflow/library.json").apply { parentFile!!.mkdirs(); writeText("unrelated") }
+        LibrarySessions.select(app, null)
+        assertTrue(LibrarySessions.current(app).storage is FileLibraryStorage)
+        assertEquals(target.path, LibrarySessions.current(app).storage.displayPath)
+        assertEquals("unrelated", File(target, "models/unrelated/.starflow/library.json").readText())
+    }
+
+    @Test fun safImageFolderReadsOriginalMetadataAndSizesWithoutCopyingAllPages() = kotlinx.coroutines.runBlocking {
+        app.getSharedPreferences("library_locations", 0).edit().putString("tree", storage.tree.toString()).commit()
+        val session = LibrarySessions.current(app)
+        session.prepare()
+        session.storage.mkdir("manga_import/Book")
+        val png = com.moe.starflow.utils.LibraryScanFixtures.png()
+        session.storage.writeNew("manga_import/Book/001.png").use { it.write(png) }
+        session.storage.writeNew("manga_import/Book/002.png").use { it.write(png) }
+        session.storage.writeNew("manga_import/Book/meta.json").use { it.write("""{"summary":"SAF summary","author":"SAF author"}""".toByteArray()) }
+        val result = LibraryScanner.scan(app, "manga")
+        assertEquals(result.failures.joinToString(), 1, result.added)
+        val manga = com.moe.starflow.mangaimport.data.ImportedMangaStore.load(app).single()
+        assertTrue(manga.description.contains("SAF summary"))
+        assertTrue(manga.description.contains("SAF author"))
+        assertTrue(manga.sizeBytes >= png.size * 2)
+        assertFalse(File(manga.localRoot, "002.png").exists())
+    }
+
+    @Test fun enumeratedDocumentsAreReadWithoutRepeatingAncestorQueries() {
+        storage.mkdir("manga_import/Book")
+        repeat(20) { index -> storage.writeNew("manga_import/Book/$index.txt").use { it.write("text".toByteArray()) } }
+        storage.invalidateLookups()
+        val nodes = storage.list("manga_import/Book")
+        val queries = provider.childQueries
+        nodes.forEach { assertEquals("text", storage.read(it.path).bufferedReader().use { it.readText() }) }
+        assertEquals(queries, provider.childQueries)
+        val removed = DocumentsContract.getDocumentId(storage.uri(nodes.first().path))
+        provider.deleteDocument(removed)
+        assertFalse(storage.exists(nodes.first().path))
+        provider.accessible = false
+        assertThrows(Exception::class.java) { storage.read(nodes.last().path).close() }
+    }
+
+    @Test fun fileImportCopiesAdjacentMetaWhenItsParentAlreadyHasALibraryGrant() = kotlinx.coroutines.runBlocking {
+        app.getSharedPreferences("library_locations", 0).edit().putString("tree", storage.tree.toString()).commit()
+        val session = LibrarySessions.current(app)
+        session.prepare()
+        storage.mkdir("manga_import/My original name")
+        val zip = File(app.cacheDir, "source.cbz")
+        com.moe.starflow.utils.LibraryScanFixtures.zip(zip, "001.png" to com.moe.starflow.utils.LibraryScanFixtures.png())
+        storage.writeNew("manga_import/My original name/original.cbz").use { it.write(zip.readBytes()) }
+        storage.writeNew("manga_import/My original name/meta.json").use { it.write("""{"series_title":"SPY×FAMILY","episode_label":"139話 前編"}""".toByteArray()) }
+        val source = storage.uri("manga_import/My original name/original.cbz")
+        val document = DocumentsContract.buildDocumentUri(AUTHORITY, DocumentsContract.getDocumentId(source))
+        assertEquals("manga_import/My original name/original.cbz", (session.storage as SafLibraryStorage).pathForDocument(document, "manga_import"))
+        val result = com.moe.starflow.mangaimport.data.MangaImporter.importArchive(session.context(), document, 12)
+        assertTrue(com.moe.starflow.utils.LogCollector.getFormattedLogs(), result.description.contains("SPY×FAMILY"))
+        assertTrue(File(File(result.localRoot).parentFile, "meta.json").isFile)
+        assertTrue(storage.exists("manga_import/My original name/original.cbz"))
+        assertTrue(storage.exists("manga_import/My original name/meta.json"))
+    }
+
     private class OpaqueProvider(private val directory: File) : DocumentsProvider() {
         private data class Node(val id: String, val name: String, val parent: String?, val file: File, val dir: Boolean)
         private val nodes = linkedMapOf(
@@ -134,6 +207,7 @@ class SafLibraryStorageTest {
         )
         var accessible = true
         var space: Long? = 1234
+        var childQueries = 0
         override fun onCreate() = true
         private fun checkAccess() { if (!accessible) throw FileNotFoundException("Permission revoked") }
         override fun queryRoots(projection: Array<out String>?): Cursor = MatrixCursor(projection ?: arrayOf(
@@ -159,8 +233,10 @@ class SafLibraryStorageTest {
             } }.toTypedArray()) } }
         }
         override fun queryDocument(documentId: String, projection: Array<out String>?): Cursor = documents(projection, listOf(nodes.getValue(documentId)))
-        override fun queryChildDocuments(parentDocumentId: String, projection: Array<out String>?, sortOrder: String?): Cursor =
-            documents(projection, nodes.values.filter { it.parent == parentDocumentId })
+        override fun queryChildDocuments(parentDocumentId: String, projection: Array<out String>?, sortOrder: String?): Cursor {
+            childQueries++
+            return documents(projection, nodes.values.filter { it.parent == parentDocumentId })
+        }
         override fun createDocument(parentDocumentId: String, mimeType: String, displayName: String): String {
             checkAccess()
             val id = "opaque-${UUID.randomUUID()}"

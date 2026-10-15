@@ -118,6 +118,13 @@
 
         </FrameLayout>
 
+        <androidx.appcompat.widget.AppCompatImageButton android:id="@+id/btn_book_data"
+            android:layout_width="48dp" android:layout_height="48dp" android:padding="13dp"
+            android:src="@drawable/ic_param_info" app:tint="@color/primary"
+            android:background="?attr/selectableItemBackgroundBorderless" android:contentDescription="@string/book_data_title"
+            android:tooltipText="@string/book_data_title" app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
         <TextView
             android:id="@+id/tv_title"
             android:layout_width="0dp"
@@ -129,7 +136,7 @@
             android:singleLine="true"
             android:ellipsize="marquee"
             android:marqueeRepeatLimit="marquee_forever"
-            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintEnd_toStartOf="@id/btn_book_data"
             app:layout_constraintStart_toEndOf="@id/thumb_frame"
             app:layout_constraintTop_toTopOf="parent"/>
 
@@ -172,10 +179,16 @@
             android:maxLines="2"
             android:ellipsize="end"
             android:visibility="gone"
-            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintEnd_toStartOf="@id/btn_export_records"
             app:layout_constraintStart_toEndOf="@id/thumb_frame"
             app:layout_constraintTop_toBottomOf="@id/tv_progress"/>
 
+        <androidx.appcompat.widget.AppCompatImageButton android:id="@+id/btn_export_records"
+            android:layout_width="48dp" android:layout_height="48dp" android:visibility="gone"
+            android:padding="12dp" android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_download" app:tint="@color/primary"
+            android:contentDescription="@string/book_records_export" android:tooltipText="@string/book_records_export"
+            app:layout_constraintEnd_toEndOf="parent" app:layout_constraintBottom_toBottomOf="parent" />
     </androidx.constraintlayout.widget.ConstraintLayout>
 
 </com.google.android.material.card.MaterialCardView>

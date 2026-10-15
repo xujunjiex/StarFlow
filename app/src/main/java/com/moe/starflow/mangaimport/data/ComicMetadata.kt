@@ -42,7 +42,10 @@ data class ComicMetadata(
     val languageIso: String? = null,
     val web: String? = null,
     val pageCount: Int? = null,
-    val year: Int? = null
+    val year: Int? = null,
+    val summary: String? = null,
+    val episode: String? = null,
+    val publishedAt: String? = null,
 )
 
 object ComicMetadataParser {
@@ -109,6 +112,9 @@ object ComicMetadataParser {
         web = primary.web ?: secondary.web,
         pageCount = primary.pageCount ?: secondary.pageCount,
         year = primary.year ?: secondary.year,
+        summary = primary.summary ?: secondary.summary,
+        episode = primary.episode ?: secondary.episode,
+        publishedAt = primary.publishedAt ?: secondary.publishedAt,
     )
 
     /**
@@ -121,7 +127,7 @@ object ComicMetadataParser {
     private fun ComicMetadata.isMeaningful(): Boolean =
         !title.isNullOrBlank() || !series.isNullOrBlank() || !writer.isNullOrBlank() ||
             !translator.isNullOrBlank() || !format.isNullOrBlank() || tags.isNotEmpty() ||
-            !languageIso.isNullOrBlank() || !web.isNullOrBlank() || pageCount != null || year != null
+            !languageIso.isNullOrBlank() || !web.isNullOrBlank() || pageCount != null || year != null || !summary.isNullOrBlank() || !episode.isNullOrBlank() || !publishedAt.isNullOrBlank()
 
     // ===== ComicInfo.xml =====
 
@@ -148,6 +154,7 @@ object ComicMetadataParser {
         var web: String? = null
         var pageCount: Int? = null
         var year: Int? = null
+        var summary: String? = null
 
         var capture: String? = null
         val buf = StringBuilder()
@@ -172,6 +179,7 @@ object ComicMetadataParser {
                         "web" -> web = value
                         "pagecount" -> pageCount = value?.toIntOrNull()
                         "year" -> year = value?.toIntOrNull()
+                        "summary", "description" -> summary = value
                     }
                     capture = null
                 }
@@ -181,7 +189,7 @@ object ComicMetadataParser {
         ComicMetadata(
             title = title, series = series, writer = writer, translator = translator,
             format = format, tags = tags, languageIso = language, web = web,
-            pageCount = pageCount, year = year
+            pageCount = pageCount, year = year, summary = summary
         ).takeIf { it.isMeaningful() }
     } catch (e: Exception) {
         LogCollector.w(TAG, "ComicInfo.xml 解析失败（忽略元数据）: ${e.message}")
@@ -195,7 +203,8 @@ object ComicMetadataParser {
         val titleObj = o.optJSONObject("title")
         val title = titleObj?.optString("english")?.takeIf { it.isNotBlank() }
             ?: titleObj?.optString("japanese")?.takeIf { it.isNotBlank() }
-            ?: o.optString("title").takeIf { it.isNotBlank() && it != "null" }
+            ?: titleObj?.optString("chinese")?.takeIf { it.isNotBlank() }
+            ?: (o.opt("title") as? String)?.takeIf { it.isNotBlank() && it != "null" }
 
         var artist: String? = null
         var group: String? = null
@@ -217,21 +226,37 @@ object ComicMetadataParser {
             }
         }
         val id = o.optInt("id", -1)
+        fun text(vararg keys: String): String? = keys.firstNotNullOfOrNull { key ->
+            when (val value = o.opt(key)) {
+                is String -> value.trim().takeIf { it.isNotEmpty() && it != "null" }
+                is org.json.JSONArray -> (0 until value.length()).mapNotNull { i ->
+                    (value.opt(i) as? String)?.trim()?.takeIf(String::isNotEmpty)
+                }.joinToString(", ").takeIf(String::isNotEmpty)
+                else -> null
+            }
+        }
+        o.optJSONArray("tags")?.let { arr ->
+            for (i in 0 until arr.length()) (arr.opt(i) as? String)?.takeIf(String::isNotBlank)?.let(tags::add)
+        }
         ComicMetadata(
-            title = title,
+            title = title ?: text("page_title"),
             // nhentai 的 parody ≈ 作品系列，category ≈ 类型
-            series = parody,
-            writer = artist,
-            translator = group,
+            series = text("series", "series_title") ?: parody,
+            writer = text("author", "authors", "writer", "artist", "creator") ?: artist
+                ?: text("page_title")?.takeIf { o.has("episode_id") }?.substringAfter(" - ", "")?.substringBefore('|')?.trim()?.takeIf(String::isNotBlank),
+            translator = text("translator", "group") ?: group,
             format = category,
             tags = tags,
             // ⚠️ language 标签是 "japanese" 这种名字、不是 ISO 码，不能塞进 languageIso
             // （ComicInfo 那边给的是 ja，缺了也不影响简介）
             languageIso = null,
             // 这份 json 按定义就是 nhentai 下载器写的 → 没有 Web 字段时用 id 拼出来
-            web = if (id > 0) "https://nhentai.net/g/$id/" else null,
-            pageCount = o.optInt("num_pages", -1).takeIf { it > 0 },
-            year = null
+            web = text("web", "url", "source", "permalink") ?: if (id > 0) "https://nhentai.net/g/$id/" else null,
+            pageCount = o.optInt("num_pages", o.optInt("page_count", -1)).takeIf { it > 0 },
+            year = null,
+            summary = text("summary", "description", "intro", "introduction", "synopsis", "note"),
+            episode = text("episode_label"),
+            publishedAt = text("published_at"),
         ).takeIf { it.isMeaningful() }
     } catch (e: Exception) {
         LogCollector.w(TAG, "meta.json 解析失败（忽略元数据）: ${e.message}")
@@ -243,17 +268,24 @@ object ComicMetadataParser {
     /**
      * 生成简介（导入时写进 `ImportedManga.description`，用户之后可自行编辑）。
      *
-     * 只列用户要的四类：**作者 / 社团·译者 / 系列 / 标签 / 来源**（空的一律不占行）。
+     * 列出可用的简介正文、标题、章节、作者、系列、页数、发布日期、标签和来源；空字段不占行。
      * 标签按 [MAX_TAGS_CHARS] 截断 —— 简介行只有两行可见，几十个标签拼进去等于什么都看不见。
      */
     fun buildDescription(context: Context, meta: ComicMetadata): String {
         val lines = mutableListOf<String>()
+        meta.summary?.takeIf(String::isNotBlank)?.let {
+            lines += android.text.Html.fromHtml(it, android.text.Html.FROM_HTML_MODE_LEGACY).toString().trim()
+        }
+        meta.title?.takeIf(String::isNotBlank)?.let { lines += context.getString(R.string.book_meta_title, it) }
+        meta.episode?.takeIf(String::isNotBlank)?.let { lines += context.getString(R.string.book_meta_episode, it) }
         meta.writer?.takeIf { it.isNotBlank() }
             ?.let { lines += context.getString(R.string.comic_meta_author, it) }
         meta.translator?.takeIf { it.isNotBlank() }
             ?.let { lines += context.getString(R.string.comic_meta_circle, it) }
         meta.series?.takeIf { it.isNotBlank() }
             ?.let { lines += context.getString(R.string.comic_meta_series, it) }
+        meta.pageCount?.let { lines += context.getString(R.string.book_meta_pages, it) }
+        meta.publishedAt?.takeIf(String::isNotBlank)?.let { lines += context.getString(R.string.book_meta_published, it) }
         if (meta.tags.isNotEmpty()) {
             val joined = meta.tags.joinToString(", ")
             val text = if (joined.length > MAX_TAGS_CHARS) {

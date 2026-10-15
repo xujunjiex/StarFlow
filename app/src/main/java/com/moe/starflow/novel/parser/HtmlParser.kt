@@ -23,9 +23,27 @@ object HtmlParser : NovelParser {
         )
         NovelBook(
             title = HtmlTextExtractor.titleOf(raw) ?: fallbackTitle,
-            author = null,
+            author = authorOf(raw),
             chapters = listOf(chapter),
+            description = descriptionOf(raw),
         )
+    }
+
+    internal fun descriptionOf(raw: String): String = metaContent(raw, setOf("description", "og:description", "dc.description")).orEmpty()
+    internal fun authorOf(raw: String): String? = metaContent(raw, setOf("author", "dc.creator"))
+
+    private fun metaContent(raw: String, names: Set<String>): String? {
+        val meta = Regex("<meta\\b[^>]*>", RegexOption.IGNORE_CASE)
+        val attributes = Regex("([\\w:-]+)\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)'|([^\\s>]+))")
+        return meta.findAll(raw).firstNotNullOfOrNull { tag ->
+            val values = attributes.findAll(tag.value).associate { match ->
+                match.groupValues[1].lowercase() to match.groupValues.drop(2).firstOrNull { it.isNotEmpty() }.orEmpty()
+            }
+            if ((values["name"] ?: values["property"])?.lowercase() in names)
+                values["content"]?.let { android.text.Html.fromHtml(it, android.text.Html.FROM_HTML_MODE_LEGACY).toString().trim() }
+                    ?.takeIf(String::isNotBlank)
+            else null
+        }
     }
 
     override suspend fun loadChapter(file: File, locator: String): String =

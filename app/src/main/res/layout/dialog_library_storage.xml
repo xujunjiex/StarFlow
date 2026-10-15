@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:background="@drawable/bg_library_storage_dialog"
@@ -32,7 +33,7 @@
                 android:layout_width="40dp" android:layout_height="40dp"
                 android:layout_marginStart="8dp" android:background="?attr/selectableItemBackgroundBorderless"
                 android:contentDescription="@string/library_close" android:padding="10dp"
-                android:src="@drawable/ic_close" android:tint="@color/text_secondary" />
+                android:src="@drawable/ic_close" app:tint="@color/text_secondary" />
         </LinearLayout>
 
         <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
@@ -51,6 +52,11 @@
                 android:textSize="13sp" />
         </LinearLayout>
 
+        <TextView android:id="@+id/library_write_warning" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_marginTop="12dp"
+            android:textColor="@color/red" android:textIsSelectable="true"
+            android:textSize="13sp" android:visibility="gone" />
+
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_marginTop="20dp" android:layout_marginBottom="9dp"
             android:text="@string/library_choose_location" android:textColor="@color/text_primary"
@@ -65,7 +71,7 @@
                 android:background="@drawable/bg_library_location_icon" android:foregroundGravity="center">
                 <ImageView android:layout_width="24dp" android:layout_height="24dp"
                     android:layout_gravity="center" android:src="@drawable/ic_library_app_storage"
-                    android:tint="@color/primary" />
+                    app:tint="@color/primary" />
             </FrameLayout>
             <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
                 android:layout_marginStart="12dp" android:layout_weight="1" android:orientation="vertical">
@@ -79,7 +85,7 @@
             </LinearLayout>
             <ImageView android:id="@+id/library_default_selected" android:layout_width="22dp"
                 android:layout_height="22dp" android:layout_marginStart="8dp"
-                android:src="@drawable/ic_check_circle" android:tint="@color/primary" android:visibility="gone" />
+                android:src="@drawable/ic_check_circle" app:tint="@color/primary" android:visibility="gone" />
         </LinearLayout>
 
         <LinearLayout android:id="@+id/library_choose" android:layout_width="match_parent"
@@ -92,7 +98,7 @@
                 android:background="@drawable/bg_library_location_icon" android:foregroundGravity="center">
                 <ImageView android:layout_width="24dp" android:layout_height="24dp"
                     android:layout_gravity="center" android:src="@drawable/ic_library_folder"
-                    android:tint="@color/primary" />
+                    app:tint="@color/primary" />
             </FrameLayout>
             <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
                 android:layout_marginStart="12dp" android:layout_weight="1" android:orientation="vertical">
@@ -106,11 +112,15 @@
             </LinearLayout>
             <ImageView android:id="@+id/library_custom_selected" android:layout_width="22dp"
                 android:layout_height="22dp" android:layout_marginStart="8dp"
-                android:src="@drawable/ic_check_circle" android:tint="@color/primary" android:visibility="gone" />
+                android:src="@drawable/ic_check_circle" app:tint="@color/primary" android:visibility="gone" />
         </LinearLayout>
 
         <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_marginTop="14dp" android:text="@string/library_folder_help"
+            android:textColor="@color/text_secondary" android:textSize="12sp" android:lineSpacingExtra="2dp" />
+
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="10dp" android:text="@string/library_record_storage_hint"
             android:textColor="@color/text_secondary" android:textSize="12sp" android:lineSpacingExtra="2dp" />
 
         <TextView android:id="@+id/library_retry" android:layout_width="match_parent"
@@ -118,5 +128,10 @@
             android:background="@drawable/bg_action_bar" android:gravity="center"
             android:text="@string/library_retry_save" android:textColor="@color/primary"
             android:textSize="14sp" android:visibility="gone" />
+        <TextView android:id="@+id/library_rebuild" android:layout_width="match_parent"
+            android:layout_height="48dp" android:layout_marginTop="4dp"
+            android:background="?attr/selectableItemBackground" android:gravity="center"
+            android:text="@string/library_reinitialize_action" android:textColor="@color/red"
+            android:textSize="14sp" />
     </LinearLayout>
 </ScrollView>

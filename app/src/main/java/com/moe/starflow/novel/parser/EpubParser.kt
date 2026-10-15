@@ -89,6 +89,7 @@ object EpubParser : NovelParser {
                 author = opf.creator?.takeIf { it.isNotBlank() },
                 chapters = chapters,
                 coverBytes = readCover(zip, opf, base, idToHref, budget),
+                description = opf.description.orEmpty(),
             )
         }
     }
@@ -183,6 +184,7 @@ object EpubParser : NovelParser {
         val metaCoverId: String?,
         val ncxPath: String?,
         val navPath: String?,
+        val description: String?,
     )
 
     private fun parseOpf(input: InputStream): Opf {
@@ -191,6 +193,7 @@ object EpubParser : NovelParser {
         val spine = mutableListOf<String>()
         var title: String? = null
         var creator: String? = null
+        var description: String? = null
         var metaCover: String? = null
         var spineTocAttr: String? = null
 
@@ -209,7 +212,8 @@ object EpubParser : NovelParser {
                     // dc:title 嵌在 metadata 里，那样写会让 buf 先装 metadata 与 title 之间的
                     // 空白再装标题，且 END_TAG 的深度永远对不上 → 标题恒取不到。
                     if ((name == "title" && (ns == NS_DC || ns == null)) ||
-                        (name == "creator" && (ns == NS_DC || ns == null))
+                        (name == "creator" && (ns == NS_DC || ns == null)) ||
+                        (name == "description" && (ns == NS_DC || ns == null))
                     ) {
                         captureName = name
                         captureDepth = parser.depth
@@ -251,6 +255,7 @@ object EpubParser : NovelParser {
                         when (captureName) {
                             "title" -> title = text
                             "creator" -> creator = text
+                            "description" -> description = text
                         }
                         captureName = null
                         captureDepth = 0
@@ -272,7 +277,7 @@ object EpubParser : NovelParser {
             props.split(' ', '\t').any { p -> p.equals("nav", true) }
         }?.href
 
-        return Opf(title, creator, manifest, spine, metaCover, ncxPath, navPath)
+        return Opf(title, creator, manifest, spine, metaCover, ncxPath, navPath, description)
     }
 
     // ===== 目录（NCX / nav） =====

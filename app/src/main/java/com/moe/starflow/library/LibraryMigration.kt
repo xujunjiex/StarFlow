@@ -23,11 +23,11 @@ internal object LibraryMigration {
             catalog.meta(LibraryMeta("legacyArchive", it))
         }
         val path = ".starflow/legacy/$archive.json"
-        if (session.storage.exists(path)) {
-            val valid = runCatching { JSONObject(session.storage.read(path).bufferedReader().use { it.readText() }) }.isSuccess
-            if (!valid) session.storage.delete(path) // Only this migration's unpublished backup.
+        if (session.recordArchive(path).isFile) {
+            val valid = runCatching { JSONObject(session.recordArchive(path).readText(Charsets.UTF_8)) }.isSuccess
+            if (!valid) session.recordArchive(path).delete() // Only this migration's unpublished backup.
         }
-        if (!session.storage.exists(path)) archive(app, session, path)
+        if (!session.recordArchive(path).isFile) archive(app, session, path)
         val oldManga = ImportedMangaStore.loadLegacy(app)
         val oldNovels = NovelStore.loadLegacy(app)
         val sourceCounts = (oldManga.map { it.localRoot } + oldNovels.map { it.localRoot }).groupingBy { File(it).canonicalPath }.eachCount()
@@ -53,7 +53,7 @@ internal object LibraryMigration {
         session.persistMeta("legacyMigrated", "1")
     }
     private fun splitArchive(context: Context, session: LibrarySession, path: String) {
-        val original = JSONObject(session.storage.read(path).bufferedReader().use { it.readText() })
+        val original = JSONObject(session.recordArchive(path).readText(Charsets.UTF_8))
         val records = original.getJSONObject("records")
         data class Owner(val kind: String, val id: Long, val stamp: String, val uuid: String)
         val owners = ImportedMangaStore.loadLegacy(context).map { Owner("manga", it.id, it.addedAt.toString(), session.uuid("manga", it.id)) } +
@@ -75,17 +75,19 @@ internal object LibraryMigration {
             }
         }
         fun save(at: String, body: JSONObject) {
+            val target = session.recordArchive(at)
             val bytes = body.toString().toByteArray(Charsets.UTF_8)
-            if (session.storage.exists(at)) {
-                if (session.storage.read(at).use { it.readBytes() }.contentEquals(bytes)) return
-                session.storage.delete(at) // This migration exclusively owns these inactive archives.
-            }
-            session.storage.writeNew(at, "application/json").use { it.write(bytes) }
-            if (!session.storage.read(at).use { it.readBytes() }.contentEquals(bytes)) throw IOException("旧资料档案写入不完整：$at")
+            if (target.isFile && target.readBytes().contentEquals(bytes)) return
+            target.parentFile!!.mkdirs()
+            val pending = File(target.parentFile, target.name + ".migrating")
+            try {
+                pending.outputStream().use { it.write(bytes); it.fd.sync() }
+                if (!pending.renameTo(target)) throw IOException("旧资料档案无法提交：$at")
+            } finally { pending.delete() }
         }
         archives.forEach { (uuid, body) -> save(".starflow/legacy/$uuid/records.json", body) }
         if (unassigned.getJSONObject("records").length() > 0) save(".starflow/legacy/unassigned/records.json", unassigned)
-        session.storage.delete(path) // Per-book archives are complete; the original private DB and preferences remain intact.
+        session.recordArchive(path).delete() // Per-book archives are complete; the original private DB and preferences remain intact.
     }
 
     private fun legacyMangaSource(session: LibrarySession, cached: File): File {
@@ -126,7 +128,8 @@ internal object LibraryMigration {
         return target
     }
     private fun archive(context: Context, session: LibrarySession, path: String) {
-        session.storage.writeNew(path, "application/json").bufferedWriter().use { writer ->
+        val target = session.recordArchive(path).apply { parentFile!!.mkdirs() }
+        target.bufferedWriter(Charsets.UTF_8).use { writer ->
             val head = JSONObject().put("format", 1).put("valid", false)
                 .put("manga", context.getSharedPreferences("manga_import", 0).getString("imported_manga_list", null))
                 .put("novel", context.getSharedPreferences("novel_shelf", 0).getString("imported_novel_list", null)).toString()
@@ -158,7 +161,7 @@ internal object LibraryMigration {
             writer.write("}}")
         }
         // A torn archive must never be mistaken for a successful migration on the next run.
-        try { JSONObject(session.storage.read(path).bufferedReader().use { it.readText() }) }
-        catch (e: Exception) { session.storage.delete(path); throw IOException("旧资料档案写入不完整", e) }
+        try { JSONObject(session.recordArchive(path).readText(Charsets.UTF_8)) }
+        catch (e: Exception) { session.recordArchive(path).delete(); throw IOException("旧资料档案写入不完整", e) }
     }
 }

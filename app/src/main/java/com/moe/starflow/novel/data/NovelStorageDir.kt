@@ -8,7 +8,7 @@ import java.io.File
 object NovelStorageDir {
 
     fun root(context: Context): File = File(com.moe.starflow.library.LibrarySessions.current(context).workingRoot, "novel_import")
-        .apply { if (!isDirectory && !mkdirs() && !isDirectory) throw java.io.IOException("无法创建小说目录：$path") }
+        .apply { com.moe.starflow.utils.FileAccessDiagnostics.ensureDirectory(this) }
 
     /** 某部小说的本地目录（也是取消/失败时的清理对象）。 */
     fun bookDir(context: Context, id: Long): File = File(root(context), com.moe.starflow.library.LibrarySessions.current(context).uuid("novel", id))

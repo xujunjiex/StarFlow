@@ -233,9 +233,16 @@ class MangaReaderActivity : AppCompatActivity() {
                 withContext(Dispatchers.IO) {
                     com.moe.starflow.library.LibrarySessions.prepare(this@MangaReaderActivity)
                     com.moe.starflow.library.LibrarySessions.checkReaderIntent(this@MangaReaderActivity, intent, "manga", id)
+                    val session = com.moe.starflow.library.LibrarySessions.current(this@MangaReaderActivity)
+                    val pendingBook = session.database.catalog().book("manga", id)
+                    if (pendingBook != null && session.sourcePresence[pendingBook.source] == null)
+                        session.sourcePresence[pendingBook.source] = session.storage.exists(pendingBook.source)
+                    if (pendingBook != null) com.moe.starflow.library.MangaDirectoryUpdates.refresh(
+                        session.context(this@MangaReaderActivity), session, listOf(pendingBook), mutableListOf())
                     manga = ImportedMangaStore.load(this@MangaReaderActivity).firstOrNull { it.id == id }
                         ?: throw java.io.IOException("作品入口已失效")
                     opened = ReaderPageSource(manga.isArchive, manga.localRoot, isPdf = manga.isPdf)
+                    manga = ImportedMangaStore.load(this@MangaReaderActivity).first { it.id == id }
                 }
                 source = opened!!
             } catch (e: Exception) {
@@ -259,7 +266,7 @@ class MangaReaderActivity : AppCompatActivity() {
             applyPager()
 
             // 重建（旋转 / 从设置页返回）时恢复现场：当前页、翻译模式、以及"这是从设置页返回"
-            if (savedInstanceState != null) {
+            if (savedInstanceState != null && savedInstanceState.getString("source_revision") == manga.sourceIndexPath) {
                 returnedFromSettings = savedInstanceState.getBoolean(STATE_FROM_SETTINGS, false)
                 restoredTranslateMode = savedInstanceState.getInt(STATE_TRANSLATE_MODE, -1)
                 pendingRealignPage = savedInstanceState.getInt(STATE_CURRENT_PAGE, -1)
@@ -273,6 +280,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 else -> manga.lastReadPage
             }
             goToPage(startPage.coerceIn(0, (source.size - 1).coerceAtLeast(0)))
+            com.moe.starflow.library.BookSourceChangeDialog.show(this@MangaReaderActivity, manga)
 
             // 阅读器内嵌翻译：载入每页记录（含失败/成功态），接右下角翻译按钮与进度条。
             // ⚠️ 控制器从 **ReaderTranslationHub** 取（应用级 scope + 按书缓存）：章节批量任务是
@@ -580,6 +588,7 @@ class MangaReaderActivity : AppCompatActivity() {
         super.onSaveInstanceState(outState)
         // 设置页返回时本 Activity 已被销毁重建，字段不保留 —— 当前页、翻译模式、和
         // 「这次重建正是从设置页返回」都要带过去，否则会跳回上次写库的页并把模式打回手动。
+        if (::manga.isInitialized) outState.putString("source_revision", manga.sourceIndexPath)
         outState.putInt(STATE_CURRENT_PAGE, currentPage)
         outState.putBoolean(STATE_FROM_SETTINGS, returnedFromSettings)
         outState.putInt(STATE_TRANSLATE_MODE, restoredTranslateMode)
@@ -2220,6 +2229,8 @@ class MangaReaderActivity : AppCompatActivity() {
                 },
                 onRotate = { updateRotateMode((rotateMode + 1) % 3, persist = true) },
                 onDownload = { showDownloadDialog() },
+                onBookData = { com.moe.starflow.library.BookDataActivity.open(this@MangaReaderActivity,
+                    com.moe.starflow.library.BookRef(manga.libraryLocationId, "manga", manga.bookUuid)) },
                 onSettings = {
                     // 从个性化设置返回后重建阅读器（配置项要重新读取才生效，见 onStart）。
                     // 顺带记下翻译模式：控制器随 Activity 一起重建，不恢复的话自动/增量会退回手动。
@@ -2663,14 +2674,15 @@ class MangaReaderActivity : AppCompatActivity() {
                 File(manga.localRoot).inputStream().use { i -> FileOutputStream(tmp).use { o -> i.copyTo(o) } }
             } else {
                 ZipOutputStream(FileOutputStream(tmp)).use { zip ->
-                    for (i in 0 until source.size) {
-                        val key = source.key(i) ?: continue
-                        val file = File(manga.localRoot, key); if (!file.isFile) continue
-                        // ⚠️ 用**原 key**（含子目录）而不是扁平化成文件名：目录导入的子目录漫画
-                        // ch1/001.jpg 与 ch2/001.jpg 拍平后会撞名，ZipOutputStream 直接抛
-                        // duplicate entry → 整包导出失败（与 ReaderExport 的规则保持一致）
+                    val root = File(manga.localRoot)
+                    val nodes = com.moe.starflow.library.LibrarySources.listFiles(root)?.filter { !it.directory }?.map {
+                        val session = com.moe.starflow.library.LibrarySessions.current(this)
+                        it.path.removePrefix(session.relative(root) + "/")
+                    } ?: root.walkTopDown().filter { it.isFile }.map { it.relativeTo(root).invariantSeparatorsPath }.toList()
+                    for (key in nodes.filter { path -> path.split('/').none { it.startsWith('.') } }) {
+                        require(File(root, key).canonicalPath.startsWith(root.canonicalPath + File.separator))
                         zip.putNextEntry(java.util.zip.ZipEntry(key))
-                        file.inputStream().use { it.copyTo(zip) }
+                        com.moe.starflow.library.LibrarySources.open(File(root, key)).use { it.copyTo(zip) }
                         zip.closeEntry()
                     }
                 }

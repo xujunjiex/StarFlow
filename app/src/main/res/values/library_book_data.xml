@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="library_import_readonly">Import folders are not writable: %1$s. Existing books remain readable. Select a writable location or repair the folder permissions. Rebuilding library records does not repair filesystem permissions.</string>
+    <string name="library_reinitialize_title">Overwrite and rebuild this library?</string>
+    <string name="library_reinitialize_action">Overwrite and rebuild</string>
+    <string name="library_reinitialize_message">Directory: %1$s\n\nProblem: %2$s\n\nRebuild replaces the library management information, permanently clears the previous internal book entries, translation, OCR, super-resolution and reading records for this directory, then scans the existing manga and novels again.\n\nOriginal manga and novel files stay in place. Other libraries are preserved.\n\nIf directory access has expired, choose the directory again to grant access. Cancel if you need the old records; clearing them cannot be undone.</string>
+    <string name="library_recovery_choose">Choose directory again</string>
+    <string name="library_rebuild_manual">Rebuild library management information from the existing original files.</string>
+    <string name="book_data_actions">Actions</string>
+    <string name="book_data_records">Processing records</string>
+    <string name="book_data_storage_help">How records are stored</string>
+    <string name="book_data_layout_pages">Pages in the current chapter layout</string>
+    <string name="book_data_progress">Reading progress</string>
+    <string name="book_data_not_read">Not started</string>
+    <string name="book_data_manga_progress">Chapter %1$d · page %2$d</string>
+    <string name="book_data_novel_progress">Chapter %1$d · paragraph %2$d</string>
+    <string name="book_data_saved">Records saved inside the app</string>
+    <string name="book_data_pending_files">Records saved · %1$d pending file operations</string>
+    <string name="book_data_deleting">Book deletion is pending</string>
+    <string name="book_data_source_expand">Identity and source · expand</string>
+    <string name="book_data_source_collapse">Identity and source · collapse</string>
+    <string name="book_data_copy_hint">Long press text and drag the selection handles to copy any range.</string>
+    <string name="book_data_library_label">Library directory</string>
+    <string name="book_data_path_label">Original relative path</string>
+    <string name="book_data_category_count">%1$s (%2$d)</string>
+    <string name="book_data_no_records">No records in this category</string>
+    <string name="book_data_range">%1$d–%2$d of %3$d · use Details to open a record</string>
+    <string name="book_data_load_failed">Could not load records. Use Refresh to retry.</string>
+    <string name="book_data_page_number">Page %1$d</string>
+    <string name="book_data_artifact_available">Saved image available</string>
+    <string name="book_data_artifact_missing">Saved image unavailable</string>
+    <string name="book_data_artifact_unknown">Saved image availability not recorded</string>
+    <string name="book_data_no_text">No text saved</string>
+    <string name="book_data_yes">Yes</string>
+    <string name="book_data_no">No</string>
+    <string name="book_record_translation_ocr">Translation / OCR</string>
+    <string name="book_record_formatted">Formatted details</string>
+    <string name="book_record_select_hint">Long press to select text; drag the handles across fields to copy a range.</string>
+    <string name="book_record_overview">Record overview</string>
+    <string name="book_record_status">Status</string>
+    <string name="book_record_failure">Failure details</string>
+    <string name="book_record_identity">Identity and location</string>
+    <string name="book_record_other">Other saved fields</string>
+    <string name="book_record_block">Text block %1$d</string>
+    <string name="book_record_original">Recognized original</string>
+    <string name="book_record_translated">Translation</string>
+    <string name="book_record_text">Original and translated text</string>
+    <string name="book_record_region">Recognition region</string>
+    <string name="book_record_regions">Recognition regions and layout</string>
+    <string name="book_record_unreadable">This saved payload could not be parsed. View its unchanged contents in Raw data.</string>
+    <string name="book_record_images">Images and saved result</string>
+    <string name="book_record_source_image">Original image</string>
+    <string name="book_record_output_image">Upscaled image</string>
+    <string name="book_record_timings">Stage timings</string>
+    <string name="book_record_parameters">Request and result parameters</string>
+    <string name="book_record_actual">Actual execution parameters</string>
+    <string name="book_record_seconds">%1$s s</string>
+    <string name="book_record_vertical_rl">Vertical, right to left</string>
+    <string name="book_record_vertical_lr">Vertical, left to right</string>
+    <string name="book_record_horizontal">Horizontal</string>
+    <string-array name="book_record_extra_keys" translatable="false">
+        <item>state</item><item>stateLabel</item><item>mangaId</item><item>mangaKey</item><item>novelId</item><item>novelKey</item>
+        <item>model</item><item>weights</item><item>scale</item><item>tileRequested</item><item>precisionRequested</item><item>fp16ArithmeticRequested</item>
+        <item>performanceMode</item><item>tileSleepMs</item><item>thresholdMP</item><item>runId</item><item>oldConfig</item>
+        <item>artifactModel</item><item>artifactWidth</item><item>artifactHeight</item><item>inputWidth</item><item>inputHeight</item><item>outputWidth</item><item>outputHeight</item>
+        <item>stage</item><item>totalMs</item><item>decodeMs</item><item>waitMs</item><item>initMs</item><item>preprocessMs</item><item>rgbPackMs</item><item>inferenceMs</item><item>rgbUnpackMs</item><item>saveMs</item>
+        <item>backend</item><item>deviceName</item><item>tile</item><item>precision</item><item>fp16Arithmetic</item><item>threads</item><item>throttleMs</item>
+        <item>l</item><item>t</item><item>r</item><item>b</item><item>fs</item><item>dir</item><item>angle</item><item>cx</item><item>cy</item>
+    </string-array>
+    <string-array name="book_record_extra_labels">
+        <item>Status code</item><item>Status</item><item>Book number</item><item>Book record key</item><item>Book number</item><item>Book record key</item>
+        <item>Requested model</item><item>Weight revision</item><item>Scale</item><item>Requested tile size</item><item>Requested precision</item><item>Requested FP16 arithmetic</item>
+        <item>Performance mode</item><item>Wait between tiles</item><item>Input threshold (MP)</item><item>Run identifier</item><item>Uses previous settings</item>
+        <item>Retained result model</item><item>Retained result width</item><item>Retained result height</item><item>Model input width</item><item>Model input height</item><item>Output width</item><item>Output height</item>
+        <item>Execution stage</item><item>Total time</item><item>Decode</item><item>Wait</item><item>Initialization</item><item>Preprocessing</item><item>RGB packing</item><item>Inference</item><item>RGB unpacking</item><item>Save</item>
+        <item>Backend</item><item>Device</item><item>Actual tile size</item><item>Actual precision</item><item>Actual FP16 arithmetic</item><item>Threads</item><item>Total tile wait</item>
+        <item>Left</item><item>Top</item><item>Right</item><item>Bottom</item><item>Font size</item><item>Text direction</item><item>Angle</item><item>Center X</item><item>Center Y</item>
+    </string-array>
+    <string-array name="book_data_detail_keys" translatable="false">
+        <item>title</item><item>description</item><item>chapterCount</item><item>pageCount</item>
+        <item>lastReadAt</item><item>addedAt</item><item>format</item><item>sourceIndexPath</item>
+        <item>missingPages</item><item>changedPages</item><item>pageIndex</item><item>chapterIndex</item><item>paraIndex</item>
+        <item>sourceText</item><item>translatedText</item><item>bubbleRects</item><item>failCode</item><item>failMessage</item>
+        <item>updatedAtMs</item><item>updatedAt</item><item>translatorName</item><item>sourceLang</item><item>targetLang</item><item>ocrModel</item>
+        <item>modelName</item><item>srcWidth</item><item>srcHeight</item><item>srcBytes</item><item>outWidth</item><item>outHeight</item><item>outBytes</item>
+        <item>startedAtMs</item><item>finishedAtMs</item><item>sourcePageKey</item><item>executionJson</item><item>artifactAvailable</item>
+        <item>path</item><item>kind</item><item>entry</item><item>chapter</item><item>bytes</item><item>missing</item><item>modifiedAt</item><item>sourceMissing</item>
+        <item>splitVersion</item><item>imagePayload</item><item>sourceChanged</item>
+    </string-array>
+    <string-array name="book_data_detail_labels">
+        <item>Title</item><item>Description</item><item>Chapters</item><item>Pages</item>
+        <item>Last read</item><item>Imported</item><item>Format</item><item>Source index</item>
+        <item>Missing pages</item><item>Pages requiring review</item><item>Page index (0 based)</item><item>Chapter index (0 based)</item><item>Paragraph index (0 based)</item>
+        <item>Original text</item><item>Translated text</item><item>Bubble coordinates</item><item>Failure code</item><item>Failure reason</item>
+        <item>Updated</item><item>Updated</item><item>Translator</item><item>Source language</item><item>Target language</item><item>OCR model</item>
+        <item>SR model</item><item>Original width</item><item>Original height</item><item>Original bytes</item><item>Output width</item><item>Output height</item><item>Output bytes</item>
+        <item>Started</item><item>Finished</item><item>Stable page identifier</item><item>Execution details</item><item>Saved image available</item>
+        <item>Relative path</item><item>Source type</item><item>Archive entry / PDF page</item><item>Chapter source</item><item>Bytes</item><item>Page missing</item><item>Modified</item><item>Container missing</item>
+        <item>Paragraph split version</item><item>Illustration translation data</item><item>Source structure changed</item>
+    </string-array>
+</resources>

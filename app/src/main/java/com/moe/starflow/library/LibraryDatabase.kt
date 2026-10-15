@@ -22,6 +22,8 @@ interface LibraryCatalogDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE) fun put(book: LibraryBook)
     @Query("DELETE FROM library_book WHERE kind = :kind AND id = :id") fun remove(kind: String, id: Long)
     @Query("SELECT * FROM library_outbox ORDER BY sequence") fun pending(): List<LibraryWrite>
+    @Query("SELECT COUNT(*) FROM library_outbox") fun pendingCount(): Int
+    @Query("SELECT EXISTS(SELECT 1 FROM library_meta WHERE name LIKE 'cleanup:%' AND value = 'pending')") fun hasPendingCleanup(): Boolean
     @Insert fun enqueue(write: LibraryWrite): Long
     @Query("DELETE FROM library_outbox WHERE sequence = :sequence") fun acknowledge(sequence: Long)
     @Query("SELECT value FROM library_meta WHERE name = :name") fun meta(name: String): String?
@@ -32,6 +34,17 @@ interface LibraryCatalogDao {
     @Query("DELETE FROM imported_page_sr") fun clearResolutions()
     @Query("DELETE FROM novel_paragraph_translation") fun clearParagraphs()
     @Query("DELETE FROM library_meta WHERE name LIKE 'asset:%'") fun clearAssets()
+    @Query("SELECT * FROM imported_page_translation WHERE mangaId = :id AND mangaKey = :key ORDER BY pageIndex LIMIT :limit OFFSET :offset")
+    fun bookTranslations(id: Long, key: String, limit: Int = Int.MAX_VALUE, offset: Int = 0): List<ImportedPageTranslation>
+    @Query("SELECT * FROM imported_page_sr WHERE mangaId = :id AND mangaKey = :key ORDER BY pageIndex LIMIT :limit OFFSET :offset")
+    fun bookResolutions(id: Long, key: String, limit: Int = Int.MAX_VALUE, offset: Int = 0): List<ImportedPageSr>
+    @Query("SELECT pageIndex FROM imported_page_translation WHERE mangaId = :id AND mangaKey = :key UNION SELECT pageIndex FROM imported_page_sr WHERE mangaId = :id AND mangaKey = :key")
+    fun recordedMangaPages(id: Long, key: String): List<Int>
+    @Query("SELECT * FROM novel_paragraph_translation WHERE novelId = :id AND novelKey = :key ORDER BY chapterIndex, paraIndex LIMIT :limit OFFSET :offset")
+    fun bookParagraphs(id: Long, key: String, limit: Int = Int.MAX_VALUE, offset: Int = 0): List<NovelParagraphTranslation>
+    @Query("SELECT COUNT(*) FROM imported_page_translation WHERE mangaId = :id AND mangaKey = :key") fun translationCount(id: Long, key: String): Int
+    @Query("SELECT COUNT(*) FROM imported_page_sr WHERE mangaId = :id AND mangaKey = :key") fun resolutionCount(id: Long, key: String): Int
+    @Query("SELECT COUNT(*) FROM novel_paragraph_translation WHERE novelId = :id AND novelKey = :key") fun paragraphCount(id: Long, key: String): Int
     @Query("SELECT * FROM imported_page_translation") fun allTranslations(): List<ImportedPageTranslation>
     @Query("SELECT * FROM imported_page_sr") fun allResolutions(): List<ImportedPageSr>
     @Query("SELECT * FROM novel_paragraph_translation") fun allParagraphs(): List<NovelParagraphTranslation>

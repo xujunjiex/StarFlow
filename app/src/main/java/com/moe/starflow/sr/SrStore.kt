@@ -62,6 +62,10 @@ object SrStore {
         } else dir(ctx,id,key).listFiles()?.any { it.name.startsWith(book(id,portable(key))+"_") && it.name.endsWith(".json") } == true
     fun exists(ctx: Context,id: Long,page: Int,key: String): Boolean =
         read(marker(ctx,id,page,key))?.let { valid(ctx,it,key) } ?: false
+    fun existsForSource(ctx: Context, id: Long, key: String, sourcePageKey: String): Boolean {
+        val name = book(id, portable(key)) + "_" + hash(sourcePageKey) + ".json"
+        return read(File(dir(ctx, id, key), name))?.let { valid(ctx, it, key) } ?: false
+    }
     fun modelOf(ctx: Context,id: Long,page: Int,key: String): String? = infoOf(ctx,id,page,key)?.model
     fun storedModelOrNull(ctx: Context,id: Long,page: Int,key: String): String? = modelOf(ctx,id,page,key)
     data class StoredInfo(val model: String,val width: Int,val height: Int,val scale: Int,val savedAtMs: Long,val bytes: Long,
@@ -197,6 +201,7 @@ object SrStore {
         return owner.books("manga").sumOf { bytes(".starflow/books/${it.uuid}/sr") }
     }
     private fun pruneUnreferencedArtifacts(ctx: Context,id: Long,key: String) {
+        if (libraryKey(key) && com.moe.starflow.library.BookRecordLocks.exporting(com.moe.starflow.library.BookRef(session(ctx,key).locationId, "manga", portable(key)))) return
         val directory=dir(ctx,id,key)
         // Interrupted temporary writes and unreferenced immutable images have no owners.
         val owned=directory.listFiles()?.filter { it.name.endsWith(".json") }?.mapNotNull { read(it)?.optString("image") }?.toSet().orEmpty()
