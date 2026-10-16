@@ -14,6 +14,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import java.io.File
+import java.util.UUID
 
 /** 书籍 id 被复用时，不同身份指纹的超分结果必须隔离，删除也只能作用于所属书籍。 */
 @RunWith(RobolectricTestRunner::class)
@@ -21,19 +22,23 @@ import java.io.File
 class SrStoreOwnershipTest {
 
     private val ctx: Context = RuntimeEnvironment.getApplication()
-    private val oldBookId = 7L
-    private val oldBookKey = "1000"      // = ImportedManga.translationKey（addedAt）
-    private val newBookKey = "2000"
+    private lateinit var book: SrTestBook
+    private lateinit var oldBookUuid: String
+    private lateinit var newBookUuid: String
+    private val oldBookId: Long get() = book.id
+    private val oldBookKey: String get() = "${book.session.locationId}:manga:$oldBookUuid"
+    private val newBookKey: String get() = "${book.session.locationId}:manga:$newBookUuid"
 
     private fun bmp(): Bitmap = Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888)
 
-    private fun srCacheDir(): File =
-        File(ctx.getExternalFilesDir(null), SrStore.DIR_NAME).apply { mkdirs() }
+    private fun oldBookDir(): File = book.session.local(".starflow/books/$oldBookUuid/sr").apply { mkdirs() }
 
     @org.junit.Before
     fun setUp() {
-        // 每个用例干净起步（SR 缓存是真实目录，跨用例会残留）
-        srCacheDir().listFiles()?.forEach { it.delete() }
+        book = SrTestBook(ctx)
+        oldBookUuid = book.uuid
+        newBookUuid = UUID.randomUUID().toString()
+        oldBookDir().listFiles()?.forEach { it.delete() }
     }
 
     private fun saveForOldBook(page: Int = 0, key: String = oldBookKey): Boolean =
@@ -61,6 +66,7 @@ class SrStoreOwnershipTest {
         assertFalse(SrStore.exists(ctx, oldBookId, 0, newBookKey))
 
         // 新书自己重超一次这一页
+        book.replaceIdentity(newBookUuid)
         SrStore.save(ctx, oldBookId, 0, bmp(), "cunet", newBookKey)
 
         assertTrue("新书现在认领得到", SrStore.exists(ctx, oldBookId, 0, newBookKey))
@@ -88,7 +94,7 @@ class SrStoreOwnershipTest {
         assertFalse("标记损坏也不能认领", SrStore.exists(ctx, oldBookId, 0, oldBookKey))
     }
 
-    private fun markerForOldBook(): File = srCacheDir().listFiles().orEmpty().single {
+    private fun markerForOldBook(): File = oldBookDir().listFiles().orEmpty().single {
         it.extension == "json" && JSONObject(it.readText()).optString("key") == oldBookKey
     }
 
@@ -99,7 +105,7 @@ class SrStoreOwnershipTest {
         assertFalse("空指纹也认领不了", SrStore.exists(ctx, oldBookId, 0, ""))
         assertFalse(
             "不许留下认领不了的孤儿文件",
-            srCacheDir().listFiles().orEmpty().isNotEmpty(),
+            oldBookDir().listFiles().orEmpty().isNotEmpty(),
         )
     }
 }

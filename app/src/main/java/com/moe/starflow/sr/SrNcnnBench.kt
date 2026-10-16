@@ -42,19 +42,21 @@ object SrNcnnBench {
         fp16a: Boolean = false,
         mode: String = "ours",
         threads: Int = srThreads(),
-        /** true = 把每一档的产物 PNG 存到 files/sr_bench_out/（偏移/接缝实测用） */
-        saveOutput: Boolean = false,
     ) {
         val app = context.applicationContext
         Thread {
-            val out = File(app.getExternalFilesDir(null), "sr_ncnn_benchmark.txt")
+            val srDir = SrStoragePaths.modelDir(app)
+            if (srDir == null) {
+                LogCollector.e(TAG, "无法访问 App 专用外部存储目录")
+                return@Thread
+            }
+            val out = File(srDir, SrStoragePaths.BENCH_LOG_NAME)
             fun emit(s: String) {
                 LogCollector.i(TAG, s)
                 runCatching { out.appendText(s + "\n") }
             }
             val started = System.currentTimeMillis()
             try {
-                val srDir = File(app.getExternalFilesDir(null), "sr")
                 SrBenchInput.load(app)
                 val src0 = SrBenchInput.bitmap()
                 emit("===== ncnn 基准 ${java.text.SimpleDateFormat("MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())} =====")
@@ -63,7 +65,7 @@ object SrNcnnBench {
                     "(${runCatching { SrNcnnNative.gpuCount() }.getOrDefault(0)})")
                 emit("参数: tile=$tile  fp16算术=$fp16a  mode=$mode  线程=$threads  预热$WARMUP+计时$RUNS(取最小)")
                 if (src0 == null) {
-                    emit("测试图缺失（files/sr_bench_input.png|webp|jpg）→ 本次跳过")
+                    emit("测试图缺失（files/sr/sr_bench_input.png|webp|jpg）→ 本次跳过")
                     emit("===== 结束 =====")
                     return@Thread
                 }
@@ -87,7 +89,7 @@ object SrNcnnBench {
                     tested++
                     emit("")
                     emit("── ${e.key}  ${e.familyName} ${e.scale}x  prepad=${if (mode == "ours") e.prepad else theirPadding(e)}")
-                    emit(measure(e, srDir, src0, tile, fp16a, mode, threads, saveOutput, app))
+                    emit(measure(e, srDir, src0, tile, fp16a, threads))
                     // 每个模型之间留口气：连续满负荷会把 SoC 打降频，后面几个模型的数字就不公平了
                     runCatching { Thread.sleep(300) }
                 }
@@ -107,10 +109,7 @@ object SrNcnnBench {
         src0: Bitmap,
         tile: Int,
         fp16a: Boolean,
-        mode: String,
         threads: Int,
-        saveOutput: Boolean,
-        app: android.content.Context,
     ): String {
         val prepad = e.prepad
         // Apply the default input compression threshold.
@@ -169,16 +168,6 @@ object SrNcnnBench {
             val min = times.minOrNull() ?: 0L
             val med = times.sorted().let { it[it.size / 2] }
             val mp = ow.toDouble() * oh / 1_000_000.0
-            // 产物存盘（只有显式要求时才做；用于本地做"产物 vs 原图"的位移/接缝分析）
-            if (saveOutput && bmp != null) {
-                runCatching {
-                    val dir = File(app.getExternalFilesDir(null), "sr_bench_out")
-                        .apply { mkdirs() }
-                    File(dir, "${e.key}_prepad${prepad}_tile$tile.png").outputStream().use { os ->
-                        bmp.compress(Bitmap.CompressFormat.PNG, 100, os)
-                    }
-                }.onFailure { LogCollector.w(TAG, "产物存盘失败: ${e.key}", it) }
-            }
             val stats = stats(bmp)
             bmp?.recycle()
 

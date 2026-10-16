@@ -261,7 +261,7 @@ object LibraryScanner {
         }
         listings.getValue(root).forEach { node ->
             val name = node.path.substringAfterLast('/')
-            if (name.startsWith('.') || (name == "sr_ncnn_benchmark.txt" || name == "sr_bench_out") || node.path in importing) return@forEach
+            if (name.startsWith('.') || name == "sr_ncnn_benchmark.txt" || node.path in importing) return@forEach
             if (owned(node.path)) return@forEach
             // A previously catalogued nested source already owns this wrapper. Do not create
             // a second manga for its parent while preserving the original identity and records.

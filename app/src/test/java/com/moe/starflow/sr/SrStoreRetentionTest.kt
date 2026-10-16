@@ -26,13 +26,14 @@ import java.nio.file.StandardCopyOption
 @Config(shadows = [SrStoreTestOs::class])
 class SrStoreRetentionTest {
     private val context: Context get() = RuntimeEnvironment.getApplication()
-    private val bookId = 17L
-    private val bookKey = "1700"
-    private val directory: File
-        get() = File(context.getExternalFilesDir(null), SrStore.DIR_NAME).apply { mkdirs() }
+    private lateinit var book: SrTestBook
+    private val bookId: Long get() = book.id
+    private val bookKey: String get() = book.key
+    private val directory: File get() = book.srDir.apply { mkdirs() }
 
     @Before
     fun setUp() {
+        book = SrTestBook(context)
         directory.listFiles().orEmpty().forEach { it.delete() }
         SrStore.bindPages(bookId, bookKey, listOf("chapter/001.jpg", "chapter/002.jpg"))
     }

@@ -16,7 +16,7 @@ import android.content.Intent
  * ```
  * adb shell am broadcast -a com.moe.starflow.SR_BENCH --es model upconv7
  * adb shell am broadcast -a com.moe.starflow.SR_BENCH --es model cunet --ei threads 6
- * adb shell cat /storage/emulated/0/Android/data/com.moe.starflow/files/sr_benchmark.txt
+ * adb shell cat /storage/emulated/0/Android/data/com.moe.starflow/files/sr/sr_ncnn_benchmark.txt
  * ```
  * 不带 `--es model` 就跑 `files/sr/` 下全部模型。
  */
@@ -35,7 +35,6 @@ class SrBenchReceiver : BroadcastReceiver() {
                 fp16a = intent.getBooleanExtra("fp16a", false),
                 mode = intent.getStringExtra("mode") ?: "ours",
                 threads = threads,
-                saveOutput = intent.getBooleanExtra("save", false),
             )
             return
         }

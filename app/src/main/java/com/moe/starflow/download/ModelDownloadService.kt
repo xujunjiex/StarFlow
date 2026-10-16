@@ -560,7 +560,12 @@ class ModelDownloadService : LifecycleService() {
 
     private fun targetFileFor(modelKey: ModelKey, fileName: String): File {
         val baseDir = baseDirFor(modelKey)
-        if (!baseDir.exists()) baseDir.mkdirs()
+        if (!baseDir.exists() && !baseDir.mkdirs() && !baseDir.isDirectory) {
+            throw java.io.IOException(getString(R.string.model_download_err_storage, baseDir.absolutePath))
+        }
+        if (!baseDir.isDirectory) {
+            throw java.io.IOException(getString(R.string.model_download_err_storage, baseDir.absolutePath))
+        }
         return File(baseDir, fileName)
     }
 

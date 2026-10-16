@@ -76,6 +76,8 @@ class ReaderMenuState(
     val anime4kPreviewBitmap: Bitmap? = null,
     /** Webtoon（连续滑动）的显示态：false=原图，true=译文（默认）。决定模式图标上是否带「译」角标。 */
     val webtoonTranslated: Boolean = true,
+    /** OCR-only execution mode: labels and completion filters switch from translation to recognition. */
+    val ocrOnly: Boolean = false,
     val translateMode: Int = 0,                 // 0 手动 1 自动 2 增量
     val debounceMs: Int = 500,                  // 自动/增量的启动延迟
     val aheadPages: Int = 5,                    // 增量向后翻多少页（1..10）
@@ -178,6 +180,7 @@ class ChapterPanelState(
     val chapters: List<MangaChapter> = emptyList(),
     val currentChapter: Int = 0,
     val records: List<ImportedPageTranslation> = emptyList(),
+    val ocrOnly: Boolean = false,
     /** 各章任务状态 / 已完成页数 / 排队页（章卡片按钮与「等待」标签都靠它们）。 */
     val jobs: Map<Int, ChapterJobState> = emptyMap(),
     val jobDone: Map<Int, Int> = emptyMap(),
@@ -216,6 +219,7 @@ class ReaderMenuSheet(
 
     /** 面板深浅（随阅读背景切换即时更新）。 */
     private var darkPanel = state.isDarkPanel
+    private var ocrOnly = state.ocrOnly
 
     /** 默认 SharedPreferences 监听（模型/语言 prefs 变化 → 刷新面板；跳设置页返回后也能生效）。 */
     private var appPrefsListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
@@ -353,6 +357,9 @@ class ReaderMenuSheet(
         appPrefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             if (key == "Text_API" || key == "Text_AI" || key == "OpenAI_Selected_Provider" || key == OcrEngineManager.PREF_KEY) {
                 refreshModelRows()
+            } else if (key == TranslationExecutionMode.KEY) {
+                refreshModelRows()
+                notifyTranslateChanged()
             } else if (key == "Source_Language" || key == "Target_Language") {
                 view?.let { refreshLangRow(it) }
             }
@@ -380,6 +387,7 @@ class ReaderMenuSheet(
     /** 重新读模型名到两行（onStart / prefs 变化时调用）。 */
     private fun refreshModelRows() {
         val v = view ?: return
+        refreshExecutionModeRows(v)
         v.findViewById<TextView>(R.id.tv_ocr_model_row).text =
             getString(R.string.reader_translate_ocr_model, ReaderTranslationInfo.ocrModelLabel(requireContext()))
         v.findViewById<TextView>(R.id.tv_translator_model_row).text =
@@ -392,6 +400,37 @@ class ReaderMenuSheet(
             )
             setOnClickListener { cb.onOpenExecutionModeSettings() }
         }
+    }
+
+    /** Keep controls truthful when this screen runs the page scheduler as OCR-only. */
+    private fun refreshExecutionModeRows(v: View) {
+        val onlyOcr = TranslationExecutionMode.isOcrOnly(requireContext())
+        ocrOnly = onlyOcr
+        v.findViewById<RadioButton>(R.id.translate_mode_manual).setText(
+            if (onlyOcr) R.string.reader_ocr_mode_manual else R.string.reader_translate_mode_manual
+        )
+        v.findViewById<RadioButton>(R.id.translate_mode_auto).setText(
+            if (onlyOcr) R.string.reader_ocr_mode_auto else R.string.reader_translate_mode_auto
+        )
+        v.findViewById<RadioButton>(R.id.translate_mode_incremental).setText(
+            if (onlyOcr) R.string.reader_ocr_mode_incremental else R.string.reader_translate_mode_incremental
+        )
+        v.findViewById<View>(R.id.row_debounce).apply {
+            findViewById<TextView>(R.id.tv_debounce_label).setText(
+                if (onlyOcr) R.string.reader_ocr_debounce else R.string.reader_translate_debounce
+            )
+            findViewById<TextView>(R.id.tv_debounce_hint).setText(
+                if (onlyOcr) R.string.reader_ocr_debounce_hint else R.string.reader_translate_debounce_hint
+            )
+        }
+        v.findViewById<TextView>(R.id.tv_ahead_label).setText(
+            if (onlyOcr) R.string.reader_ocr_ahead_pages else R.string.reader_translate_ahead_pages
+        )
+        v.findViewById<TextView>(R.id.tv_ahead_hint).setText(
+            if (onlyOcr) R.string.reader_ocr_ahead_hint else R.string.reader_translate_ahead_hint
+        )
+        v.findViewById<View>(R.id.row_concurrency).visibility = if (onlyOcr) View.GONE else View.VISIBLE
+        v.findViewById<View>(R.id.btn_model_translate).visibility = if (onlyOcr) View.GONE else View.VISIBLE
     }
 
     /** Webtoon(3) 下翻页动画/自动翻页不生效：即时禁用置灰，切回分页模式自动恢复。 */
@@ -553,6 +592,7 @@ class ReaderMenuSheet(
         waitingPages = state.waitingPages
         ocrPages = state.ocrPages
         translatingPages = state.translatingPages
+        ocrOnly = state.ocrOnly
         val rvPages = view.findViewById<androidx.recyclerview.widget.RecyclerView>(R.id.rv_translate_pages)
         rvPages.layoutManager = LinearLayoutManager(requireContext())
         rvPages.adapter = pageAdapter
@@ -642,6 +682,7 @@ class ReaderMenuSheet(
         // 超分记录列表（在**调色面板**的超分区里，不是这一页）
         setupSrRecords(view)
         setupConcurrency(view)
+        refreshExecutionModeRows(view)
 
         // 模型区：OCR/翻译模型 快速跳转（保持面板打开，返回后 onStart/prefs 监听刷新模型名）
         view.findViewById<TextView>(R.id.tv_ocr_model_row).text =
@@ -1298,6 +1339,7 @@ class ReaderMenuSheet(
             waitingPages = waitingPages,
             ocrPages = ocrPages,
             translatingPages = translatingPages,
+            ocrOnly = ocrOnly,
         )
         // 超分那一路同源推送（两个适配器共用章表与选中章，只是记录与任务不同）
         srAdapter.submit(
@@ -1364,6 +1406,7 @@ class ReaderMenuSheet(
         waitingPages = st.waitingPages
         ocrPages = st.ocrPages
         translatingPages = st.translatingPages
+        ocrOnly = st.ocrOnly
         currentSrRecords = st.srRecords
         currentSrJob = st.srJob
         if (view != null) pushToAdapter()

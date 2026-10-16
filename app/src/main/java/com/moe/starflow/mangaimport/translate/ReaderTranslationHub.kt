@@ -52,6 +52,9 @@ object ReaderTranslationHub : ChapterJobSource {
     /** 取（或创建）某本书的控制器。同一本书永远只有一份（任务/缓存不会分裂）。 */
     @Synchronized
     fun controllerFor(context: Context, manga: ImportedManga): ReaderTranslationController {
+        check(manga.bookUuid.matches(Regex("[0-9a-fA-F-]{36}")) && manga.libraryLocationId.isNotBlank()) {
+            "漫画尚未关联到当前书库 UUID，不能启动阅读器任务"
+        }
         // ⚠️ **必须比身份指纹**，不能只看 id：书架删除后新导入的书会**复用同一个 id**
         // （`书架最大id+1`），而控制器在构造时就捕获了 `mangaKey = manga.translationKey`
         // → 旧控制器若还活着，新书会按**旧指纹**读写译文（当场看着正常，重启后译文"消失"、

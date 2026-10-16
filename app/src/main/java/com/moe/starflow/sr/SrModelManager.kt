@@ -15,9 +15,8 @@ import java.io.File
  * [isDownloaded] + [modelFile] / [ncnnPair] 取文件，
  * 两边都只经过这里，不各自读 prefs。
  *
- * ⚠️ **落盘目录必须与下载流水线一致**：`ModelDownloadRepository.baseDirFor` 与
- * `ModelDownloadService.baseDirFor` 的超分分支都是 `getExternalFilesDir("sr")`。
- * 改目录要改三处（那两个 when + 这里的 [SR_DIR]）。
+ * ⚠️ **落盘目录必须与下载流水线一致**：Repository 与 Service 的超分分支、
+ * 以及这里的模型目录都指向 [SrStoragePaths.ROOT_DIR_NAME]。
  *
  * ⚠️ 文件名**不在这里硬编码**，一律从 `downloadinfo.json`（经 Repository）取 ——
  * 清单是文件的单一事实来源，这里再写一份就会在换文件名时静默失配。
@@ -26,9 +25,6 @@ object SrModelManager {
 
     /** prefs 键：当前启用的超分模型（存 [ModelKey.name]） */
     const val PREF_ACTIVE_KEY = "sr_active_model_key"
-
-    /** 超分模型目录名（getExternalFilesDir 下） */
-    private const val SR_DIR = "sr"
 
     /**
      * 所有可选的超分模型，顺序 = 模型管理页「超分」Tab 的展示顺序。
@@ -80,9 +76,8 @@ object SrModelManager {
         prefs.edit().putString(PREF_ACTIVE_KEY, key.name).apply()
     }
 
-    /** 超分模型目录 */
-    fun modelDir(context: Context): File? =
-        context.getExternalFilesDir(null)?.let { File(it, SR_DIR) }
+    /** 超分模型目录；同时迁移旧版放在 files/ 下的 SR 辅助目录。 */
+    fun modelDir(context: Context): File? = SrStoragePaths.modelDir(context)
 
     /**
      * 某模型的**全部**目标文件（顺序与 downloadinfo.json 一致）。

@@ -39,13 +39,13 @@ object SrBenchInput {
     var height: Int = 1456
         private set
 
-    /** 读 `files/sr_bench_input.{png,webp,jpg}` 并缩到 [TARGET_W] 宽。 */
+    /** 读 `files/sr/sr_bench_input.{png,webp,jpg}` 并缩到 [TARGET_W] 宽。 */
     fun load(app: Context) {
-        val base = app.getExternalFilesDir(null) ?: return
-        for (n in listOf("sr_bench_input.png", "sr_bench_input.webp", "sr_bench_input.jpg")) {
-            val f = File(base, n)
-            if (!f.isFile) continue
-            val raw = BitmapFactory.decodeFile(f.absolutePath) ?: continue
+        val srDir = SrStoragePaths.modelDir(app) ?: return
+        for (n in SrStoragePaths.BENCH_INPUT_NAMES) {
+            val input = File(srDir, n)
+            if (!input.isFile) continue
+            val raw = BitmapFactory.decodeFile(input.absolutePath) ?: continue
             val w = if (raw.width > TARGET_W) TARGET_W else raw.width
             val h = (raw.height.toLong() * w / raw.width).toInt().coerceAtLeast(1)
             val scaled = if (w == raw.width) raw else Bitmap.createScaledBitmap(raw, w, h, true)
@@ -53,7 +53,7 @@ object SrBenchInput {
             bmp = scaled
             width = w
             height = h
-            sourceLabel = "${f.name}（原 ${raw.width}x${raw.height} → ${w}x$h）"
+            sourceLabel = "${input.name}（原 ${raw.width}x${raw.height} → ${w}x$h）"
             return
         }
         width = TARGET_W

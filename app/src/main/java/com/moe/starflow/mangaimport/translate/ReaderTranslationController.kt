@@ -248,6 +248,9 @@ class ReaderTranslationController(
     /** 队列正在翻译的页（-1 = 空闲）。供状态浮层显示"正在翻译第 N 页"。 */
     val queuePage = MutableStateFlow(-1)
 
+    /** 前台单页/自动/增量流水线此刻真正持有 OCR 锁的页；整章任务由 ChapterJobRunner 单独跟踪。 */
+    private val foregroundOcrPages = ConcurrentHashMap.newKeySet<Int>()
+
     private val db = com.moe.starflow.library.LibrarySessions.current(context)
     private val dao = db.importedPageTranslationDao()
     private val cacheManager = TranslationCacheManager(context)
@@ -750,7 +753,7 @@ class ReaderTranslationController(
         return SrStore.generation(manga.id,page,mangaKey)
     }
     private suspend fun refreshSrArtifacts() = withContext(Dispatchers.IO) {
-        if(srRows.value.isEmpty() && srModelByPage.isEmpty() && !SrStore.bookHasArtifacts(context,manga.id,mangaKey))return@withContext
+        if(srRows.value.isEmpty() && srModelByPage.isEmpty() && !SrStore.bookHasArtifacts(context,mangaKey))return@withContext
         bindSrPages()
         val available=(0 until ownSource.size).associateWith { SrStore.infoOf(context,manga.id,it,mangaKey) }.filterValues { it!=null }
         srRowsMutex.withLock {
@@ -1275,8 +1278,10 @@ class ReaderTranslationController(
         setPageModeBusy(mode != MODE_MANUAL)
         // 切走手动模式时，把在途的手动翻译停掉，避免与队列抢 OcrLock
         if (mode != MODE_MANUAL) {
+            val manualWasRunning = manualJob?.isActive == true
             manualJob?.cancel()
             manualJob = null
+            if (manualWasRunning) queuePage.value = -1
         }
         translateMode.value = mode
         restartQueue()
@@ -1412,8 +1417,11 @@ class ReaderTranslationController(
                             waitingNotified = true
                             LogCollector.d(TAG, "queue: OcrLock busy, waiting")
                             onPhase(
-                                ReaderTranslatePhase.TRANSLATING,
-                                context.getString(R.string.reader_translate_waiting_other)
+                                if (isOcrOnlyMode()) ReaderTranslatePhase.DETECTING else ReaderTranslatePhase.TRANSLATING,
+                                context.getString(
+                                    if (isOcrOnlyMode()) R.string.reader_ocr_waiting_other
+                                    else R.string.reader_translate_waiting_other
+                                )
                             )
                         }
                         continue
@@ -1436,12 +1444,7 @@ class ReaderTranslationController(
                         }
                         queuePage.value = target
                         try {
-                            if (isOcrOnlyMode()) {
-                                val prep = ocrPhase(target)
-                                if (prep != null) showOcrOnlyPage(target, prep)
-                            } else {
-                                runTranslate(target, fromQueue = true)
-                            }
+                            runTranslate(target, fromQueue = true)
                         } finally {
                             queuePage.value = -1
                         }
@@ -1523,8 +1526,13 @@ class ReaderTranslationController(
                     }
                     queuePage.value = page
                     reportQueuePhase(page, ReaderTranslatePhase.DETECTING, null)
-                    val prep = ocrPhase(page)
+                    val prep = ocrPhase(page, trackForegroundPage = true)
                     if (prep == null) {
+                        reportQueuePhase(
+                            page,
+                            ReaderTranslatePhase.FAILED,
+                            failMessageOf(page) ?: context.getString(R.string.reader_translate_ocr_empty),
+                        )
                         if (currentCoroutineContext().isActive) startAutoSr(page)
                         // OCR 阶段自己已经写了失败记录 + 日志（等锁超时/加载失败/空页）
                         slots.release()
@@ -1532,8 +1540,20 @@ class ReaderTranslationController(
                     }
                     if (isOcrOnlyMode()) {
                         try {
-                            showOcrOnlyPage(page, prep)
-                            dispatched++
+                            if (showOcrOnlyPageSafely(page, prep)) {
+                                dispatched++
+                                reportQueuePhase(
+                                    page,
+                                    ReaderTranslatePhase.SUCCESS,
+                                    context.getString(R.string.execution_ocr_only_done),
+                                )
+                            } else {
+                                reportQueuePhase(
+                                    page,
+                                    ReaderTranslatePhase.FAILED,
+                                    failMessageOf(page) ?: context.getString(R.string.reader_translate_ocr_empty),
+                                )
+                            }
                         } finally {
                             slots.release()
                         }
@@ -1712,7 +1732,7 @@ class ReaderTranslationController(
      */
     fun busyHint(source: BusySource): String = when (source) {
         BusySource.PAGE_MODE -> busyHintText(translateMode.value)
-        BusySource.CHAPTER_TRANSLATE -> context.getString(R.string.reader_blocked_by_chapter_translate)
+        BusySource.CHAPTER_TRANSLATE -> busyHintText(translateMode.value)
         BusySource.CHAPTER_SR -> context.getString(R.string.reader_blocked_by_chapter_sr)
         BusySource.NONE -> ""
     }
@@ -1731,11 +1751,17 @@ class ReaderTranslationController(
             cancelEverything()
             translateMode.value = MODE_MANUAL
             version.value += 1
-            context.getString(R.string.reader_translate_force_stopped_to_manual)
+            context.getString(
+                if (isOcrOnlyMode()) R.string.reader_ocr_force_stopped_to_manual
+                else R.string.reader_translate_force_stopped_to_manual
+            )
         }
         BusySource.CHAPTER_TRANSLATE -> {
             cancelAllChapterJobs()
-            context.getString(R.string.reader_translate_force_stopped_chapter)
+            context.getString(
+                if (isOcrOnlyMode()) R.string.reader_ocr_force_stopped_chapter
+                else R.string.reader_translate_force_stopped_chapter
+            )
         }
         BusySource.CHAPTER_SR -> {
             cancelSrChapterJob()
@@ -1824,7 +1850,7 @@ class ReaderTranslationController(
     fun inFlightPages(): Set<Int> = chapterRunner.inFlightPages()
 
     /** **识别中**（OCR 阶段）的页 —— 面板与状态浮层要把它和「翻译中」分开显示（用户口径）。恒 ≤1 页。 */
-    fun ocrPages(): Set<Int> = chapterRunner.ocrPages()
+    fun ocrPages(): Set<Int> = chapterRunner.ocrPages() + foregroundOcrPages.toSet()
 
     /** **翻译中**（请求已发出 / 本地推理中）的页。 */
     fun translatingPages(): Set<Int> =
@@ -1986,10 +2012,26 @@ class ReaderTranslationController(
         version.value += 1
     }
 
-    private suspend fun showOcrOnlyPage(page: Int, prep: PreparedPage) {
+    private suspend fun showOcrOnlyPageSafely(page: Int, prep: PreparedPage): Boolean {
+        return try {
+            showOcrOnlyPage(page, prep)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            LogCollector.e(TAG, "OCR 结果上屏失败 page=$page", e)
+            withContext(NonCancellable) {
+                runCatching {
+                    fail(page, "OCR_DISPLAY_FAILED", e.message ?: context.getString(R.string.reader_translate_failed))
+                }
+            }
+            false
+        }
+    }
+
+    private suspend fun showOcrOnlyPage(page: Int, prep: PreparedPage): Boolean {
         if (prep.bubbles.isEmpty()) {
             if (!prep.bitmap.isRecycled) prep.bitmap.recycle()
-            return
+            return false
         }
         val originals = prep.bubbles.map { bubble ->
             TranslatedBubble(
@@ -2014,6 +2056,7 @@ class ReaderTranslationController(
         } finally {
             if (!prep.bitmap.isRecycled) prep.bitmap.recycle()
         }
+        return true
     }
 
     private suspend fun acquireOcrLockWithWait(page: Int): Long {
@@ -2039,7 +2082,7 @@ class ReaderTranslationController(
      * 窗口**只包 OCR 阶段、不包整章任务**：超分据此让路（见 `OcrLock.beginOcrDemand` 的注释），
      * 但整章翻译期间超分仍然跑得起来（用户口径：超分要和翻译中一起出现）。
      */
-    private suspend fun ocrPhase(page: Int): PreparedPage? {
+    private suspend fun ocrPhase(page: Int, trackForegroundPage: Boolean = false): PreparedPage? {
         if (!sourcePageAvailable(page)) return null
         // 翻译模式下已有 OCR 载荷直接复用，避免重新调用 OCR；仅 OCR 模式只挑 IDLE 页。
         if (!isOcrOnlyMode()) {
@@ -2047,13 +2090,13 @@ class ReaderTranslationController(
         }
         OcrLock.beginOcrDemand()
         try {
-            return ocrPhaseLocked(page)
+            return ocrPhaseLocked(page, trackForegroundPage)
         } finally {
             OcrLock.endOcrDemand()
         }
     }
 
-    private suspend fun ocrPhaseLocked(page: Int): PreparedPage? {
+    private suspend fun ocrPhaseLocked(page: Int, trackForegroundPage: Boolean): PreparedPage? {
         // ⚠️ **等锁必须有超时，且超时要如实记账**（2026-09-28 用户报的"进度在涨、什么都没翻、
         // 正在翻译的卡片直接消失"就是这个静默 return null 造成的）：
         // 以前 `while (isRunning) delay()` 之后 `tryAcquire()` 一旦被别人抢先就**静默返回 null** ——
@@ -2070,6 +2113,10 @@ class ReaderTranslationController(
         // 否则下一页等待时会误判当前 PP-OCR 单例已失主并并发进入同一会话。
         val heartbeatJob = OcrLock.startHeartbeat(ocrToken)
         try {
+            if (trackForegroundPage) {
+                foregroundOcrPages += page
+                withContext(NonCancellable + Dispatchers.Main) { onVisual() }
+            }
             val (det, ocr) = try {
                 // startHeartbeat 覆盖模型加载和后续 native OCR，避免长页识别触发 30s 锁自愈。
                 TranslationEngineInit.ensureReady(context)
@@ -2100,15 +2147,20 @@ class ReaderTranslationController(
                 val bubbles = DetectionBridge.ocrToBubbleRegions(
                     blocks, RtTextDirection.resolve(det, rtDirection, overlayConfig.textDirection)
                 )
-                if (bubbles.isEmpty()) {
+                val hasRecognizedText = bubbles.any { bubble ->
+                    bubble.texts.any { TranslateUtils.cleanOcrText(it).isNotBlank() }
+                }
+                if (!hasRecognizedText) {
                     withContext(NonCancellable) {
-                        runCatching { fail(page, "OCR_EMPTY", context.getString(R.string.reader_translate_ocr_empty)) }
+                        fail(page, "OCR_EMPTY", context.getString(R.string.reader_translate_ocr_empty))
                     }
+                    if (!bitmap.isRecycled) bitmap.recycle()
+                    null
                 } else {
                     // OCR 成功立即落库：后续翻译失败、取消或切换模式，都可以复用这份 OCR。
-                    withContext(NonCancellable) { runCatching { saveOcrRecord(page, bubbles, srcLang, tgtLang) } }
+                    withContext(NonCancellable) { saveOcrRecord(page, bubbles, srcLang, tgtLang) }
+                    PreparedPage(bitmap, bubbles, det, ocr, srcLang, tgtLang)
                 }
-                PreparedPage(bitmap, bubbles, det, ocr, srcLang, tgtLang)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 // ⚠️ **取消不是失败**：掐流水线/退出时，正在 OCR 的这一页会被取消 ——
                 // 若照 `catch (Exception)` 处理就会把它标成「失败」（面板上冒出一堆用户没见过的失败页，
@@ -2124,6 +2176,10 @@ class ReaderTranslationController(
                 null
             }
         } finally {
+            if (trackForegroundPage) {
+                foregroundOcrPages -= page
+                withContext(NonCancellable + Dispatchers.Main) { onVisual() }
+            }
             heartbeatJob.cancel()
             OcrLock.release(ocrToken)
         }
@@ -2175,9 +2231,9 @@ class ReaderTranslationController(
         try {
             if(allowAutoSr)srJob=maybeStartAutoSr(page,prep)
             if (isOcrOnlyMode()) {
-                showOcrOnlyPage(page, prep)
-                result = "OCR"
-                return true
+                val shown = showOcrOnlyPageSafely(page, prep)
+                result = if (shown) "OCR" else "失败(OCR 空)"
+                return shown
             }
             if (prep.bubbles.isEmpty()) {
                 val msg = context.getString(R.string.reader_translate_ocr_empty)
@@ -2370,17 +2426,18 @@ class ReaderTranslationController(
      * ⚠️ 三个缓存都要一起作废，否则删完页面上还挂着旧译图：分页 `renderLru`（三态各一份）、
      * 半成品 `PARTIAL`、Webtoon `webtoonLru`，以及内存里的三态记录。
      */
-    suspend fun deletePage(pageIndex: Int) = withContext(Dispatchers.IO) {
+    suspend fun deletePage(pageIndex: Int): Boolean = withContext(Dispatchers.IO) {
         try {
             dao.deletePage(manga.id, mangaKey, pageIndex)
         } catch (e: Exception) {
             LogCollector.e(TAG, "删除单页译文失败 page=$pageIndex", e)
-            return@withContext
+            return@withContext false
         }
         rows.update { it - pageIndex }
         evictPageCaches(pageIndex)
         version.value += 1
         withContext(Dispatchers.Main) { onVisual() }
+        true
     }
 
     /**
@@ -2412,9 +2469,21 @@ class ReaderTranslationController(
         srModelByPage.remove(pageIndex)
     }
 
-    /** 该段页号里已成功翻译的页数。 */
-    fun successCount(from: Int, to: Int): Int =
-        rows.value.count { it.key in from..to && it.value.state == ImportedPageTranslation.STATE_SUCCESS }
+    /** 该段页号里当前模式已完成的页数（OCR-only 按有有效 OCR 载荷计数）。 */
+    fun successCount(from: Int, to: Int): Int = rows.value.count { (page, row) ->
+        page in from..to && if (isOcrOnlyMode()) hasOcrPayload(row)
+        else row.state == ImportedPageTranslation.STATE_SUCCESS
+    }
+
+    /** Pages complete for the current execution mode: translated in translation mode, recognized in OCR-only mode. */
+    fun completedPages(): Set<Int> = if (isOcrOnlyMode()) recognizedPages() else translatedPages()
+
+    /** Pages with persisted OCR source text and bubble geometry. */
+    fun recognizedPages(): Set<Int> = rows.value.filterValues(::hasOcrPayload).keys
+
+    private fun hasOcrPayload(row: ImportedPageTranslation): Boolean =
+        !row.bubbleRects.isNullOrBlank() &&
+            TranslationCacheUtils.parseIndexedTextList(row.sourceText).any { it.isNotBlank() }
 
     /** 该段页号里**未成功**（未翻译 + 失败 + 翻译中）的页数。 */
     fun pendingCount(from: Int, to: Int): Int =
@@ -2469,7 +2538,17 @@ class ReaderTranslationController(
             }
         }
         val page = currentPageProvider()
-        manualJob = scope.launch(Dispatchers.IO) { runTranslate(page, fromQueue = false) }
+        queuePage.value = page
+        val job = scope.launch(Dispatchers.IO) {
+            runTranslate(page, fromQueue = false)
+        }
+        manualJob = job
+        job.invokeOnCompletion {
+            if (manualJob === job) {
+                manualJob = null
+                if (queuePage.value == page) queuePage.value = -1
+            }
+        }
         return TranslateClick.StartedManual
     }
 
@@ -2486,9 +2565,22 @@ class ReaderTranslationController(
         if (running.isNotEmpty()) {
             val done = running.sumOf { it.done }
             val total = running.sumOf { it.total }
+            if (isOcrOnlyMode()) {
+                return context.getString(R.string.reader_ocr_chapter_hint, done, total)
+            }
             return context.getString(R.string.reader_translate_chapter_hint, done, total)
         }
         val p = queuePage.value
+        if (isOcrOnlyMode()) {
+            return when {
+                p >= 0 && mode == MODE_AUTO -> context.getString(R.string.reader_ocr_hint_auto_page, p + 1)
+                p >= 0 && mode == MODE_AHEAD -> context.getString(R.string.reader_ocr_hint_ahead_page, p + 1)
+                p >= 0 -> context.getString(R.string.reader_ocr_hint_page, p + 1)
+                mode == MODE_AUTO -> context.getString(R.string.reader_ocr_hint_auto_idle)
+                mode == MODE_AHEAD -> context.getString(R.string.reader_ocr_hint_ahead_idle)
+                else -> context.getString(R.string.reader_ocr_busy)
+            }
+        }
         return when {
             p >= 0 && mode == MODE_AUTO ->
                 context.getString(R.string.reader_translate_hint_auto_page, p + 1)
@@ -2594,7 +2686,7 @@ class ReaderTranslationController(
 
     fun hasOcr(pageIndex: Int): Boolean {
         val row = rows.value[pageIndex] ?: return false
-        return !row.sourceText.isNullOrBlank() && !row.bubbleRects.isNullOrBlank()
+        return hasOcrPayload(row)
     }
 
     fun failMessageOf(pageIndex: Int): String? = rows.value[pageIndex]?.failMessage
@@ -2624,8 +2716,22 @@ class ReaderTranslationController(
         }
         // 已有 OCR 的页在普通翻译模式下直接复用；仅 OCR 模式只执行 OCR 并上屏原文。
         if (isOcrOnlyMode()) {
-            val prep = ocrPhase(page)
-            if (prep != null) showOcrOnlyPage(page, prep)
+            if (fromQueue) reportQueuePhase(page, ReaderTranslatePhase.DETECTING, null)
+            else onPhase(ReaderTranslatePhase.DETECTING, null)
+            val prep = ocrPhase(page, trackForegroundPage = true)
+            if (prep == null) {
+                val message = failMessageOf(page) ?: context.getString(R.string.reader_translate_ocr_empty)
+                if (fromQueue) reportQueuePhase(page, ReaderTranslatePhase.FAILED, message)
+                else onPhase(ReaderTranslatePhase.FAILED, message)
+            } else if (showOcrOnlyPageSafely(page, prep)) {
+                val message = context.getString(R.string.execution_ocr_only_done)
+                if (fromQueue) reportQueuePhase(page, ReaderTranslatePhase.SUCCESS, message)
+                else onPhase(ReaderTranslatePhase.SUCCESS, message)
+            } else {
+                val message = failMessageOf(page) ?: context.getString(R.string.reader_translate_ocr_empty)
+                if (fromQueue) reportQueuePhase(page, ReaderTranslatePhase.FAILED, message)
+                else onPhase(ReaderTranslatePhase.FAILED, message)
+            }
             return
         }
         // 放在缓存复用分支之前：该分支同样需要状态提示，而且不需要先拿 OCR 锁。
@@ -3195,7 +3301,8 @@ class ReaderTranslationController(
             ImportedPageTranslation.STATE_IDLE ->
                 if (rowHasPayload(pageIndex)) lastFullRender(pageIndex) else null
 
-            ImportedPageTranslation.STATE_OCR,
+            ImportedPageTranslation.STATE_OCR -> lastFullRender(pageIndex)
+
             ImportedPageTranslation.STATE_FAILED ->
                 renderLru.get(renderKey(pageIndex, TranslationCacheManager.OverlayMode.ORIGINAL, baseSig(pageIndex)))
                     ?: if (rowHasPayload(pageIndex)) lastFullRender(pageIndex) else null
@@ -3503,10 +3610,10 @@ class ReaderTranslationController(
 
     // ========== 三态切换 ==========
 
-    /** 循环切换：PLAIN → ORIGINAL → TRANSLATED → PLAIN。无成功记录页忽略。 */
+    /** 译文页循环三态；仅 OCR 页在 PLAIN 与 ORIGINAL 之间切换。没有 OCR 载荷的页忽略。 */
     fun cycleVisual(pageIndex: Int) {
         val state = stateOf(pageIndex)
-        val order = if (state == ImportedPageTranslation.STATE_SUCCESS) {
+        val order = if (state == ImportedPageTranslation.STATE_SUCCESS && !isOcrOnlyMode()) {
             listOf(
                 TranslationCacheManager.OverlayMode.PLAIN,
                 TranslationCacheManager.OverlayMode.ORIGINAL,
@@ -3526,13 +3633,16 @@ class ReaderTranslationController(
 
     /** 当前页显示态（成功页默认译文，其余默认原图）。 */
     fun currentVisual(pageIndex: Int): TranslationCacheManager.OverlayMode =
-        currentVisualByPage[pageIndex]
-            ?: when {
-                stateOf(pageIndex) == ImportedPageTranslation.STATE_SUCCESS && !isOcrOnlyMode() ->
-                    TranslationCacheManager.OverlayMode.TRANSLATED
-                hasOcr(pageIndex) -> TranslationCacheManager.OverlayMode.ORIGINAL
-                else -> TranslationCacheManager.OverlayMode.PLAIN
-            }
+        currentVisualByPage[pageIndex]?.let { stored ->
+            if (isOcrOnlyMode() && stored == TranslationCacheManager.OverlayMode.TRANSLATED) {
+                TranslationCacheManager.OverlayMode.ORIGINAL
+            } else stored
+        } ?: when {
+            stateOf(pageIndex) == ImportedPageTranslation.STATE_SUCCESS && !isOcrOnlyMode() ->
+                TranslationCacheManager.OverlayMode.TRANSLATED
+            hasOcr(pageIndex) -> TranslationCacheManager.OverlayMode.ORIGINAL
+            else -> TranslationCacheManager.OverlayMode.PLAIN
+        }
 
     // ========== Webtoon 原图/译文切换 ==========
 

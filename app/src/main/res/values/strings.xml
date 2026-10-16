@@ -719,7 +719,7 @@
 
 
     <string name="sr_low_res_tip">💡 Super resolution can only help genuinely low-resolution sources. Pages already 1000px+ wide barely change, and heavy screentone may be re-drawn. Keep it off unless the source is small.</string>
-    <string name="sr_storage_note">📁 Models live in Android/data/com.moe.starflow/files/sr/ — deleting those files uninstalls the model (the app will show it as "not downloaded").\n🎯 Super resolution only applies to the manga reader. Screenshot/recording translation and the novel reader never upscale, and OCR always reads the original page.\n🗂 Upscaled pages are 2x images saved per page in files/sr_cache/. A successful rerun replaces the previous result; a failed rerun keeps it. There is no size limit or automatic eviction. Results can be cleared manually and are removed when the manga is deleted.</string>
+    <string name="sr_storage_note">📁 Models live in Android/data/com.moe.starflow/files/sr/ — deleting model files makes them appear as "not downloaded".\n🎯 Super resolution only applies to the manga reader. Screenshot/recording translation and the novel reader never upscale, and OCR always reads the original page.\n🗂 Reader results are stored per book in the current library at .starflow/books/&lt;UUID&gt;/sr/. Benchmark logs and input images are in files/sr/. A successful rerun replaces the previous result; a failed rerun keeps it. Results are not automatically evicted and are removed when the manga is deleted.</string>
     <string name="sr_no_model_selected">No super-resolution model selected — download one below</string>
     <string name="sr_srmd_group">SRMD (2x)</string>
     <string name="sr_srmd_group_desc">A single model that handles several degradations at once (blur, noise, rescaling). Two levels: with denoise / without denoise.</string>
@@ -773,6 +773,7 @@
     <string name="model_download_err_timeout">Connection timed out (%s)</string>
     <string name="model_download_err_connect">Cannot connect to server (%s)</string>
     <string name="model_download_err_ssl">TLS/SSL error (%s)</string>
+    <string name="model_download_err_storage">Cannot write to model folder: %1$s. The app tried to repair the directory and partial-file permissions. This app-specific folder has no extra storage permission to grant; check that device storage is available and the system is not restricting the app, then restart the app and retry.</string>
     <string name="model_download_err_no_entry">No download entry for this model (downloadinfo.json has no such key)</string>
     <string name="model_download_err_file_invalid">File failed verification: %s</string>
     <string name="model_download_err_incomplete">Incomplete after download, missing/damaged: %s</string>
@@ -1093,18 +1094,23 @@
     <string name="reader_interval">Turn interval</string>
     <string name="reader_translate_pending">Translation coming soon…</string>
     <string name="reader_translate_busy">Another page is translating</string>
+    <string name="reader_ocr_busy">The OCR engine is busy with another task. Please wait.</string>
     <string name="reader_translate_model_missing">OCR models not ready: %1$s</string>
     <string name="reader_translate_api_not_configured">Please configure a translation API first</string>
     <string name="reader_translate_load_failed">Failed to read page</string>
     <string name="reader_translate_ocr_empty">No text detected on this page</string>
     <string name="reader_translate_empty">No translation produced</string>
     <string name="reader_toggle_desc">Toggle translated/original/plain</string>
+    <string name="reader_ocr_toggle_desc">Toggle recognized text/original image</string>
     <string name="reader_translate_mode_title">Translation mode</string>
     <string name="reader_execution_mode_translate">Execution mode: Translate</string>
     <string name="reader_execution_mode_ocr_only">Execution mode: OCR only</string>
     <string name="reader_translate_mode_manual">Manual</string>
     <string name="reader_translate_mode_auto">Auto</string>
     <string name="reader_translate_mode_incremental">Incremental</string>
+    <string name="reader_ocr_mode_manual">Manual OCR</string>
+    <string name="reader_ocr_mode_auto">Auto OCR</string>
+    <string name="reader_ocr_mode_incremental">Incremental OCR</string>
     <string name="reader_translate_summary">%1$d pages · %2$d done · %3$d ongoing · %4$d failed</string>
     <string name="reader_translate_ocr_model">OCR Model: %1$s</string>
     <string name="reader_translate_translator_model">Translation Model: %1$s</string>
@@ -1125,10 +1131,13 @@
     <string name="reader_sr_chapter_done">Upscaled</string>
     <string name="reader_sr_badge">%1$d/%2$d upscaled</string>
     <string name="reader_sr_blocked_by_translate">Translation is running (chapter / auto / translate-ahead). Pause or cancel it before upscaling.</string>
+    <string name="reader_sr_blocked_by_ocr">OCR is running (chapter / auto / incremental). Pause or cancel it before upscaling.</string>
     <string name="reader_translate_blocked_by_sr">Chapter upscaling is running. Cancel it before translating.</string>
+    <string name="reader_ocr_blocked_by_sr">Chapter upscaling is running. Cancel it before starting OCR.</string>
     <string name="reader_blocked_by_chapter_translate">Chapter translation is running. Double-tap to cancel it first.</string>
     <string name="reader_blocked_by_chapter_sr">This chapter is being upscaled. Double-tap to cancel it first.</string>
     <string name="reader_translate_force_stopped_chapter">Chapter translation was cancelled.</string>
+    <string name="reader_ocr_force_stopped_chapter">Chapter OCR was stopped.</string>
     <string name="reader_sr_clear_chapter_title">Clear chapter upscaling</string>
     <string name="reader_sr_clear_chapter_msg">Delete the upscaled image of every page in this chapter? Pages go back to the original artwork.</string>
     <string name="reader_sr_clear_chapter_ok">Clear</string>
@@ -1165,7 +1174,7 @@
     <string name="sr_fail_anime4k_init">Anime4K failed to initialise (GLES3 unavailable, or shader compilation failed)</string>
     <string name="sr_fail_anime4k_too_large">This page is too large, Anime4K was skipped: %1$d×%2$d (%3$.1f MP) exceeds the %4$.1f MP limit\nUse a super-resolution model to actually enlarge pages like this (Anime4K only restores lines at the same resolution)</string>
     <string name="sr_fail_inference">Super-resolution inference failed — the engine message follows (tap to copy)</string>
-    <string name="sr_fail_save">Could not write the upscaled image: storage full, or the sr_cache folder is not writable</string>
+    <string name="sr_fail_save">Could not write the upscaled image: check device storage and whether the current library SR folder is writable</string>
     <string name="sr_fail_page_load">Could not read the original page (file missing or failed to decode)</string>
     <string name="sr_fail_busy">This page is already being upscaled — please wait</string>
     <string name="sr_select_need_download">This model is not downloaded yet — tap "Download" on its right first, then select it:\n%1$s</string>
@@ -1197,6 +1206,7 @@
     <string name="reader_translate_state_translating">Translating</string>
     <!-- "Recognizing" = the OCR stage (always serial, at most 1 page). It is a different in-progress state from "Translating". -->
     <string name="reader_translate_state_ocr">Recognizing</string>
+    <string name="reader_translate_state_ocr_done">Recognized</string>
     <!-- One entry of the status chip: %1$s = stage name, %2$s = page list (P3, P4) -->
     <string name="reader_translate_stage_entry">%1$s %2$s</string>
     <string name="reader_translate_state_success">✓ Done</string>
@@ -1209,6 +1219,7 @@
     <string name="reader_translate_close">Close</string>
     <string name="reader_translate_detail_empty">No translation content yet</string>
     <string name="reader_translate_detecting">Detecting…</string>
+    <string name="reader_ocr_running">Recognizing…</string>
     <string name="reader_translate_in_progress">Translating…</string>
     <string name="reader_translate_skip_ocr">OCR text reused — skipping OCR · translating…</string>
     <string name="reader_translate_done">Translation done</string>
@@ -1223,10 +1234,18 @@
     <string name="reader_translate_hint_ahead_page">Translating P%1$d. Double-tap to pause.</string>
     <string name="reader_translate_hint_auto_idle">Double-tap to exit auto-translate first.</string>
     <string name="reader_translate_hint_ahead_idle">Double-tap to exit translate-ahead first.</string>
+    <string name="reader_ocr_hint_auto_page">Auto-recognizing P%1$d. Double-tap to pause OCR.</string>
+    <string name="reader_ocr_hint_ahead_page">Recognizing ahead at P%1$d. Double-tap to pause OCR.</string>
+    <string name="reader_ocr_hint_page">Recognizing P%1$d. Double-tap to pause OCR.</string>
+    <string name="reader_ocr_hint_auto_idle">Auto OCR is enabled. Double-tap to exit it and retry.</string>
+    <string name="reader_ocr_hint_ahead_idle">Incremental OCR is enabled. Double-tap to exit it and retry.</string>
     <string name="reader_translate_status_page">%1$s · P%2$d</string>
     <string name="reader_translate_batch_detect">Recognizing (%1$d/2)…</string>
     <string name="reader_translate_batch_translate">Translating (%1$d/2)…</string>
     <string name="reader_translate_queue_drained">Translation queue finished. Turn the page to continue.</string>
+    <string name="reader_ocr_queue_drained">No pages left to recognize. Turn the page to continue OCR.</string>
+    <string name="reader_ocr_waiting_other">Waiting for another OCR task to finish…</string>
+    <string name="reader_ocr_force_stopped">OCR was force-stopped.</string>
 
     <!-- ===== 漫画章节系统 ===== -->
     <!-- 章标题兜底：文件夹名本身带编号时只显示文件夹名（见 mangaChapterLabel） -->
@@ -1238,6 +1257,7 @@
     <string name="reader_chapter_first">Already at the first chapter</string>
     <string name="reader_chapter_last">Already at the last chapter</string>
     <string name="reader_chapter_badge">%1$d/%2$d translated</string>
+    <string name="reader_ocr_chapter_badge">%1$d/%2$d recognized</string>
 
     <!-- 章节目录（书架列表行 / 阅读器顶部胶囊点开的那个弹窗） -->
     <string name="import_chapters_count">%1$d chapters</string>
@@ -1262,6 +1282,9 @@
     <string name="reader_translate_chapter_pause">Pause</string>
     <string name="reader_translate_chapter_done">Translated</string>
     <string name="reader_translate_chapter_resume">Resume</string>
+    <string name="reader_ocr_chapter_recognize">Recognize chapter</string>
+    <string name="reader_ocr_chapter_done">Recognized</string>
+    <string name="reader_ocr_chapter_clear">Clear OCR results</string>
 
     <!-- 章节批量翻译：通知栏（每章一条，可暂停/继续/取消） -->
     <string name="chapter_translate_notify_title">%1$s · %2$s</string>
@@ -1279,22 +1302,39 @@
     <string name="chapter_translate_notify_summary_ocr">%1$d chapter(s) OCRing in background</string>
     <string name="reader_translate_chapter_clear">Clear</string>
     <string name="reader_translate_chapter_running">Translating chapter %1$d/%2$d</string>
+    <string name="reader_ocr_chapter_running">Recognizing chapter %1$d/%2$d</string>
+    <string name="reader_ocr_chapter_paused">OCR paused · %1$d/%2$d pages</string>
     <!-- 章节批量翻译的并发度（漫画：OCR 串行，调高主要加快翻译请求） -->
     <string name="reader_translate_concurrency">Max concurrent translation requests</string>
     <string name="reader_translate_concurrency_hint">Max concurrent requests for whole-chapter and incremental translation; local models stay at 1. OCR itself is always serial.</string>
     <string name="reader_translate_state_waiting">Waiting</string>
     <string name="reader_translate_chapter_hint">Translating chapter %1$d/%2$d. Double-tap to pause.</string>
+    <string name="reader_ocr_chapter_hint">Recognizing chapter %1$d/%2$d. Double-tap to pause.</string>
     <string name="reader_translate_chapter_finished">Chapter finished: %1$d/%2$d translated</string>
+    <string name="reader_ocr_chapter_finished">Chapter OCR finished: %1$d/%2$d recognized</string>
     <string name="reader_translate_chapter_nothing">Nothing to translate in this chapter</string>
+    <string name="reader_ocr_chapter_nothing">No pages need OCR in this chapter</string>
     <!-- 一键翻译整章的确认弹窗：默认「只翻未完成」，可强行「全部重翻」（覆盖已成功的页） -->
     <string name="reader_translate_chapter_confirm_title">Translate this chapter</string>
     <string name="reader_translate_chapter_confirm_msg">This chapter has %1$d pages: %2$d untranslated, %3$d failed, %4$d done.</string>
     <string name="reader_translate_chapter_only_pending">Pending only</string>
     <string name="reader_translate_chapter_overwrite">Redo all</string>
+    <string name="reader_ocr_chapter_confirm_title">Recognize this chapter</string>
+    <string name="reader_ocr_chapter_confirm_msg">This chapter has %1$d pages: %2$d need OCR, %3$d failed, %4$d recognized.</string>
+    <string name="reader_ocr_chapter_only_pending">Recognize pending pages</string>
+    <string name="reader_ocr_chapter_overwrite">Recognize all again</string>
     <string name="reader_translate_clear_confirm_title">Clear chapter translations?</string>
     <string name="reader_translate_clear_confirm_msg">The translation data of %1$d pages in this chapter will be deleted. This cannot be undone.</string>
     <string name="reader_translate_chapter_cleared">Chapter translations cleared</string>
+    <string name="reader_ocr_clear_chapter_confirm_title">Clear chapter OCR results?</string>
+    <string name="reader_ocr_clear_chapter_confirm_msg">OCR results for %1$d pages in this chapter will be deleted. This cannot be undone.</string>
+    <string name="reader_ocr_chapter_cleared">Chapter OCR results cleared</string>
+    <string name="reader_ocr_ahead_pages">Pages to recognize ahead</string>
+    <string name="reader_ocr_ahead_hint">Incremental OCR only: recognize this many pages after the current page. The window moves as you turn pages.</string>
+    <string name="reader_ocr_debounce">OCR start delay</string>
+    <string name="reader_ocr_debounce_hint">Wait briefly after page turning stops before starting OCR, so pages you swipe past are skipped.</string>
     <string name="reader_translate_delete_page">Clear</string>
+    <string name="reader_ocr_delete_page">Clear OCR</string>
     <string name="reader_translate_page_deleted">Page translation deleted</string>
     <string name="reader_translate_filter_done">Done</string>
     <string name="reader_translate_filter_ongoing">Ongoing</string>
@@ -1305,6 +1345,7 @@
     <string name="reader_translate_partial_cached">Translated (%1$d/%2$d cached, %3$d via API)</string>
     <string name="reader_translate_force_stopped">Translation was force-stopped.</string>
     <string name="reader_translate_force_stopped_to_manual">Translation was force-stopped, switched to manual mode.</string>
+    <string name="reader_ocr_force_stopped_to_manual">OCR was force-stopped, switched to manual mode.</string>
     <string name="reader_translate_debounce">Start delay</string>
     <string name="reader_translate_debounce_hint">Delay before translating after a page turn (auto/incremental). Smaller responds faster; more wasted translations while turning.</string>
     <string name="reader_translate_ahead_pages">Pages ahead</string>
@@ -1809,6 +1850,9 @@
     <string name="reader_clear_page_confirm_title">Clear this page\'s translation?</string>
     <string name="reader_clear_page_confirm_msg">This deletes the translation of page %1$d (source text and bubble data included) and shows the original image again. This cannot be undone.</string>
     <string name="reader_clear_page_confirm_ok">Clear</string>
+    <string name="reader_ocr_clear_page_confirm_title">Clear this page OCR result?</string>
+    <string name="reader_ocr_clear_page_confirm_msg">This deletes the OCR result and bubble data of page %1$d and shows the original image again. This cannot be undone.</string>
+    <string name="reader_ocr_page_deleted">Page OCR result deleted</string>
 
     <!-- waifu2x family (2026-10, official ONNX build from deepghs/waifu2x_onnx) -->
 

@@ -10,6 +10,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.file.Files
@@ -26,6 +27,8 @@ object ModelDownloadManager {
     private const val SPEED_UPDATE_INTERVAL = 500L  // 每 500ms 更新一次速度
     private const val BUFFER_SIZE = 65536  // 64KB 缓冲区
 
+    private class StorageAccessException(message: String, cause: Throwable? = null) : IOException(message, cause)
+
     /**
      * 下载进度回调
      */
@@ -37,7 +40,7 @@ object ModelDownloadManager {
      * 下载模型文件
      */
     suspend fun downloadModel(
-        @Suppress("UNUSED_PARAMETER") context: Context,
+        context: Context,
         url: String,
         checksum: String,  // MD5
         destFile: File,
@@ -51,6 +54,11 @@ object ModelDownloadManager {
         for (attempt in 1..maxRetries) {
             try {
                 LogCollector.d(TAG, "开始下载 (attempt $attempt/$maxRetries): $url")
+
+                // 先验证目标目录，避免模型服务器已经响应后才因本地目录拒绝写入而失败。
+                // 如果旧 .part 只是不小心被设成只读，尝试恢复属主写权限；无法恢复时
+                // 删除这个不完整文件，从头下载（目录仍会在下面做真实创建探测）。
+                ensureWritableDestination(context, tempFile)
 
                 connection = URL(url).openConnection() as HttpURLConnection
                 connection.connectTimeout = 15000
@@ -158,10 +166,21 @@ object ModelDownloadManager {
                 LogCollector.d(TAG, "下载已取消")
                 throw e
             } catch (e: Exception) {
-                lastException = e
-                LogCollector.e(TAG, "attempt $attempt/$maxRetries 失败: ${e.message}")
+                val reported = if (isAccessDenied(e)) {
+                    IOException(
+                        context.getString(
+                            R.string.model_download_err_storage,
+                            tempFile.parentFile?.absolutePath ?: tempFile.absolutePath
+                        ),
+                        e
+                    )
+                } else e
+                lastException = reported
+                LogCollector.e(TAG, "attempt $attempt/$maxRetries 失败: ${reported.message}")
                 connection?.disconnect()
                 connection = null
+                // 权限拒绝不会因重复请求网络而恢复；把明确原因交给 Service 展示。
+                if (isAccessDenied(e)) return@withContext Result.failure(reported)
                 if (attempt < maxRetries) {
                     kotlinx.coroutines.delay((attempt * 2000L).coerceAtMost(10000L))
                 }
@@ -173,6 +192,90 @@ object ModelDownloadManager {
         // 只有删除已下载成功的目标文件时才会清理（由调用方 deleteModel() 处理）
         Result.failure(lastException ?: Exception(context.getString(R.string.toast_download_failed)))
     }
+
+    private fun ensureWritableDestination(context: Context, tempFile: File) {
+        val parent = tempFile.parentFile
+            ?: throw StorageAccessException(context.getString(R.string.model_download_err_storage, tempFile.absolutePath))
+        if (!parent.exists() && !parent.mkdirs() && !parent.isDirectory) {
+            throw StorageAccessException(context.getString(R.string.model_download_err_storage, parent.absolutePath))
+        }
+        if (!parent.isDirectory) {
+            throw StorageAccessException(context.getString(R.string.model_download_err_storage, parent.absolutePath))
+        }
+
+        // 只修复当前 App 所有目录/文件的属主权限；不申请对共享存储的宽泛权限。
+        if (!parent.canRead()) parent.setReadable(true, true)
+        if (!parent.canWrite()) parent.setWritable(true, true)
+        if (!parent.canExecute()) parent.setExecutable(true, true)
+
+        if (tempFile.exists() && !tempFile.canWrite()) {
+            tempFile.setWritable(true, true)
+            if (!tempFile.canWrite()) {
+                if (!tempFile.delete()) {
+                    throw StorageAccessException(context.getString(R.string.model_download_err_storage, tempFile.absolutePath))
+                }
+                LogCollector.w(TAG, "删除不可写的断点文件，改为从头下载: ${tempFile.absolutePath}")
+            }
+        }
+
+        try {
+            probeWritableDirectory(parent)
+            return
+        } catch (e: Exception) {
+            // 旧的空 sr 目录可能本身带有错误权限。File.delete() 只会删除空目录，
+            // 不会递归删除模型；重建仍使用同一个 files/sr 路径。
+            if (!isSrModelDirectory(context, parent) || !parent.delete()) {
+                throw StorageAccessException(
+                    context.getString(R.string.model_download_err_storage, parent.absolutePath),
+                    e
+                )
+            }
+        }
+
+        if (!parent.mkdirs() && !parent.isDirectory) {
+            throw StorageAccessException(context.getString(R.string.model_download_err_storage, parent.absolutePath))
+        }
+        if (!parent.isDirectory) {
+            throw StorageAccessException(context.getString(R.string.model_download_err_storage, parent.absolutePath))
+        }
+        if (!parent.canRead()) parent.setReadable(true, true)
+        if (!parent.canWrite()) parent.setWritable(true, true)
+        if (!parent.canExecute()) parent.setExecutable(true, true)
+
+        try {
+            probeWritableDirectory(parent)
+        } catch (e: Exception) {
+            throw StorageAccessException(
+                context.getString(R.string.model_download_err_storage, parent.absolutePath),
+                e
+            )
+        }
+    }
+
+    private fun probeWritableDirectory(parent: File) {
+        val probe = File.createTempFile(".sf-", ".tmp", parent)
+        if (!probe.delete()) {
+            probe.deleteOnExit()
+            throw IOException("无法清理下载目录写入探测文件")
+        }
+    }
+
+    private fun isSrModelDirectory(context: Context, parent: File): Boolean {
+        val appFilesDir = context.getExternalFilesDir(null) ?: return false
+        return try {
+            parent.canonicalFile == File(appFilesDir, "sr").canonicalFile
+        } catch (_: IOException) {
+            false
+        }
+    }
+
+    private fun isAccessDenied(error: Throwable): Boolean =
+        generateSequence(error) { it.cause }.any { cause ->
+            cause is StorageAccessException ||
+                cause is SecurityException ||
+                cause.message?.contains("EACCES", ignoreCase = true) == true ||
+                cause.message?.contains("Permission denied", ignoreCase = true) == true
+        }
 
     private fun calculateMD5(file: File): String {
         val md = MessageDigest.getInstance("MD5")

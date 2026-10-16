@@ -105,6 +105,7 @@ class ReaderPageStateAdapter(
 
     /** 在途页：**翻译中**（请求已发出 / 本地推理）的页号集合。 */
     private var translatingPages: Set<Int> = emptySet()
+    private var ocrOnly = false
     private var selectedChapter = 0
     private var filter = FILTER_ALL
 
@@ -136,6 +137,7 @@ class ReaderPageStateAdapter(
          */
         ocrPages: Set<Int> = emptySet(),
         translatingPages: Set<Int> = emptySet(),
+        ocrOnly: Boolean = false,
     ) {
         // ⚠️ 判据是「**章表变了**」而不是「这是第一次提交」：宿主会先往面板字段里存一份章表
         // 再调这里，用「this.chapters.isEmpty()」判首次会被那一步提前破坏，
@@ -150,6 +152,7 @@ class ReaderPageStateAdapter(
         this.waitingPages = waitingPages
         this.ocrPages = ocrPages
         this.translatingPages = translatingPages
+        this.ocrOnly = ocrOnly
         if (chaptersChanged) expanded += selectedChapter
         rebuild()
     }
@@ -214,7 +217,9 @@ class ReaderPageStateAdapter(
         if (chapters.isEmpty()) return emptyList()
         val successByChapter = HashMap<Int, Int>()
         for (r in records) {
-            if (r.state != ImportedPageTranslation.STATE_SUCCESS) continue
+            val complete = if (ocrOnly) hasOcrPayload(r)
+            else r.state == ImportedPageTranslation.STATE_SUCCESS
+            if (!complete) continue
             val idx = chapterIndexFor(r.pageIndex)
             if (idx >= 0) successByChapter[idx] = (successByChapter[idx] ?: 0) + 1
         }
@@ -245,7 +250,7 @@ class ReaderPageStateAdapter(
         val inFlight = (ocrPages + translatingPages) - waitingPages
         val recorded = records
             .filter { chapterIndexFor(it.pageIndex) == chapterIndex }
-            .filter { it.state != ImportedPageTranslation.STATE_IDLE }
+            .filter { it.state != ImportedPageTranslation.STATE_IDLE || (ocrOnly && hasOcrPayload(it)) }
             // ⚠️ **在途页一律走阶段行**（见 ①），哪怕它带着上一次的记录：重翻时库里还是
             // SUCCESS/FAILED，照记录渲染会出现「明明在识别中，卡片写着已完成」。
             .filter { it.pageIndex !in inFlight }
@@ -292,11 +297,12 @@ class ReaderPageStateAdapter(
     }
 
     private fun matchesFilter(r: ImportedPageTranslation): Boolean = when (filter) {
-        FILTER_DONE -> r.state == ImportedPageTranslation.STATE_SUCCESS
-        FILTER_ONGOING -> r.state == ImportedPageTranslation.STATE_TRANSLATING ||
-            r.state == ImportedPageTranslation.STATE_OCR ||
-            (r.state == ImportedPageTranslation.STATE_FAILED &&
-                !r.sourceText.isNullOrBlank() && !r.bubbleRects.isNullOrBlank())
+        FILTER_DONE -> if (ocrOnly) hasOcrPayload(r)
+            else r.state == ImportedPageTranslation.STATE_SUCCESS
+        FILTER_ONGOING -> if (ocrOnly) r.state == ImportedPageTranslation.STATE_TRANSLATING
+            else r.state == ImportedPageTranslation.STATE_TRANSLATING ||
+                r.state == ImportedPageTranslation.STATE_OCR ||
+                (r.state == ImportedPageTranslation.STATE_FAILED && hasOcrPayload(r))
         FILTER_FAILED -> r.state == ImportedPageTranslation.STATE_FAILED
         else -> true
     }
@@ -348,17 +354,22 @@ class ReaderPageStateAdapter(
                 // ⚠️ 分母用**任务自己的 total**：默认「只翻未完成」时任务 total 只是待翻页数，
                 // 用章页数会出现「已译 12/22」→「翻译中 0/22」→ 停在 10/22 的倒退（小说侧一直是 done/total）。
                 running -> ctx.getString(
-                    R.string.reader_translate_chapter_running,
+                    if (ocrOnly) R.string.reader_ocr_chapter_running else R.string.reader_translate_chapter_running,
                     row.jobDone,
                     if (row.jobTotal > 0) row.jobTotal else row.pageCount,
                 )
                 paused -> ctx.getString(
-                    R.string.chapter_translate_notify_paused,
+                    if (ocrOnly) R.string.reader_ocr_chapter_paused else R.string.chapter_translate_notify_paused,
                     row.jobDone,
                     if (row.jobTotal > 0) row.jobTotal else row.pageCount,
                 )
-                allDone -> ctx.getString(R.string.reader_translate_chapter_done)
-                else -> ctx.getString(R.string.reader_chapter_badge, row.success, row.pageCount)
+                allDone -> ctx.getString(
+                    if (ocrOnly) R.string.reader_ocr_chapter_done else R.string.reader_translate_chapter_done
+                )
+                else -> ctx.getString(
+                    if (ocrOnly) R.string.reader_ocr_chapter_badge else R.string.reader_chapter_badge,
+                    row.success, row.pageCount
+                )
             }
             setTextColor(
                 when {
@@ -387,7 +398,9 @@ class ReaderPageStateAdapter(
             text = when {
                 running -> ctx.getString(R.string.reader_translate_chapter_pause)
                 paused -> ctx.getString(R.string.reader_translate_chapter_resume)
-                else -> ctx.getString(R.string.reader_translate_chapter_translate)
+                else -> ctx.getString(
+                    if (ocrOnly) R.string.reader_ocr_chapter_recognize else R.string.reader_translate_chapter_translate
+                )
             }
             // ⚠️ **整章译完 → 置灰**（用户口径 2026-10-01：「翻译本章已经完成就按钮应该置灰，
             //    除非用户手动删除了某张的译文，这个按钮才应该实时刷新变成可用状态」）。
@@ -417,7 +430,9 @@ class ReaderPageStateAdapter(
             // ⚠️ 只在**任务真的还在跑/暂停**时才显示「取消」；完成态必须是「清空译文」
             //（用户报的"已经翻完了还一直显示暂停和取消"）
             text = if (running || paused) ctx.getString(R.string.cancel)
-            else ctx.getString(R.string.reader_translate_chapter_clear)
+            else ctx.getString(
+                if (ocrOnly) R.string.reader_ocr_chapter_clear else R.string.reader_translate_chapter_clear
+            )
             setTextColor(0xFFCC5555.toInt())
             background = pill(if (dark) 0x33CC5555 else 0x14CC5555)
             setOnClickListener { onChapterSecondary(row.chapterIndex) }
@@ -479,7 +494,6 @@ class ReaderPageStateAdapter(
             row.stage == ChapterTaskStage.TRANSLATE ||
                 page.state == ImportedPageTranslation.STATE_TRANSLATING -> CardBackdrop.Tone.ACTIVE
             page.state == ImportedPageTranslation.STATE_FAILED -> CardBackdrop.Tone.FAILED
-            page.state == ImportedPageTranslation.STATE_OCR -> CardBackdrop.Tone.OCR
             else -> null
         }
         // ⚠️ 子行必须走 `applyNested`（方角 + 左侧 3dp 竖线 + 上下零间距）：
@@ -506,19 +520,29 @@ class ReaderPageStateAdapter(
             badge.setText(R.string.reader_translate_state_translating)
             badge.setBackgroundResource(R.drawable.bg_state_translating)
         } else {
-            badge.setText(contextString(item.context, when (page.state) {
+            val stateLabel = if (ocrOnly && hasOcrPayload(page) && page.state != ImportedPageTranslation.STATE_FAILED) {
+                R.string.reader_translate_state_ocr_done
+            } else when (page.state) {
                 ImportedPageTranslation.STATE_TRANSLATING -> R.string.reader_translate_state_translating
-                ImportedPageTranslation.STATE_SUCCESS -> R.string.reader_translate_state_success
+                ImportedPageTranslation.STATE_SUCCESS -> if (ocrOnly && hasOcrPayload(page))
+                    R.string.reader_translate_state_ocr_done else R.string.reader_translate_state_success
                 ImportedPageTranslation.STATE_FAILED -> R.string.reader_translate_state_failed
-                ImportedPageTranslation.STATE_OCR -> R.string.reader_translate_state_ocr
+                ImportedPageTranslation.STATE_OCR -> R.string.reader_translate_state_ocr_done
                 else -> R.string.reader_translate_state_idle
-            }))
+            }
+            badge.setText(contextString(item.context, stateLabel))
             badge.setBackgroundResource(
-                when (page.state) {
-                    ImportedPageTranslation.STATE_SUCCESS -> R.drawable.bg_state_success
-                    ImportedPageTranslation.STATE_FAILED -> R.drawable.bg_state_failed
-                    ImportedPageTranslation.STATE_TRANSLATING -> R.drawable.bg_state_translating
-                    ImportedPageTranslation.STATE_OCR -> R.drawable.bg_state_ocr
+                when {
+                    ocrOnly && hasOcrPayload(page) && page.state != ImportedPageTranslation.STATE_FAILED ->
+                        R.drawable.bg_state_success
+                    page.state == ImportedPageTranslation.STATE_SUCCESS ->
+                        R.drawable.bg_state_success
+                    page.state == ImportedPageTranslation.STATE_FAILED ->
+                        R.drawable.bg_state_failed
+                    page.state == ImportedPageTranslation.STATE_TRANSLATING ->
+                        R.drawable.bg_state_translating
+                    page.state == ImportedPageTranslation.STATE_OCR ->
+                        R.drawable.bg_state_success
                     else -> R.drawable.bg_state_idle
                 }
             )
@@ -537,9 +561,10 @@ class ReaderPageStateAdapter(
         btnDetail.text = contextString(item.context,
             if (expanded) R.string.reader_translate_collapse else R.string.reader_translate_row_detail)
 
-        // 删除本页译文（整行数据）。⚠️ 必须**显式**置 VISIBLE：本布局与小说面板共用，
+        // 删除本页记录（整行数据）。⚠️ 必须**显式**置 VISIBLE：本布局与小说面板共用，
         // 默认 gone，回收复用时不赋值就会把上一行的按钮状态带过来（或永远不显示）
         item.findViewById<TextView>(R.id.btn_row_delete).apply {
+            setText(if (ocrOnly) R.string.reader_ocr_delete_page else R.string.reader_translate_delete_page)
             visibility = if (row.waiting) View.GONE else View.VISIBLE
             setOnClickListener { onDeletePage(page.pageIndex) }
         }
@@ -582,6 +607,10 @@ class ReaderPageStateAdapter(
         }
     }
 
+    private fun hasOcrPayload(row: ImportedPageTranslation): Boolean =
+        !row.bubbleRects.isNullOrBlank() &&
+            TranslationCacheUtils.parseIndexedTextList(row.sourceText).any { it.isNotBlank() }
+
     /** 像屏幕翻译历史那样：元数据（翻译器/语言/时间）+ 逐条 原文(淡)+译文(主)。拖拽选择复制，无复制按钮。 */
     private fun fillDetail(
         item: View,
@@ -591,7 +620,7 @@ class ReaderPageStateAdapter(
         accent: Int
     ) {
         val meta = buildString {
-            row.translatorName?.takeIf { it.isNotBlank() }?.let { append(it).append("\n") }
+            if (!ocrOnly) row.translatorName?.takeIf { it.isNotBlank() }?.let { append(it).append("\n") }
             val langs = listOfNotNull(row.sourceLang, row.targetLang)
             if (langs.isNotEmpty()) append(langs.joinToString(" → ")).append(" · ")
             if (row.updatedAtMs > 0L) {
@@ -609,8 +638,10 @@ class ReaderPageStateAdapter(
         for (i in originals.indices) {
             sb.append("[${i + 1}] ")
             sb.append(originals[i], ForegroundColorSpan(subColor), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-            sb.append("\n[${i + 1}] ")
-            sb.append(translations.getOrNull(i).orEmpty(), ForegroundColorSpan(labelColor), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            if (!ocrOnly) {
+                sb.append("\n[${i + 1}] ")
+                sb.append(translations.getOrNull(i).orEmpty(), ForegroundColorSpan(labelColor), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
             if (i < originals.size - 1) sb.append("\n\n")
         }
         item.findViewById<TextView>(R.id.tv_detail_list).text = sb

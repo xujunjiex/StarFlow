@@ -350,6 +350,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 translationController?.load()
                 refreshTranslationChrome()
                 refreshProgressTranslation()
+                if (mode != 3) applyPageVisual(currentPage)
                 // ⚠️ 启动就处于 Webtoon 时，onCreate 里的 applyPager() 早于控制器创建 → 那次预热是空跑。
                 // 等 load() 拿到记录后再预热一次（此时才知道哪些页是已翻译的）。
                 if (mode == 3) {
@@ -437,8 +438,12 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun showForceStoppedNotice(toManual: Boolean) {
         notifyUser(
             getString(
-                if (toManual) R.string.reader_translate_force_stopped_to_manual
-                else R.string.reader_translate_force_stopped
+                when {
+                    translationController?.isOcrOnlyMode() == true && toManual -> R.string.reader_ocr_force_stopped_to_manual
+                    translationController?.isOcrOnlyMode() == true -> R.string.reader_ocr_force_stopped
+                    toManual -> R.string.reader_translate_force_stopped_to_manual
+                    else -> R.string.reader_translate_force_stopped
+                }
             )
         )
     }
@@ -653,7 +658,7 @@ class MangaReaderActivity : AppCompatActivity() {
         TranslationStatusOverlay.getInstance(this@MangaReaderActivity).dismiss()
         // 兜底：onStop 没发过（进程被杀/未走 onStop 的路径）而当时确实在自动翻 → 补一次
         if (wasActive && !pausedToManualNotified) {
-            notifyUser(getString(R.string.reader_translate_force_stopped_to_manual))
+            showForceStoppedNotice(toManual = true)
         }
         // ⚠️ 释放本 Activity 自持的页数据源：PDF 的 `PdfRenderer` 占着 FD（有限资源）。
         //    控制器那份是**另一个实例**（它自己的 ownSource），在 `shutdownAll` 里释放 —— 两边各关各的。
@@ -1045,8 +1050,11 @@ class MangaReaderActivity : AppCompatActivity() {
             // ⚠️ "点了没反应"排查的第一现场：这条日志只说明"点击到了"，后面没别的日志
             // 才说明是流程里被拦住了（配合 ReaderAnim 已限流，日志窗口不会再被刷掉）
             LogCollector.d("ReaderTranslate", "翻译按钮点击：page=$currentPage mode=$mode disableByMode=${isTranslateDisabledByMode()}")
-            // 「重新翻译」才转一圈（用户口径：重新翻译可以是旋转；三态切换不要）
-            if (translationController?.stateOf(currentPage) == ImportedPageTranslation.STATE_SUCCESS) {
+            // 「重新翻译 / 重新 OCR」才转一圈；显示态切换不要旋转。
+            val currentState = translationController?.stateOf(currentPage)
+            val ocrComplete = translationController?.isOcrOnlyMode() == true &&
+                translationController?.hasOcr(currentPage) == true
+            if (currentState == ImportedPageTranslation.STATE_SUCCESS || ocrComplete) {
                 binding.ivTranslate.animate().rotationBy(360f).setDuration(420).start()
             }
             if (isTranslateDisabledByMode()) {
@@ -1069,7 +1077,12 @@ class MangaReaderActivity : AppCompatActivity() {
                     TranslationStatusOverlay.getInstance(this).dismiss()
                     // 双击强制取消 = 强制退出 + 回退手动（用户口径：提示前一句固定，后一句只在真回退时才接）。
                     // 走统一出口：浮层画不出来时至少还有 Toast，否则"双击了但什么都没说"
-                    notifyUser(getString(R.string.reader_translate_force_stopped_to_manual))
+                    notifyUser(
+                        getString(
+                            if (controller.isOcrOnlyMode()) R.string.reader_ocr_force_stopped_to_manual
+                            else R.string.reader_translate_force_stopped_to_manual
+                        )
+                    )
                     refreshTranslationChrome()
                     refreshProgressTranslation()
                 }
@@ -1082,13 +1095,16 @@ class MangaReaderActivity : AppCompatActivity() {
                     refreshProgressTranslation()
                 }
                 TranslateClick.Busy -> {
-                    notifyUser(getString(R.string.reader_translate_busy))
+                    notifyUser(getString(
+                        if (controller.isOcrOnlyMode()) R.string.reader_ocr_busy
+                        else R.string.reader_translate_busy
+                    ))
                     refreshTranslationChrome()
                 }
                 TranslateClick.StartedManual, TranslateClick.Ignored -> Unit
             }
         }
-        // 成功页：三态循环（译文/原文/纯原图）。
+        // 翻译成功页三态循环（译文/原文/纯原图）；OCR-only 页两态切换（原文/纯原图）。
         // Webtoon 没有单页三态（连续滚动下"当前页"语义不唯一），整屏切换改由阅读模式分段器
         // 上「连续滑动」按钮的两态控制（见 ReaderMenuSheet），本按钮在 Webtoon 下整组隐藏。
         binding.btnToggleTranslate.setOnClickListener {
@@ -1234,6 +1250,7 @@ class MangaReaderActivity : AppCompatActivity() {
         return ReaderChapterDialog.Status(
             success = controller.successCount(chapter.startPage, chapter.endPage),
             total = chapter.pageCount,
+            ocrOnly = controller.isOcrOnlyMode(),
             running = job?.state == ChapterJobState.RUNNING || job?.state == ChapterJobState.QUEUED,
             paused = job?.state == ChapterJobState.PAUSED,
             jobDone = job?.done ?: 0,
@@ -1255,6 +1272,7 @@ class MangaReaderActivity : AppCompatActivity() {
             chapters = chapters,
             currentChapter = currentChapterIndex(),
             records = c?.records() ?: emptyList(),
+            ocrOnly = c?.isOcrOnlyMode() == true,
             jobs = jobs.associate { it.chapterIndex to it.state },
             jobDone = jobs.associate { it.chapterIndex to it.done },
             jobTotal = jobs.associate { it.chapterIndex to it.total },
@@ -1275,7 +1293,15 @@ class MangaReaderActivity : AppCompatActivity() {
             runOnUiThread {
                 TranslationStatusOverlay.getInstance(this@MangaReaderActivity).dismiss()
                 // 整章翻完是「结果」，走统一出口（浮层不可用时退 Toast），不能静默
-                if (!cancelled) notifyUser(getString(R.string.reader_translate_chapter_finished, ok, total))
+                if (!cancelled) {
+                    notifyUser(
+                        getString(
+                            if (controller.isOcrOnlyMode()) R.string.reader_ocr_chapter_finished
+                            else R.string.reader_translate_chapter_finished,
+                            ok, total,
+                        )
+                    )
+                }
                 refreshProgressTranslation()
                 refreshTranslationChrome()
             }
@@ -1305,7 +1331,11 @@ class MangaReaderActivity : AppCompatActivity() {
                     val done = running.sumOf { it.done }
                     val total = running.sumOf { it.total }
                     if (!statusOverlayEnabled()) return@collect
-                    val base = getString(R.string.reader_translate_chapter_running, done, total)
+                    val base = getString(
+                        if (controller.isOcrOnlyMode()) R.string.reader_ocr_chapter_running
+                        else R.string.reader_translate_chapter_running,
+                        done, total,
+                    )
                     // 「识别中 P3 · 翻译中 P4, P5」——用户口径：进行中只有这两个状态，必须说清是哪个
                     val stages = chapterStageText(inFlight)
                     val text = if (stages.isEmpty()) base else "$base · $stages"
@@ -1379,26 +1409,33 @@ class MangaReaderActivity : AppCompatActivity() {
             else -> Unit
         }
         val pages = chapter.startPage..chapter.endPage
-        val untranslated = pages.count { controller.stateOf(it) == ImportedPageTranslation.STATE_IDLE }
-        val failed = pages.count { controller.stateOf(it) == ImportedPageTranslation.STATE_FAILED }
-        val done = pages.count { controller.stateOf(it) == ImportedPageTranslation.STATE_SUCCESS }
+        val ocrOnly = controller.isOcrOnlyMode()
+        val untranslated = pages.count {
+            controller.stateOf(it) == ImportedPageTranslation.STATE_IDLE && (!ocrOnly || !controller.hasOcr(it))
+        }
+        val failed = pages.count {
+            controller.stateOf(it) == ImportedPageTranslation.STATE_FAILED && (!ocrOnly || !controller.hasOcr(it))
+        }
+        val done = if (ocrOnly) pages.count(controller::hasOcr)
+        else controller.successCount(chapter.startPage, chapter.endPage)
         val all = pages.toList()
-        val pending = all.filter { controller.stateOf(it) != ImportedPageTranslation.STATE_SUCCESS }
+        val pending = if (ocrOnly) all.filterNot(controller::hasOcr)
+        else all.filter { controller.stateOf(it) != ImportedPageTranslation.STATE_SUCCESS }
         // 弹窗跟随**阅读背景**深浅（用户口径：弹窗也要适配主题配色，别跟系统主题走）
         ReaderDialogs.show(this, isDarkBackground()) {
-            setTitle(R.string.reader_translate_chapter_confirm_title)
+            setTitle(if (ocrOnly) R.string.reader_ocr_chapter_confirm_title else R.string.reader_translate_chapter_confirm_title)
             setMessage(
                 getString(
-                    R.string.reader_translate_chapter_confirm_msg,
+                    if (ocrOnly) R.string.reader_ocr_chapter_confirm_msg else R.string.reader_translate_chapter_confirm_msg,
                     chapter.pageCount, untranslated, failed, done
                 )
             )
             // 正按钮 = 「只翻未完成」→ 系统默认聚焦它 = 默认**不覆盖**（用户口径）
-            setPositiveButton(R.string.reader_translate_chapter_only_pending) { _, _ ->
+            setPositiveButton(if (ocrOnly) R.string.reader_ocr_chapter_only_pending else R.string.reader_translate_chapter_only_pending) { _, _ ->
                 startChapterBatch(chapterIndex, pending)
             }
             // 中按钮 = 强行覆盖（连已成功的页一起重翻）
-            setNeutralButton(R.string.reader_translate_chapter_overwrite) { _, _ ->
+            setNeutralButton(if (ocrOnly) R.string.reader_ocr_chapter_overwrite else R.string.reader_translate_chapter_overwrite) { _, _ ->
                 startChapterBatch(chapterIndex, all)
             }
             setNegativeButton(R.string.cancel, null)
@@ -1442,7 +1479,13 @@ class MangaReaderActivity : AppCompatActivity() {
             return
         }
         if (controller.srBatchBlockedByTranslate()) {
-            notifyUser(getString(R.string.reader_sr_blocked_by_translate), AppNotice.Style.ERROR)
+            notifyUser(
+                getString(
+                    if (controller.isOcrOnlyMode()) R.string.reader_sr_blocked_by_ocr
+                    else R.string.reader_sr_blocked_by_translate
+                ),
+                AppNotice.Style.ERROR,
+            )
             return
         }
         val chapter=chapters.getOrNull(chapterIndex) ?: return
@@ -1543,13 +1586,24 @@ class MangaReaderActivity : AppCompatActivity() {
         val controller = translationController ?: return
         val chapter = chapters.getOrNull(chapterIndex) ?: return
         if (pages.isEmpty()) {
-            notifyUser(getString(R.string.reader_translate_chapter_nothing))
+            notifyUser(
+                getString(
+                    if (controller.isOcrOnlyMode()) R.string.reader_ocr_chapter_nothing
+                    else R.string.reader_translate_chapter_nothing
+                ),
+            )
             return
         }
         // **互斥**（用户口径 2026-10）：超分本章在跑时不许再开翻译本章 —— 两个批量任务都要抢
         // `OcrLock`，同时开就是互相拖死；而且用户根本分不清哪条进度是哪条。要有提示，不静默。
         if (controller.translateBatchBlockedBySr()) {
-            notifyUser(getString(R.string.reader_translate_blocked_by_sr), AppNotice.Style.ERROR)
+            notifyUser(
+                getString(
+                    if (controller.isOcrOnlyMode()) R.string.reader_ocr_blocked_by_sr
+                    else R.string.reader_translate_blocked_by_sr
+                ),
+                AppNotice.Style.ERROR,
+            )
             return
         }
         // 章标题一起带过去：后台任务要靠它显示通知栏文案（阅读器关掉后拿不到 chapters）
@@ -1614,17 +1668,18 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun confirmClearChapter(chapterIndex: Int = currentChapterIndex()) {
         val controller = translationController ?: return
         val chapter = chapters.getOrNull(chapterIndex) ?: return
+        val ocrOnly = controller.isOcrOnlyMode()
         val affected = (chapter.startPage..chapter.endPage).count {
-            controller.stateOf(it) != ImportedPageTranslation.STATE_IDLE
+            controller.stateOf(it) != ImportedPageTranslation.STATE_IDLE || (ocrOnly && controller.hasOcr(it))
         }
         if (affected == 0) {
-            notifyUser(getString(R.string.reader_translate_chapter_nothing))
+            notifyUser(getString(if (ocrOnly) R.string.reader_ocr_chapter_nothing else R.string.reader_translate_chapter_nothing))
             return
         }
         // 清空本章也要跟阅读背景（用户口径：所有弹窗都要适配主题配色）
         ReaderDialogs.show(this, isDarkBackground()) {
-            setTitle(R.string.reader_translate_clear_confirm_title)
-            setMessage(getString(R.string.reader_translate_clear_confirm_msg, affected))
+            setTitle(if (ocrOnly) R.string.reader_ocr_clear_chapter_confirm_title else R.string.reader_translate_clear_confirm_title)
+            setMessage(getString(if (ocrOnly) R.string.reader_ocr_clear_chapter_confirm_msg else R.string.reader_translate_clear_confirm_msg, affected))
             setPositiveButton(R.string.confirm) { _, _ ->
                 lifecycleScope.launch {
                     val removed = controller.clearPageRange(chapter.startPage, chapter.endPage)
@@ -1636,7 +1691,7 @@ class MangaReaderActivity : AppCompatActivity() {
                     refreshTranslationChrome()
                     applyPageVisual(currentPage)
                     if (removed > 0) {
-                        notifyUser(getString(R.string.reader_translate_chapter_cleared))
+                        notifyUser(getString(if (ocrOnly) R.string.reader_ocr_chapter_cleared else R.string.reader_translate_chapter_cleared))
                     }
                 }
             }
@@ -1654,8 +1709,9 @@ class MangaReaderActivity : AppCompatActivity() {
         // ⚠️ 走 ReaderDialogs.show（= 跟随**阅读背景**深浅）：裸 AlertDialog 跟系统主题走，
         // 深色阅读背景 + 浅色系统下就是一块突兀的白底（用户报的"弹窗没适配主题配色"）
         ReaderDialogs.show(this, isDarkBackground()) {
-            setTitle(R.string.reader_clear_page_confirm_title)
-            setMessage(getString(R.string.reader_clear_page_confirm_msg, page + 1))
+            val ocrOnly = translationController?.isOcrOnlyMode() == true
+            setTitle(if (ocrOnly) R.string.reader_ocr_clear_page_confirm_title else R.string.reader_clear_page_confirm_title)
+            setMessage(getString(if (ocrOnly) R.string.reader_ocr_clear_page_confirm_msg else R.string.reader_clear_page_confirm_msg, page + 1))
             setNegativeButton(R.string.user_cancel, null)
             setPositiveButton(R.string.reader_clear_page_confirm_ok) { _, _ -> deletePageTranslation(page) }
         }
@@ -1665,13 +1721,20 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun deletePageTranslation(page: Int) {
         val controller = translationController ?: return
         lifecycleScope.launch {
-            controller.deletePage(page)
+            val deleted = controller.deletePage(page)
             refreshProgressTranslation()
             // ⚠️ 同上：删一页译文要让章卡片的「翻译本章」从置灰**立刻**变回可点
             pushPanelNow()
             refreshTranslationChrome()
             applyPageVisual(currentPage)
-            notifyUser(getString(R.string.reader_translate_page_deleted))
+            if (deleted) {
+                notifyUser(
+                    getString(
+                        if (controller.isOcrOnlyMode()) R.string.reader_ocr_page_deleted
+                        else R.string.reader_translate_page_deleted
+                    )
+                )
+            }
         }
     }
 
@@ -1791,7 +1854,12 @@ class MangaReaderActivity : AppCompatActivity() {
                 // message 优先：分批时管线会给出「识别中（1/2）…」这类带批次的文案（与截屏翻译对齐）
                 ReaderTranslatePhase.DETECTING -> {
                     setTranslatingPulse(true)
-                    progress(withPage(message ?: getString(R.string.reader_translate_detecting)))
+                    val fallback = if (translationController?.isOcrOnlyMode() == true) {
+                        getString(R.string.reader_ocr_running)
+                    } else {
+                        getString(R.string.reader_translate_detecting)
+                    }
+                    progress(withPage(message ?: fallback))
                 }
                 ReaderTranslatePhase.TRANSLATING -> {
                     setTranslatingPulse(true)
@@ -1821,7 +1889,12 @@ class MangaReaderActivity : AppCompatActivity() {
                 ReaderTranslatePhase.QUEUE_DRAINED -> {
                     setTranslatingPulse(false)
                     TranslationStatusOverlay.getInstance(this).dismiss()
-                    notifyUser(getString(R.string.reader_translate_queue_drained))
+                    notifyUser(
+                        getString(
+                            if (translationController?.isOcrOnlyMode() == true) R.string.reader_ocr_queue_drained
+                            else R.string.reader_translate_queue_drained
+                        )
+                    )
                     refreshProgressTranslation()
                 }
             }
@@ -1856,21 +1929,28 @@ class MangaReaderActivity : AppCompatActivity() {
 
         val controller = translationController ?: return
         val state = controller.stateOf(currentPage)
-        val translated = state == ImportedPageTranslation.STATE_SUCCESS
+        val ocrOnly = controller.isOcrOnlyMode()
+        val translated = !ocrOnly && state == ImportedPageTranslation.STATE_SUCCESS
+        val ocrComplete = ocrOnly && controller.hasOcr(currentPage)
         val failed = state == ImportedPageTranslation.STATE_FAILED
 
-        binding.btnToggleTranslate.visibility = if (translated) View.VISIBLE else View.GONE
+        binding.btnToggleTranslate.visibility = if (translated || ocrComplete) View.VISIBLE else View.GONE
         binding.btnFailTranslate.visibility = if (failed) View.VISIBLE else View.GONE
         // 清除本页译文（**最右边**，用户口径）：只在当前页**有译文**时出现
         binding.btnClearTranslate.visibility = if (translated) View.VISIBLE else View.GONE
         refreshSrButtons(controller)
         // 翻译按钮图标：成功 → 重翻图标；未译/失败 → 翻译图标
         binding.ivTranslate.setImageResource(
-            if (translated) R.drawable.ic_refresh else R.drawable.ic_reader_translate
+            if (translated || ocrComplete) R.drawable.ic_refresh else R.drawable.ic_reader_translate
         )
-        if (translated) {
+        if (translated || ocrComplete) {
             binding.ivToggleTranslate.setImageResource(overlayModeIcon(controller.currentVisual(currentPage)))
         }
+        val toggleDescription = getString(
+            if (ocrOnly) R.string.reader_ocr_toggle_desc else R.string.reader_toggle_desc
+        )
+        binding.btnToggleTranslate.contentDescription = toggleDescription
+        binding.ivToggleTranslate.contentDescription = toggleDescription
         // 走到这里说明是分页模式（Webtoon 在上面已整组隐藏）→ 按钮恒可用，无需置灰
     }
 
@@ -2029,7 +2109,7 @@ class MangaReaderActivity : AppCompatActivity() {
     }
     /** 刷新进度条上的「已翻译」绿色区间。 */
     private fun refreshProgressTranslation() {
-        binding.readerProgress.setTranslatedPages(translationController?.translatedPages() ?: emptySet())
+        binding.readerProgress.setTranslatedPages(translationController?.completedPages() ?: emptySet())
         // 超分那一条**独立**的紫色区间（用户口径：超分过的页也要在进度条上有标记）。
         // 与绿色分居粗带两侧：绿在粗带中间、紫在粗带下方 —— 一页可以"翻了没超"或"超了没翻"，
         // 两个维度互不遮盖。
@@ -2079,8 +2159,9 @@ class MangaReaderActivity : AppCompatActivity() {
             refreshWebtoonRange(pageIndex)
             return
         }
-        val visual = if (controller.stateOf(pageIndex) == ImportedPageTranslation.STATE_SUCCESS)
-            controller.currentVisual(pageIndex) else null
+        val state = controller.stateOf(pageIndex)
+        val hasOverlay = state == ImportedPageTranslation.STATE_SUCCESS || controller.hasOcr(pageIndex)
+        val visual = if (hasOverlay) controller.currentVisual(pageIndex) else null
         lifecycleScope.launch(Dispatchers.IO) {
             if (visual != null && visual != TranslationCacheManager.OverlayMode.PLAIN) {
                 controller.visualBitmap(pageIndex, visual) // 渲染 + 预热缓存
@@ -2153,6 +2234,7 @@ class MangaReaderActivity : AppCompatActivity() {
                     srPreviewBitmap = srPreview,
                     anime4kPreviewBitmap = anime4kPreview,
                     webtoonTranslated = webtoonTranslated,
+                    ocrOnly = translationController?.isOcrOnlyMode() == true,
                     translateMode = modeBeforeOpen,
                     debounceMs = translationController?.debounceMs?.value ?: 500,
                     aheadPages = translationController?.aheadPages?.value ?: 5,

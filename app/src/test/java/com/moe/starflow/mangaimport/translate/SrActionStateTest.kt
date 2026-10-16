@@ -16,7 +16,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
-import java.io.File
 
 /**
  * 右下角那三枚超分按钮背后的状态机里，**不依赖真实模型文件**的那几支
@@ -35,8 +34,9 @@ class SrActionStateTest {
     private val ctx: Context get() = RuntimeEnvironment.getApplication()
     private val prefs get() = PreferenceManager.getDefaultSharedPreferences(ctx)
 
-    private val bookId = 1L
-    private val addedAt = 1000L          // translationKey = "1000"
+    private lateinit var book: com.moe.starflow.sr.SrTestBook
+    private val bookId: Long get() = book.id
+    private val addedAt = 1000L
     private val page = 0
 
     private val keyA = SrModelManager.allKeys[0]
@@ -44,8 +44,9 @@ class SrActionStateTest {
     private fun controller() = ReaderTranslationController(
         ctx,
         ImportedManga(
-            id = bookId, title = "t", localRoot = "/tmp/x", isArchive = false,
+            id = bookId, title = "t", localRoot = book.source.path, isArchive = true,
             coverPath = null, pageCount = 3, addedAt = addedAt,
+            bookUuid = book.uuid, libraryLocationId = book.session.locationId,
         ),
         CoroutineScope(Dispatchers.Unconfined),
     )
@@ -54,12 +55,11 @@ class SrActionStateTest {
     private fun srcPage(): Bitmap = Bitmap.createBitmap(100, 140, Bitmap.Config.ARGB_8888)
     private fun upscaledPage(): Bitmap = Bitmap.createBitmap(200, 280, Bitmap.Config.ARGB_8888)
 
-    private fun srCacheDir(): File =
-        File(ctx.getExternalFilesDir(null), SrStore.DIR_NAME).apply { mkdirs() }
-
     @org.junit.Before
     fun setUp() {
-        srCacheDir().listFiles()?.forEach { it.delete() }
+        book = com.moe.starflow.sr.SrTestBook(ctx)
+        book.srDir.mkdirs()
+        book.srDir.listFiles()?.forEach { it.delete() }
         SrSettings.setReaderEnabled(prefs, true)
         SrModelManager.setActive(prefs, keyA)
     }
@@ -98,10 +98,12 @@ class SrActionStateTest {
     @Test
     fun resultOwnedByAnotherBookDoesNotCount() {
         // 用**另一个指纹**落盘（模拟删书重导后复用了同一个 id）
+        val previousKey = book.key
         assertTrue(
             "夹具本身要能落盘（否则这条用例是假绿）",
-            SrStore.save(ctx, bookId, page, upscaledPage(), keyA.name, "9999"),
+            SrStore.save(ctx, bookId, page, upscaledPage(), keyA.name, previousKey),
         )
+        book.replaceIdentity()
         val c = controller().apply { bindPage() }
 
         assertEquals(

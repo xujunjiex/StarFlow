@@ -55,6 +55,8 @@ object ReaderChapterDialog {
         val success: Int = 0,
         /** 本章总页数。 */
         val total: Int = 0,
+        /** Completed means recognized pages in OCR-only mode. */
+        val ocrOnly: Boolean = false,
         /** 有章节批量任务在跑（含排队）。 */
         val running: Boolean = false,
         /** 任务被暂停。 */
@@ -186,17 +188,22 @@ object ReaderChapterDialog {
             val base = when {
                 // ⚠️ 分母用任务自己的 total（只翻未完成时 ≠ 章页数），否则进度会「倒退」
                 st.running -> ctx.getString(
-                    R.string.reader_translate_chapter_running,
+                    if (st.ocrOnly) R.string.reader_ocr_chapter_running else R.string.reader_translate_chapter_running,
                     st.jobDone,
                     if (st.jobTotal > 0) st.jobTotal else st.total,
                 )
                 st.paused -> ctx.getString(
-                    R.string.chapter_translate_notify_paused,
+                    if (st.ocrOnly) R.string.reader_ocr_chapter_paused else R.string.chapter_translate_notify_paused,
                     st.jobDone,
                     if (st.jobTotal > 0) st.jobTotal else st.total,
                 )
-                st.allDone -> ctx.getString(R.string.reader_translate_chapter_done)
-                else -> ctx.getString(R.string.reader_chapter_badge, st.success, st.total)
+                st.allDone -> ctx.getString(
+                    if (st.ocrOnly) R.string.reader_ocr_chapter_done else R.string.reader_translate_chapter_done
+                )
+                else -> ctx.getString(
+                    if (st.ocrOnly) R.string.reader_ocr_chapter_badge else R.string.reader_chapter_badge,
+                    st.success, st.total,
+                )
             }
             // 队列里还在等的页数（面板上的「等待」）——有任务时才有意义
             holder.binding.tvChapterBadge.text =

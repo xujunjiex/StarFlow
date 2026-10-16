@@ -104,11 +104,8 @@ object FolderNovelParser : NovelParser {
         return out
     }
 
-    private fun displayName(relativePath: String): String {
-        val base = relativePath.substringAfterLast('/').substringBeforeLast('.', relativePath)
-        val folder = relativePath.substringBeforeLast('/', "")
-        return if (folder.isBlank()) base else "$folder · $base"
-    }
+    private fun displayName(relativePath: String): String =
+        relativePath.substringAfterLast('/').substringBeforeLast('.', relativePath)
 
     /** 把一本 epub 展开成若干章，locator 保留分卷相对路径与卷内定位。 */
     private suspend fun expandVolume(
@@ -138,10 +135,22 @@ object FolderNovelParser : NovelParser {
         return inner.chapters.map { c ->
             NovelChapterMeta(
                 index = 0, // 由调用方统一重编号
-                title = if (c.title.isBlank()) volumeName else "$volumeName · ${c.title}",
+                title = chapterTitle(c.title, volumeName, c.locator),
                 locator = "$relativePath$INNER_SEP${c.locator}",
             )
         }
+    }
+
+    /** 优先显示卷内章节名；导出器把卷名重复写入章节标题时将其剥掉。 */
+    private fun chapterTitle(title: String, volumeName: String, locator: String): String {
+        val locatorTitle = locator.substringAfterLast('/').substringBeforeLast('.', locator)
+        val original = title.trim()
+        if (original.isBlank()) return locatorTitle.ifBlank { volumeName }
+        val volumeBase = volumeName.substringAfterLast('/').substringBeforeLast('.', volumeName).trim()
+        val withoutVolume = if (volumeBase.isNotBlank() && original.startsWith(volumeBase, ignoreCase = true)) {
+            original.drop(volumeBase.length).trimStart(' ', '·', '-', '—', '_', '.', ':', '：')
+        } else original
+        return withoutVolume.ifBlank { locatorTitle.ifBlank { volumeName } }
     }
 
     override suspend fun loadChapter(file: File, locator: String): String =

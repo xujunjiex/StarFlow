@@ -173,7 +173,15 @@ class TranslationJobService : LifecycleService() {
                 runCatching {
                     if (canPostNotifications()) {
                         NotificationManagerCompat.from(this@TranslationJobService)
-                            .notify(NOTIFICATION_ID_SERVICE, buildSummaryNotification(active.size))
+                            .notify(
+                                NOTIFICATION_ID_SERVICE,
+                                buildSummaryNotification(
+                                    active.size,
+                                    ocrOnly = active.isNotEmpty() &&
+                                        active.all { it.kind == TranslationJobKind.MANGA } &&
+                                        TranslationExecutionMode.isOcrOnly(this@TranslationJobService),
+                                )
+                            )
                     }
                 }
             }
@@ -197,7 +205,7 @@ class TranslationJobService : LifecycleService() {
             !job.stageText.isNullOrBlank() -> job.stageText
             // ⚠️ 仅 OCR 模式下一页都没在翻译 → 通知栏也必须报「正在OCR」（用户口径 2026-10：
             //    只 OCR 模式的提示系统要对所有涉及 OCR 的功能生效）
-            TranslationExecutionMode.isOcrOnly(this) ->
+            job.kind == TranslationJobKind.MANGA && TranslationExecutionMode.isOcrOnly(this) ->
                 getString(R.string.chapter_translate_notify_progress_ocr, job.done, job.total)
             else -> getString(R.string.chapter_translate_notify_progress, job.done, job.total)
         }
@@ -279,11 +287,22 @@ class TranslationJobService : LifecycleService() {
         )
     }
 
-    private fun buildSummaryNotification(running: Int) =
+    private fun buildSummaryNotification(running: Int, ocrOnly: Boolean = false) =
         NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_reader_translate)
-            .setContentTitle(getString(R.string.chapter_translate_notify_summary_title))
-            .setContentText(getString(R.string.chapter_translate_notify_summary, running))
+            .setContentTitle(
+                getString(
+                    if (ocrOnly) R.string.chapter_translate_notify_summary_title_ocr
+                    else R.string.chapter_translate_notify_summary_title
+                )
+            )
+            .setContentText(
+                getString(
+                    if (ocrOnly) R.string.chapter_translate_notify_summary_ocr
+                    else R.string.chapter_translate_notify_summary,
+                    running,
+                )
+            )
             .setOngoing(true)
             .setSilent(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)

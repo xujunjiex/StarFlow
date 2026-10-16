@@ -1548,9 +1548,8 @@
                  超分页底部提示（用户口径 2026-10：「超分下载页面最下面要写清楚模型存放
                  准确位置和注意事项」）
 
-                 ⚠️ 文案在 strings 的 `sr_low_res_tip` / `sr_storage_note`（中英各一份，
-                 路径与 `SrModelManager.SR_DIR` = files/sr/、`SrStore.DIR_NAME` =
-                 files/sr_cache/ 对得上，改目录必须同步改这两条）。
+                 文案在 strings 的 `sr_low_res_tip` / `sr_storage_note`（中英各一份）。
+                 模型与诊断目录由 SrStoragePaths 管理；阅读器超分结果保存在书库每本书目录。
                  ════════════════════════════════════════════════════ -->
             <TextView
                 android:id="@+id/sr_low_res_note"

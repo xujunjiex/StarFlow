@@ -73,15 +73,15 @@ class FolderNovelParserTest {
         assertEquals(1, FolderNovelParser.parse(d).chapters.size)
     }
 
-    /** 子目录是章节分类目录；章节标题保留目录名，locator 保留相对路径。 */
+    /** 子目录只用于定位；标题保持简洁，locator 保留完整相对路径。 */
     @Test
-    fun `子目录里的文件按章节分类保留目录名`() = runBlocking {
+    fun `子目录标题不重复添加目录路径`() = runBlocking {
         val d = dir()
         d.w("01.txt", "正文")
         val sub = File(d, "sub").apply { mkdirs() }
         File(sub, "02.txt").writeText("子目录里的")
         val chapters = FolderNovelParser.parse(d).chapters
-        assertEquals(listOf("01", "sub · 02"), chapters.map { it.title })
+        assertEquals(listOf("01", "02"), chapters.map { it.title })
         assertEquals(listOf("01.txt", "sub/02.txt"), chapters.map { it.locator })
         assertEquals("子目录里的", FolderNovelParser.loadChapter(d, chapters[1].locator))
     }
@@ -140,7 +140,7 @@ class FolderNovelParserTest {
 
     /** 「一部小说 = 若干卷 epub + 若干散章 txt」这种下载形态要能读。 */
     @Test
-    fun `夹内 epub 展开成多章并带卷名前缀`() = runBlocking {
+    fun `夹内 epub 展开成多章并显示卷内章节名`() = runBlocking {
         val d = dir()
         d.w("01 散章.txt", "散章正文")
         val epub = File(d, "02 第一卷.epub")
@@ -168,8 +168,8 @@ class FolderNovelParserTest {
         val book = FolderNovelParser.parse(d)
         assertEquals("1 个散章 + 卷内 2 章", 3, book.chapters.size)
         assertEquals("01 散章", book.chapters[0].title)
-        assertEquals("02 第一卷 · 甲章", book.chapters[1].title)
-        assertEquals("02 第一卷 · 乙章", book.chapters[2].title)
+        assertEquals("甲章", book.chapters[1].title)
+        assertEquals("乙章", book.chapters[2].title)
         assertEquals(listOf(0, 1, 2), book.chapters.map { it.index })
 
         assertEquals("散章正文", FolderNovelParser.loadChapter(d, book.chapters[0].locator))

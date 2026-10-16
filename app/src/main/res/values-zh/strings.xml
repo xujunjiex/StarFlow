@@ -653,7 +653,7 @@
 
 
     <string name="sr_low_res_tip">💡 超分只对真正低分辨率的图源有明显效果。宽度 1000px 以上的页面几乎看不出变化，网点重的页还可能被重新绘制。图源不小就别开。</string>
-    <string name="sr_storage_note">📁 模型存放位置：Android/data/com.moe.starflow/files/sr/（删掉这里的文件就等于卸载模型，设备端会显示为「未下载」）。\n🎯 超分只对「漫画阅读器」生效：截屏翻译、录屏翻译、小说阅读都不做超分，OCR 也始终识别原图。\n🗂 超分结果是 2x 图片，按页保存在 files/sr_cache/；每页重做成功后替换旧结果，失败时保留旧图。不设容量上限，不会自动淘汰；可主动清空，删除漫画时一起删除。</string>
+    <string name="sr_storage_note">📁 模型存放位置：Android/data/com.moe.starflow/files/sr/（删掉模型文件就会显示为「未下载」）。\n🎯 超分只对「漫画阅读器」生效：截屏翻译、录屏翻译、小说阅读都不做超分，OCR 也始终识别原图。\n🗂 阅读器超分结果按书籍保存在当前书库的 .starflow/books/&lt;UUID&gt;/sr/；基准日志和测试图位于 files/sr/。每页重做成功后替换旧结果，失败时保留旧图；不会自动淘汰，删书时清理对应结果。</string>
     <string name="sr_no_model_selected">尚未选择超分模型——请在下方下载</string>
     <string name="sr_srmd_group">SRMD（2x）</string>
     <string name="sr_srmd_group_desc">用单个模型应对多种退化（模糊、噪点、缩放），分「带降噪 / 不降噪」两档。</string>
@@ -708,6 +708,7 @@
     <string name="model_download_err_timeout">连接超时（%s）</string>
     <string name="model_download_err_connect">无法连接服务器（%s）</string>
     <string name="model_download_err_ssl">TLS/SSL 错误（%s）</string>
+    <string name="model_download_err_storage">无法写入模型目录：%1$s。App 已尝试修复目录和临时文件权限。此 App 专用目录没有可申请的额外存储权限；请检查设备存储是否可用、App 是否受系统限制，然后重启 App 重试。</string>
     <string name="model_download_err_no_entry">清单里没有这个模型的下载条目（downloadinfo.json 缺该 key）</string>
     <string name="model_download_err_file_invalid">文件校验未通过：%s</string>
     <string name="model_download_err_incomplete">下载后不完整，缺失或损坏：%s</string>
@@ -1029,18 +1030,23 @@
     <string name="reader_interval">翻页间隔</string>
     <string name="reader_translate_pending">翻译功能开发中…</string>
     <string name="reader_translate_busy">另一页正在翻译</string>
+    <string name="reader_ocr_busy">OCR 引擎正在处理其他任务，请稍候</string>
     <string name="reader_translate_model_missing">识别模型未就绪：%1$s</string>
     <string name="reader_translate_api_not_configured">请先在设置中配置翻译 API</string>
     <string name="reader_translate_load_failed">页面读取失败</string>
     <string name="reader_translate_ocr_empty">本页未识别到文字</string>
     <string name="reader_translate_empty">未生成译文</string>
     <string name="reader_toggle_desc">切换 译文/原文/原图</string>
+    <string name="reader_ocr_toggle_desc">切换识别原文/原图</string>
     <string name="reader_translate_mode_title">翻译模式</string>
     <string name="reader_execution_mode_translate">执行模式：翻译</string>
     <string name="reader_execution_mode_ocr_only">执行模式：仅 OCR</string>
     <string name="reader_translate_mode_manual">手动</string>
     <string name="reader_translate_mode_auto">自动</string>
     <string name="reader_translate_mode_incremental">增量</string>
+    <string name="reader_ocr_mode_manual">手动识别</string>
+    <string name="reader_ocr_mode_auto">自动识别</string>
+    <string name="reader_ocr_mode_incremental">增量识别</string>
     <string name="reader_translate_summary">共 %1$d 页 · 已译 %2$d · 翻译中 %3$d · 失败 %4$d</string>
     <string name="reader_translate_ocr_model">OCR模型：%1$s</string>
     <string name="reader_translate_translator_model">翻译模型：%1$s</string>
@@ -1052,6 +1058,10 @@
     <string name="reader_sr_switch_off">阅读器超分已关闭（已生成的超分图仍留在磁盘上）</string>
     <string name="reader_sr_auto_label">翻译时自动超分</string>
     <string name="reader_translate_ahead_hint">仅增量模式：从当前页往后自动翻多少页。翻页时窗口跟着前移。</string>
+    <string name="reader_ocr_ahead_pages">向后识别页数</string>
+    <string name="reader_ocr_ahead_hint">仅增量 OCR：从当前页往后识别的页数。翻页时窗口跟着前移。</string>
+    <string name="reader_ocr_debounce">识别启动延迟</string>
+    <string name="reader_ocr_debounce_hint">翻页停止后等待一段时间再开始 OCR，避免识别刚划过的页面。</string>
 
     <!-- ═══ 超分记录系统（2026-10）═══ -->
     <string name="reader_sr_state_running">超分中</string>
@@ -1061,10 +1071,13 @@
     <string name="reader_sr_chapter_done">超分完成</string>
     <string name="reader_sr_badge">已超分 %1$d/%2$d</string>
     <string name="reader_sr_blocked_by_translate">翻译正在跑（本章 / 自动 / 增量），请先暂停或取消，再开始超分。</string>
+    <string name="reader_sr_blocked_by_ocr">OCR 正在运行（本章 / 自动 / 增量），请先暂停或取消，再开始超分。</string>
     <string name="reader_translate_blocked_by_sr">本章正在超分中，请先取消超分，再开始翻译。</string>
+    <string name="reader_ocr_blocked_by_sr">本章正在超分中，请先取消超分，再开始 OCR。</string>
     <string name="reader_blocked_by_chapter_translate">正在翻译本章，双击可先取消再超分。</string>
     <string name="reader_blocked_by_chapter_sr">本章正在超分中，双击可先取消。</string>
     <string name="reader_translate_force_stopped_chapter">已取消本章翻译。</string>
+    <string name="reader_ocr_force_stopped_chapter">已停止本章 OCR。</string>
     <string name="reader_sr_clear_chapter_title">清空本章超分</string>
     <string name="reader_sr_clear_chapter_msg">将删除本章所有页的超分结果，页面回到原图。确定吗？</string>
     <string name="reader_sr_clear_chapter_ok">清空</string>
@@ -1101,7 +1114,7 @@
     <string name="sr_fail_anime4k_init">Anime4K 初始化失败（当前设备不支持 GLES3，或着色器编译失败）</string>
     <string name="sr_fail_anime4k_too_large">本页分辨率太大，Anime4K 跳过了：本页 %1$d×%2$d（%3$.1f 百万像素）超过 %4$.1f 百万像素上限\n想放大这种页面请改用「超分模型」（Anime4K 只做同分辨率线条修复）</string>
     <string name="sr_fail_inference">超分推理失败，引擎原文如下（点这条可以复制）</string>
-    <string name="sr_fail_save">超分图写盘失败：存储空间不足，或 sr_cache 目录不可写</string>
+    <string name="sr_fail_save">超分图写盘失败：请检查设备存储空间，以及当前书库的超分目录是否可写</string>
     <string name="sr_fail_page_load">读不到这一页的原图（文件丢失或解码失败）</string>
     <string name="sr_fail_busy">这一页正在超分中，请稍候</string>
     <string name="sr_select_need_download">这个模型还没下载，先点它右边的「下载」，下好之后再选它：\n%1$s</string>
@@ -1132,6 +1145,7 @@
     <string name="reader_translate_state_translating">翻译中</string>
     <!-- 「识别中」= OCR 阶段（恒串行，屏幕上最多 1 页）；它与「翻译中」（并发请求）是两个不同的进行中状态 -->
     <string name="reader_translate_state_ocr">识别中</string>
+    <string name="reader_translate_state_ocr_done">已识别</string>
     <!-- 状态浮层里的一段：%1$s=阶段名（识别中/翻译中），%2$s=页码列表（P3, P4） -->
     <string name="reader_translate_stage_entry">%1$s %2$s</string>
     <string name="reader_translate_state_success">✓ 已完成</string>
@@ -1144,6 +1158,7 @@
     <string name="reader_translate_close">关闭</string>
     <string name="reader_translate_detail_empty">暂无译文内容</string>
     <string name="reader_translate_detecting">检测中…</string>
+    <string name="reader_ocr_running">识别中…</string>
     <string name="reader_translate_in_progress">翻译中…</string>
     <string name="reader_translate_skip_ocr">已有识别结果，跳过 OCR · 翻译中…</string>
     <string name="reader_translate_done">翻译完成</string>
@@ -1158,11 +1173,19 @@
     <string name="reader_translate_hint_ahead_page">正在翻译 P%1$d 页，双击暂停翻译</string>
     <string name="reader_translate_hint_auto_idle">请双击退出自动翻译后重试</string>
     <string name="reader_translate_hint_ahead_idle">请双击退出增量翻译后重试</string>
+    <string name="reader_ocr_hint_auto_page">正在自动识别 P%1$d 页，双击暂停 OCR</string>
+    <string name="reader_ocr_hint_ahead_page">正在增量识别 P%1$d 页，双击暂停 OCR</string>
+    <string name="reader_ocr_hint_page">正在识别 P%1$d 页，双击暂停 OCR</string>
+    <string name="reader_ocr_hint_auto_idle">自动 OCR 已启用，双击退出后重试</string>
+    <string name="reader_ocr_hint_ahead_idle">增量 OCR 已启用，双击退出后重试</string>
     <string name="reader_translate_status_page">%1$s · P%2$d</string>
     <string name="reader_translate_batch_detect">识别中（%1$d/2）…</string>
     <string name="reader_translate_batch_translate">翻译中（%1$d/2）…</string>
     <string name="reader_translate_queue_drained">翻译队列已耗尽，翻页后继续</string>
+    <string name="reader_ocr_queue_drained">没有待识别页面，翻页后继续 OCR</string>
     <string name="reader_translate_waiting_other">等待其他翻译任务完成…</string>
+    <string name="reader_ocr_waiting_other">等待其他 OCR 任务完成…</string>
+    <string name="reader_ocr_force_stopped">OCR 进程已强制退出</string>
 
     <!-- ===== 漫画章节系统 ===== -->
     <string name="manga_chapter_label">第%1$d章</string>
@@ -1172,6 +1195,7 @@
     <string name="reader_chapter_first">当前已是第一章</string>
     <string name="reader_chapter_last">当前已是最后一章</string>
     <string name="reader_chapter_badge">已译 %1$d/%2$d</string>
+    <string name="reader_ocr_chapter_badge">已识别 %1$d/%2$d</string>
 
     <string name="import_chapters_count">共 %1$d 章</string>
     <string name="import_read_progress_chapter">%1$s · %2$d/%3$d</string>
@@ -1195,6 +1219,9 @@
     <string name="reader_translate_chapter_pause">暂停</string>
     <string name="reader_translate_chapter_done">翻译完成</string>
     <string name="reader_translate_chapter_resume">继续</string>
+    <string name="reader_ocr_chapter_recognize">识别本章</string>
+    <string name="reader_ocr_chapter_done">识别完成</string>
+    <string name="reader_ocr_chapter_clear">清除识别结果</string>
 
     <!-- 章节批量翻译：通知栏（每章一条，可暂停/继续/取消） -->
     <string name="chapter_translate_notify_title">%1$s · %2$s</string>
@@ -1212,21 +1239,34 @@
     <string name="chapter_translate_notify_summary_ocr">%1$d 个章节正在后台OCR</string>
     <string name="reader_translate_chapter_clear">清空</string>
     <string name="reader_translate_chapter_running">正在翻译本章 %1$d/%2$d</string>
+    <string name="reader_ocr_chapter_running">正在识别本章 %1$d/%2$d</string>
+    <string name="reader_ocr_chapter_paused">已暂停 OCR · %1$d/%2$d 页</string>
     <!-- 章节批量翻译的并发度（漫画：OCR 串行，调高主要加快翻译请求） -->
     <string name="reader_translate_concurrency">翻译模型最大同时请求数</string>
     <string name="reader_translate_concurrency_hint">整章/增量翻译同时发出的请求上限；本地模型固定为 1。OCR 始终逐页串行。</string>
     <string name="reader_translate_state_waiting">等待</string>
     <string name="reader_translate_chapter_hint">正在翻译本章 %1$d/%2$d，双击暂停</string>
+    <string name="reader_ocr_chapter_hint">正在识别本章 %1$d/%2$d，双击暂停</string>
     <string name="reader_translate_chapter_finished">本章完成 %1$d/%2$d</string>
+    <string name="reader_ocr_chapter_finished">本章识别完成 %1$d/%2$d</string>
     <string name="reader_translate_chapter_nothing">本章没有待翻译的页面</string>
+    <string name="reader_ocr_chapter_nothing">本章没有待识别的页面</string>
     <string name="reader_translate_chapter_confirm_title">翻译本章</string>
     <string name="reader_translate_chapter_confirm_msg">本章共 %1$d 页：未翻译 %2$d 页、失败 %3$d 页、已成功 %4$d 页。</string>
     <string name="reader_translate_chapter_only_pending">只翻未完成</string>
     <string name="reader_translate_chapter_overwrite">全部重翻</string>
+    <string name="reader_ocr_chapter_confirm_title">识别本章</string>
+    <string name="reader_ocr_chapter_confirm_msg">本章共 %1$d 页：待识别 %2$d 页、失败 %3$d 页、已识别 %4$d 页。</string>
+    <string name="reader_ocr_chapter_only_pending">只识别待处理页</string>
+    <string name="reader_ocr_chapter_overwrite">重新识别全部</string>
     <string name="reader_translate_clear_confirm_title">清除本章译文？</string>
     <string name="reader_translate_clear_confirm_msg">将删除本章 %1$d 页的全部翻译数据，且无法恢复。</string>
     <string name="reader_translate_chapter_cleared">已清除本章译文</string>
+    <string name="reader_ocr_clear_chapter_confirm_title">清除本章 OCR 结果？</string>
+    <string name="reader_ocr_clear_chapter_confirm_msg">将删除本章 %1$d 页的 OCR 结果，且无法恢复。</string>
+    <string name="reader_ocr_chapter_cleared">已清除本章 OCR 结果</string>
     <string name="reader_translate_delete_page">清空译文</string>
+    <string name="reader_ocr_delete_page">清除 OCR</string>
     <string name="reader_translate_page_deleted">已删除该页译文</string>
     <string name="reader_translate_filter_done">完成</string>
     <string name="reader_translate_filter_ongoing">进行中</string>
@@ -1234,6 +1274,7 @@
     <string name="reader_translate_partial_cached">翻译完成（%1$d/%2$d 命中缓存，%3$d 条调用 API）</string>
     <string name="reader_translate_force_stopped">翻译进程已强制退出</string>
     <string name="reader_translate_force_stopped_to_manual">翻译进程已强制退出，回退到手动模式</string>
+    <string name="reader_ocr_force_stopped_to_manual">OCR 进程已强制退出，回退到手动模式</string>
     <string name="reader_translate_debounce">启动延迟</string>
     <string name="reader_translate_debounce_hint">翻页停止后延迟该时长开始翻译（自动/增量共用）。值越小响应越快，翻页途中的无效翻译越多。</string>
     <string name="reader_translate_ahead_pages">向后翻译页数</string>
@@ -1807,6 +1848,9 @@
     <string name="reader_clear_page_confirm_title">清除本页译文？</string>
     <string name="reader_clear_page_confirm_msg">将删除第 %1$d 页的译文（原文与气泡数据一并删除），该页回到原图显示。此操作不可撤销。</string>
     <string name="reader_clear_page_confirm_ok">清除</string>
+    <string name="reader_ocr_clear_page_confirm_title">清除本页 OCR 结果？</string>
+    <string name="reader_ocr_clear_page_confirm_msg">将删除第 %1$d 页的 OCR 结果和气泡数据，该页回到原图显示。此操作不可撤销。</string>
+    <string name="reader_ocr_page_deleted">已删除本页 OCR 结果</string>
 
     <!-- waifu2x 模型族（2026-10，deepghs/waifu2x_onnx 的官方 ONNX 版） -->
 
