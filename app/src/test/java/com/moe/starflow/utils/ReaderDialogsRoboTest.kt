@@ -54,4 +54,26 @@ class ReaderDialogsRoboTest {
             )
         }
     }
+    @Test
+    fun `文字配色保持不透明且反复应用主题不会变成分隔线颜色`() {
+        val activity = activity()
+        for (dark in listOf(false, true)) {
+            val background = if (dark) 0xFF1C1C1E.toInt() else android.graphics.Color.WHITE
+            for (original in listOf(android.graphics.Color.BLACK, android.graphics.Color.WHITE,
+                ReaderDialogs.LABEL_LIGHT, ReaderDialogs.LABEL_DARK)) {
+                val text = android.widget.TextView(activity).apply { setTextColor(original) }
+                ReaderDialogs.tintCustomView(text, dark)
+                val first = text.currentTextColor
+                ReaderDialogs.tintCustomView(text, dark)
+                org.junit.Assert.assertEquals(first, text.currentTextColor)
+                org.junit.Assert.assertEquals(255, android.graphics.Color.alpha(first))
+                assertTrue(androidx.core.graphics.ColorUtils.calculateContrast(first, background) >= 4.5)
+            }
+            val secondary = android.widget.TextView(activity).apply { setTextColor(ReaderDialogs.SUB_LIGHT) }
+            ReaderDialogs.tintCustomView(secondary, dark)
+            org.junit.Assert.assertEquals(if (dark) ReaderDialogs.SUB_DARK else ReaderDialogs.SUB_LIGHT,
+                secondary.currentTextColor)
+        }
+    }
+
 }

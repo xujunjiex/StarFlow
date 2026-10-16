@@ -131,6 +131,8 @@ class NovelReaderActivity : AppCompatActivity() {
         private const val KEY_INTERVAL = "reader_auto_turn_interval"
 
         private const val STATE_CURRENT_CHAPTER = "novel_state_chapter"
+        private const val STATE_ANCHOR_PARA = "novel_state_anchor_para"
+        private const val STATE_ANCHOR_FRACTION = "novel_state_anchor_fraction"
         private const val STATE_FROM_SETTINGS = "novel_state_from_settings"
 
         fun intent(context: Context, novelId: Long): Intent =
@@ -464,6 +466,8 @@ class NovelReaderActivity : AppCompatActivity() {
         if (savedInstanceState != null) {
             returnedFromSettings = savedInstanceState.getBoolean(STATE_FROM_SETTINGS, false)
             chapterIndex = savedInstanceState.getInt(STATE_CURRENT_CHAPTER, chapterIndex)
+            pendingAnchor = NovelAnchor(savedInstanceState.getInt(STATE_ANCHOR_PARA, pendingAnchor.paraIndex),
+                savedInstanceState.getFloat(STATE_ANCHOR_FRACTION, pendingAnchor.fraction))
         }
 
         // 章批量翻译的**应用级宿主**：同一本书永远只有一份（任务/进度不会分裂）
@@ -654,6 +658,8 @@ class NovelReaderActivity : AppCompatActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
         outState.putInt(STATE_CURRENT_CHAPTER, chapterIndex)
+        outState.putInt(STATE_ANCHOR_PARA, pendingAnchor.paraIndex)
+        outState.putFloat(STATE_ANCHOR_FRACTION, pendingAnchor.fraction)
         outState.putBoolean(STATE_FROM_SETTINGS, returnedFromSettings)
     }
 
@@ -1839,20 +1845,23 @@ class NovelReaderActivity : AppCompatActivity() {
 
     private fun applyBackground() {
         bgMode = NovelPanelStyle.background(prefs)
-        val bg = NovelPanelStyle.backgroundColor(bgMode)
+        val bg = NovelPanelStyle.backgroundColor(bgMode, prefs)
+        val statusColors = NovelAppearance.statusColors(prefs)
+        pageAdapter.setStatusColors(statusColors)
+        scrollAdapter.setStatusColors(statusColors)
         binding.root.setBackgroundColor(bg)
         binding.novelPager.setBackgroundColor(bg)
         binding.novelScroll.setBackgroundColor(bg)
-        val pillTextColor = if (NovelPanelStyle.isDarkBackground(bgMode)) Color.WHITE else Color.BLACK
+        val pillTextColor = if (NovelPanelStyle.isDarkBackground(bgMode, prefs)) Color.WHITE else Color.BLACK
         // 两半都要设：textColor 不会从父 LinearLayout 继承下来
         binding.tvPageIndicator.setTextColor(pillTextColor)
         binding.tvPageCounter.setTextColor(pillTextColor)
         binding.novelStatus.setTextColor(
-            if (NovelPanelStyle.isDarkBackground(bgMode)) 0xFFECECEC.toInt() else 0xFF222222.toInt()
+            if (NovelPanelStyle.isDarkBackground(bgMode, prefs)) 0xFFECECEC.toInt() else 0xFF222222.toInt()
         )
         // 文字色与**每页的底色**一起下发：底色必须画在页自己身上，
         // 否则「覆盖」动画里页面透明 → 看起来只有文字在动、背景不动
-        val textColor = NovelPanelStyle.textColor(bgMode)
+        val textColor = NovelPanelStyle.textColor(bgMode, prefs)
         pageAdapter.setColors(textColor, bg)
         scrollAdapter.setColors(textColor, bg)
     }
@@ -1926,8 +1935,8 @@ class NovelReaderActivity : AppCompatActivity() {
             scrollTranslated = computeScrollTranslated(loaded)
             showStatus(if (loaded.isEmpty) getString(R.string.novel_empty_chapter) else null)
 
-            val textColor = NovelPanelStyle.textColor(bgMode)
-            val bgColor = NovelPanelStyle.backgroundColor(bgMode)
+            val textColor = NovelPanelStyle.textColor(bgMode, prefs)
+            val bgColor = NovelPanelStyle.backgroundColor(bgMode, prefs)
             if (isScrollMode()) {
                 // 上下间距落在**列表**上而不是每一段上：落在每段上会变成段间距。
                 // clipToPadding=false → 正文可以滚到浮层底下再滑走，而不是被硬切一刀
@@ -2321,6 +2330,10 @@ class NovelReaderActivity : AppCompatActivity() {
         readerMode = NovelPanelStyle.readerMode(prefs),
         animation = animationMode,
         background = bgMode,
+        statusColors = NovelAppearance.statusColors(prefs),
+        customBackground = NovelAppearance.customBackground(prefs),
+        customText = NovelAppearance.customText(prefs),
+        fontName = NovelReaderFont.label(this),
         autoTurn = autoTurnEnabled,
         intervalSec = autoTurnIntervalSec,
         debounceMs = NovelPanelStyle.debounceMs(prefs),
@@ -2328,7 +2341,7 @@ class NovelReaderActivity : AppCompatActivity() {
         batchSize = NovelPanelStyle.batchSize(prefs),
         rotateLabel = rotateLabel(),
         keepParagraphsWhole = NovelPanelStyle.keepParagraphsWhole(prefs),
-        isDarkPanel = NovelPanelStyle.isDarkBackground(bgMode),
+        isDarkPanel = NovelPanelStyle.isDarkBackground(bgMode, prefs),
         // 章任务状态（卡片按钮文案 + 徽章 + 「等待」行）：应用级宿主是唯一真值
         chapterJobs = chapterHost?.chapterJobs?.value.orEmpty().associateBy { it.chapterIndex },
         waitingBatches = chapterHost?.waitingByChapter().orEmpty(),
@@ -2922,7 +2935,7 @@ class NovelReaderActivity : AppCompatActivity() {
                         // 面板/标题/正文/按钮全由主题给色，不再"换底 + 一律刷浅色"（那是白底白字的来源）
                         dlg = ReaderDialogs.show(
                             this@NovelReaderActivity,
-                            NovelPanelStyle.isDarkBackground(bgMode),
+                            NovelPanelStyle.isDarkBackground(bgMode, prefs),
                         ) {
                             setTitle(R.string.novel_translate_oversize_title)
                             setMessage(getString(R.string.novel_translate_oversize_msg, estimate, threshold))
@@ -3211,7 +3224,7 @@ class NovelReaderActivity : AppCompatActivity() {
                 // 在面板里是「进行中」—— 用户报的「没翻完却显示全部完成」的另一半在这。
                 totals = chapterTotals.toMap(),
                 currentChapter = chapterIndex,
-                dark = NovelPanelStyle.isDarkBackground(bgMode),
+                dark = NovelPanelStyle.isDarkBackground(bgMode, prefs),
                 onPick = { picked ->
                     tocHandle = null
                     gotoChapter(picked)
@@ -3235,6 +3248,14 @@ class NovelReaderActivity : AppCompatActivity() {
         }
     }
 
+    private fun openPersonalization(preferenceKey: String? = null) {
+        persistProgress()
+        returnedFromSettings = true
+        startActivity(Intent(this, SettingPageActivity::class.java)
+            .putExtra(SettingPageActivity.EXTRA_FRAGMENT_TYPE, SettingPageActivity.TYPE_FRAGMENT_PERSONALIZATION)
+            .putExtra(SettingPageActivity.EXTRA_PREFERENCE_KEY, preferenceKey))
+    }
+
     private fun showMenuNow(chapters: List<com.moe.starflow.novel.model.NovelChapterMeta>, stats: Map<Int, NovelChapterStat>) {
         if (isFinishing || isDestroyed) return
         val fontSp = NovelPanelStyle.fontSizeSp(prefs)
@@ -3243,7 +3264,11 @@ class NovelReaderActivity : AppCompatActivity() {
                 readerMode = NovelPanelStyle.readerMode(prefs),
                 animation = animationMode,
                 bg = bgMode,
-                        fontSizeSp = fontSp,
+                statusColors = NovelAppearance.statusColors(prefs),
+                customBackground = NovelAppearance.customBackground(prefs),
+                customText = NovelAppearance.customText(prefs),
+                fontName = NovelReaderFont.label(this),
+                fontSizeSp = fontSp,
                 lineSpacingStep = NovelPanelStyle.lineSpacingStep(prefs),
                 paragraphSpacingDp = NovelPanelStyle.paragraphSpacingDp(prefs),
                 paddingDp = NovelPanelStyle.paddingDp(prefs),
@@ -3252,7 +3277,7 @@ class NovelReaderActivity : AppCompatActivity() {
                 autoTurn = autoTurnEnabled,
                 intervalSec = autoTurnIntervalSec,
                 rotateLabel = rotateLabel(),
-                isDarkPanel = NovelPanelStyle.isDarkBackground(bgMode),
+                isDarkPanel = NovelPanelStyle.isDarkBackground(bgMode, prefs),
                 keepParagraphsWhole = NovelPanelStyle.keepParagraphsWhole(prefs),
                 translateMode = NovelPanelStyle.translateMode(prefs),
                 debounceMs = NovelPanelStyle.debounceMs(prefs),
@@ -3281,6 +3306,22 @@ class NovelReaderActivity : AppCompatActivity() {
                     updateAutoTurn()
                 },
                 onAnimation = { a -> NovelPanelStyle.setAnimation(prefs, a); animationMode = a; applyAnimation() },
+                onOpenFontSettings = { openPersonalization("result_font") },
+                onStatusColor = { state, color ->
+                    NovelAppearance.setStatusColor(prefs, state, color)
+                    applyBackground()
+                    pushPanelState()
+                },
+                onResetStatusColors = {
+                    NovelAppearance.resetStatusColors(prefs)
+                    applyBackground()
+                    pushPanelState()
+                },
+                onCustomColors = { background, text ->
+                    NovelAppearance.saveCustom(prefs, background, text)
+                    applyBackground()
+                    pushPanelState()
+                },
                 onBackground = { v ->
                     NovelPanelStyle.setBackground(prefs, v)
                     applyBackground()
@@ -3321,13 +3362,7 @@ class NovelReaderActivity : AppCompatActivity() {
                 onRotate = { updateRotateMode((rotateMode + 1) % 3, persist = true) },
                 onBookData = { com.moe.starflow.library.BookDataActivity.open(this,
                     com.moe.starflow.library.BookRef(book!!.libraryLocationId, "novel", book!!.bookUuid), runtimePages = content?.pages?.size) },
-                onSettings = {
-                    returnedFromSettings = true
-                    startActivity(
-                        Intent(this@NovelReaderActivity, SettingPageActivity::class.java)
-                            .putExtra(SettingPageActivity.EXTRA_FRAGMENT_TYPE, SettingPageActivity.TYPE_FRAGMENT_PERSONALIZATION)
-                    )
-                },
+                onSettings = { openPersonalization() },
                 onTranslateMode = { m ->
                     NovelPanelStyle.setTranslateMode(prefs, m)
                     if (m == NovelTranslateMode.MANUAL) {
@@ -3429,7 +3464,7 @@ class NovelReaderActivity : AppCompatActivity() {
         val n = selectedPara.count { translations.containsKey(it) }
         if (n <= 0) return
         // 共享实现：弹窗用对应 night 模式的上下文建，底与字同源（见 ReaderDialogs）
-        ReaderDialogs.show(this, NovelPanelStyle.isDarkBackground(bgMode)) {
+        ReaderDialogs.show(this, NovelPanelStyle.isDarkBackground(bgMode, prefs)) {
             setTitle(R.string.novel_clear_translation_title)
             setMessage(getString(R.string.novel_clear_translation_confirm, n))
             setNegativeButton(R.string.user_cancel, null)

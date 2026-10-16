@@ -31,6 +31,7 @@ class ReaderThemeGuardTest {
         "mangaimport/reader/ReaderPagePreviewDialog.kt",
         "novel/reader/NovelReaderActivity.kt",
         "novel/reader/NovelPanelSheet.kt",
+        "novel/reader/NovelColorDialogs.kt",
         "novel/reader/NovelTocDialog.kt",
     )
 

@@ -149,7 +149,7 @@ object ReaderDialogs {
         when (root) {
             is TextView -> {
                 val c = currentTextColor(root)
-                if (isNeutral(c)) root.setTextColor(if (dark) darkenNeutralToLight(c) else lightenNeutralToDark(c))
+                if (isNeutral(c)) root.setTextColor(neutralTextColor(c, dark))
             }
             is ViewGroup -> {
                 // 分隔线：1dp 高的纯色 View（XML 里常写 #F0F0F0，深色下一条亮线很扎眼）
@@ -175,11 +175,15 @@ object ReaderDialogs {
         return (max - min).toFloat() / max < 0.25f
     }
 
-    /** 中性色 → 深色模式下的可读值：暗色映射成主文字浅色，亮色（分割线）映射成暗底分割线。 */
-    private fun darkenNeutralToLight(color: Int): Int = if (luminance(color) < 0.5f) LABEL_DARK else DIVIDER_DARK
-
-    /** 中性色 → 浅色模式下的可读值：亮色映射成主文字深色，暗色（分割线）映射成浅底分割线。 */
-    private fun lightenNeutralToDark(color: Int): Int = if (luminance(color) >= 0.5f) LABEL_LIGHT else DIVIDER_LIGHT
+    /** Text is always opaque. Divider alpha must never be applied to a label, even after repeated theming. */
+    private fun neutralTextColor(color: Int, dark: Boolean): Int {
+        val secondary = luminance(color) in 0.30f..0.75f
+        return if (dark) {
+            if (secondary) SUB_DARK else LABEL_DARK
+        } else {
+            if (secondary) SUB_LIGHT else LABEL_LIGHT
+        }
+    }
 
     /** 相对亮度（0=黑 1=白）。 */
     private fun luminance(color: Int): Float {

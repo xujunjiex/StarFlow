@@ -119,9 +119,9 @@ object NovelImageControls {
      * ⚠️ 描边要单独用 [drawSelectionFrame] 画在图片**之后**（[NovelPageView] 那段有自己的
      * `clipRect`，把描边画在里面会被裁掉一半 —— 而且描边本来就在图片矩形**外面**）。
      */
-    fun drawSelectionFill(canvas: Canvas, rect: Box, density: Float) {
+    fun drawSelectionFill(canvas: Canvas, rect: Box, density: Float, color: Int = SELECTION_FILL) {
         val fill = fillPaint
-        fill.color = SELECTION_FILL
+        fill.color = color
         val r = 6f * density
         canvas.drawRoundRect(rect.toRectF(), r, r, fill)
     }

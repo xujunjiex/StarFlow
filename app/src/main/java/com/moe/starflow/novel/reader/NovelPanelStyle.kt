@@ -66,20 +66,26 @@ object NovelPanelStyle {
         prefs.edit().putInt(KEY_ANIM, v.coerceIn(0, 3)).apply()
 
     /**
-     * 阅读背景：0 默认 / 1 浅 / 2 深 / 3 白 / 4 黑 / 5 自动。
-     * 值域与 `MangaReaderActivity` 完全一致。
+     * 阅读背景：0 默认 / 1 浅 / 2 深 / 3 白 / 4 黑 / 5 旧自动 / 6 小说自定义。
+     * 前五项沿用漫画的选中值，自定义选中态单独保存，不能污染漫画的值域。
      */
-    fun background(prefs: SharedPreferences): Int = prefs.getInt(KEY_BG, 0).coerceIn(0, 5)
+    fun background(prefs: SharedPreferences): Int =
+        if (NovelAppearance.customSelected(prefs)) NovelAppearance.CUSTOM_MODE else prefs.getInt(KEY_BG, 0).coerceIn(0, 5)
 
-    fun setBackground(prefs: SharedPreferences, v: Int) =
-        prefs.edit().putInt(KEY_BG, v.coerceIn(0, 5)).apply()
+    fun setBackground(prefs: SharedPreferences, v: Int) {
+        NovelAppearance.selectCustom(prefs, v == NovelAppearance.CUSTOM_MODE)
+        if (v != NovelAppearance.CUSTOM_MODE) prefs.edit().putInt(KEY_BG, v.coerceIn(0, 5)).apply()
+    }
 
     /** 系统是否深色。⚠️ 读 `Resources.getSystem()`：不受 app 强制日夜主题影响（与漫画一致）。 */
     fun isSystemDark(): Boolean =
         (android.content.res.Resources.getSystem().configuration.uiMode and
             Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
 
-    fun isDarkBackground(bg: Int): Boolean = when (bg) {
+    fun isDarkBackground(bg: Int, prefs: SharedPreferences? = null): Boolean = when (bg) {
+        NovelAppearance.CUSTOM_MODE -> androidx.core.graphics.ColorUtils.calculateLuminance(
+            prefs?.let { NovelAppearance.customBackground(it) } ?: NovelAppearance.DEFAULT_BACKGROUND
+        ) < 0.5
         2, 4 -> true
         3 -> false
         1 -> false
@@ -87,12 +93,13 @@ object NovelPanelStyle {
     }
 
     fun isDarkBackground(context: Context, prefs: SharedPreferences): Boolean =
-        isDarkBackground(background(prefs))
+        isDarkBackground(background(prefs), prefs)
 
-    /** 背景色值。与漫画的 `resolveBgColor()` 同一套取值。 */
-    fun backgroundColor(bg: Int): Int = when (bg) {
-        1 -> 0xFFF0F0EE.toInt()
-        2 -> 0xFF18181C.toInt()
+    /** 小说背景色：浅色使用暖纸色、深色使用灰蓝；默认/白/黑延续既有规则。 */
+    fun backgroundColor(bg: Int, prefs: SharedPreferences? = null): Int = when (bg) {
+        NovelAppearance.CUSTOM_MODE -> prefs?.let { NovelAppearance.customBackground(it) } ?: NovelAppearance.DEFAULT_BACKGROUND
+        1 -> 0xFFEAE3D2.toInt()
+        2 -> 0xFF292D35.toInt()
         3 -> android.graphics.Color.WHITE
         4 -> android.graphics.Color.BLACK
         5 -> if (isSystemDark()) android.graphics.Color.BLACK else android.graphics.Color.WHITE
@@ -304,6 +311,7 @@ object NovelPanelStyle {
         val density = context.resources.displayMetrics.scaledDensity
         val densityDpi = context.resources.displayMetrics.density
         val fontSp = fontSizeSp(prefs)
+        val font = NovelReaderFont.resolve(context)
         // 双语模式下段间距要拉大一截：一段双语是「原文 + 换行 + 译文」两行，行间空隙就是普通
         // 行距，段间距若只比它大一点点，读者分不清"这行译文属于上一行原文还是再上一段"
         // （用户报的「好区分译文到底属于谁」）。一对双语算一个段落块，块之间留出明显空档。
@@ -314,6 +322,8 @@ object NovelPanelStyle {
         }
         return NovelTextStyle(
             fontSizePx = fontSp * density,
+            typeface = font.typeface,
+            fontKey = font.key,
             lineSpacingMultiplier = lineSpacingStep(prefs) / 10f,
             paragraphSpacingPx = paragraphSpacingDp(prefs) * densityDpi * paraFactor,
             paddingPx = paddingDp(prefs) * densityDpi,
@@ -337,7 +347,9 @@ object NovelPanelStyle {
      *
      * 背景是深色时用浅灰而不是纯白 —— 纯白压在纯黑上对比过强，长段落读久了刺眼。
      */
-    fun textColor(bg: Int): Int = if (isDarkBackground(bg)) 0xFFD8D8DC.toInt() else 0xFF1A1A1A.toInt()
+    fun textColor(bg: Int, prefs: SharedPreferences? = null): Int =
+        if (bg == NovelAppearance.CUSTOM_MODE) prefs?.let { NovelAppearance.customText(it) } ?: NovelAppearance.DEFAULT_TEXT
+        else if (isDarkBackground(bg, prefs)) 0xFFD8D8DC.toInt() else 0xFF1A1A1A.toInt()
 
     // ===== 翻译 =====
 

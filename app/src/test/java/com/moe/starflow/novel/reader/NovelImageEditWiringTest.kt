@@ -181,8 +181,9 @@ class NovelImageEditWiringTest {
             activity.contains("onUnitSettled = { ch, paras -> onUnitSettled(ch, paras) }"),
         )
         assertTrue(
-            "onStart 要把回调挂到整章宿主上",
-            bodyOf("override fun onStart(").contains("chapterHost?.onUnitSettled = { ch, paras -> onUnitSettled(ch, paras) }"),
+            "onStart 要经统一启动入口把回调挂到整章宿主上",
+            bodyOf("override fun onStart(").contains("onReaderStarted()") &&
+                bodyOf("private fun onReaderStarted(").contains("chapterHost?.onUnitSettled = { ch, paras -> onUnitSettled(ch, paras) }"),
         )
         assertTrue(
             "onStop 要摘掉（宿主是应用级的，挂着就是泄漏）",

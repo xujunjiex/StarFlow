@@ -58,6 +58,13 @@ Robolectric 的文本引擎是**桩**：`Paint.breakText` 不按宽度换行、�
     ⚠️ **按字段开推送就是这类 bug 的成因**：早先只有 `notifyTranslateChanged(stats)`，于是「在面板里切章」不刷新；新增宿主字段时必须加进 `notifyHostState` 这一篇，否则漏掉是默认结果
   - 同理别在面板里留第二份数据：`updateSummary()` 曾读快照里的 `state.chapterStats`，而推送改的是 adapter 里那一份 —— 推了也白推
 
+### 阅读外观与字体
+
+- `NovelAppearance` 统一保存小说状态颜色及自定义背景/文字色，面板快照与宿主推送必须包含这份配色和当前字体名称。四种状态优先级不变；透明色参与优先级，不回退绘制其他状态。
+- 前五项背景继续读写共享 `reader_background`，小说自定义选中态与色值用 `novel_*` 独立键；旧值 5 显示为默认项。浅/深预设及其图标只在小说侧改色，漫画不受影响。
+- 自定义状态色同时作用于文本底色、插图边框和选中填充；未配置时保留原先半透明文本底色及不透明边框。调色复用 ColorPicker 组件，弹窗主题统一使用 `ReaderDialogs`，跟随当前阅读器深浅；草稿颜色仅作用于预览。右侧颜色样本使用 `NovelColorSwatch` 的 20dp 固定尺寸，不能使用会把长方形强制量成大圆的 ColorPanelView。
+- 正文使用全局 `Custom_Result_Font`，与界面字体开关无关。`NovelReaderFont` 按文件身份缓存字体，`NovelTextStyle` 携带同一 Typeface 和字体身份，段级缓存及章级缓存都包含字体变化；缺失或无效字体回退系统。字体设置返回后重建阅读器并保存段号与段内比例。
+
 ### TXT 段落切分
 
 `NovelParagraphSplitter.linesToParagraphs`（`TxtParser` / `FolderNovelParser` 调）：按 `\n` 切开、

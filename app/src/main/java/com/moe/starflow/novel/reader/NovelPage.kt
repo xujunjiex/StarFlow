@@ -78,6 +78,8 @@ data class NovelTextStyle(
     val topPaddingPx: Float = 0f,
     val bottomPaddingPx: Float = 0f,
     val keepParagraphsWhole: Boolean = true,
+    val typeface: android.graphics.Typeface? = null,
+    val fontKey: String = "",
 ) {
     /** 一页真正能放正文的高度。 */
     fun contentHeightPx(pageHeightPx: Int): Float =

@@ -79,6 +79,10 @@ class NovelPanelState(
     val batchWarnIndex: Int = NovelBatchWarning.defaultIndex,
     /** 同时翻译图片（epub 插图当"一个段落"一起翻；默认关）。 */
     val translateImages: Boolean = false,
+    val statusColors: NovelStatusColors = NovelStatusColors(),
+    val customBackground: Int = NovelAppearance.DEFAULT_BACKGROUND,
+    val customText: Int = NovelAppearance.DEFAULT_TEXT,
+    val fontName: String = "",
 )
 
 /** 小说阅读器底部工具栏回调。 */
@@ -100,6 +104,10 @@ class NovelPanelCallbacks(
     val onRotate: () -> Unit,
     val onSettings: () -> Unit,
     val onBookData: () -> Unit = {},
+    val onOpenFontSettings: () -> Unit = {},
+    val onStatusColor: (NovelHighlight, Int?) -> Unit = { _, _ -> },
+    val onResetStatusColors: () -> Unit = {},
+    val onCustomColors: (Int, Int) -> Unit = { _, _ -> },
     val onTranslateMode: (NovelTranslateMode) -> Unit = {},
 
     /**
@@ -171,6 +179,18 @@ class NovelPanelSheet(
 
     /** 面板深浅（随阅读背景切换即时更新）。 */
     private var darkPanel = state.isDarkPanel
+    private var currentBackground = state.bg
+    private var currentStatusColors = state.statusColors
+    private var customBackground = state.customBackground
+    private var customText = state.customText
+    private val statusRows = listOf(
+        Triple(NovelHighlight.SELECTION, R.id.btn_status_selection, R.id.swatch_status_selection),
+        Triple(NovelHighlight.ACTIVE, R.id.btn_status_active, R.id.swatch_status_active),
+        Triple(NovelHighlight.FAILED, R.id.btn_status_failed, R.id.swatch_status_failed),
+        Triple(NovelHighlight.COMPLETED, R.id.btn_status_completed, R.id.swatch_status_completed),
+    )
+    private val statusTitles = listOf(R.string.novel_status_selection, R.string.novel_status_active,
+        R.string.novel_status_failed, R.string.novel_status_completed)
 
     /** 面板自己的 prefs（与 `NovelPanelStyle` 同一份，折叠态等纯 UI 偏好存这里）。 */
     private val prefs: SharedPreferences
@@ -209,7 +229,7 @@ class NovelPanelSheet(
 
     /** 背景 glyph 分段（不 tint 图标，只用选中容器高亮）——行为与漫画面板一致。 */
     private val bgSegIds = setOf(
-        R.id.seg_bg_default, R.id.seg_bg_light, R.id.seg_bg_dark, R.id.seg_bg_white, R.id.seg_bg_black,
+        R.id.seg_bg_default, R.id.seg_bg_light, R.id.seg_bg_dark, R.id.seg_bg_white, R.id.seg_bg_black, R.id.seg_bg_custom,
     )
 
     private var translateMode = NovelTranslateMode.MANUAL
@@ -346,7 +366,16 @@ class NovelPanelSheet(
             R.id.seg_bg_dark to (state.bg == 2),
             R.id.seg_bg_white to (state.bg == 3),
             R.id.seg_bg_black to (state.bg == 4),
+            R.id.seg_bg_custom to (state.bg == NovelAppearance.CUSTOM_MODE),
         )) { id ->
+            if (id == R.id.seg_bg_custom) {
+                // Opening an editor is not a selection: cancel must retain the previous mode.
+                applySeg(view, R.id.seg_background, backgroundSegment(currentBackground))
+                NovelColorDialogs.customAppearance(requireContext(), customBackground, customText, dark = darkPanel) { bg, text ->
+                    cb.onCustomColors(bg, text)
+                }
+                return@setupSeg
+            }
             val newBg = when (id) {
                 R.id.seg_bg_light -> 1
                 R.id.seg_bg_dark -> 2
@@ -355,10 +384,12 @@ class NovelPanelSheet(
                 else -> 0
             }
             // 点背景即切，面板深浅立刻跟随
-            darkPanel = NovelPanelStyle.isDarkBackground(newBg)
+            darkPanel = NovelPanelStyle.isDarkBackground(newBg, prefs)
             applyPanelTheme(view, root)
             cb.onBackground(newBg)
         }
+
+        setupAppearance(view)
 
         // ---- 样式：显示三态 + 行距/段距/边距 ----
         // ---- 排版：恢复默认 / 字号 / 行距 / 段距 / 左右边距 / 上下间距 ----
@@ -736,6 +767,9 @@ class NovelPanelSheet(
         R.id.tv_batch_group_title,
         R.id.tv_batch_warn_label, R.id.tv_concurrency_label,
         R.id.tv_font_size_label,
+        R.id.tv_font_group_title, R.id.tv_font_style_label, R.id.tv_status_color_group_title,
+        R.id.tv_status_selection_label, R.id.tv_status_active_label,
+        R.id.tv_status_failed_label, R.id.tv_status_completed_label,
         R.id.tv_line_spacing_label, R.id.tv_para_spacing_label,
         R.id.tv_padding_label, R.id.tv_keep_paragraphs_label,
         R.id.tv_top_padding_label, R.id.tv_bottom_padding_label,
@@ -754,6 +788,8 @@ class NovelPanelSheet(
         R.id.tv_batch_warn_value, R.id.tv_batch_warn_hint,
         R.id.tv_concurrency_value, R.id.tv_concurrency_hint,
         R.id.tv_font_size_value,
+        R.id.tv_font_group_arrow, R.id.tv_font_style_value,
+        R.id.tv_status_color_group_arrow, R.id.tv_status_color_hint,
         R.id.tv_line_spacing_value, R.id.tv_para_spacing_value,
         R.id.tv_padding_value, R.id.tv_keep_paragraphs_hint,
         R.id.tv_top_padding_value, R.id.tv_bottom_padding_value,
@@ -965,6 +1001,66 @@ class NovelPanelSheet(
             }
         }
 
+    private fun backgroundSegment(mode: Int): Int = when (mode) {
+        1 -> R.id.seg_bg_light
+        2 -> R.id.seg_bg_dark
+        3 -> R.id.seg_bg_white
+        4 -> R.id.seg_bg_black
+        NovelAppearance.CUSTOM_MODE -> R.id.seg_bg_custom
+        else -> R.id.seg_bg_default
+    }
+
+    private fun setupAppearance(view: View) {
+        fun fold(button: Int, content: Int, arrow: Int, key: String) {
+            val body = view.findViewById<View>(content)
+            val indicator = view.findViewById<TextView>(arrow)
+            fun render(expanded: Boolean) {
+                body.visibility = if (expanded) View.VISIBLE else View.GONE
+                indicator.text = if (expanded) "▾" else "▸"
+            }
+            render(prefs.getBoolean(key, false))
+            view.findViewById<View>(button).setOnClickListener {
+                val expanded = body.visibility != View.VISIBLE
+                prefs.edit().putBoolean(key, expanded).apply()
+                render(expanded)
+            }
+        }
+        fold(R.id.btn_font_group, R.id.font_group_content, R.id.tv_font_group_arrow, "novel_font_group_expanded")
+        fold(R.id.btn_status_color_group, R.id.status_color_group_content, R.id.tv_status_color_group_arrow, "novel_status_color_group_expanded")
+        view.findViewById<View>(R.id.btn_font_style).setOnClickListener { dismiss(); cb.onOpenFontSettings() }
+        for ((state, button, _) in statusRows) {
+            view.findViewById<View>(button).setOnClickListener {
+                NovelColorDialogs.picker(requireContext(), darkPanel, statusTitles[state.ordinal],
+                    currentStatusColors.color(state), state.defaultColor) { cb.onStatusColor(state, it) }
+            }
+        }
+        view.findViewById<View>(R.id.btn_reset_status_colors).setOnClickListener { cb.onResetStatusColors() }
+        renderAppearance(view, state.statusColors, state.customBackground, state.customText, state.fontName)
+    }
+
+    private fun renderAppearance(view: View, colors: NovelStatusColors, backgroundArgb: Int, text: Int, font: String) {
+        currentStatusColors = colors
+        customBackground = backgroundArgb
+        customText = text
+        statusRows.forEach { (state, button, swatch) ->
+            view.findViewById<NovelColorSwatch>(swatch).apply {
+                color = colors.color(state)
+                dark = darkPanel
+            }
+            view.findViewById<View>(button).contentDescription =
+                getString(statusTitles[state.ordinal]) + " " + NovelColorDialogs.hex(colors.color(state))
+        }
+        view.findViewById<TextView>(R.id.tv_font_style_value).text = font.ifEmpty { getString(R.string.novel_font_default) }
+        view.findViewById<TextView>(R.id.tv_custom_bg_preview).apply {
+            setTextColor(text)
+            this.background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setColor(backgroundArgb)
+                setStroke((resources.displayMetrics.density).toInt().coerceAtLeast(1), 0xFF888888.toInt())
+            }
+        }
+    }
+
     // ===== 翻译汇总 / 过滤 =====
 
 
@@ -986,6 +1082,8 @@ class NovelPanelSheet(
         }
         syncing = true
         try {
+            currentBackground = s.background
+            renderAppearance(view, s.statusColors, s.customBackground, s.customText, s.fontName)
             chapterAdapter.stats = s.chapterStats
             chapterAdapter.totals = s.chapterTotals
             chapterAdapter.chars = s.chapterChars
@@ -1016,13 +1114,7 @@ class NovelPanelSheet(
             )
             applySeg(
                 view, R.id.seg_background,
-                when (s.background) {
-                    1 -> R.id.seg_bg_light
-                    2 -> R.id.seg_bg_dark
-                    3 -> R.id.seg_bg_white
-                    4 -> R.id.seg_bg_black
-                    else -> R.id.seg_bg_default
-                },
+                backgroundSegment(s.background),
             )
 
             reapplyingMode = true

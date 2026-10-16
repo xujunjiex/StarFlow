@@ -76,6 +76,13 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
         }
     }
 
+    override fun onViewCreated(view: android.view.View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        activity?.intent?.getStringExtra(SettingPageActivity.EXTRA_PREFERENCE_KEY)?.let { key ->
+            if (findPreference<Preference>(key) != null) listView.post { if (isAdded) scrollToPreference(key) }
+        }
+    }
+
     private lateinit var prefs: CustomPreference
     private val pickFileLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         uri?.let { handleFileSelection(it) }

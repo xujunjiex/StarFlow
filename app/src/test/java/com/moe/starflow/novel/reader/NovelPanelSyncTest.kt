@@ -452,4 +452,58 @@ class NovelPanelSyncTest {
         assertTrue(idOf("sb_concurrency") != 0)
         assertTrue(idOf("sb_batch_warn") != 0)
     }
+    @Test
+    fun `外观回推同步四个状态色自定义配色和字体名称`() {
+        val (sheet, view) = attach()
+        val colors = NovelStatusColors(colors = listOf(0, 0x55112233, 0x66445566, 0x77778899))
+        sheet.renderHostState(NovelPanelHostState(
+            background = NovelAppearance.CUSTOM_MODE,
+            statusColors = colors,
+            customBackground = 0xFF112233.toInt(),
+            customText = 0xFFEEEEEE.toInt(),
+            fontName = "ReaderSerif.ttf",
+            isDarkPanel = true,
+        ))
+        val swatches = listOf(R.id.swatch_status_selection, R.id.swatch_status_active,
+            R.id.swatch_status_failed, R.id.swatch_status_completed)
+        swatches.forEachIndexed { index, id ->
+            assertEquals(colors.colors[index], view.findViewById<NovelColorSwatch>(id).color)
+        }
+        assertEquals(android.view.View.VISIBLE, view.findViewById<android.view.View>(R.id.sel_seg_bg_custom).visibility)
+        assertEquals("ReaderSerif.ttf", view.findViewById<TextView>(R.id.tv_font_style_value).text.toString())
+        assertEquals(0xFFEEEEEE.toInt(), view.findViewById<TextView>(R.id.tv_custom_bg_preview).currentTextColor)
+        sheet.renderHostState(NovelPanelHostState())
+        assertEquals(android.view.View.GONE, view.findViewById<android.view.View>(R.id.sel_seg_bg_custom).visibility)
+        assertEquals(view.context.getString(R.string.novel_font_default),
+            view.findViewById<TextView>(R.id.tv_font_style_value).text.toString())
+    }
+
+    @Test
+    fun `打开自定义配色后取消保留原背景选中项`() {
+        val (_, view) = attach()
+        view.findViewById<android.view.View>(R.id.seg_bg_custom).performClick()
+        val dialog = org.robolectric.shadows.ShadowDialog.getLatestDialog()
+        requireNotNull(dialog).cancel()
+        assertEquals(android.view.View.VISIBLE, view.findViewById<android.view.View>(R.id.sel_seg_bg_default).visibility)
+        assertEquals(android.view.View.GONE, view.findViewById<android.view.View>(R.id.sel_seg_bg_custom).visibility)
+    }
+
+    @Test
+    fun `两个外观折叠组默认收起并分别记忆展开态`() {
+        val prefs = org.robolectric.RuntimeEnvironment.getApplication()
+            .getSharedPreferences(NovelPanelStyle.PREFS_NAME, android.content.Context.MODE_PRIVATE)
+        prefs.edit().remove("novel_font_group_expanded").remove("novel_status_color_group_expanded").commit()
+        try {
+            val (_, first) = attach()
+            assertEquals(android.view.View.GONE, first.findViewById<android.view.View>(R.id.font_group_content).visibility)
+            assertEquals(android.view.View.GONE, first.findViewById<android.view.View>(R.id.status_color_group_content).visibility)
+            first.findViewById<android.view.View>(R.id.btn_font_group).performClick()
+            val (_, reopened) = attach()
+            assertEquals(android.view.View.VISIBLE, reopened.findViewById<android.view.View>(R.id.font_group_content).visibility)
+            assertEquals(android.view.View.GONE, reopened.findViewById<android.view.View>(R.id.status_color_group_content).visibility)
+        } finally {
+            prefs.edit().remove("novel_font_group_expanded").remove("novel_status_color_group_expanded").commit()
+        }
+    }
+
 }

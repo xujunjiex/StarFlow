@@ -91,6 +91,7 @@ object NovelTextRenderer {
     fun build(text: String, style: NovelTextStyle, contentWidth: Int, color: Int = COLOR_MAIN): StaticLayout {
         val paint = TextPaint(TextPaint.ANTI_ALIAS_FLAG).apply {
             textSize = style.fontSizePx
+            typeface = style.typeface
             this.color = color
         }
         return StaticLayout.Builder

@@ -1506,7 +1506,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 notifyUser(getString(R.string.reader_sr_chapter_started));pushPanelNow()
             }
             if(counts.second>0 || counts.third>0) {
-                androidx.appcompat.app.AlertDialog.Builder(this@MangaReaderActivity)
+                androidx.appcompat.app.AlertDialog.Builder(ReaderDialogs.context(this@MangaReaderActivity, isDarkBackground()))
                     .setTitle(R.string.reader_sr_chapter_choose_title)
                     .setMessage(getString(R.string.reader_sr_chapter_choose_msg,all.size,counts.first,counts.second,counts.third,all.size-counts.first-counts.second-counts.third))
                     .setPositiveButton(R.string.reader_sr_chapter_skip_existing){_,_->start(false)}

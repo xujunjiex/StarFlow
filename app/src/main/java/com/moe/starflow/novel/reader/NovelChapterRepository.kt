@@ -332,7 +332,7 @@ class NovelChapterRepository(
 
         val key = "${bookKey(book)}:$chapterIndex:${NovelParagraphSplitter.SPLIT_VERSION}:" +
             "${displayMode.name}:${revisionOf(translations)}:" +
-            "${style.fontSizePx}:${style.lineSpacingMultiplier}:${style.paragraphSpacingPx}:" +
+            "${style.fontKey}:${style.fontSizePx}:${style.lineSpacingMultiplier}:${style.paragraphSpacingPx}:" +
             "${style.paddingPx}:${style.topPaddingPx}:${style.bottomPaddingPx}:" +
             // ⚠️ 整段保护必须进缓存键：关掉自动排版后同一章会重排出**不同的页表**，
             // 不进键就会命中旧页表、开关看起来"没生效"

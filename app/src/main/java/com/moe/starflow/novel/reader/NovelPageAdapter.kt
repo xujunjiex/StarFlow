@@ -43,6 +43,13 @@ class NovelPageAdapter : RecyclerView.Adapter<NovelPageAdapter.VH>() {
 
     /** 选择模式里被选中的段（高亮底）。 */
     private var selected: Set<Int> = emptySet()
+    private var statusColors = NovelStatusColors()
+
+    fun setStatusColors(colors: NovelStatusColors) {
+        if (statusColors == colors) return
+        statusColors = colors
+        notifyItemRangeChanged(0, itemCount)
+    }
 
     /** 正在翻译 / 刚翻完的段（琥珀高亮底）。 */
     private var activeBatch: Set<Int> = emptySet()
@@ -159,6 +166,7 @@ class NovelPageAdapter : RecyclerView.Adapter<NovelPageAdapter.VH>() {
         holder.curl.setPageBackground(backgroundColor)
         val c = content ?: return
         val page = c.pages.getOrNull(position) ?: return
+        holder.page.setStatusColors(statusColors)
         holder.page.bind(c, page, style, textColor, selected, activeBatch, failedBatch, recentBatch)
         // 插图显示态/聚焦态/载荷是**宿主灌进来的状态**（不在 bind 的参数里：三态只重画不重排）
         holder.page.setImageState(imageVisuals, focusedImage, imageTranslations)

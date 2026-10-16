@@ -2004,4 +2004,20 @@
     <string name="manga_source_missing_records">有 %1$d 个缺失页面仍留有翻译、OCR 或超分记录。可从导入卡片的“作品数据与记录”查看原路径，放回文件后重新扫描。选择“忽略这些缺页记录”后，这些页面不会再触发缺页记录提醒；记录不会被删除。</string>
     <string name="manga_source_ignore_records">忽略这些缺页记录</string>
     <string name="library_record_storage_hint">书目、阅读进度和翻译／OCR／超分记录保存在 App 内部，并按书库隔离。目录保存原文件、文件索引和图片产物；复制目录不会带走完整记录，请通过“导出记录”保存单本数据。</string>
+    <string name="novel_font_group">字体与字号</string>
+    <string name="novel_font_style">字体样式</string>
+    <string name="novel_status_color_group">翻译状态颜色</string>
+    <string name="novel_status_selection">选中段落</string>
+    <string name="novel_status_active">翻译中</string>
+    <string name="novel_status_failed">翻译失败</string>
+    <string name="novel_status_completed">翻译完成</string>
+    <string name="novel_status_color_hint">透明度调为 0 时隐藏对应的段落底色和插图边框。</string>
+    <string name="novel_status_colors_reset">全部恢复默认</string>
+    <string name="novel_custom_appearance">自定义配色</string>
+    <string name="novel_custom_background_color">背景颜色</string>
+    <string name="novel_custom_text_color">文字颜色</string>
+    <string name="novel_color_preview">正文配色预览\n这是一段用于预览阅读效果的文字。</string>
+    <string name="novel_color_invalid">请输入有效的十六进制颜色值</string>
+    <string name="novel_font_default">系统默认</string>
+    <string name="novel_color_opacity">不透明度</string>
 </resources>

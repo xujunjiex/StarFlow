@@ -2006,4 +2006,20 @@
     <string name="manga_source_missing_records">%1$d missing pages still have translation, OCR or upscaling records. Find their original paths from the information icon on the Import card, restore the files and rescan. Ignore these missing records to stop future warnings for these pages. Their records will be kept.</string>
     <string name="manga_source_ignore_records">Ignore these missing records</string>
     <string name="library_record_storage_hint">Book details, reading progress and translation/OCR/SR records are stored inside the app and isolated by library. The directory holds originals, file indexes and image artifacts. Copying it does not transfer complete records; use Export records to save a book package.</string>
+    <string name="novel_font_group">Font and size</string>
+    <string name="novel_font_style">Font style</string>
+    <string name="novel_status_color_group">Translation status colors</string>
+    <string name="novel_status_selection">Selected paragraphs</string>
+    <string name="novel_status_active">Translating</string>
+    <string name="novel_status_failed">Translation failed</string>
+    <string name="novel_status_completed">Translation completed</string>
+    <string name="novel_status_color_hint">Set opacity to 0 to hide the paragraph highlight and illustration frame.</string>
+    <string name="novel_status_colors_reset">Restore all defaults</string>
+    <string name="novel_custom_appearance">Custom colors</string>
+    <string name="novel_custom_background_color">Background color</string>
+    <string name="novel_custom_text_color">Text color</string>
+    <string name="novel_color_preview">Reading color preview\nA sample paragraph to preview your reading colors.</string>
+    <string name="novel_color_invalid">Enter a valid hexadecimal color</string>
+    <string name="novel_font_default">System default</string>
+    <string name="novel_color_opacity">Opacity</string>
 </resources>

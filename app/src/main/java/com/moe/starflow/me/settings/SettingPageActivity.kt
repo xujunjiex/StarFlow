@@ -36,6 +36,7 @@ class SettingPageActivity : BaseActivity() {
 
     companion object {
         const val EXTRA_FRAGMENT_TYPE = "fragment_type"
+        const val EXTRA_PREFERENCE_KEY = "preference_key"
         const val TYPE_FRAGMENT_TRANSLATE_MODE = 1
         const val TYPE_FRAGMENT_API_CONFIG = 2
         const val TYPE_FRAGMENT_PERSONALIZATION = 3

@@ -44,6 +44,16 @@ class NovelPageView(context: Context) : View(context) {
      * 与 [activeBatch] 是前后两个时刻：琥珀是"正在飞"，这个是"刚落定"。
      */
     private var recentBatch: Set<Int> = emptySet()
+    private var statusColors = NovelStatusColors()
+
+    fun setStatusColors(colors: NovelStatusColors) {
+        statusColors = colors
+        selectionPaint.color = colors.color(NovelHighlight.SELECTION)
+        activeBatchPaint.color = colors.color(NovelHighlight.ACTIVE)
+        failedBatchPaint.color = colors.color(NovelHighlight.FAILED)
+        recentBatchPaint.color = colors.color(NovelHighlight.COMPLETED)
+        invalidate()
+    }
 
     /** 每张插图的显示态（`段号 -> 三态`）；表里没有 = 译文态。 */
     private var imageVisuals: Map<Int, NovelImageVisual> = emptyMap()
@@ -433,7 +443,7 @@ class NovelPageView(context: Context) : View(context) {
         val visual = visualOf(paraIndex)
         val payload = imageTranslations[paraIndex]
         // **编辑模式**：填充画在图片下面（图片会把中间盖掉，只在边缘留一圈底色）
-        if (focused) NovelImageControls.drawSelectionFill(canvas, selection, density)
+        if (focused) NovelImageControls.drawSelectionFill(canvas, selection, density, statusColors.selectionFill)
         val overlay = if (payload != null) {
             NovelImageOverlay.of(context, image, payload, visual, size.width.toInt())
         } else {
@@ -453,10 +463,10 @@ class NovelPageView(context: Context) : View(context) {
         // 「这三张图片都要显示黄色状态」）—— 只高亮文本段的话，一整批都是图时屏幕上毫无反馈。
         // 「刚翻完」给绿框（图片没有"底色"可换，框是它唯一的状态载体）。
         val frame = when {
-            focused -> NovelImageControls.SELECTION_BORDER to NovelImageControls.SELECTION_BORDER_DP
-            paraIndex in failedBatch -> NovelTextRenderer.BORDER_FAILED_BATCH to 3f
-            paraIndex in activeBatch -> NovelTextRenderer.BORDER_ACTIVE_BATCH to 3f
-            paraIndex in recentBatch -> NovelTextRenderer.BORDER_LAST_TRANSLATED to 3f
+            focused -> statusColors.border(NovelHighlight.SELECTION) to NovelImageControls.SELECTION_BORDER_DP
+            paraIndex in failedBatch -> statusColors.border(NovelHighlight.FAILED) to 3f
+            paraIndex in activeBatch -> statusColors.border(NovelHighlight.ACTIVE) to 3f
+            paraIndex in recentBatch -> statusColors.border(NovelHighlight.COMPLETED) to 3f
             else -> null
         }
         if (frame != null) {

@@ -113,4 +113,15 @@ class NovelLayoutCacheTest {
         }
         assertEquals("paginate 必须把每段的排版存进缓存，实际重建了 ${c.builds} 次", 0, c.builds)
     }
+    @Test
+    fun `字体改变后旧段排版不可复用且测量使用选中的字体`() {
+        val cache = NovelLayoutCache()
+        val original = cache.layout(0, text, style, 300) { NovelTextRenderer.build(text, style, 300) }
+        val serif = style.copy(fontKey = "serif-font", typeface = android.graphics.Typeface.SERIF)
+        val changed = cache.layout(0, text, serif, 300) { NovelTextRenderer.build(text, serif, 300) }
+        assertNotSame(original, changed)
+        assertEquals(android.graphics.Typeface.SERIF, changed.paint.typeface)
+        assertSame(changed, cache.layout(0, text, serif, 300) { error("字体和文本均未变化时应命中缓存") })
+    }
+
 }

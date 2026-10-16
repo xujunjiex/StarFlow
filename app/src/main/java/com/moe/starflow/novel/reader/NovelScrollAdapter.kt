@@ -32,6 +32,13 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
 
     /** 选择模式里被选中的段（item 底色）。 */
     private var selected: Set<Int> = emptySet()
+    private var statusColors = NovelStatusColors()
+
+    fun setStatusColors(colors: NovelStatusColors) {
+        if (statusColors == colors) return
+        statusColors = colors
+        notifyItemRangeChanged(0, itemCount)
+    }
 
     /** 正在翻译 / 刚翻完的段（琥珀底色）。 */
     private var activeBatch: Set<Int> = emptySet()
@@ -153,6 +160,7 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
             active = para.index in activeBatch,
             failed = para.index in failedBatch,
             recent = para.index in recentBatch,
+            statusColors = statusColors,
         )
     }
 
@@ -167,6 +175,7 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
         private var active: Boolean = false
         private var failed: Boolean = false
         private var recent: Boolean = false
+        private var statusColors = NovelStatusColors()
 
         /**
          * 这一段的插图（有图就**画图不画那串 `📷 [图片]` 占位文本**）。
@@ -246,12 +255,13 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
             active: Boolean = false,
             failed: Boolean = false,
             recent: Boolean = false,
+            statusColors: NovelStatusColors = NovelStatusColors(),
         ) {
             if (this.text == text && this.style == style && this.textColor == textColor &&
                 this.backgroundColor == backgroundColor && this.image == image &&
                 this.payload == payload && this.visual == visual && this.focused == focused &&
                 this.selected == selected && this.active == active && this.failed == failed &&
-                this.recent == recent
+                this.recent == recent && this.statusColors == statusColors
             ) {
                 return
             }
@@ -271,14 +281,15 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
             this.active = active
             this.failed = failed
             this.recent = recent
+            this.statusColors = statusColors
             // 底色优先级：**选中 > 失败 > 正在翻译 > 刚翻完 > 阅读背景**。
             // 「正在翻译」用半透明琥珀、「失败」用半透明淡红、「刚翻完」用半透明淡绿：
             // 深浅两种背景下都看得见，又不盖住正文
             val want = when {
-                selected -> NovelTextRenderer.COLOR_SELECTION
-                failed -> NovelTextRenderer.COLOR_FAILED_BATCH
-                active -> NovelTextRenderer.COLOR_ACTIVE_BATCH
-                recent -> NovelTextRenderer.COLOR_LAST_TRANSLATED
+                selected -> statusColors.color(NovelHighlight.SELECTION)
+                failed -> statusColors.color(NovelHighlight.FAILED)
+                active -> statusColors.color(NovelHighlight.ACTIVE)
+                recent -> statusColors.color(NovelHighlight.COMPLETED)
                 else -> backgroundColor
             }
             // ⚠️ 底色变了才动 background：setBackground/setBackgroundColor 内部都会 requestLayout，
@@ -335,7 +346,7 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
                     val density = resources.displayMetrics.density
                     // 选中效果的**填充**画在图片下面（图片会盖掉中间，只在边缘留一圈底色）
                     val selection = NovelImageControls.selectionRect(left, 0f, left + size.width, size.height, density)
-                    if (focused) NovelImageControls.drawSelectionFill(canvas, selection, density)
+                    if (focused) NovelImageControls.drawSelectionFill(canvas, selection, density, statusColors.selectionFill)
                     // 有译文载荷 → 画覆盖层（译文 / 识别原文）；纯图态或没载荷 → 画原图
                     val overlay = payload?.let {
                         NovelImageOverlay.of(context, img, it, visual, size.width.toInt())
@@ -351,10 +362,10 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
                         // 优先级与文本段底色同一套：选中(蓝) > 失败(红) > 正在翻译(琥珀) ——
                         // 「这几张图正在翻」要有可见的黄框（用户口径：三张图都要显示黄色状态）
                         val frame = when {
-                            focused -> NovelImageControls.SELECTION_BORDER to NovelImageControls.SELECTION_BORDER_DP
-                            failed -> NovelTextRenderer.BORDER_FAILED_BATCH to 3f
-                            active -> NovelTextRenderer.BORDER_ACTIVE_BATCH to 3f
-                            recent -> NovelTextRenderer.BORDER_LAST_TRANSLATED to 3f
+                            focused -> statusColors.border(NovelHighlight.SELECTION) to NovelImageControls.SELECTION_BORDER_DP
+                            failed -> statusColors.border(NovelHighlight.FAILED) to 3f
+                            active -> statusColors.border(NovelHighlight.ACTIVE) to 3f
+                            recent -> statusColors.border(NovelHighlight.COMPLETED) to 3f
                             else -> null
                         }
                         if (frame != null) {

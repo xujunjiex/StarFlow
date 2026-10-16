@@ -74,4 +74,8 @@ data class NovelPanelHostState(
 
     /** 同时翻译图片（epub 插图当"一个段落"一起翻；默认关）。 */
     val translateImages: Boolean = false,
+    val statusColors: NovelStatusColors = NovelStatusColors(),
+    val customBackground: Int = NovelAppearance.DEFAULT_BACKGROUND,
+    val customText: Int = NovelAppearance.DEFAULT_TEXT,
+    val fontName: String = "",
 )
