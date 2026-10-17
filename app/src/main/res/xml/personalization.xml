@@ -107,6 +107,24 @@
             android:entries="@array/show_source_text_entries"
             android:entryValues="@array/show_source_text_values"/>
 
+        <!-- 一次显示最近 N 条译文（默认关闭；开启后默认 3 条，条数可调）。
+             多条显示时浮窗只画译文，不再拼接原文，避免条数多时浮窗过高。 -->
+        <SwitchPreference
+            android:key="game_recent_results_enabled"
+            app:iconSpaceReserved="false"
+            android:defaultValue="false"
+            android:title="@string/game_recent_results_title"
+            android:summary="@string/game_recent_results_summary"/>
+
+        <ListPreference
+            android:key="game_recent_results_count"
+            app:iconSpaceReserved="false"
+            android:defaultValue="3"
+            android:title="@string/game_recent_results_count_title"
+            android:entries="@array/game_recent_results_count_entries"
+            android:entryValues="@array/game_recent_results_count_values"
+            android:dependency="game_recent_results_enabled"/>
+
         <ListPreference
             android:key="Game_Text_Direction"
             app:iconSpaceReserved="false"

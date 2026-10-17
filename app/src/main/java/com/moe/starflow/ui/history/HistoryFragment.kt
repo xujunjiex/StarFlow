@@ -44,6 +44,9 @@ class HistoryFragment : Fragment() {
 
     companion object {
         private const val TAG = "HistoryFragment"
+
+        /** 游戏历史的紧凑列表开关（只显示译文、留白最小），见 item_history_game_compact.xml。 */
+        private const val KEY_GAME_COMPACT = "history_game_compact"
     }
 
     private var _binding: FragmentHistoryBinding? = null
@@ -118,6 +121,10 @@ class HistoryFragment : Fragment() {
         )
         binding.rvGameHistory.layoutManager = LinearLayoutManager(requireContext())
         binding.rvGameHistory.adapter = gameGroupAdapter
+        // 紧凑模式（只显示译文）：读设置决定初始形态，切换在历史设置弹窗里
+        gameGroupAdapter.setCompactMode(
+            CustomPreference.getInstance(requireContext()).getBoolean(KEY_GAME_COMPACT, false)
+        )
 
         // 漫画历史：分组适配器
         val prefs = CustomPreference.getInstance(requireContext())
@@ -196,6 +203,14 @@ class HistoryFragment : Fragment() {
         }
         container.addView(displayGroup)
 
+        // 游戏历史紧凑模式：只显示译文、留白最小（小尺寸屏/横屏一屏看更多结果）
+        val compactCheck = android.widget.CheckBox(requireContext()).apply {
+            text = getString(R.string.history_game_compact_title)
+            isChecked = prefs.getBoolean(KEY_GAME_COMPACT, false)
+            setPadding(0, 24, 0, 0)
+        }
+        container.addView(compactCheck)
+
         val cacheCountValues = intArrayOf(0, 20, 50, 100, 200, 500)
         val currentCacheCount = prefs.getString("translation_cache_count", "100").toIntOrNull() ?: 100
         val currentCacheIdx = cacheCountValues.indexOfFirst { it == currentCacheCount }.coerceAtLeast(3)
@@ -250,6 +265,7 @@ class HistoryFragment : Fragment() {
                     prefs.setString("history_display_mode", displayValues[newDisplayIdx])
                 }
                 prefs.setString("translation_cache_count", cacheCountValues[cacheSeekBar.progress].toString())
+                prefs.setBoolean(KEY_GAME_COMPACT, compactCheck.isChecked)
                 val newEngineIdx = engineGroup.checkedRadioButtonId
                 if (newEngineIdx >= 0) {
                     prefs.setString("history_retranslate_engine", engineValues[newEngineIdx])
@@ -345,6 +361,7 @@ class HistoryFragment : Fragment() {
                 when (currentTab) {
                     TranslationCacheManager.MODE_GAME -> {
                         // 游戏历史始终按进程（sessionId）分组，不按日期合并
+                        gameGroupAdapter.setCompactMode(prefs.getBoolean(KEY_GAME_COMPACT, false))
                         val groups = cacheManager.getHistoryGrouped(currentTab, sortByUpdated = false)
                         gameGroupAdapter.submitList(groups)
                         updateEmptyState(groups.isEmpty())

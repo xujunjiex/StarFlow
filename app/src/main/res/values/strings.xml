@@ -372,6 +372,10 @@
     <string name="translate_result_box_with_hint">Game/Video Translation Result Settings</string>
     <string name="show_source_text_title">Also show original text</string>
     <string name="show_source_text_summary">Current mode：%s\nDisplays the translation result along with the original text</string>
+    <string name="show_source_text_disabled_summary">Unavailable while \"Show the most recent translations together\" is on: multiple entries show translations only. Turn that option off to use this.</string>
+    <string name="game_recent_results_title">Show the most recent translations together</string>
+    <string name="game_recent_results_summary">The floating result box shows the latest translations in one go. Off by default; when off it keeps showing only the newest result.</string>
+    <string name="game_recent_results_count_title">Number of recent translations</string>
     <string name="volcapi_name">Volc Engine</string>
     <string name="volcapi_description">Volc Engine API, click \"Manage Volc Engine API\" below to set up the API, and you can also view the API application tutorial (there is a free call quota of 2 million characters per month).</string>
     <string name="manage_volc_api">Manage Volc Engine API</string>
@@ -960,6 +964,8 @@
     <string name="history_download_session">Download</string>
     <string name="history_settings_title">History Settings</string>
     <string name="history_display_mode_label">Display Mode</string>
+    <string name="history_game_compact_title">Compact list (translation only)</string>
+    <string name="history_compact_no_translation">(OCR only, no translation)</string>
     <string name="history_no_images_to_download">No images to download</string>
     <string name="history_share_session">Share Session</string>
     <string name="history_download_failed">Download failed: %s</string>

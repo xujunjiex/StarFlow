@@ -457,6 +457,18 @@ class FloatingBallService : LifecycleService() {
     // 重新翻译用：记录最近一次翻译的原文
     private var lastTranslatedSource: String? = null
 
+    // 上屏用：**本条结果**对应的原文（图片翻译没有原文文本 → null）。
+    // ⚠️ 不能拿 lastTranslatedSource 顶替：它属于「重新翻译」的语义，图片翻译不更新它，
+    // 用它拼「同时显示原文」会把上一次文本翻译的原文贴到这次图片译文上。
+    private var lastRenderedSource: String? = null
+
+    // 最近成功译文（本次服务会话内有效，只在主线程读写）。
+    // 决定结果浮窗显示 1 条（默认，与旧版一致）还是最近 N 条；失败/流式/仅 OCR 不入队。
+    private val recentResults = GameRecentResultQueue()
+
+    // 「多条显示」开关（GameRecentResults.KEY_ENABLED）：onCreate 读一次，prefs 变化时更新。
+    private var recentResultsEnabled = GameRecentResults.DEFAULT_ENABLED
+
     // SharedPreferences listener（防止被 GC 回收）
     private var prefChangeListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
 
@@ -566,6 +578,9 @@ class FloatingBallService : LifecycleService() {
         // 读取 AI 上下文设置（预算档位 = token，不是轮数）
         contextEnabled = prefs.getBoolean("game_context_enabled", false)
         contextTokenBudget = ContextBudget.budgetOf(prefs)
+        // 结果浮窗显示设置：多条显示开关 + 条数
+        recentResultsEnabled = GameRecentResults.isEnabled(prefs)
+        recentResults.setLimit(GameRecentResults.countOf(prefs))
 
         // 先初始化截图提供者，再检查权限（权限检查在悬浮球创建之前）
         initScreenshotProvider()
@@ -606,6 +621,15 @@ class FloatingBallService : LifecycleService() {
                 key == "game_context_enabled" -> contextEnabled = prefs.getBoolean("game_context_enabled", false)
                 // 上下文长度（token 预算）改动 → 现读，下一次翻译即按新预算裁剪
                 key == ContextBudget.KEY_TOKEN_BUDGET -> contextTokenBudget = ContextBudget.budgetOf(prefs)
+                // 结果浮窗显示设置：改完立刻按新设置重画（多条 ↔ 单条、条数增减）
+                key == GameRecentResults.KEY_ENABLED -> {
+                    recentResultsEnabled = GameRecentResults.isEnabled(prefs)
+                    rerenderResults()
+                }
+                key == GameRecentResults.KEY_COUNT -> {
+                    recentResults.setLimit(GameRecentResults.countOf(prefs))
+                    rerenderResults()
+                }
                 // 翻译模型切换：重建 translator（共享 Hy-MT2 实例由 Holder 换出/重建，无需重启服务）
                 key == "Text_API" || key == "Text_AI" -> {
                     if (prefs.getInt("Translate_Mode", Constants.TranslateMode.TEXT.id) == Constants.TranslateMode.TEXT.id) {
@@ -1643,6 +1667,65 @@ class FloatingBallService : LifecycleService() {
     }
 
     /**
+     * 成功译文入队并按当前设置重画浮窗 —— **结果上屏的唯一入口**。
+     *
+     * 只给**翻译成功的路径**调用（新译文 / 内存 LRU 命中 / 数据库缓存命中 / 图片翻译）：
+     * 失败、流式中间态、仅 OCR 的原文都不是「翻译完成」，不进最近列表，仍各自直接 `setText`。
+     *
+     * @param source 本条结果的原文；图片翻译没有原文文本，传 null
+     * @param fromMemoryCache 内存 LRU 命中（浮窗加 ⚡ 前缀）；数据库命中仍按旧行为不加
+     * @param cacheHit 是否来自缓存（决定右下角「重新翻译」按钮的显隐，语义与旧版一致）
+     */
+    private fun showGameResult(
+        source: String?,
+        translated: String?,
+        fromMemoryCache: Boolean = false,
+        cacheHit: Boolean = false
+    ) {
+        if (translated.isNullOrBlank()) return
+        if (!source.isNullOrBlank()) lastTranslatedSource = source
+        lastRenderedSource = source?.takeIf { it.isNotBlank() }
+        recentResults.add(translated)
+        renderResults(newestFromMemoryCache = fromMemoryCache)
+        if (cacheHit) translationResultView.showCacheIndicator() else translationResultView.hideCacheIndicator()
+        showResultView()
+    }
+
+    /** 设置变化后按新设置重画（没有历史结果时不动浮窗）。 */
+    private fun rerenderResults() {
+        if (recentResults.isEmpty() || !::translationResultView.isInitialized) return
+        renderResults()
+    }
+
+    /**
+     * 把最近译文渲染进结果浮窗。
+     *
+     * - 多条显示：只画译文，按完成时间从旧到新，相邻两条之间插 [GameRecentResults.SEPARATOR]。
+     *   不插原文/元数据 —— 条数一多再塞原文浮窗会过高。
+     * - 单条显示（默认）：与旧版完全一致，走 [composeResultText]（受「同时显示原文」设置影响）。
+     *   ⚠️ 原文取 [lastRenderedSource]（**本条结果**的来源），不是 [lastTranslatedSource]。
+     * - ⚡ 只标一次：单条标在整段开头，多条标在**最新那一条**上（它是「本次上屏来自内存缓存」
+     *   的临时标志，不属于历史条目）。
+     */
+    private fun renderResults(newestFromMemoryCache: Boolean = false) {
+        val entries = recentResults.snapshot()
+        if (entries.isEmpty()) return
+
+        val multi = recentResultsEnabled && entries.size > 1
+        val body = if (multi) {
+            entries.mapIndexed { index, item ->
+                if (index == entries.lastIndex && newestFromMemoryCache) "⚡$item" else item
+            }.joinToString("\n" + GameRecentResults.SEPARATOR + "\n")
+        } else {
+            val newest = entries.last()
+            val composed = composeResultText(lastRenderedSource, newest) ?: newest
+            // ⚠️ 只有单条时才在开头补 ⚡：多条已在最新那条上标过，再补一个会标到**最旧**那条头上
+            if (newestFromMemoryCache && !composed.startsWith("⚡")) "⚡$composed" else composed
+        }
+        translationResultView.setText(body)
+    }
+
+    /**
      * 翻译进行中且已有部分结果上屏时，单击悬浮球/关闭结果浮层 → 弹确认。
      * 停止 → 终止翻译且不保存结果；继续 → 保持现状。
      */
@@ -1903,9 +1986,13 @@ class FloatingBallService : LifecycleService() {
                                         updateDebugStatus("【LRU缓存命中】", elapsedMs = elapsed, diffRatio = pixelDecision.diffRatio)
                                         statusOverlay.showImmediate(getString(R.string.cache_hit))
                                         ballStateManager?.setState(BallStateManager.State.Completed)
-                                        composeResultText(ocrDecision.ocrText, ocrDecision.cachedText)
-                                            ?.let { translationResultView.setText(it, fromCache = true) }
-                                        translationResultView.showCacheIndicator()
+                                        // 内存 LRU 命中：浮窗带 ⚡（与旧版一致）
+                                        showGameResult(
+                                            source = ocrDecision.ocrText,
+                                            translated = ocrDecision.cachedText,
+                                            fromMemoryCache = true,
+                                            cacheHit = true
+                                        )
                                         engine.markIdle()
                                         ballStateManager?.setState(BallStateManager.State.Idle)
                                         updateDebugStatus("【IDLE】等待像素变化")
@@ -1924,10 +2011,12 @@ class FloatingBallService : LifecycleService() {
                                             updateDebugStatus("【缓存】database", elapsedMs = elapsed, diffRatio = pixelDecision.diffRatio)
                                             statusOverlay.showImmediate(getString(R.string.cache_hit))
                                             ballStateManager?.setState(BallStateManager.State.Completed)
-                                            composeResultText(ocrDecision.ocrText, dbCache.translatedText)
-                                                ?.let { translationResultView.setText(it) }
-                                            translationResultView.showCacheIndicator()
-                                            lastTranslatedSource = ocrDecision.ocrText
+                                            // 数据库命中：按旧行为不加 ⚡
+                                            showGameResult(
+                                                source = ocrDecision.ocrText,
+                                                translated = dbCache.translatedText,
+                                                cacheHit = true
+                                            )
                                             autoTranslateEngine?.onTranslationSuccess(ocrDecision.ocrText, dbCache.translatedText)
                                             autoTranslateEngine?.markIdle()
                                             ballStateManager?.setState(BallStateManager.State.Idle)
@@ -2002,10 +2091,12 @@ class FloatingBallService : LifecycleService() {
                         updateDebugStatus("【缓存】database", elapsedMs = elapsed)
                         statusOverlay.show(getString(R.string.cache_hit))
                         ballStateManager?.setState(BallStateManager.State.Completed)
-                        composeResultText(normalizedTxt, dbCache.translatedText)
-                            ?.let { translationResultView.setText(it) }
-                        translationResultView.showCacheIndicator()
-                        lastTranslatedSource = normalizedTxt
+                        // 数据库命中：按旧行为不加 ⚡
+                        showGameResult(
+                            source = normalizedTxt,
+                            translated = dbCache.translatedText,
+                            cacheHit = true
+                        )
                         isTranslating.set(false)
                     } else {
                         updateDebugStatus("【翻译中】手动")
@@ -2133,15 +2224,8 @@ class FloatingBallService : LifecycleService() {
                         LogCollector.d(TAG, "文本翻译成功: ${result.translatedText.take(50)}..., 耗时: ${elapsed}ms")
                         updateDebugStatus("【完成】", elapsedMs = elapsed)
 
-                        // 调试模式强制显示原文+译文，否则按个性设置（统一通过 composeResultText 走同一条路径）
-                        composeResultText(str, result.translatedText)?.let { translationResultView.setText(it) }
-                        translationResultView.hideCacheIndicator()
-                        lastTranslatedSource = str
-
-                        // 自动翻译中自动恢复显示
-                        if (isAutoTranslating && !isResultViewShowing) {
-                            showResultView()
-                        }
+                        // 上屏（单条 = 按「同时显示原文」组合原文/译文；多条 = 最近 N 条译文）。
+                        showGameResult(source = str, translated = result.translatedText)
 
                         // 更新缓存并进入 IDLE
                         autoTranslateEngine?.onTranslationSuccess(str, result.translatedText)
@@ -2222,11 +2306,9 @@ class FloatingBallService : LifecycleService() {
                         updateDebugStatus("【完成】图片翻译", elapsedMs = elapsed)
                         statusOverlay.showImmediate(getString(R.string.translating_done))
                         ballStateManager?.setState(BallStateManager.State.Completed)
-                        translationResultView.setText(result.translatedText)
-                        // 自动翻译中自动恢复显示
-                        if (isAutoTranslating && !isResultViewShowing) {
-                            showResultView()
-                        }
+                        // 图片翻译没有原文文本：source 传 null —— 既不会覆盖「重新翻译」用的
+                        // lastTranslatedSource，也不会在开启「同时显示原文」时把上一次文本翻译的原文串进来
+                        showGameResult(source = null, translated = result.translatedText)
                     }
                     is TranslationResult.Error -> {
                         if (translationCancelled) {
@@ -2410,6 +2492,8 @@ class FloatingBallService : LifecycleService() {
         super.onDestroy()
         // 服务停止 = 一次翻译会话结束 → 清空上下文（用户口径：「关闭截屏翻译进程」时重置）
         clearContext()
+        // 最近译文只活在本次服务会话里，随服务结束清空（下次启动重新累积）
+        recentResults.clear()
         // 注销悬浮球图标变更广播
         iconChangeReceiver?.let {
             androidx.localbroadcastmanager.content.LocalBroadcastManager.getInstance(this).unregisterReceiver(it)

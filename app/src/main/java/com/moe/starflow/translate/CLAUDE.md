@@ -75,6 +75,33 @@ IDLE（跳过OCR）──像素变化──→ CHANGED ──稳定1帧──→
 - 自动翻译时不能关闭悬浮球
 - 可穿透性：⚠️ 结果容器本身**没有 alpha 开关**（原来这条写的是"通过 alpha 控制"，代码里查无实现）。半透明是**悬浮球**自己的 `Floating_Ball_Alpha`；漫画侧的"穿透"是复制模式的触摸分支（`isCopyMode`）
 
+**结果上屏只有一个入口：`FloatingBallService.showGameResult()`**。五条成功路径 —— 自动模式的
+内存 LRU 命中、自动模式的数据库命中、手动模式的数据库命中、`translateByText` 的成功回调、
+`translateByPic`（图片翻译，`source = null`）—— 都必须走它。它负责三件事，别在调用点各写一遍：
+① 记入最近译文队列（`GameRecentResultQueue`，只保存译文，按完成时间从旧到新）；
+② 按设置渲染单条 / 多条（`renderResults`）；③ 确保结果窗口在屏（`showResultView`）。
+⚠️ 失败、流式中间态（`onPartial`）、仅 OCR 的原文**不进**最近列表，也不走这个入口
+（它们仍然直接 `translationResultView.setText(...)`）：它们不是「翻译完成」。
+
+**「最近多条译文」设置**（键与解析都在 `translate/GameRecentResults.kt`，XML 在 `personalization.xml`
+的「游戏/视频翻译结果设置」分类）：
+
+| 键 | 默认 | 语义 |
+|---|---|---|
+| `game_recent_results_enabled` | `false` | 打开后浮窗一次显示最近 N 条译文（多条只画译文，用 `————————` 分隔，不拼原文） |
+| `game_recent_results_count` | `3` | 条数，字符串存储，取值收敛到 1..5；上限 5 是因为浮窗 `wrap_content` 且**不带滚动** |
+
+⚠️ **「同时显示原文」只在单条模式生效**：多条模式刻意不拼原文（N 条再拼原文会高到出屏），
+所以开了「原文 + 译文对照」的用户切到多条后看不到原文 —— 这是有意的取舍，别当 bug 修。
+**与此配套**：开启多条显示时，设置页的「显示原文」被禁用（灰掉）并把摘要换成
+`show_source_text_disabled_summary` 说明原因（`PersonalizationConfig.syncShowSourceAvailability`，
+开关变化时 `view.post` 同步一次、`onResume` 再补一次），关闭多条后自动恢复 —— 否则用户会以为设置坏了。
+⚠️ 单条模式拼原文用的是 `lastRenderedSource`（**本条结果**的原文），**不是** `lastTranslatedSource`
+（那是「重新翻译」用的、只有文本翻译才更新）。图片翻译没有原文文本，用后者会把上一次文本翻译
+的原文贴到这次图片译文上。
+⚠️ 最近译文队列**只活在本次服务会话里**（`onDestroy` 清空），不落库、不从数据库恢复：
+历史里同一原文会被 `refreshGameCache` 覆盖成一条，用它当「最近 N 条」会给出错误顺序。
+
 **悬浮球长按延迟：** 默认 300ms（`FloatingBallConfig.LONG_PRESS_DELAY`）
 
 **悬浮球手势自定义：**

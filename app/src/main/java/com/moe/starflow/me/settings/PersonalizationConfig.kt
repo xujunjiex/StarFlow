@@ -45,6 +45,7 @@ import com.moe.starflow.translate.screenshot.AccessibilityServiceManager
 import com.moe.starflow.translate.CustomLocale
 import com.moe.starflow.translate.widget.Dialogs
 import com.moe.starflow.translate.FloatingBallService
+import com.moe.starflow.translate.GameRecentResults
 import com.moe.starflow.manga.MangaFloatingService
 import com.moe.starflow.utils.Constants
 import com.moe.starflow.utils.ContextBudget
@@ -226,8 +227,20 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
             true
         }
         showSource.summaryProvider = Preference.SummaryProvider<ListPreference> { _ ->
-            getString(R.string.show_source_text_summary, showSource.entry)
+            // 「同时显示最近多条翻译」开启时，多条模式只画译文 → 这一项不生效，摘要改成说明
+            if (isMultiRecentEnabled()) {
+                getString(R.string.show_source_text_disabled_summary)
+            } else {
+                getString(R.string.show_source_text_summary, showSource.entry)
+            }
         }
+        // 多条显示的开关一变，立刻灰掉/恢复「显示原文」
+        findPreference<SwitchPreference>(GameRecentResults.KEY_ENABLED)?.setOnPreferenceChangeListener { _, _ ->
+            // 回调发生在持久化之前：排到本次点击处理完之后再按新值同步
+            view?.post { syncShowSourceAvailability() }
+            true
+        }
+        syncShowSourceAvailability()
 
         // 文字阴影
         findPreference<SwitchPreference>("text_shadow_enabled")?.apply {
@@ -761,6 +774,25 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
         findPreference<Preference>("manga_translation_replacements")?.let { updateReplacementSummary(it) }
         // 超分模型摘要也要在返回时重刷：用户可能在模型管理页删掉/换了模型
         findPreference<Preference>("sr_model_manage")?.let { updateSrModelSummary(it) }
+        // 「多条显示」可能在别处被改（例如恢复默认），回来时按现值再同步一次
+        syncShowSourceAvailability()
+    }
+
+    /** 「同时显示最近多条翻译」是否开启。 */
+    private fun isMultiRecentEnabled(): Boolean =
+        prefs.getBoolean(GameRecentResults.KEY_ENABLED, GameRecentResults.DEFAULT_ENABLED)
+
+    /**
+     * 「同时显示最近多条翻译」开启时，结果框在多条模式下**只画译文**（高度可控），
+     * 所以「显示原文」这一项实际不起作用 —— 开启期把它禁用（灰掉）+ 改摘要说明原因，
+     * 避免用户以为设置坏了。关闭多条显示后自动恢复。
+     */
+    private fun syncShowSourceAvailability() {
+        if (!this::showSource.isInitialized) return
+        val multi = isMultiRecentEnabled()
+        // isEnabled 变化本身就是状态镜像：只有值真的变了才写（Preference.setEnabled 内部会 notifyChanged，
+        // 摘要 provider 随之重算）。两者始终同源，不需要额外刷新。
+        if (showSource.isEnabled != !multi) showSource.isEnabled = !multi
     }
 
     private fun handleDefaultIcon(prefKey: String) {
