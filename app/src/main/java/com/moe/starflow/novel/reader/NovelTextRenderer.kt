@@ -2,6 +2,10 @@ package com.moe.starflow.novel.reader
 
 import android.graphics.Canvas
 import android.text.StaticLayout
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.style.RelativeSizeSpan
+import com.moe.starflow.novel.parser.NovelFontSizeSpan
 import android.text.TextPaint
 
 /**
@@ -88,14 +92,29 @@ object NovelTextRenderer {
      */
     const val HIGHLIGHT_CORNER_DP = 8f
 
-    fun build(text: String, style: NovelTextStyle, contentWidth: Int, color: Int = COLOR_MAIN): StaticLayout {
+    fun build(
+        text: String,
+        style: NovelTextStyle,
+        contentWidth: Int,
+        color: Int = COLOR_MAIN,
+        fontSizeSpans: List<NovelFontSizeSpan> = emptyList(),
+    ): StaticLayout {
         val paint = TextPaint(TextPaint.ANTI_ALIAS_FLAG).apply {
             textSize = style.fontSizePx
             typeface = style.typeface
             this.color = color
         }
+        val styledText: CharSequence = if (style.useEpubFontSizes && fontSizeSpans.isNotEmpty()) {
+            SpannableString(text).apply {
+                fontSizeSpans.forEach { span ->
+                    val start = span.start.coerceIn(0, text.length)
+                    val end = span.end.coerceIn(start, text.length)
+                    if (start < end) setSpan(RelativeSizeSpan(span.scale), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                }
+            }
+        } else text
         return StaticLayout.Builder
-            .obtain(text, 0, text.length, paint, contentWidth.coerceAtLeast(1))
+            .obtain(styledText, 0, styledText.length, paint, contentWidth.coerceAtLeast(1))
             .setLineSpacing(0f, style.lineSpacingMultiplier)
             .setIncludePad(false)
             .build()

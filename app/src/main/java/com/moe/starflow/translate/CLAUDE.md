@@ -296,3 +296,9 @@ MediaProjectionIntentHolder — 存储授权 Intent。
 **重置时机（`clearContext()`，两个服务同名同义）**：**新会话开始**（`onCreate` 里翻译器建好后）与**服务停止**（`onDestroy`）各清一次 —— 清内存历史 + 引擎侧那份。
 ⚠️ **不在「退出漫画阅读器」时清**：阅读器退出后仍可能有章节后台批量翻译在跑，此刻清会把在途批次正在用的上下文抽走；阅读器自己的历史是 `ReaderTranslationController` 的实例字段、随 Activity 消失，不依赖 Service 侧清理。
 ⚠️ **引擎侧必须显式清**：`LlamaCppTranslation` 是**进程级共享实例**（`LlamaCppSharedHolder`），服务重建后还是同一个对象，不清就会把上个会话的历史接着当上下文用。
+
+## 请求取消与本地模型互斥
+
+`TranslationTextAPI.startTranslation` 返回单次请求句柄；共享本地模型的调用方必须取消自己的句柄。`TranslationAwaiter` 统一处理成功、异常、取消与超时，并丢弃迟到回调。LlamaCpp/NLLB 工作线程持有原生互斥直到实际返回，协程停止等待不能提前放行下一次原生推理。
+
+截图请求按代次过滤阶段、流式和终端回调。本地批次锁使用幂等的请求租约，旧回调不能释放新请求的租约；正常结束、取消和异常均解除 screenshot busy 登记。游戏/视频 OCR 同样登记全局 OCR 锁，停止信号通过 `OcrExecution` 进入原生推理。

@@ -11,7 +11,10 @@ import com.moe.starflow.novel.translate.NovelParagraph
 import com.moe.starflow.novel.translate.NovelParagraphSplitter
 import com.moe.starflow.novel.translate.NovelParagraphType
 import com.moe.starflow.utils.LogCollector
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -50,6 +53,8 @@ data class ChapterContent(
      * 一张解出来的插图完全可以没有译文（用户没开「同时翻译图片」、也没长按它）。
      */
     val imageTranslations: Map<Int, NovelImageTranslation> = emptyMap(),
+    /** Source CSS ranges to apply to the currently displayed text. */
+    val displayFontSizeSpans: Map<Int, List<com.moe.starflow.novel.parser.NovelFontSizeSpan>> = emptyMap(),
 ) {
     /**
      * 非 SKIP 的段（滚动列表就是按这个顺序排的）。
@@ -150,9 +155,14 @@ class NovelChapterRepository(
     suspend fun chaptersOf(book: ImportedNovel): List<NovelChapterMeta> = withContext(Dispatchers.IO) {
         val key = bookKey(book)
         chapterLists.get(key)?.let { return@withContext it }
-        val list = runCatching { NovelParsers.forFormat(book.format).parse(File(book.localRoot)).chapters }
-            .onFailure { LogCollector.e(TAG, "解析目录失败: ${book.localRoot}", it) }
-            .getOrDefault(emptyList())
+        val list = try {
+            NovelParsers.forFormat(book.format).parse(File(book.localRoot)).chapters
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (e: Exception) {
+            LogCollector.e(TAG, "解析目录失败: ${book.localRoot}", e)
+            emptyList()
+        }
         chapterLists.put(key, list)
         list
     }
@@ -221,11 +231,14 @@ class NovelChapterRepository(
             chapterImages.get(key)?.let { return@withContext it }
 
             val meta = chaptersOf(book).getOrNull(chapterIndex) ?: return@withContext emptyMap()
-            val source = runCatching {
+            val source = try {
                 NovelParsers.forFormat(book.format).loadChapterSource(File(book.localRoot), meta.locator)
-            }.onFailure {
-                LogCollector.e(TAG, "读章插图失败 ch=$chapterIndex locator=${meta.locator}", it)
-            }.getOrDefault(ChapterSource.EMPTY)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                LogCollector.e(TAG, "读章插图失败 ch=$chapterIndex locator=${meta.locator}", e)
+                ChapterSource.EMPTY
+            }
 
             val dir = NovelStorageDir.imageCacheDir(root, book).apply { mkdirs() }
             val out = HashMap<Int, NovelImage>()
@@ -275,12 +288,15 @@ class NovelChapterRepository(
             val meta = chaptersOf(book).getOrNull(chapterIndex) ?: return@withContext emptyList()
             val key = chapterKey(book, chapterIndex)
             paragraphs.get(key) ?: run {
-                val text = runCatching {
-                    NovelParsers.forFormat(book.format).loadChapter(File(book.localRoot), meta.locator)
-                }.onFailure {
-                    LogCollector.e(TAG, "读章失败 ch=$chapterIndex locator=${meta.locator}", it)
-                }.getOrDefault("")
-                NovelParagraphSplitter.split(text).also { paragraphs.put(key, it) }
+                val chapterText = try {
+                    NovelParsers.forFormat(book.format).loadChapterText(File(book.localRoot), meta.locator)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (e: Exception) {
+                    LogCollector.e(TAG, "读章失败 ch=$chapterIndex locator=${meta.locator}", e)
+                    com.moe.starflow.novel.parser.ChapterText("")
+                }
+                NovelParagraphSplitter.split(chapterText.text, chapterText.fontSizeSpans).also { paragraphs.put(key, it) }
             }
         }
 
@@ -326,13 +342,24 @@ class NovelChapterRepository(
 
         // 显示文本：分页与绘制的唯一共同来源（见类注释）
         val displayParas = paras.map { p ->
-            p.copy(originalText = NovelPageBilingual.displayText(p.originalText, translations[p.index], displayMode))
+            val displayText = NovelPageBilingual.displayText(p.originalText, translations[p.index], displayMode)
+            // Original-only text and the original half of bilingual text retain EPUB CSS ranges.
+            // A translated-only string has different character offsets and uses the base size.
+            val displaySpans = if (
+                displayText == p.originalText || displayText.startsWith(p.originalText + "\n")
+            ) p.fontSizeSpans else emptyList()
+            p.copy(originalText = displayText, fontSizeSpans = displaySpans)
         }
         val displayTexts = displayParas.associate { it.index to it.originalText }
+        val displayFontSizeSpans = displayParas.associate { it.index to it.fontSizeSpans }
 
+        // Auto only changes geometry when this chapter has a matching EPUB size span. Avoid a
+        // needless full-chapter repagination for books whose CSS declarations are unused.
+        val applyEpubFontSizes = style.useEpubFontSizes && paras.any { it.fontSizeSpans.isNotEmpty() }
         val key = "${bookKey(book)}:$chapterIndex:${NovelParagraphSplitter.SPLIT_VERSION}:" +
             "${displayMode.name}:${revisionOf(translations)}:" +
             "${style.fontKey}:${style.fontSizePx}:${style.lineSpacingMultiplier}:${style.paragraphSpacingPx}:" +
+            "$applyEpubFontSizes:" +
             "${style.paddingPx}:${style.topPaddingPx}:${style.bottomPaddingPx}:" +
             // ⚠️ 整段保护必须进缓存键：关掉自动排版后同一章会重排出**不同的页表**，
             // 不进键就会命中旧页表、开关看起来"没生效"
@@ -351,22 +378,32 @@ class NovelChapterRepository(
 
         // 插图（没有 imagesRoot / 没有图片时是空表）：解图是 I/O + 落盘，只在这里做一次，
         // 结果进 chapterImages 缓存，同章重排（改字号/译文到达）不再碰压缩包
-        val images = runCatching { imagesOf(book, chapterIndex) }
-            .onFailure { LogCollector.w(TAG, "本章插图加载失败 ch=$chapterIndex", it) }
-            .getOrDefault(emptyMap())
+        val images = try {
+            imagesOf(book, chapterIndex)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (e: Exception) {
+            LogCollector.w(TAG, "本章插图加载失败 ch=$chapterIndex", e)
+            emptyMap()
+        }
 
         val visible = paras.filter { it.type != NovelParagraphType.SKIP }
+        val paginationContext = currentCoroutineContext()
         ChapterContent(
             chapterIndex = chapterIndex,
             title = title,
             paragraphs = paras,
             displayTexts = displayTexts,
-            pages = NovelPaginator.paginate(displayParas, style, widthPx, heightPx, anchor, layoutCache, images),
+            pages = NovelPaginator.paginate(
+                displayParas, style, widthPx, heightPx, anchor, layoutCache, images,
+                cancellationCheck = { paginationContext.ensureActive() },
+            ),
             translatableIndexes = visible
                 .filter { it.isTranslatable() || (includeImages && it.type == NovelParagraphType.IMAGE) }
                 .mapTo(HashSet()) { it.index },
             images = images,
             imageTranslations = imageTranslations,
+            displayFontSizeSpans = displayFontSizeSpans,
         ).also { content.put(key, it) }
     }
 

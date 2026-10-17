@@ -79,7 +79,6 @@ import com.moe.starflow.utils.KeystoreManager
 import com.moe.starflow.utils.TextSimilarity
 import com.moe.starflow.utils.TranslationExecutionMode
 import com.moe.starflow.utils.TranslationBusyRegistry
-import com.moe.starflow.utils.LocalTranslationCoordinator
 import com.moe.starflow.utils.ThemeManager
 import com.moe.starflow.translate.TranslationStatusOverlay
 import com.moe.starflow.utils.UtilTools
@@ -87,6 +86,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -176,6 +176,7 @@ class MangaFloatingService : LifecycleService() {
     private var ballInitialTouchY = 0f
 
     private var isProcessing = false
+    private val translationGeneration = java.util.concurrent.atomic.AtomicLong()
     @Volatile private var translationCancelled = false  // 用户强制停止翻译：不保存结果；跨线程读（TranslateUtils 取消轮询）需 volatile
     /** 本次翻译是否已有部分气泡渲染上屏（分批渲染首批 / 本地模型流式出字）：决定单击悬浮球是直接终止还是弹确认 */
     private var partialRenderShown = false
@@ -1833,6 +1834,11 @@ class MangaFloatingService : LifecycleService() {
                         }
                     }
                     LogCollector.d(TAG, "Screenshot collector: processMangaScreenshot completed normally")
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    if (!kotlinx.coroutines.currentCoroutineContext().isActive) throw e
+                    isProcessing = false
+                    dismissProgressOverlay()
+                    LogCollector.d(TAG, "Screenshot OCR cancelled")
                 } catch (e: TranslationCancelledException) {
                     // 用户主动停止翻译：用专用异常可靠识别（不依赖 translationCancelled，
                     // 避免被下一次翻译抢先重置导致竞态误报「翻译失败」）
@@ -1852,6 +1858,16 @@ class MangaFloatingService : LifecycleService() {
                     isProcessing = false
                     dismissProgressOverlay()
                     LogCollector.e(TAG, e.diagnostic, e)
+                    if (autoTranslateEngine.isAutoTranslating) stopAutoTranslate()
+                    statusOverlay.showError(getString(R.string.error_ocr_memory))
+                    ballStateManager?.setState(BallStateManager.State.Error)
+                } catch (e: OutOfMemoryError) {
+                    // Some image/RT-DETR allocations happen before the engine-specific OCR guard.
+                    // Keep a Java heap allocation failure inside this translation task so the service
+                    // can release its screenshot in processMangaScreenshot's finally block.
+                    isProcessing = false
+                    dismissProgressOverlay()
+                    LogCollector.e(TAG, "Screenshot collector: image/OCR memory allocation failed", e)
                     if (autoTranslateEngine.isAutoTranslating) stopAutoTranslate()
                     statusOverlay.showError(getString(R.string.error_ocr_memory))
                     ballStateManager?.setState(BallStateManager.State.Error)
@@ -2078,6 +2094,13 @@ class MangaFloatingService : LifecycleService() {
     }
 
     private suspend fun processMangaScreenshot(bitmap: Bitmap, precomputedPHash: Long? = null, precomputedExtHashes: LongArray? = null) {
+        val generation = translationGeneration.get()
+        withContext(OcrExecution.context { translationCancelled || generation != translationGeneration.get() }) {
+            processMangaScreenshotCancellable(bitmap, precomputedPHash, precomputedExtHashes)
+        }
+    }
+
+    private suspend fun processMangaScreenshotCancellable(bitmap: Bitmap, precomputedPHash: Long?, precomputedExtHashes: LongArray?) {
         TranslationBusyRegistry.enter()
         try {
             LogCollector.d(TAG, "processMangaScreenshot: START")
@@ -2328,7 +2351,7 @@ class MangaFloatingService : LifecycleService() {
             }
 
             // OcrLock: 保护 ONNX 模型的多线程访问（PP-OCRv5/manga-ocr 等单例引擎）
-            val ocrToken = com.moe.starflow.manga.OcrLock.acquire()
+            val ocrToken = com.moe.starflow.manga.OcrLock.acquire(kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job], "manga screenshot OCR")
         if (ocrToken == 0L) {
                 autoTranslateEngine.scheduleNextDetection(MangaAutoTranslateEngine.DETECT_INTERVAL_MS)
                 isProcessing = false
@@ -2490,16 +2513,12 @@ class MangaFloatingService : LifecycleService() {
             // 该开关同时管辖两种增量显示：PP 系列/RT+manga 的分两批、Hy-MT2 的逐句流式。
             // 关闭时 Hy-MT2 不再逐句冒出，而是一次性返回全部译文（与分批关闭时的行为一致）。
             val incrementalEnabled = prefs.getBoolean("Incremental_Render", true)
-            val localTranslation = translatorText?.isLocalHeavyEngine() == true
-            if (localTranslation) LocalTranslationCoordinator.mutex.lock()
-            val newTranslatedBubbles = try {
+            val newTranslatedBubbles = run {
                 batchPipeline(bitmap).translateWithCache(allBubbles) { partialBubbles ->
                     if (incrementalEnabled && partialBubbles.isNotEmpty()) {
                         launchPartialRender { renderAndShowMergedOverlay(bitmap, partialBubbles, saveCache = false, showCopyButton = false) }
                     }
                 }
-            } finally {
-                if (localTranslation) LocalTranslationCoordinator.mutex.unlock()
             }
             LogCollector.d(TAG, "processMangaScreenshot: Step 3 - done, got ${newTranslatedBubbles.size} results")
 
@@ -3567,8 +3586,9 @@ class MangaFloatingService : LifecycleService() {
      */
     private fun cancelInFlightTranslation(showMessage: Boolean = true) {
         translationCancelled = true
+        translationGeneration.incrementAndGet()
         partialRenderShown = false  // 已停止：再点悬浮球不再弹确认，直接幂等终止
-        translatorText?.cancelTranslation()
+        // TranslationAwaiter and OcrExecution observe this request's stop flag.
         dismissProgressOverlay()
         dismissResultOverlay()
         ballStateManager?.setState(BallStateManager.State.Idle)

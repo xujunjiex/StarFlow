@@ -6,6 +6,8 @@ import android.graphics.BitmapFactory
 import androidx.preference.PreferenceManager
 import com.moe.starflow.data.TranslationCacheManager
 import com.moe.starflow.manga.OcrLock
+import com.moe.starflow.manga.engine.OcrExecution
+import kotlinx.coroutines.CancellationException
 import com.moe.starflow.manga.TranslateUtils
 import com.moe.starflow.manga.TranslationCancelledException
 import com.moe.starflow.manga.config.MangaModeConfig
@@ -19,7 +21,6 @@ import com.moe.starflow.mangaimport.translate.TranslationEngineInit
 import com.moe.starflow.translate.TranslationTextAPI
 import com.moe.starflow.translate.isLocalHeavyEngine
 import com.moe.starflow.utils.CustomPreference
-import com.moe.starflow.utils.LocalTranslationCoordinator
 import com.moe.starflow.utils.LogCollector
 import com.moe.starflow.utils.OcrEngineManager
 import kotlinx.coroutines.CoroutineScope
@@ -58,7 +59,7 @@ internal fun languageUnsupportedByOcr(sourceLang: String, supported: Set<String>
  * `translatePlain`），只是把「漫画页」换成「小说插图」：
  *
  * ```
- * OcrLock.beginOcrDemand() → OcrLock.acquire()（带等锁 + 5s 心跳）
+ * OcrLock.beginOcrDemand() → OcrLock.acquire(currentCoroutineContext()[Job], "novel image OCR")（带等锁 + 5s 心跳）
  *   → TranslationEngineInit.ensureReady(context)   ← 引擎组来自全局设置（默认 PP-OCRv6，免下载）
  *   → DetectionBridge.runOCR(bitmap, srcLang, det, ocr, context, keepTextFree, rtDir)
  *   → DetectionBridge.ocrToBubbleRegions(blocks, 方向)     → 文字块（矩形 + 原文）
@@ -72,8 +73,8 @@ internal fun languageUnsupportedByOcr(sourceLang: String, supported: Set<String>
  * 1. **必须持 `OcrLock`**：PP-OCR / RT-DETR / manga-ocr 都是进程级单例 ONNX，
  *    与截屏翻译 / 漫画阅读器 / 超分共用同一个 session —— 不持锁并发调用就是崩或出垃圾结果。
  *    锁忙时**等**（最多 [LOCK_WAIT_TIMEOUT_MS]），拿到再干；等不到报"引擎忙"。
- * 2. **本地文本引擎（NLLB / LlamaCpp）要串行**：`LocalTranslationCoordinator.mutex`
- *    —— 与漫画 `translatePhase` 同一套（远端 API 不占）。
+ * 2. **本地文本引擎（NLLB / LlamaCpp）要串行**：由 `TranslateUtils` 统一取得可取消的批次租约，
+ *    工作线程在原生调用结束前保持模型互斥（远端 API 不占）。
  *
  * ⚠️ 位图**不缓存**（与显示用的 `NovelImageStore` 分开）：OCR 要大一点的分辨率，
  * 而它用完就 `recycle()` —— 一章十几张插图全留着就是几十 MB。
@@ -120,7 +121,7 @@ class NovelImagePipeline(
         sourceLang: String,
         targetLang: String,
         isCancelled: () -> Boolean = { false },
-    ): NovelImageOutcome = withContext(Dispatchers.IO) {
+    ): NovelImageOutcome = withContext(Dispatchers.IO + OcrExecution.context(isCancelled)) {
         translateOnIo(file, sourceLang, targetLang, isCancelled)
     }
 
@@ -136,6 +137,7 @@ class NovelImagePipeline(
         targetLang: String,
         isCancelled: () -> Boolean,
     ): NovelImageOutcome {
+        if (isCancelled()) return NovelImageOutcome(null, null)
         if (!file.isFile) return NovelImageOutcome(null, "插图文件不存在")
         // ⚠️ **先校验语言与 OCR 引擎组是否兼容**：`DetectionBridge.runOCR` 在语言不受支持时
         // **静默返回空列表**（PP-OCRv5 的 ko/ru 没下 rec 模型时就是这样，manga-ocr 只认日文），
@@ -152,14 +154,18 @@ class NovelImagePipeline(
         val decoded = decodeForOcr(file) ?: return NovelImageOutcome(null, "插图读不出来（可能已损坏）")
         val base = decoded.bitmap
         try {
-            val bubbles = runCatching { ocrWithLock(base, sourceLang) }
-                .onFailure { LogCollector.e(TAG, "插图 OCR 失败: ${file.name}", it) }
-                .getOrElse { e ->
-                    return NovelImageOutcome(
-                        null,
-                        if (e is OcrMemoryException) e.message else "${e.javaClass.simpleName}: ${e.message.orEmpty()}".ifBlank { "OCR 失败" },
-                    )
-                }
+            val bubbles = try {
+                ocrWithLock(base, sourceLang)
+            } catch (e: CancellationException) {
+                if (!currentCoroutineContext().isActive) throw e
+                return NovelImageOutcome(null, null)
+            } catch (e: Exception) {
+                LogCollector.e(TAG, "插图 OCR 失败: ${file.name}", e)
+                return NovelImageOutcome(
+                    null,
+                    if (e is OcrMemoryException) e.message else "${e.javaClass.simpleName}: ${e.message.orEmpty()}".ifBlank { "OCR 失败" },
+                )
+            }
             if (bubbles.isEmpty()) return NovelImageOutcome(null, "这张图里没识别到文字")
             if (isCancelled()) return NovelImageOutcome(null, null)
 
@@ -252,8 +258,6 @@ class NovelImagePipeline(
         val engine = api() ?: throw IllegalStateException("没有配置文本翻译引擎")
         // 本地引擎（NLLB / LlamaCpp）全局串行：与漫画 translatePhase 同一把锁。
         // 判据收敛在 `isLocalHeavyEngine()`（唯一来源），别自己 instanceof 两个类。
-        val local = engine.isLocalHeavyEngine()
-        if (local) LocalTranslationCoordinator.mutex.lock()
         try {
             return TranslateUtils.translateBubbles(
                 translator = engine,
@@ -265,8 +269,6 @@ class NovelImagePipeline(
             )
         } catch (e: TranslationCancelledException) {
             return null
-        } finally {
-            if (local) runCatching { LocalTranslationCoordinator.mutex.unlock() }
         }
     }
 
@@ -338,28 +340,14 @@ class NovelImagePipeline(
     private suspend fun acquireLockWithWait(): Long {
         var waited = 0L
         while (true) {
-            OcrLock.acquire().let { if (it != 0L) return it }
+            OcrExecution.checkCancellation()
+            OcrLock.acquire(currentCoroutineContext()[Job], "novel image OCR").let { if (it != 0L) return it }
             if (waited >= LOCK_WAIT_TIMEOUT_MS) return 0L
             delay(LOCK_POLL_MS)
             waited += LOCK_POLL_MS
         }
     }
 
-    /**
-     * 持锁期间的心跳。
-     *
-     * ⚠️ 首次 `ensureReady` 可能要加载 ONNX 模型（秒级到十几秒），远超
-     * `OcrLock.STALE_TIMEOUT_MS`(30s) 的一半 —— 不打心跳会被自愈机制判成"持有者已死"而强制放锁，
-     * 于是另一个 OCR/超分任务同时进来用同一个引擎。
-     *
-     * ⚠️ 不能用 `coroutineScope { launch { … } }`：那会在**返回前等子协程结束**（心跳永远不返回）。
-     * 这里挂一个独立的 scope（父上下文被取消时它跟着取消，`finally` 里再 `cancel()`）。
-     */
-    private suspend fun startHeartbeat(token: Long): Job =
-        CoroutineScope(currentCoroutineContext()).launch {
-            while (isActive) {
-                OcrLock.heartbeat(token)
-                delay(LOCK_HEARTBEAT_MS)
-            }
-        }
+    /** 心跳由共享锁托管，取消收尾期间保留，释放令牌或持有者完成后停止。 */
+    private suspend fun startHeartbeat(token: Long): Job = OcrLock.startHeartbeat(token, LOCK_HEARTBEAT_MS)
 }

@@ -22,6 +22,9 @@ import com.moe.starflow.translate.TranslationResult
 import com.moe.starflow.translate.TranslationTextAPI
 import com.moe.starflow.translate.widget.BallStateManager
 import com.moe.starflow.utils.CustomPreference
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
@@ -72,6 +75,7 @@ class IncrementalBatchPipelineTest {
         private var recCallCount = 0
         var recFailure: OcrMemoryException? = null
         var failureOnCall = 0
+        var onRecognizeV5: ((Int) -> Unit)? = null
         val ownedCrops = mutableListOf<Bitmap>()
 
         override fun resolveRecLangV5(context: Context, lang: String): Pair<PPOcrV5Engine.RecLang?, String?> {
@@ -108,6 +112,7 @@ class IncrementalBatchPipelineTest {
         ): List<RecResult> {
             calls += Call("recognizeV5", crops.size)
             val callIndex = recCallCount++
+            onRecognizeV5?.invoke(callIndex)
             recFailure?.takeIf { callIndex == failureOnCall }?.let { throw it }
             val blank = blankRec || (blankFirstCallOnly && callIndex == 0)
             return crops.mapIndexed { i, _ -> RecResult(if (blank) "" else "v5-$i", 1f) }
@@ -202,7 +207,7 @@ class IncrementalBatchPipelineTest {
          * 只看 [batchResults] 会漏掉一半。
          */
         val bubbleDirections = mutableListOf<TextDirection>()
-        var cancelled = false
+        @Volatile var cancelled = false
         val history = LinkedList<Pair<String, String>>()
         val cache = RegionCacheManager()
 
@@ -262,6 +267,37 @@ class IncrementalBatchPipelineTest {
         IncrementalBatchPipeline(host, scope, cfg, ops)
 
     private fun bitmap() = Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888)
+
+    @Test
+    fun stopFlagReachesSecondOcrEvenWhenTheFirstBatchHasNoText() = kotlinx.coroutines.runBlocking {
+        val host = FakeHost(ctx, FakeTranslator())
+        ops.blankFirstCallOnly = true
+        val started = java.util.concurrent.CountDownLatch(1)
+        val escape = java.util.concurrent.atomic.AtomicBoolean()
+        ops.onRecognizeV5 = { index ->
+            if (index == 1) {
+                started.countDown()
+                while (!escape.get()) com.moe.starflow.manga.engine.OcrExecution.checkCancellation()
+            }
+        }
+        val externalScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+        val image = bitmap()
+        val result = kotlinx.coroutines.CoroutineScope(coroutineContext).async(Dispatchers.Default) {
+            runCatching { pipeline(host, config(), externalScope).run(image) }.exceptionOrNull()
+        }
+        try {
+            assertTrue(started.await(3, java.util.concurrent.TimeUnit.SECONDS))
+            host.cancelled = true
+            val failure = kotlinx.coroutines.withTimeout(3_000) { result.await() }
+            assertTrue("Stopping the host must terminate second-batch OCR", failure is kotlinx.coroutines.CancellationException)
+            assertTrue(host.errors.isEmpty())
+        } finally {
+            escape.set(true)
+            result.cancelAndJoin()
+            externalScope.cancel()
+            image.recycle()
+        }
+    }
 
     // ---------- 路由判定 ----------
 

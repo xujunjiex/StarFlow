@@ -2,6 +2,8 @@ package com.moe.starflow.novel.translate
 
 import com.moe.starflow.translate.TranslationResult
 import com.moe.starflow.translate.TranslationTextAPI
+import com.moe.starflow.translate.TranslationRequest
+import com.moe.starflow.translate.TranslationRequestSlot
 import com.moe.starflow.utils.LogCollector
 import translationapi.TranslatorFactory
 import kotlinx.coroutines.withTimeoutOrNull
@@ -41,6 +43,12 @@ fun interface NovelTextTranslator {
         callback: (TranslationResult) -> Unit,
     )
 
+    fun start(prompt: String, sourceLang: String, targetLang: String,
+        callback: (TranslationResult) -> Unit): TranslationRequest {
+        translate(prompt, sourceLang, targetLang, callback)
+        return TranslationRequest { cancel() }
+    }
+
     fun cancel() {}
 
     val name: String get() = ""
@@ -68,35 +76,35 @@ fun interface NovelTextTranslator {
 
 /** 把既有 [TranslationTextAPI] 适配成 [NovelTextTranslator]。 */
 class TranslationTextApiAdapter(private val api: TranslationTextAPI) : NovelTextTranslator {
-
+    private val requests = java.util.concurrent.ConcurrentHashMap.newKeySet<TranslationRequestSlot>()
     override val name: String get() = api.modelName.ifEmpty { api::class.java.simpleName }
-
     override val isLocal: Boolean get() = TranslatorFactory.isLocal(api)
 
-    override fun translate(
-        prompt: String,
-        sourceLang: String,
-        targetLang: String,
-        callback: (TranslationResult) -> Unit,
-    ) = api.getTranslation(prompt, sourceLang, targetLang, callback)
+    override fun translate(prompt: String, sourceLang: String, targetLang: String,
+        callback: (TranslationResult) -> Unit) { start(prompt, sourceLang, targetLang, callback) }
 
-    /**
-     * ⚠️ **只对本地引擎真的去取消**。
-     *
-     * [TranslationTextAPI] 没有「请求句柄」，`cancelTranslation()` 的语义是**取消该实例上所有在飞请求**，
-     * 而小说/漫画都是同一实例并发 N 批：某一次批级取消（协程被取消）如果直接转成引擎取消，
-     * 会把同实例上**其它批**的请求一起杀掉 —— 那些批等的是回调（回调不会再来）→ 永久挂起
-     * （2026-10 真机事故的同族问题，见 `translationapi.InFlightRequests` 注释）。
-     * 远端请求交给它自己完成/超时，结果由 [NovelTranslationEngine.requestOnce] 的 `cont.isActive` 守卫丢弃。
-     * 本地引擎（NLLB / LlamaCpp）必须真取消：它占着 native 互斥锁，不取消就一直白等。
-     */
-    override fun cancel() {
-        if (TranslatorFactory.isLocal(api)) api.cancelTranslation()
+    override fun start(prompt: String, sourceLang: String, targetLang: String,
+        callback: (TranslationResult) -> Unit): TranslationRequest {
+        val slot = TranslationRequestSlot()
+        requests.add(slot)
+        try {
+            slot.attach(api.startTranslation(prompt, sourceLang, targetLang, callback = callback@{ result ->
+                if (!requests.remove(slot)) return@callback
+                slot.finish()
+                callback(result)
+            }))
+        } catch (e: Exception) {
+            requests.remove(slot)
+            slot.cancel()
+            throw e
+        }
+        return TranslationRequest { requests.remove(slot); slot.cancel() }
     }
 
-    /** ⚠️ 这里**必须**真的取消（与 [cancel] 相反）：走到这里 = 整个阅读器/任务要停了。 */
+    override fun cancel() { requests.toList().forEach { it.cancel() }; requests.clear() }
     override fun abortInFlight() {
-        api.cancelTranslation()
+        cancel()
+        if (!isLocal) api.cancelTranslation()
     }
 }
 
@@ -273,10 +281,12 @@ class NovelTranslationEngine(private val translator: NovelTextTranslator) {
         val answered = java.util.concurrent.atomic.AtomicBoolean(false)
         val waitForCallback: suspend () -> String? = {
             suspendCancellableCoroutine { cont ->
-                var resumed = false
-                translator.translate(prompt, sourceLang, targetLang) { result ->
-                    if (resumed) return@translate
-                    resumed = true
+                val slot = TranslationRequestSlot()
+                val resumed = java.util.concurrent.atomic.AtomicBoolean()
+                cont.invokeOnCancellation { slot.cancel() }
+                slot.attach(translator.start(prompt, sourceLang, targetLang) callback@{ result ->
+                    if (!resumed.compareAndSet(false, true)) return@callback
+                    slot.finish()
                     answered.set(true)
                     when (result) {
                         is TranslationResult.Success -> {
@@ -292,11 +302,8 @@ class NovelTranslationEngine(private val translator: NovelTextTranslator) {
                             if (cont.isActive) cont.resume(null)
                         }
                     }
-                }
-                cont.invokeOnCancellation {
-                    // 取消时通知底层中断在途请求（网络 API 取消后回调不会再来，必须主动中断）
-                    runCatching { translator.cancel() }
-                }
+                })
+
             }
         }
         val reply = if (translator.isLocal) {

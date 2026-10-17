@@ -167,6 +167,7 @@ object PPOcrV5Engine {
      * rec 会话按需懒加载（首次调用 [getRecSession] 时）。
      */
     fun initialize(context: Context) {
+        OcrExecution.checkCancellation()
         PpRecRecognizer.withMemoryGuard(context, TAG, "PP-OCRv5 initialization") {
             synchronized(lock) {
                 if (isInitialized) return
@@ -886,7 +887,7 @@ object PPOcrV5Engine {
             longArrayOf(1, 3, detH.toLong(), detW.toLong())
         )
         val results = try {
-            detSession!!.run(mapOf("x" to inputTensor))
+            OcrExecution.run(detSession!!, mapOf("x" to inputTensor))
         } finally {
             inputTensor.close()
         }
@@ -1026,7 +1027,7 @@ object PPOcrV5Engine {
         )
 
         val results = try {
-            detSession!!.run(mapOf("x" to inputTensor))
+            OcrExecution.run(detSession!!, mapOf("x" to inputTensor))
         } finally {
             inputTensor.close()
         }

@@ -2,6 +2,7 @@ package com.moe.starflow.manga.engine
 
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
+import ai.onnxruntime.OrtException
 import ai.onnxruntime.OrtSession
 import android.content.Context
 import android.graphics.Bitmap
@@ -27,6 +28,32 @@ internal object PpRecRecognizer {
         val message = context.getString(R.string.error_ocr_memory)
         if (e.message == message) throw e
         throw OcrMemoryException(e.diagnostic, e, message).also { it.logged = true }
+    }
+
+    /** Same allocation guard for OCR routes that suspend while a native call is in progress. */
+    internal suspend fun <T> withMemoryGuardSuspend(
+        context: Context,
+        tag: String,
+        stage: String,
+        block: suspend () -> T,
+    ): T = try {
+        block()
+    } catch (e: OcrMemoryException) {
+        if (!e.logged) logAllocationFailure(tag, e)
+        val message = context.getString(R.string.error_ocr_memory)
+        if (e.message == message) throw e
+        throw OcrMemoryException(e.diagnostic, e, message).also { it.logged = true }
+    } catch (e: OutOfMemoryError) {
+        val failure = OcrMemoryException("$stage: memory allocation failed", e)
+        logAllocationFailure(tag, failure)
+        throw OcrMemoryException(failure.diagnostic, failure, context.getString(R.string.error_ocr_memory))
+            .also { it.logged = true }
+    } catch (e: OrtException) {
+        if (!PpRecBatching.isAllocationFailure(e.message)) throw e
+        val failure = OcrMemoryException("$stage: ORT memory allocation failed: ${e.message}", e)
+        logAllocationFailure(tag, failure)
+        throw OcrMemoryException(failure.diagnostic, failure, context.getString(R.string.error_ocr_memory))
+            .also { it.logged = true }
     }
 
     fun logAllocationFailure(tag: String, error: OcrMemoryException) {
@@ -55,6 +82,7 @@ internal object PpRecRecognizer {
                 logAllocationFailure(tag, error)
             },
         ) { indices, width ->
+            OcrExecution.checkCancellation()
             var stage = "input allocation bytes=${PpRecBatching.inputBytes(width, indices.size)}"
             PpRecBatching.guard({ "$stage width=$width batch=${indices.size}" }) {
                 val bytes = PpRecBatching.inputBytes(width, indices.size)
@@ -75,7 +103,7 @@ internal object PpRecRecognizer {
                         // the pinned output. Never call getFloatBuffer on the probe (it copies logits).
                         val probeBuffer = buffer.duplicate().apply { limit(Math.toIntExact(PpRecBatching.inputBytes(width, 1) / 4)) }
                         OnnxTensor.createTensor(env, probeBuffer, longArrayOf(1, 3, 48, width.toLong())).use { probe ->
-                            session.run(mapOf("x" to probe)).use { result ->
+                            OcrExecution.run(session, mapOf("x" to probe)).use { result ->
                                 session.outputNames.asSequence().mapNotNull { name ->
                                     (result.get(name).orElse(null) as? OnnxTensor)?.let { output ->
                                         val dims = output.info.shape
@@ -99,7 +127,7 @@ internal object PpRecRecognizer {
                     OnnxTensor.createTensor(env, predictions,
                         longArrayOf(indices.size.toLong(), shape.seqLen.toLong(), shape.classes.toLong())).use { output ->
                         stage = "recognition inference shape=[${indices.size},${shape.seqLen},${shape.classes}] outputBytes=${outputElements.toLong() * 4}"
-                        session.run(mapOf("x" to input), mapOf(shape.name to output)).use {
+                        OcrExecution.run(session, mapOf("x" to input), mapOf(shape.name to output)).use {
                             // ORT writes directly into predictions. Result does not own pinned output;
                             // the surrounding use closes its tensor exactly once, after decoding.
                             stage = "CTC decoding"

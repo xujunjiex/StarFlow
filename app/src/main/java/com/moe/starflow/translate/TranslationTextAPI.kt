@@ -62,6 +62,21 @@ interface TranslationTextAPI {
     // 用于取消正在进行的翻译任务
     fun cancelTranslation()
 
+    /** Local shared engines override this with cancellation scoped to the returned request. */
+    fun startTranslation(
+        text: String,
+        sourceLanguage: String,
+        targetLanguage: String,
+        onPhase: (String) -> Unit = {},
+        onPartial: (String) -> Unit = {},
+        callback: (TranslationResult) -> Unit,
+    ): TranslationRequest {
+        getTranslationStreaming(text, sourceLanguage, targetLanguage, onPhase, onPartial, callback)
+        // Remote implementations may share concurrent requests. Discarding a consumer must not
+        // call the engine-wide cancelAll and accidentally cancel somebody else's request.
+        return TranslationRequest { }
+    }
+
     // 释放资源
     fun release()
 }

@@ -50,6 +50,7 @@ Robolectric 的文本引擎是**桩**：`Paint.breakText` 不按宽度换行、�
 ### 阅读器状态与面板约束
 
 - **并发加载按序号丢弃**（`loadToken`）：`loadChapter` 被 onCreate/译文到达/改排版/尺寸变化多处调用，不丢弃过期结果会把章节号与页码一起拽回去（现场表现是「翻页卡在第一页、点目录也没用」）
+- **章节读取和分页等待态**：启动解析章节目录与 `loadChapter` 共用居中不确定进度动画；延迟 180ms 显示以避免短任务闪屏，只有对应的最新加载结束后才隐藏。
 - **阅读模式取值迁移**（`novel_reader_mode_version`）：旧 `1`=滚动，新 `1`=上下翻页、滚动挪到 `2`
 - **两个阅读器共用一套约定**：背景/翻页动画/旋转的 prefs 键与漫画共用（`manga_reader`），字号与排版是 `novel_*` 独立；`CurlPageView`、四个 transformer、`ReaderProgressBar` 直接复用 `mangaimport/reader`
 - **面板是打开那一刻的快照**（`NovelPanelState` 全是 `val`），宿主改了值必须显式回推，两个方向都只留**一个出口**：
@@ -64,6 +65,7 @@ Robolectric 的文本引擎是**桩**：`Paint.breakText` 不按宽度换行、�
 - 前五项背景继续读写共享 `reader_background`，小说自定义选中态与色值用 `novel_*` 独立键；旧值 5 显示为默认项。浅/深预设及其图标只在小说侧改色，漫画不受影响。
 - 自定义状态色同时作用于文本底色、插图边框和选中填充；未配置时保留原先半透明文本底色及不透明边框。调色复用 ColorPicker 组件，弹窗主题统一使用 `ReaderDialogs`，跟随当前阅读器深浅；草稿颜色仅作用于预览。右侧颜色样本使用 `NovelColorSwatch` 的 20dp 固定尺寸，不能使用会把长方形强制量成大圆的 ColorPanelView。
 - 正文使用全局 `Custom_Result_Font`，与界面字体开关无关。`NovelReaderFont` 按文件身份缓存字体，`NovelTextStyle` 携带同一 Typeface 和字体身份，段级缓存及章级缓存都包含字体变化；缺失或无效字体回退系统。字体设置返回后重建阅读器并保存段号与段内比例。
+- 字号面板提供漫画同款「自动」胶囊：开启时读取 EPUB XHTML 的内联/样式表 `font-size`，按原文范围应用；没有有效字号范围时直接用滑块固定字号。拖动字号滑块切回固定模式，重置排版恢复自动。CSS 字号范围必须同时进入分页 `StaticLayout` 与两种阅读模式的绘制布局及其缓存键；翻译文本使用固定字号，原文与双语中的原文部分保留 EPUB 字号。
 
 ### TXT 段落切分
 
@@ -101,12 +103,15 @@ TXT 内嵌 HTML 按 HTML 解析）。
 | 格式 | 导入入口 | 章节 | **插图** |
 |---|---|---|---|
 | `TXT` | 文件 | 按章节标记切；无标记 = 整本一章 | —（纯文本，没有图片的概念） |
-| `EPUB` | 文件 | spine 序（不是文件名字典序） | ✅ 包内图（整包复制进来） |
+| `EPUB` | 文件 | 按 spine 原序保留全部条目；封面/导航标为辅助章，首次打开定位到第一条正文 | ✅ 包内图（整包复制进来） |
 | `ZIP_HTML` | 文件（.zip） | 包内 html/htm/xhtml/txt 条目，自然序 | ✅ 包内图（`ZipImages.read`） |
 | `HTML` | 文件（.html/.htm/.xhtml，或按内容识别） | 整篇 = 一章 | HTML 正文可读；外部图片须用文件夹导入 |
 | `FOLDER` | 文件夹 | 根目录及最多 6 层子目录中的 TXT/HTML/EPUB/ZIP HTML（EPUB 与 ZIP 展开成卷） | ✅ HTML 按所在目录解析相对图片；EPUB/ZIP 卷的图 ✅；TXT 无图 |
 
 MOBI/AZW、FB2、PDF、RAR/7z 小说包当前没有对应解析器，不应在界面宣称为可读小说格式。ZIP 中只有图片而没有 HTML/TXT 章节时按漫画包处理，不是小说。
+
+- EPUB 可以把全书正文放在单个 XHTML，并用 EPUB3 `page-list` 锚点标记扫描页；这类文件按 spine 保留所有条目，辅助页不占默认正文起点。阅读器打开时若解析章节数与旧书架记录不同，要更新记录；只有保存位置无效或落在辅助章时才重置到第一条正文。
+- 单个 XHTML 可能含数万段（例如 OCR 书籍）；分页逐段读取 `StaticLayout` 度量，只保留行起点/行高数组和有界布局缓存，不能在整章分页期间持有每一段的 `StaticLayout`。新章节或重排请求到来时取消过期加载，并在段落度量循环中响应取消。
 
 - ⚠️ **小说侧不许复用漫画的导入文案**：`NovelShelfFragment.showImportDialog` 曾用
   `import_manga_option_files`（＝「导入文件（zip/cbz/cbr/7z）」）—— **cbr/cbz/7z 是漫画的格式**
@@ -172,7 +177,7 @@ MOBI/AZW、FB2、PDF、RAR/7z 小说包当前没有对应解析器，不应在�
 | 段 | 位置 | 说明 |
 |---|---|---|
 | OCR | `NovelImagePipeline.ocrWithLock` | 复用**漫画同一条链路**：`OcrLock`（`beginOcrDemand` + 带 5s 心跳的等锁）→ `TranslationEngineInit.ensureReady`（引擎组来自全局设置，默认 PP-OCRv6 免下载）→ `DetectionBridge.runOCR` → `ocrToBubbleRegions`。⚠️ **翻译前一定放锁**（那是 OCR/超分引擎锁，不是翻译锁） |
-| 翻译 | `TranslateUtils.translateBubbles` | 漫画那套编号批量 + prefill + 空译文回退原文 + 取消看门狗；本地引擎（NLLB/LlamaCpp）外面套 `LocalTranslationCoordinator.mutex`（判据 `isLocalHeavyEngine()`） |
+| 翻译 | `TranslateUtils.translateBubbles` | 漫画那套编号批量 + prefill + 空译文回退原文 + 取消看门狗；本地引擎（NLLB/LlamaCpp）在 `TranslateUtils` 内统一取得 `LocalTranslationCoordinator.mutex`（判据 `isLocalHeavyEngine()`） |
 | 载荷 | `NovelImageTranslation` + `NovelImagePayloadCodec` | 一个块 = 矩形 + OCR 原文 + 译文 + 竖排 + 字号；存 `novel_paragraph_translation.imagePayload`（JSON）。**同一行的 `translatedText` 存拼接译文**（导出/进度/「已翻」判据直接复用），所以图片段在库里就是一条普通成功行 |
 | 渲染 | `NovelImageOverlay` | 三态 = 译文（`useOriginalText=false`）/ 识别原文（`true`）/ 纯图（**不调** `renderOverlay`）；按 `(图片路径, 态, 载荷 hashCode, 目标宽, 渲染倍率)` 缓存；`renderScale` 按"这张图最终画多大"给（**不再是 1f**，见下面「⑤ 覆盖层按最终画多大光栅化」）。"原文"是**把 OCR 原文画回原位**，不是裸原图 |
 | 交互 | `NovelImageControls` + `NovelPageView`/`NovelScrollAdapter` | **长按只进"编辑模式"**（按钮亮出来，**不自动开翻**）→ 点右下角「翻译」按钮才 OCR+翻译；按钮**画在图上**（贴图片绘制矩形右下角内侧），**画与命中同源**（`controlsOf()` 一份几何） |
@@ -410,7 +415,7 @@ MOBI/AZW、FB2、PDF、RAR/7z 小说包当前没有对应解析器，不应在�
 - 手动模式从当前页首个未翻段开始执行一批。自动模式逐批翻译当前页，页内完成后等待翻页；每次最多执行一批。
 - 增量模式使用滑动窗口，从当前页起点向后处理“向后批数 × 每批段数”的范围；窗口耗尽后等待翻页再前移。它和章节任务使用设置的并发数。
 - 页面范围变化或在途任务全部结束后，调度器会等待页面稳定再领取任务。增量模式只在整条流水线空闲时补位；高亮只显示当前页实际在执行的段。
-- 打开面板或双击翻译按钮会暂停队列并返回手动模式。退出阅读器或切到后台会停止页面队列、终止在途请求并返回手动模式；独立的章节任务由应用级宿主持有，可继续运行。
+- 手动空闲时双击翻译按钮快捷开启自动模式；单击先等 300ms 双击窗口，超时后才翻一批。已有自动/增量队列运行时，单击只提示，双击停止队列并返回手动模式；打开面板也沿用停止队列、回退手动的逻辑。手动批次运行时双击不取消，长按正文仍用于选择段落；选择模式下点翻译直接翻选中段，不进入双击判定。退出阅读器或切到后台会停止页面队列、终止在途请求并返回手动模式；独立的章节任务由应用级宿主持有，可继续运行。
 - 守卫：NovelBatchPlannerTest、NovelTranslationQueueTest（模式推进、防抖与清除译文后的处理）和 NovelTranslationConcurrencyTest（并发补位与自动模式串行）。
 ### 章节批量翻译任务与并发
 
@@ -479,13 +484,7 @@ MOBI/AZW、FB2、PDF、RAR/7z 小说包当前没有对应解析器，不应在�
 - ⚠️ **账本 `failedAnchors` 用并发集合**（N>1 时有多个工人读写），
   且**在飞账本的一切读写都要持锁**：曾出现"调度侧无锁 `sorted()` 迭代 + 工人侧加锁 `removeAll`"
   → `ConcurrentModificationException` 抛在 `launch` 里（scope 无异常处理器 = 崩进程）
-- **`OcrLock` 只在 N==1（本地引擎）时整批持有**；N>1（远端 API）**不持锁** —— 那把锁是**OCR 引擎锁**，
-  小说没有 OCR，与漫画 `translatePhase` 同口径。N==1 的行为与改造前**逐字一致**（既有 14 条断言原样过）
-  ⚠️ 但持锁期间**必须持续打心跳**（`withLockHeartbeat(token)`，5s 一次）：本地引擎一整批可以跑几分钟，
-  远超 `OcrLock.STALE_TIMEOUT_MS`(30s)，不打心跳会被自愈机制判成"持有者已死"而**强制放锁** →
-  另一个翻译任务（另一本书的章节任务 / 漫画阅读器 OCR / 超分）随即拿到锁，**两个线程同时用同一个本地引擎**。
-  ⚠️ 心跳协程写 `launch { }` 继承调用方派发器，**不要写 `launch(Dispatchers.IO)`** —— 那会把真实线程池的
-  非确定性带进用 `runTest` 虚拟时钟写的 `NovelTranslationQueueTest`（实测 14 例里挂 10 例）。
+- 纯文本批次不持 `OcrLock`，本地模型由请求工作线程统一串行；插图只在 OCR 阶段持锁并登记执行任务。取消使用单个请求句柄，不能中止共享模型上其他书籍或截图任务。
 - 暂停 = 只停取批、队列留着（=「等待」行）；取消 = 丢还没开始翻的批、**已翻好的保留**；
   **在途批「强制结束」**（`stop()` → `job.cancel()`：协程取消，译文只在成功后写库 ⇒ 取消不入库、也不等它
   —— 与漫画「打开面板/退出阅读器」的强制退出同一套，2026-09-28 核对过）。

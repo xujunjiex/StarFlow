@@ -1,5 +1,7 @@
 package com.moe.starflow.novel.translate
 
+import com.moe.starflow.novel.parser.NovelFontSizeSpan
+
 /**
  * 章节文本 → 段落列表。
  *
@@ -66,15 +68,28 @@ object NovelParagraphSplitter {
         .filter { it.isNotEmpty() }
         .joinToString("\n\n")
 
-    fun split(content: String): List<NovelParagraph> {
+    fun split(content: String): List<NovelParagraph> = split(content, emptyList())
+
+    /** Split the text and carry its CSS font-size ranges into paragraph-local coordinates. */
+    fun split(content: String, fontSizeSpans: List<NovelFontSizeSpan>): List<NovelParagraph> {
         if (content.isBlank()) return emptyList()
-        val normalized = content
+        val normalized = normalize(content)
+        if (fontSizeSpans.isEmpty()) return splitNormalized(normalized)
+        val mapped = normalizeWithSpans(content, fontSizeSpans)
+        // Keep the established paragraph text byte-for-byte stable. If an unusual input takes a
+        // different normalization path, it remains readable and simply falls back to fixed size.
+        if (mapped.text != normalized) return splitNormalized(normalized)
+        return splitNormalizedWithSpans(mapped.text, mapped.spans)
+    }
+
+    private fun normalize(content: String): String = content
             .replace("\r\n", "\n")
             .replace('\r', '\n')
             .replace(Regex("""[ \t]+\n"""), "\n")
             .replace(Regex("""\n[ \t]+"""), "\n")
             .replace(Regex("""\n{3,}"""), "\n\n")
 
+    private fun splitNormalized(normalized: String): List<NovelParagraph> {
         val out = mutableListOf<NovelParagraph>()
         var index = 0
         for (raw in normalized.split("\n\n")) {
@@ -91,5 +106,103 @@ object NovelParagraphSplitter {
             index++
         }
         return out
+    }
+
+    private fun splitNormalizedWithSpans(
+        normalized: String,
+        spans: List<NovelFontSizeSpan>,
+    ): List<NovelParagraph> {
+        val out = mutableListOf<NovelParagraph>()
+        var index = 0
+        var start = 0
+        while (start <= normalized.length) {
+            val separator = normalized.indexOf("\n\n", start).let { if (it < 0) normalized.length else it }
+            var textStart = start
+            var textEnd = separator
+            while (textStart < textEnd && normalized[textStart].isWhitespace()) textStart++
+            while (textEnd > textStart && normalized[textEnd - 1].isWhitespace()) textEnd--
+            if (textStart < textEnd) {
+                val text = normalized.substring(textStart, textEnd)
+                val localSpans = spans.mapNotNull { span ->
+                    val from = maxOf(span.start, textStart)
+                    val to = minOf(span.end, textEnd)
+                    if (from >= to) null else NovelFontSizeSpan(from - textStart, to - textStart, span.scale)
+                }
+                val type = when {
+                    IMAGE_PREFIX.containsMatchIn(text) -> NovelParagraphType.IMAGE
+                    text.length < MIN_TEXT_LENGTH -> NovelParagraphType.SKIP
+                    else -> NovelParagraphType.TEXT
+                }
+                out.add(NovelParagraph(index, type, text, localSpans))
+                index++
+            }
+            if (separator == normalized.length) break
+            start = separator + 2
+        }
+        return out
+    }
+
+    private data class MappedText(val text: String, val spans: List<NovelFontSizeSpan>)
+
+    /** Mirrors the existing normalization while preserving only non-default style runs. */
+    private fun normalizeWithSpans(content: String, sourceSpans: List<NovelFontSizeSpan>): MappedText {
+        val spans = sourceSpans.sortedBy { it.start }
+        var spanIndex = 0
+        fun scaleAt(offset: Int): Float {
+            while (spanIndex < spans.size && spans[spanIndex].end <= offset) spanIndex++
+            return spans.getOrNull(spanIndex)?.takeIf { offset >= it.start && offset < it.end }?.scale ?: 1f
+        }
+        val out = StringBuilder(content.length)
+        val outSpans = mutableListOf<NovelFontSizeSpan>()
+        fun append(c: Char, scale: Float) {
+            val at = out.length
+            out.append(c)
+            if (kotlin.math.abs(scale - 1f) <= 0.0001f) return
+            val last = outSpans.lastOrNull()
+            if (last != null && last.end == at && kotlin.math.abs(last.scale - scale) <= 0.0001f) {
+                outSpans[outSpans.lastIndex] = last.copy(end = at + 1)
+            } else outSpans.add(NovelFontSizeSpan(at, at + 1, scale))
+        }
+        val pending = StringBuilder()
+        val pendingScales = mutableListOf<Float>()
+        var afterNewline = false
+        var newlineCount = 0
+        var i = 0
+        while (i < content.length) {
+            var sourceIndex = i
+            var c = content[i]
+            if (c == '\r') {
+                if (i + 1 < content.length && content[i + 1] == '\n') {
+                    i++
+                    sourceIndex = i
+                    c = '\n'
+                } else c = '\n'
+            }
+            val scale = scaleAt(sourceIndex)
+            when {
+                c == ' ' || c == '\t' -> if (!afterNewline) {
+                    pending.append(c)
+                    pendingScales.add(scale)
+                }
+                c == '\n' -> {
+                    pending.setLength(0)
+                    pendingScales.clear()
+                    if (newlineCount < 2) append('\n', scale)
+                    newlineCount++
+                    afterNewline = true
+                }
+                else -> {
+                    if (!afterNewline) for (p in pending.indices) append(pending[p], pendingScales[p])
+                    pending.setLength(0)
+                    pendingScales.clear()
+                    append(c, scale)
+                    afterNewline = false
+                    newlineCount = 0
+                }
+            }
+            i++
+        }
+        if (!afterNewline) for (p in pending.indices) append(pending[p], pendingScales[p])
+        return MappedText(out.toString(), outSpans)
     }
 }

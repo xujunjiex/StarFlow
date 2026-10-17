@@ -50,6 +50,7 @@ class NovelPanelState(
     val animation: Int = NovelPanelStyle.ANIM_SLIDE,
     val bg: Int = 0,
     val fontSizeSp: Float = NovelPanelStyle.FONT_SIZE_DEFAULT,
+    val fontSizeAuto: Boolean = true,
     val lineSpacingStep: Int = NovelPanelStyle.LINE_SPACING_DEFAULT,
     val paragraphSpacingDp: Int = NovelPanelStyle.PARA_SPACING_DEFAULT,
     val paddingDp: Int = NovelPanelStyle.SIDE_PADDING_DEFAULT,
@@ -91,6 +92,7 @@ class NovelPanelCallbacks(
     val onAnimation: (Int) -> Unit,
     val onBackground: (Int) -> Unit,
     val onFontSize: (Float) -> Unit = {},
+    val onFontSizeAuto: (Boolean) -> Unit = {},
     val onLineSpacing: (Int) -> Unit,
     val onParagraphSpacing: (Int) -> Unit,
     val onPadding: (Int) -> Unit,
@@ -216,6 +218,7 @@ class NovelPanelSheet(
     private var curReaderMode = NovelPanelStyle.READER_PAGED
 
     private var curFontSp = NovelPanelStyle.FONT_SIZE_DEFAULT
+    private var curFontSizeAuto = true
 
     /** 正在由 [refreshDerivedUi] 程序化改控件（避免回调回环）。 */
     private var syncing = false
@@ -397,6 +400,7 @@ class NovelPanelSheet(
         // ⚠️ 每个滑块松手就回调一次，阅读器立刻重排并重画 —— 参数是**直接生效**的，
         // 没有「自动排版」在中间改写用户设的值（那个功能已删除）。
         val sbFont = view.findViewById<SeekBar>(R.id.sb_font_size)
+        val btnFontAuto = view.findViewById<TextView>(R.id.btn_font_size_auto)
 
         val tvFontValue = view.findViewById<TextView>(R.id.tv_font_size_value)
         val sbLine = view.findViewById<SeekBar>(R.id.sb_line_spacing)
@@ -428,6 +432,7 @@ class NovelPanelSheet(
         bindTypography(
             view,
             fontSp = state.fontSizeSp,
+            fontAuto = state.fontSizeAuto,
             lineStep = state.lineSpacingStep,
             paraDp = state.paragraphSpacingDp,
             padDp = state.paddingDp,
@@ -437,10 +442,19 @@ class NovelPanelSheet(
 
         sbFont.setOnSeekBarChangeListener(sliderLabel({ tvFontValue.text = "$it sp" }) {
             curFontSp = it.toFloat()
+            if (curFontSizeAuto) {
+                curFontSizeAuto = false
+                refreshFontSizeAutoButton(view)
+            }
             cb.onFontSize(curFontSp)
             // 走派生 UI 的统一出口（段距区间现在是**固定**的，这里不会再动任何滑块）
             refreshDerivedUi(view)
         })
+        btnFontAuto.setOnClickListener {
+            curFontSizeAuto = !curFontSizeAuto
+            refreshFontSizeAutoButton(view)
+            cb.onFontSizeAuto(curFontSizeAuto)
+        }
 
         sbLine.setOnSeekBarChangeListener(sliderLabel(
             onLabel = { tvLine.text = NovelPanelStyle.lineSpacingLabel(it) },
@@ -662,6 +676,7 @@ class NovelPanelSheet(
     private fun bindTypography(
         view: View,
         fontSp: Float,
+        fontAuto: Boolean,
         lineStep: Int,
         paraDp: Int,
         padDp: Int,
@@ -672,6 +687,8 @@ class NovelPanelSheet(
         sbFont.progress = fontSp.toInt()
             .coerceIn(NovelPanelStyle.FONT_SIZE_MIN.toInt(), NovelPanelStyle.FONT_SIZE_MAX.toInt())
         view.findViewById<TextView>(R.id.tv_font_size_value).text = "${sbFont.progress} sp"
+        curFontSizeAuto = fontAuto
+        refreshFontSizeAutoButton(view)
 
         val sbLine = view.findViewById<SeekBar>(R.id.sb_line_spacing)
         sbLine.progress = lineStep
@@ -706,12 +723,27 @@ class NovelPanelSheet(
         bindTypography(
             view,
             fontSp = font,
+            fontAuto = NovelPanelStyle.fontSizeAuto(p),
             lineStep = NovelPanelStyle.lineSpacingStep(p),
             paraDp = NovelPanelStyle.paragraphSpacingDp(p),
             padDp = NovelPanelStyle.paddingDp(p),
             topDp = NovelPanelStyle.topPaddingDp(p),
             bottomDp = NovelPanelStyle.bottomPaddingDp(p),
         )
+    }
+
+    private fun refreshFontSizeAutoButton(view: View) {
+        val button = view.findViewById<TextView>(R.id.btn_font_size_auto)
+        val auto = curFontSizeAuto
+        val density = resources.displayMetrics.density
+        button.setTextColor(
+            if (auto) 0xFF55AEEA.toInt() else if (darkPanel) 0xFF9A9A9F.toInt() else 0xFF888888.toInt(),
+        )
+        button.background = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = 8f * density
+            setColor(if (auto) (if (darkPanel) 0x332E86C9 else 0x1A2E86C9) else 0x00000000)
+            setStroke((1f * density).toInt().coerceAtLeast(1), if (darkPanel) 0x33FFFFFF else 0x22000000)
+        }
     }
 
     /**
@@ -788,6 +820,7 @@ class NovelPanelSheet(
         R.id.tv_batch_warn_value, R.id.tv_batch_warn_hint,
         R.id.tv_concurrency_value, R.id.tv_concurrency_hint,
         R.id.tv_font_size_value,
+        R.id.tv_font_size_hint, R.id.btn_font_size_auto,
         R.id.tv_font_group_arrow, R.id.tv_font_style_value,
         R.id.tv_status_color_group_arrow, R.id.tv_status_color_hint,
         R.id.tv_line_spacing_value, R.id.tv_para_spacing_value,
@@ -806,6 +839,7 @@ class NovelPanelSheet(
         val subColor = if (dark) 0xFF9A9A9F.toInt() else 0xFF888888.toInt()
         panelLabelIds.forEach { view.findViewById<TextView>(it).setTextColor(labelColor) }
         panelSubIds.forEach { view.findViewById<TextView>(it).setTextColor(subColor) }
+        refreshFontSizeAutoButton(view)
         reapplySegments(view)
         // ⚠️ Tab 图标与筛选 chip 原来**只在创建/点击时**着色，主题重喷漏了它们 ——
         // 表现就是「切了阅读背景，有几处颜色不跟着变，关掉面板再打开才正常」。

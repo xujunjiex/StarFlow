@@ -80,6 +80,8 @@ data class NovelTextStyle(
     val keepParagraphsWhole: Boolean = true,
     val typeface: android.graphics.Typeface? = null,
     val fontKey: String = "",
+    /** Apply EPUB CSS font-size spans in automatic mode; no spans means the base size is used. */
+    val useEpubFontSizes: Boolean = false,
 ) {
     /** 一页真正能放正文的高度。 */
     fun contentHeightPx(pageHeightPx: Int): Float =

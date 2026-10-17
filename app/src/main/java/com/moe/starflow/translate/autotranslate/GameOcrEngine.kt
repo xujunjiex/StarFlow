@@ -14,6 +14,7 @@ import com.moe.starflow.manga.engine.PPOcrV5Engine
 import com.moe.starflow.manga.engine.PPOcrV6Engine
 import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.LogCollector
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -48,7 +49,31 @@ class GameOcrEngine(
     suspend fun recognize(
         bitmap: Bitmap,
         verticalDirection: TextDirection = TextDirection.VERTICAL_RL
-    ): String {
+    ): String = withContext(Dispatchers.IO + OcrExecution.context()) {
+        OcrLock.beginOcrDemand()
+        var token = 0L
+        var heartbeat: kotlinx.coroutines.Job? = null
+        try {
+            val started = System.nanoTime()
+            while (token == 0L) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                OcrExecution.checkCancellation()
+                token = OcrLock.acquire(kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job], "game/video OCR")
+                if (token == 0L) {
+                    check((System.nanoTime() - started) / 1_000_000 < 60_000) { "OCR engine busy: ${OcrLock.describeOwner()}" }
+                    kotlinx.coroutines.delay(50)
+                }
+            }
+            heartbeat = OcrLock.startHeartbeat(token)
+            recognizeLocked(bitmap, verticalDirection)
+        } finally {
+            heartbeat?.cancel()
+            if (token != 0L) OcrLock.release(token)
+            OcrLock.endOcrDemand()
+        }
+    }
+
+    private suspend fun recognizeLocked(bitmap: Bitmap, verticalDirection: TextDirection): String {
         val engine = com.moe.starflow.utils.OcrEngineManager.getGameVideoOcrEngineGroup(
             prefs.getSharedPreferences()
         ).gameEngine

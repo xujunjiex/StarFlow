@@ -47,26 +47,10 @@ class NovelImageConcurrencyGuardTest {
 
     /** ① 含图批不持外锁：`holdLock` 必须同时看 `serial` **和** `!batchHasImage`。 */
     @Test
-    fun `含插图的批不持外层 OCR 锁`() {
-        val body = bodyOf(queue, "private suspend fun runInFlight(")
-        assertTrue(
-            "runInFlight 必须算 batchHasImage",
-            body.contains("val batchHasImage = batch.any"),
-        )
-        assertTrue(
-            "持锁判据必须是 serial && !batchHasImage（否则插图流水线自己拿锁 = 自己等自己）",
-            body.contains("val holdLock = serial && !batchHasImage"),
-        )
-        assertTrue("只有 holdLock 时才抢锁", body.contains("if (holdLock) {"))
-        // runBatch（手动一批 / 整章兜底）同一套
-        val batch = bodyOf(queue, "private suspend fun runBatch(")
-        assertTrue("runBatch 也要判含图", batch.contains("val batchHasImage = batch.any"))
-        assertTrue(
-            "含图批直接进 TRANSLATING，不抢外层锁",
-            batch.contains("if (batchHasImage) {") && batch.contains("NovelQueuePhase.TRANSLATING"),
-        )
-        // 流水线自己拿锁（这是"外层不能持"的原因）
-        assertTrue("插图流水线自己拿 OcrLock", pipeline.contains("OcrLock.acquire()"))
+    fun `文本队列不持外层 OCR 锁`() {
+        assertFalse("文本队列不能占 OCR/SR 锁", queue.contains("OcrLock.acquire("))
+        assertTrue("插图流水线自己拿 OCR 锁", pipeline.contains("OcrLock.acquire("))
+        assertTrue("插图原生调用登记执行 Job", pipeline.contains("currentCoroutineContext()[Job]"))
     }
 
     /** ② 含图批串行：队列 `imageBusy`（按"批内含图"判）+ 整章 `imageGate`。 */

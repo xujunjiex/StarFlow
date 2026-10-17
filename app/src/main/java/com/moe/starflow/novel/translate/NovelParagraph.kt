@@ -1,5 +1,7 @@
 package com.moe.starflow.novel.translate
 
+import com.moe.starflow.novel.parser.NovelFontSizeSpan
+
 /**
  * 段落类型。
  *
@@ -21,4 +23,6 @@ data class NovelParagraph(
     val index: Int,
     val type: NovelParagraphType,
     val originalText: String,
+    /** EPUB CSS font-size ranges, local to [originalText]. */
+    val fontSizeSpans: List<NovelFontSizeSpan> = emptyList(),
 )

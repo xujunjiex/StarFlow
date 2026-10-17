@@ -34,6 +34,8 @@ class LlamaCppChatEngine(context: Context, prefs: CustomPreference) : ChatEngine
         }
     }
 
+    @Volatile private var request: com.moe.starflow.translate.TranslationRequestSlot? = null
+
     override fun chat(
         history: List<ChatMessage>,
         input: String,
@@ -48,25 +50,32 @@ class LlamaCppChatEngine(context: Context, prefs: CustomPreference) : ChatEngine
         }
         val (roles, contents) = ChatPromptBuilder.buildMessages(history, input)
         LogCollector.d(TAG, "chat 消息[${contents.size}]（system='${ChatTemplates.DEFAULT_SYSTEM.take(40)}'）")
-        e.chatNative(
+        request?.cancel()
+        val slot = com.moe.starflow.translate.TranslationRequestSlot()
+        request = slot
+        slot.attach(e.chatNative(
             systemPrompt = ChatTemplates.DEFAULT_SYSTEM,
             roles = roles,
             contents = contents,
-            onPhase = onPhase,
-            onPartial = onPartial,
-        ) { result ->
+            onPhase = { if (request === slot) onPhase(it) },
+            onPartial = { if (request === slot) onPartial(it) },
+        ) callback@{ result ->
+            if (request !== slot) return@callback
+            slot.finish()
             when (result) {
                 is TranslationResult.Success -> callback(ChatResult.Success(result.translatedText))
                 is TranslationResult.Error -> callback(ChatResult.Error(result.error))
             }
-        }
+        })
     }
 
     override fun cancel() {
-        engine?.cancelTranslation()
+        request?.cancel()
+        request = null
     }
 
     override fun release() {
+        cancel()
         // 共享实例 keepAlive 常驻，全 app 复用：不释放模型
     }
 

@@ -47,41 +47,9 @@ import kotlin.coroutines.resumeWithException
 
 object OCRTextRecognizer {
     private const val TAG = "OCRTextRecognizer"
-    private val recognizers = mutableMapOf<String, TextRecognizer>()
-
-    private fun getOrCreateRecognizer(language: String): TextRecognizer {
-        return recognizers.getOrPut(language) {
-            when (language) {
-                "zh" -> TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
-                "en" -> TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-                "ja" -> TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
-                "ko" -> TextRecognition.getClient(KoreanTextRecognizerOptions.Builder().build())
-                else -> TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-            }
-        }
-    }
-
-    // 使用suspend函数使其成为协程
     suspend fun getPicText(language: String, bitmap: Bitmap): String =
         withContext(Dispatchers.Default) {
-            suspendCancellableCoroutine { continuation ->
-                val recognizer = getOrCreateRecognizer(language)
-                try {
-                    val image = InputImage.fromBitmap(bitmap, 0)
-                    recognizer.process(image)
-                        .addOnSuccessListener { visionText ->
-                            val resultText = mergeText(visionText, language)
-                            LogCollector.d(TAG, "getPicText: bitmap=${bitmap.width}x${bitmap.height}")
-                            continuation.resume(resultText)
-                        }
-                        .addOnFailureListener { e ->
-                            e.printStackTrace()
-                            continuation.resumeWithException(e)
-                        }
-                } catch (e: Exception) {
-                    continuation.resumeWithException(e)
-                }
-            }
+            mergeText(MlKitRecognition.recognize(bitmap, language), language)
         }
 
     /**
@@ -113,9 +81,6 @@ object OCRTextRecognizer {
         }.joinToString(separator = sep(language))
     }
 
-    // 添加清理方法
-    fun cleanup() {
-        recognizers.values.forEach { it.close() }
-        recognizers.clear()
-    }
+    // Requests close their own recognizer after the SDK releases the input image.
+    fun cleanup() = Unit
 }

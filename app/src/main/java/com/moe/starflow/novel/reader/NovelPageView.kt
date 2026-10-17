@@ -86,6 +86,9 @@ class NovelPageView(context: Context) : View(context) {
      */
     private var layoutTexts: Map<Int, String> = emptyMap()
 
+    /** Paragraph-local EPUB font-size ranges used to build each cached layout. */
+    private var layoutFontSpans: Map<Int, List<com.moe.starflow.novel.parser.NovelFontSizeSpan>> = emptyMap()
+
     /** 段号 → 该段的逐行高度 `getLineBottom(i) - getLineTop(i)`（与分页端量的是同一批数）。 */
     private var lineHeights: Map<Int, FloatArray> = emptyMap()
 
@@ -150,6 +153,7 @@ class NovelPageView(context: Context) : View(context) {
             if (this.style != style) {
                 layouts = emptyMap()
                 layoutTexts = emptyMap()
+                layoutFontSpans = emptyMap()
                 lineHeights = emptyMap()
             }
             overflowReported = false
@@ -315,6 +319,7 @@ class NovelPageView(context: Context) : View(context) {
         val newLayouts = HashMap<Int, StaticLayout>(p.segments.size)
         val newHeights = HashMap<Int, FloatArray>(p.segments.size)
         val newTexts = HashMap<Int, String>(p.segments.size)
+        val newFontSpans = HashMap<Int, List<com.moe.starflow.novel.parser.NovelFontSizeSpan>>(p.segments.size)
         for (seg in p.segments) {
             // 插图段：高度由图片尺寸定。图片尺寸已知（加载时量好），所以这里**不解码**
             val imgSize = c.images[seg.paraIndex]?.let { NovelImageMetrics.fit(it, cw, maxImgH) }
@@ -324,14 +329,16 @@ class NovelPageView(context: Context) : View(context) {
             }
             val text = c.displayOf(seg.paraIndex)
             if (text.isEmpty()) continue
-            val reused = if (sameWidth && layoutTexts[seg.paraIndex] == text) {
+            val fontSpans = c.displayFontSizeSpans[seg.paraIndex].orEmpty()
+            val reused = if (sameWidth && layoutTexts[seg.paraIndex] == text && layoutFontSpans[seg.paraIndex] == fontSpans) {
                 layouts[seg.paraIndex]
             } else {
                 null
             }
-            val layout = reused ?: NovelTextRenderer.build(text, style, cw, textColor)
+            val layout = reused ?: NovelTextRenderer.build(text, style, cw, textColor, fontSpans)
             newLayouts[seg.paraIndex] = layout
             newTexts[seg.paraIndex] = text
+            newFontSpans[seg.paraIndex] = fontSpans
             // 行高表只跟这份 layout 有关，复用时连数组一起复用（不必再遍历一遍行）
             val heights = if (reused != null) lineHeights[seg.paraIndex] else null
             newHeights[seg.paraIndex] = heights ?: FloatArray(layout.lineCount) {
@@ -340,6 +347,7 @@ class NovelPageView(context: Context) : View(context) {
         }
         layouts = newLayouts
         layoutTexts = newTexts
+        layoutFontSpans = newFontSpans
         lineHeights = newHeights
         layoutsDirty = false
     }

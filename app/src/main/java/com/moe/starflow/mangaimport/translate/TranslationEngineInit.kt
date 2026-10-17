@@ -18,7 +18,7 @@ import com.moe.starflow.utils.OcrEngineManager
 object TranslationEngineInit {
 
     /** 返回 (det, ocr)，供 [com.moe.starflow.manga.DetectionBridge.runOCR] 路由。 */
-    suspend fun ensureReady(context: Context): Pair<DetEngine, OcrEngine> {
+    suspend fun ensureReady(context: Context): Pair<DetEngine, OcrEngine> = com.moe.starflow.manga.engine.OcrExecution.cancellable {
         val group = OcrEngineManager.getOcrEngineGroup(
             PreferenceManager.getDefaultSharedPreferences(context)
         )
@@ -42,6 +42,7 @@ object TranslationEngineInit {
             }
             OcrEngine.MLKit -> {} // 无需初始化
         }
-        return det to ocr
+        com.moe.starflow.manga.engine.OcrExecution.checkCancellation()
+        det to ocr
     }
 }

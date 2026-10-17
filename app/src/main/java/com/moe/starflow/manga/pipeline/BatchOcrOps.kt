@@ -72,10 +72,10 @@ object RealBatchOcrOps : BatchOcrOps {
 
     override suspend fun recognizeV5(
         ctx: Context, crops: List<Bitmap>, lang: PPOcrV5Engine.RecLang,
-    ): List<RecResult> = PPOcrV5Engine.recognizeBatchWithCls(ctx, crops, lang)
+    ): List<RecResult> = com.moe.starflow.manga.engine.OcrExecution.cancellable { PPOcrV5Engine.recognizeBatchWithCls(ctx, crops, lang) }
 
     override suspend fun recognizeV6(ctx: Context, crops: List<Bitmap>): List<RecResult> =
-        PPOcrV6Engine.recognizeBatchWithCls(ctx, crops)
+        com.moe.starflow.manga.engine.OcrExecution.cancellable { PPOcrV6Engine.recognizeBatchWithCls(ctx, crops) }
 
     override suspend fun recognizeCroppedBubbles(
         crops: List<CroppedBubble>, lang: String, rtDirection: TextDirection,

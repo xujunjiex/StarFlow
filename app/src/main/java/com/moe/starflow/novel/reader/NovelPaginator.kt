@@ -23,6 +23,7 @@ internal class NovelLayoutCache(private val maxEntries: Int = 256) {
     private data class Key(
         val paraIndex: Int,
         val text: String,
+        val fontSizeSpans: List<com.moe.starflow.novel.parser.NovelFontSizeSpan>,
         val style: NovelTextStyle,
         val width: Int,
     )
@@ -37,11 +38,12 @@ internal class NovelLayoutCache(private val maxEntries: Int = 256) {
     fun layout(
         paraIndex: Int,
         text: String,
+        fontSizeSpans: List<com.moe.starflow.novel.parser.NovelFontSizeSpan>,
         style: NovelTextStyle,
         contentWidth: Int,
         build: () -> StaticLayout,
     ): StaticLayout {
-        val key = Key(paraIndex, text, style, contentWidth)
+        val key = Key(paraIndex, text, fontSizeSpans, style, contentWidth)
         entries[key]?.let { return it }
         return build().also { entries[key] = it }
     }
@@ -228,6 +230,7 @@ object NovelPaginator {
         anchor: NovelAnchor?,
         layoutCache: NovelLayoutCache?,
         images: Map<Int, NovelImage> = emptyMap(),
+        cancellationCheck: () -> Unit = {},
     ): List<NovelPage> {
         val visible = paragraphs.filter { it.type != NovelParagraphType.SKIP }
         if (visible.isEmpty() || widthPx <= 0 || heightPx <= 0) return emptyList()
@@ -239,47 +242,38 @@ object NovelPaginator {
         // ⚠️ 高度必须与绘制端走**同一个公式**（[NovelImageMetrics]）：分页端和绘制端各算一套的话，
         // 差几像素就是"底部那行被裁"或"正文顶出框"。这也是它必须在 IO 线程上就能算出来的原因
         // —— 图片真实像素尺寸在加载时已经量好存进 [NovelImage] 了，这里不碰解码。
-        val imageSizes = visible.map { p ->
-            images[p.index]?.let { NovelImageMetrics.fit(it, contentWidth, contentHeight) }
-        }
-        val layouts = visible.mapIndexed { i, p ->
-            // 有图可画 → 不排版（那串 `📷 [图片]` 占位文本根本不显示）
-            if (imageSizes[i] != null) {
-                null
+        // Do not retain one StaticLayout per paragraph. A single XHTML can legitimately
+        // contain tens of thousands of OCR paragraphs; keeping every layout alive while
+        // paginating that chapter caused large memory spikes. Keep only compact line metrics
+        // here; NovelLayoutCache remains a bounded 256-entry cache for later drawing/reflow.
+        val lineStarts = ArrayList<IntArray>(visible.size)
+        val lineHeights = ArrayList<FloatArray>(visible.size)
+        var target: Pair<Int, Int>? = null
+        visible.forEachIndexed { i, p ->
+            if ((i and 0x3F) == 0) cancellationCheck()
+            val imageSize = images[p.index]?.let { NovelImageMetrics.fit(it, contentWidth, contentHeight) }
+            if (imageSize != null) {
+                // 图片段当"整段一行、行起点 0、高度 = 图片高度"：分页仍走统一的几何逻辑。
+                lineStarts.add(intArrayOf(0))
+                lineHeights.add(floatArrayOf(imageSize.height))
             } else {
-                layoutCache
-                    ?.layout(p.index, p.originalText, style, contentWidth) {
-                        NovelTextRenderer.build(p.originalText, style, contentWidth)
+                val layout = layoutCache
+                    ?.layout(p.index, p.originalText, p.fontSizeSpans, style, contentWidth) {
+                        NovelTextRenderer.build(p.originalText, style, contentWidth, fontSizeSpans = p.fontSizeSpans)
                     }
-                    ?: NovelTextRenderer.build(p.originalText, style, contentWidth)
-            }
-        }
-        // 图片段当"整段一行、行起点 0、高度 = 图片高度"：`paginateByLines` 只认这两个数组，
-        // 于是「图片要不要换页」和文字走的是同一套记账，不需要给图片单开一条分页路径
-        val lineStarts = visible.mapIndexed { i, _ ->
-            layouts[i]?.let { l -> IntArray(l.lineCount) { l.getLineStart(it) } } ?: intArrayOf(0)
-        }
-        val lineHeights = visible.mapIndexed { i, _ ->
-            layouts[i]?.let { l ->
-                FloatArray(l.lineCount) { (l.getLineBottom(it) - l.getLineTop(it)).toFloat() }
-            } ?: floatArrayOf(imageSizes[i]!!.height)
-        }
+                    ?: NovelTextRenderer.build(p.originalText, style, contentWidth, fontSizeSpans = p.fontSizeSpans)
+                lineStarts.add(IntArray(layout.lineCount) { layout.getLineStart(it) })
+                lineHeights.add(FloatArray(layout.lineCount) {
+                    (layout.getLineBottom(it) - layout.getLineTop(it)).toFloat()
+                })
 
-        // 锚点 → (可见段下标, 段内行号)：锚点的字符位置落在哪一行，那一行就要另起一页。
-        // ⚠️ 行号由**同一份 layout** 反查（`getLineForOffset`），与 `lineStarts/lineHeights`
-        // 同源，不会出现"切在行中间"。
-        val visIndexOf = HashMap<Int, Int>(visible.size)
-        visible.forEachIndexed { i, p -> visIndexOf[p.index] = i }
-        val target = anchor?.let { a ->
-            val vi = visIndexOf[a.paraIndex] ?: return@let null
-            val lay = layouts[vi]
-            if (lay == null) {
-                // 插图段：整段就是"一行"，锚点只能落在它的第一行
-                vi to 0
-            } else {
-                val len = visible[vi].originalText.length
-                val off = a.charOffsetOf(len).coerceIn(0, (len - 1).coerceAtLeast(0))
-                vi to lay.getLineForOffset(off)
+                // Resolve the saved anchor while this paragraph's layout is in hand. The
+                // layout can then be released before processing the next paragraph.
+                if (anchor?.paraIndex == p.index) {
+                    val len = p.originalText.length
+                    val off = anchor.charOffsetOf(len).coerceIn(0, (len - 1).coerceAtLeast(0))
+                    target = i to layout.getLineForOffset(off)
+                }
             }
         }
 
@@ -295,6 +289,8 @@ object NovelPaginator {
             visible, lineStarts, lineHeights, style.paragraphSpacingPx, contentHeight,
             style.keepParagraphsWhole,
         )
+        val visIndexOf = HashMap<Int, Int>(visible.size)
+        visible.forEachIndexed { i, p -> visIndexOf[p.index] = i }
         val forceBreak = target?.takeIf { (vi, line) ->
             shouldForceBreak(natural, visIndexOf, vi, line, lineHeights, style.paragraphSpacingPx, contentHeight)
         }

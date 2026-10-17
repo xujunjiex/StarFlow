@@ -6,6 +6,9 @@ import com.moe.starflow.translate.ContextAwareTranslation
 import com.moe.starflow.translate.TranslationResult
 import com.moe.starflow.translate.TranslationStatusOverlay
 import com.moe.starflow.translate.TranslationTextAPI
+import com.moe.starflow.translate.TranslationRequest
+import com.moe.starflow.translate.LocalTranslationRequest
+import com.moe.starflow.utils.LocalTranslationCoordinator
 import com.moe.starflow.utils.ContextBudget
 import com.moe.starflow.utils.LogCollector
 import translationapi.llamacpp.LlamaCppNative
@@ -45,9 +48,8 @@ class LlamaCppTranslation(
     @Volatile private var crashDirSet = false
 
     @Volatile private var handle: Long = 0L
-    @Volatile private var currentTask: Thread? = null
-    @Volatile private var cancelled = false
-    /** 任务世代号：cancelTranslation()/release() 递增，使在途任务的结果失效 */
+    private val requests = java.util.concurrent.ConcurrentHashMap.newKeySet<LocalTranslationRequest>()
+    /** 模型释放世代号：release() 递增，使等待加载的旧请求失效 */
     @Volatile private var currentEpoch = 0L
     /** 正在 native 调用中的任务数：release() 等它归零后才释放模型，杜绝 use-after-free */
     @Volatile private var inFlight = 0
@@ -120,7 +122,7 @@ class LlamaCppTranslation(
         sourceLanguage: String,
         targetLanguage: String,
         callback: (TranslationResult) -> Unit
-    ) = translateInternal(text, sourceLanguage, targetLanguage, onPhase = null, onPartial = null, callback)
+    ) { translateInternal(text, sourceLanguage, targetLanguage, onPhase = null, onPartial = null, callback) }
 
     override fun getTranslationStreaming(
         text: String,
@@ -129,7 +131,39 @@ class LlamaCppTranslation(
         onPhase: (String) -> Unit,
         onPartial: (String) -> Unit,
         callback: (TranslationResult) -> Unit
-    ) = translateInternal(text, sourceLanguage, targetLanguage, onPhase, onPartial, callback)
+    ) { translateInternal(text, sourceLanguage, targetLanguage, onPhase, onPartial, callback) }
+
+    override fun startTranslation(
+        text: String,
+        sourceLanguage: String,
+        targetLanguage: String,
+        onPhase: (String) -> Unit,
+        onPartial: (String) -> Unit,
+        callback: (TranslationResult) -> Unit,
+    ): TranslationRequest = translateInternal(text, sourceLanguage, targetLanguage, onPhase, onPartial, callback)
+
+    private fun startLocalRequest(
+        callback: (TranslationResult) -> Unit,
+        block: (Long, LocalTranslationRequest) -> TranslationResult,
+    ): TranslationRequest {
+        val epoch = currentEpoch
+        val request = LocalTranslationRequest(callback)
+        requests.add(request)
+        request.start(onFinished = { requests.remove(request) }) { task ->
+            val h = ensureLoaded()
+            task.ensureActive()
+            if (h == 0L) return@start TranslationResult.Error(Exception(loadFailureMessage()))
+            val nativeHandle = synchronized(initLock) {
+                if (!released && handle != 0L && currentEpoch == epoch) { inFlight++; handle } else 0L
+            }
+            if (nativeHandle == 0L) return@start TranslationResult.Error(Exception(ctx.getString(R.string.llamacpp_released_translate)))
+            try {
+                task.ensureActive()
+                block(nativeHandle, task).also { task.ensureActive() }
+            } finally { synchronized(initLock) { inFlight-- } }
+        }
+        return request
+    }
 
     private fun translateInternal(
         text: String,
@@ -137,103 +171,47 @@ class LlamaCppTranslation(
         targetLanguage: String,
         onPhase: ((String) -> Unit)?,
         onPartial: ((String) -> Unit)?,
-        callback: (TranslationResult) -> Unit
-    ) {
-        cancelled = false
-        val epoch = currentEpoch
+        callback: (TranslationResult) -> Unit,
+    ): TranslationRequest {
         val targetName = LlamaCppLanguages.getTargetName(targetLanguage)
         val params = currentParams()
-        currentTask = Thread {
-            try {
-                val tLoad0 = System.currentTimeMillis()
-                val h = ensureLoaded()
-                LogCollector.d(TAG, "$modelName ensureLoaded 耗时=${System.currentTimeMillis() - tLoad0}ms (h=$h)")
-                if (h == 0L) {
-                    callback(TranslationResult.Error(Exception(loadFailureMessage())))
-                    return@Thread
-                }
-                var registered = false
-                try {
-                    val nativeHandle = synchronized(initLock) {
-                        if (handle != 0L && currentEpoch == epoch) {
-                            inFlight++; registered = true; handle
-                        } else 0L
-                    }
-                    if (nativeHandle == 0L) {
-                        callback(TranslationResult.Error(Exception(ctx.getString(R.string.llamacpp_released_translate))))
-                        return@Thread
-                    }
-
-                    // 两条通道：Hy-MT2 手工拼装 / 通用模板渲染
-                    // 历史上下文作为 user 段里原文之前的一段前缀（本地通道没有多轮接口，见 contextAwareText）
-                    val promptText = contextAwareText(text, params)
-                    val prompt: String
-                    val prefix: String
-                    if (hyProfile) {
-                        prompt = LlamaCppPrompt.buildHy(params.promptTemplate, targetName, promptText)
-                        prefix = LlamaCppPrompt.buildHyPrefix(params.promptTemplate, targetName)
-                    } else {
-                        val rendered = LlamaCppPrompt.buildGeneric(nativeHandle, params, targetName, promptText)
-                        prompt = rendered.prompt
-                        prefix = rendered.prefix
-                    }
-                    LogCollector.d(TAG, "$modelName 翻译 ${sourceLanguage}→$targetLanguage hy=$hyProfile prefix=${prefix.length}字")
-                    LogCollector.d(TAG, "$modelName prompt:\n$prompt")
-
-                    val tNative0 = System.currentTimeMillis()
-                    val result = if (onPartial != null) {
-                        val cb = object : LlamaCppStreamCallback {
-                            override fun onPhase(phase: String) { onPhase?.invoke(phase) }
-                            override fun onToken(text: String) { onPartial(text) }
-                        }
-                        if (hyProfile) {
-                            LlamaCppNative.nativeTranslateStreaming(
-                                nativeHandle, prompt, prefix, params.temperature, params.topP,
-                                params.topK, params.repetitionPenalty, params.maxTokens, cb
-                            )
-                        } else {
-                            LlamaCppNative.nativeTranslateRawStreaming(
-                                nativeHandle, prompt, prefix, params.temperature, params.topP,
-                                params.topK, params.repetitionPenalty, params.maxTokens, cb
-                            )
-                        }
-                    } else {
-                        if (hyProfile) {
-                            LlamaCppNative.nativeTranslate(
-                                nativeHandle, prompt, prefix, params.temperature, params.topP,
-                                params.topK, params.repetitionPenalty, params.maxTokens
-                            )
-                        } else {
-                            LlamaCppNative.nativeTranslateRaw(
-                                nativeHandle, prompt, prefix, params.temperature, params.topP,
-                                params.topK, params.repetitionPenalty, params.maxTokens
-                            )
-                        }
-                    }.trim()
-                    LogCollector.d(TAG, "$modelName native 耗时=${System.currentTimeMillis() - tNative0}ms result=$result")
-
-                    if (result == "__PROMPT_TOO_LONG__") {
-                        callback(TranslationResult.Error(Exception(ctx.getString(R.string.llamacpp_error_text_too_long))))
-                        return@Thread
-                    }
-                    if (cancelled || currentEpoch != epoch) {
-                        callback(TranslationResult.Error(Exception(ctx.getString(R.string.error_translation_cancelled))))
-                    } else if (result.isEmpty()) {
-                        callback(TranslationResult.Error(Exception(ctx.getString(R.string.llamacpp_empty_result))))
-                    } else {
-                        callback(TranslationResult.Success(result))
-                    }
-                } finally {
-                    if (registered) synchronized(initLock) { inFlight-- }
-                }
-            } catch (e: Exception) {
-                LogCollector.e(TAG, "$modelName 翻译异常: ${e.message}", e)
-                callback(TranslationResult.Error(e))
+        return startLocalRequest(callback) { h, task ->
+            val promptText = contextAwareText(text, params)
+            val prompt: String
+            val prefix: String
+            if (hyProfile) {
+                prompt = LlamaCppPrompt.buildHy(params.promptTemplate, targetName, promptText)
+                prefix = LlamaCppPrompt.buildHyPrefix(params.promptTemplate, targetName)
+            } else {
+                val rendered = LlamaCppPrompt.buildGeneric(h, params, targetName, promptText)
+                prompt = rendered.prompt
+                prefix = rendered.prefix
             }
-        }.apply {
-            // 高优先级：解码线程在系统高负载时不被前台饿死（否则 decode 明显变慢）
-            priority = Thread.MAX_PRIORITY
-            start()
+            LogCollector.d(TAG, "$modelName 翻译 ${sourceLanguage}→$targetLanguage hy=$hyProfile prefix=${prefix.length}字")
+            val started = System.currentTimeMillis()
+            val result = task.abortable(abort = { LlamaCppNative.nativeAbort(h) }) {
+                if (onPartial != null) {
+                    val cb = object : LlamaCppStreamCallback {
+                        override fun onPhase(phase: String) { if (!task.isCancelled) { task.reportProgress(); onPhase?.invoke(phase) } }
+                        override fun onToken(text: String) { if (!task.isCancelled) { task.reportProgress(); onPartial(text) } }
+                    }
+                    if (hyProfile) LlamaCppNative.nativeTranslateStreaming(
+                        h, prompt, prefix, params.temperature, params.topP, params.topK, params.repetitionPenalty, params.maxTokens, cb)
+                    else LlamaCppNative.nativeTranslateRawStreaming(
+                        h, prompt, prefix, params.temperature, params.topP, params.topK, params.repetitionPenalty, params.maxTokens, cb)
+                } else {
+                    if (hyProfile) LlamaCppNative.nativeTranslate(
+                        h, prompt, prefix, params.temperature, params.topP, params.topK, params.repetitionPenalty, params.maxTokens)
+                    else LlamaCppNative.nativeTranslateRaw(
+                        h, prompt, prefix, params.temperature, params.topP, params.topK, params.repetitionPenalty, params.maxTokens)
+                }
+            }.trim()
+            LogCollector.d(TAG, "$modelName native 耗时=${System.currentTimeMillis() - started}ms")
+            when {
+                result == "__PROMPT_TOO_LONG__" -> TranslationResult.Error(Exception(ctx.getString(R.string.llamacpp_error_text_too_long)))
+                result.isEmpty() -> TranslationResult.Error(Exception(ctx.getString(R.string.llamacpp_empty_result)))
+                else -> TranslationResult.Success(result)
+            }
         }
     }
 
@@ -249,63 +227,26 @@ class LlamaCppTranslation(
         contents: Array<String>,
         onPhase: (String) -> Unit,
         onPartial: (String) -> Unit,
-        callback: (TranslationResult) -> Unit
-    ) {
-        cancelled = false
-        val epoch = currentEpoch
+        callback: (TranslationResult) -> Unit,
+    ): TranslationRequest {
         val params = currentParams()
-        currentTask = Thread {
-            try {
-                val h = ensureLoaded()
-                if (h == 0L) {
-                    callback(TranslationResult.Error(Exception(loadFailureMessage())))
-                    return@Thread
-                }
-                var registered = false
-                try {
-                    val nativeHandle = synchronized(initLock) {
-                        if (handle != 0L && currentEpoch == epoch) { inFlight++; registered = true; handle } else 0L
-                    }
-                    if (nativeHandle == 0L) {
-                        callback(TranslationResult.Error(Exception(ctx.getString(R.string.llamacpp_released_translate))))
-                        return@Thread
-                    }
-                    val cb = object : LlamaCppStreamCallback {
-                        override fun onPhase(phase: String) { onPhase(phase) }
-                        override fun onToken(text: String) { onPartial(text) }
-                    }
-                    val result = if (hyProfile) {
-                        LlamaCppNative.nativeTranslateChat(
-                            nativeHandle, systemPrompt, roles, contents,
-                            params.temperature, params.topP, params.topK,
-                            params.repetitionPenalty, params.maxTokens, cb
-                        )
-                    } else {
-                        val prompt = LlamaCppPrompt.buildGenericChat(
-                            nativeHandle, systemPrompt, roles, contents, params.enableThinking
-                        )
-                        LlamaCppNative.nativeTranslateRawStreaming(
-                            nativeHandle, prompt, "", params.temperature, params.topP,
-                            params.topK, params.repetitionPenalty, params.maxTokens, cb
-                        )
-                    }.trim()
-                    if (cancelled || currentEpoch != epoch) {
-                        callback(TranslationResult.Error(Exception(ctx.getString(R.string.error_chat_cancelled))))
-                    } else if (result.isEmpty()) {
-                        callback(TranslationResult.Error(Exception(ctx.getString(R.string.llamacpp_empty_result))))
-                    } else {
-                        callback(TranslationResult.Success(result))
-                    }
-                } finally {
-                    if (registered) synchronized(initLock) { inFlight-- }
-                }
-            } catch (e: Exception) {
-                LogCollector.e(TAG, "$modelName 对话异常: ${e.message}", e)
-                callback(TranslationResult.Error(e))
+        return startLocalRequest(callback) { h, task ->
+            val cb = object : LlamaCppStreamCallback {
+                override fun onPhase(phase: String) { if (!task.isCancelled) { task.reportProgress(); onPhase(phase) } }
+                override fun onToken(text: String) { if (!task.isCancelled) { task.reportProgress(); onPartial(text) } }
             }
-        }.apply {
-            priority = Thread.MAX_PRIORITY
-            start()
+            val result = task.abortable(abort = { LlamaCppNative.nativeAbort(h) }) {
+                if (hyProfile) LlamaCppNative.nativeTranslateChat(
+                    h, systemPrompt, roles, contents, params.temperature, params.topP, params.topK,
+                    params.repetitionPenalty, params.maxTokens, cb)
+                else {
+                    val prompt = LlamaCppPrompt.buildGenericChat(h, systemPrompt, roles, contents, params.enableThinking)
+                    LlamaCppNative.nativeTranslateRawStreaming(h, prompt, "", params.temperature, params.topP,
+                        params.topK, params.repetitionPenalty, params.maxTokens, cb)
+                }
+            }.trim()
+            if (result.isEmpty()) TranslationResult.Error(Exception(ctx.getString(R.string.llamacpp_empty_result)))
+            else TranslationResult.Success(result)
         }
     }
 
@@ -390,45 +331,22 @@ class LlamaCppTranslation(
     }
 
     override fun cancelTranslation() {
-        currentEpoch++
-        cancelled = true
-        val task = currentTask
-        if (task?.isAlive == true) task.interrupt()
-        currentTask = null
-        synchronized(initLock) {
-            if (handle != 0L) LlamaCppNative.nativeAbort(handle)
-        }
+        requests.toList().forEach { it.cancel() }
     }
 
     override fun release() {
-        if (keepAlive) {
-            LogCollector.d(TAG, "$modelName release(keepAlive)：保留模型，仅取消在途任务")
-            cancelTranslation()
-            val t = currentTask
-            if (t?.isAlive == true) runCatching { t.join(2000) }
-            currentTask = null
-            return
-        }
-        val task = currentTask
+        // A shared instance has requests owned by other screens/services. Their handles cancel them.
+        if (keepAlive) return
+        released = true
+        synchronized(initLock) { currentEpoch++ }
         cancelTranslation()
-        task?.let { t ->
-            if (t.isAlive) {
-                try { t.join(3000) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+        LocalTranslationCoordinator.runNative {
+            synchronized(initLock) {
+                val oldHandle = handle
+                handle = 0L
+                if (oldHandle != 0L) HyMt2StyleRelease(oldHandle)
             }
         }
-        currentTask = null
-        val oldHandle: Long
-        synchronized(initLock) {
-            oldHandle = handle
-            handle = 0L
-        }
-        val deadline = System.currentTimeMillis() + 3000
-        while (synchronized(initLock) { inFlight } > 0 && System.currentTimeMillis() < deadline) {
-            Thread.sleep(50)
-        }
-        if (oldHandle != 0L) synchronized(initLock) { runCatching { LlamaCppNative.nativeRelease(oldHandle) } }
-        released = true
-        statusOverlay.release()
     }
 
     /** 后台预加载模型（共享常驻场景），把加载挪到用户第一次翻译之前。 */
@@ -438,7 +356,7 @@ class LlamaCppTranslation(
         Thread {
             try {
                 val t0 = System.currentTimeMillis()
-                val h = ensureLoaded()
+                val h = LocalTranslationCoordinator.runNative { ensureLoaded() }
                 LogCollector.d(TAG, "$modelName warmUp 完成 h=$h 耗时=${System.currentTimeMillis() - t0}ms")
             } catch (e: Exception) {
                 LogCollector.e(TAG, "$modelName warmUp 失败: ${e.message}", e)

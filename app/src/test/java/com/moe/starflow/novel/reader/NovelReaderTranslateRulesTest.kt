@@ -111,4 +111,16 @@ class NovelReaderTranslateRulesTest {
             src.contains("chapterJobs?.collect { pushPanelState(); refreshChapterJobChips() }"),
         )
     }
+
+    /** 手动空闲双击快捷开启自动；运行中的自动队列仍由双击/面板退出到手动。 */
+    @Test
+    fun `手动空闲双击开启自动且面板仍退出队列`() {
+        val src = activity()
+        assertTrue("空闲单击必须延迟一个双击窗口，避免先启动手动批次", src.contains("postDelayed(action, DOUBLE_CLICK_MS)"))
+        assertTrue("第二击必须走快捷自动分支", src.contains("startAutoFromTranslateButton()"))
+        assertTrue("快捷分支要保存自动模式", src.contains("NovelPanelStyle.setTranslateMode(prefs, NovelTranslateMode.AUTO)"))
+        assertTrue("自动队列中的双击继续回退手动", src.contains("pauseToManual(getString(R.string.reader_translate_force_stopped_to_manual))"))
+        assertTrue("开面板仍走既有停止入口", src.contains("queue?.setPanelOpen(true)"))
+        assertTrue("文本选择态不能被自动模式双击抢走", src.contains("if (selecting && selectedPara.isNotEmpty())"))
+    }
 }

@@ -227,12 +227,7 @@ class MangaViewerActivity : AppCompatActivity() {
                 com.moe.starflow.utils.UiUtils.showToast(this, getString(R.string.toast_crop_unavailable))
                 return@setOnClickListener
             }
-            val ocrToken = com.moe.starflow.manga.OcrLock.acquire()
-            if (ocrToken == 0L) {
-                com.moe.starflow.utils.UiUtils.showToast(this, getString(R.string.toast_translating_wait))
-                return@setOnClickListener
-            }
-            performRetranslate(entry, pageCache, originalPath, ocrToken)
+            performRetranslate(entry, pageCache, originalPath)
         }
 
         // 非管理视图隐藏重新翻译按钮
@@ -745,12 +740,16 @@ class MangaViewerActivity : AppCompatActivity() {
         entry: HistoryEntry,
         pageCache: PageCacheEntity,
         originalPath: String,
-        /** `OcrLock` 的持有者令牌（在点击处拿的锁，必须由同一次调用放掉 —— 见 `OcrLock.acquire`）。 */
-        ocrToken: Long,
     ) {
         binding.btnRetranslate.isEnabled = false
         com.moe.starflow.utils.UiUtils.showToast(this, getString(R.string.toast_translating_now))
         lifecycleScope.launch {
+            val ocrToken = com.moe.starflow.manga.OcrLock.acquire(kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job], "history retranslation")
+            if (ocrToken == 0L) {
+                binding.btnRetranslate.isEnabled = true
+                com.moe.starflow.utils.UiUtils.showToast(this@MangaViewerActivity, getString(R.string.toast_translating_wait))
+                return@launch
+            }
             val heartbeatJob = com.moe.starflow.manga.OcrLock.startHeartbeat(ocrToken)
             var originalBmp: Bitmap?
             try {
@@ -760,7 +759,7 @@ class MangaViewerActivity : AppCompatActivity() {
                 val cropBottomPx = pageCache.cropBottom
                 LogCollector.d(TAG, "performRetranslate: entryId=${entry.id}, crop=$cropLeftPx,$cropTopPx-$cropRightPx,$cropBottomPx")
 
-                withContext(Dispatchers.IO) {
+                withContext(Dispatchers.IO + com.moe.starflow.manga.engine.OcrExecution.context()) {
                     originalBmp = BitmapFactory.decodeFile(originalPath)
                         ?: throw Exception("原图加载失败")
                     val cropRect = android.graphics.RectF(

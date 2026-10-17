@@ -1,0 +1,85 @@
+// Applied by :app. Selection happens before Kotlin/kapt compilation, not just at test execution.
+def testRoot = file('src/test/java')
+def sources = fileTree(testRoot) { include '**/*.kt', '**/*.java' }.files
+def guardPaths = rootProject.file('gradle/source-guards.txt').readLines('UTF-8')
+        .collect { it.trim() }.findAll { it && !it.startsWith('#') }
+def guardSources = guardPaths.collect { new File(testRoot, it).canonicalFile }.toSet()
+
+def classOf = { File source ->
+    testRoot.canonicalFile.toPath().relativize(source.canonicalFile.toPath()).toString()
+            .replace(File.separator, '.').replaceFirst(/\.(kt|java)$/, '')
+}
+def testSources = sources.findAll { it.name ==~ /.*Tests?\.(kt|java)/ }.toSet()
+def classes = testSources.collectEntries { [(classOf(it)): it.canonicalFile] }
+def requested = gradle.startParameter.taskNames.collect { it.tokenize(':').last() }
+def guardMode = requested.contains('testSourceGuards')
+def allMode = requested.contains('testAllUnit')
+// A removed legacy test must not break APK packaging. Check the manifest only for verification requests.
+def verificationRequested = requested.any { it.startsWith('test') || it in ['verificationPlan', 'check', 'build'] }
+def missingGuards = guardSources.findAll { !it.isFile() }
+if (verificationRequested && missingGuards) {
+    throw new GradleException("Update gradle/source-guards.txt: missing ${missingGuards*.name}")
+}
+def selectedClasses = providers.gradleProperty('testClasses').orNull?.split(',')
+        ?.collect { it.trim() }?.findAll { it } ?: []
+if ((guardMode && allMode) || ((guardMode || allMode) && selectedClasses)) {
+    throw new GradleException('Choose one verification mode per invocation: focused, source guards, or all unit tests.')
+}
+if (requested.contains('testFocused') && !selectedClasses) {
+    throw new GradleException('testFocused requires -PtestClasses=package.TestClass[,package.OtherTestClass]')
+}
+def unknown = selectedClasses.findAll { !classes.containsKey(it) }
+if (unknown) throw new GradleException("Unknown test classes (wildcards are not supported): ${unknown}")
+def selectedGuards = selectedClasses.findAll { guardSources.contains(classes[it]) }
+if (selectedGuards) {
+    throw new GradleException("Source-text guards are opt-in via :app:testSourceGuards: ${selectedGuards}")
+}
+
+def mode = allMode ? 'all' : guardMode ? 'source-guards' : selectedClasses ? 'focused' : 'behavior'
+def selectedSources = (allMode ? testSources : guardMode ? guardSources : selectedClasses
+        ? selectedClasses.collect { classes[it] } : testSources.findAll { !guardSources.contains(it.canonicalFile) })
+        .collect { it.canonicalFile }.toSet()
+def excluded = testSources.collect { it.canonicalFile }.toSet() - selectedSources
+
+// Keep shared fixtures, but remove unselected test classes from both kapt stubs and Kotlin compilation.
+tasks.matching { it.name ==~ /(?:compile|kaptGenerateStubs).*UnitTestKotlin/ }.configureEach {
+    exclude { element -> excluded.contains(element.file.canonicalFile) }
+}
+tasks.withType(JavaCompile).matching { it.name.endsWith('UnitTestJavaWithJavac') }.configureEach {
+    exclude { element -> excluded.contains(element.file.canonicalFile) }
+}
+tasks.withType(Test).configureEach {
+    if (guardMode || selectedClasses) {
+        filter.setIncludePatterns(*(selectedSources.collect { classOf(it) } as String[]))
+    }
+    if (!guardMode && !allMode) guardSources.each { filter.excludeTestsMatching(classOf(it)) }
+}
+
+tasks.register('verificationPlan') {
+    group = 'verification'
+    description = 'Show selected test sources without compiling or running tests.'
+    doLast {
+        logger.lifecycle("Verification mode: ${mode}; selected test classes: ${selectedSources.size()}/${testSources.size()}")
+        logger.lifecycle("Shared fixture sources: ${sources.size() - testSources.size()}; excluded test sources: ${excluded.size()}")
+        if (selectedClasses) selectedSources.sort { classOf(it) }.each { logger.lifecycle("  ${classOf(it)}") }
+        // Report the compiler's actual filtered input, so source selection is reviewable without running it.
+        ['kaptGenerateStubsDebugUnitTestKotlin', 'compileDebugUnitTestKotlin'].each { taskName ->
+            def compiler = tasks.named(taskName).get()
+            def actual = compiler.sources.files.collect { it.canonicalFile }.toSet()
+            def expected = selectedSources + sources.findAll { !testSources.contains(it) }.collect { it.canonicalFile }
+            if (actual.intersect(sources.collect { it.canonicalFile }) != expected.toSet()) {
+                throw new GradleException("${taskName} inputs do not match the verification selection.")
+            }
+        }
+        logger.lifecycle('Kotlin and kapt source selection match the plan. No tests were executed.')
+    }
+}
+['testFocused': 'Run explicitly named behavior test classes, compiling only those classes and fixtures.',
+ 'testSourceGuards': 'Run legacy source-text checks explicitly; excluded from normal unit tests.',
+ 'testAllUnit': 'Run all debug unit tests, including legacy source-text checks.'].each { name, text ->
+    tasks.register(name) {
+        group = 'verification'
+        description = text
+        dependsOn 'testDebugUnitTest'
+    }
+}

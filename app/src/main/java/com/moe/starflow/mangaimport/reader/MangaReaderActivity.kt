@@ -162,6 +162,10 @@ class MangaReaderActivity : AppCompatActivity() {
     /** 翻译按钮双击判定用的上次单击时刻（elapsedRealtime）。 */
     private var lastTranslateClickMs = 0L
 
+    /** 手动空闲时暂缓第一次单击，给第二击留出开启自动模式的 300ms 窗口。 */
+    private var pendingManualTranslateClick: Runnable? = null
+    private var pendingManualTranslateClickMs = 0L
+
     /** 超分/重新超分按钮双击判定用的上次单击时刻（与翻译按钮同一套语义，见 `onSrEnhanceClicked`）。 */
     private var lastSrClickMs = 0L
 
@@ -406,6 +410,8 @@ class MangaReaderActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
+        cancelPendingManualTranslateClick()
+        lastTranslateClickMs = 0L
         autoTurnJob?.cancel()
         autoTurnJob = null
         // ⚠️ 用户口径：「退出阅读器自动暂停回退手动，但**没有 app 的提示信息**」——
@@ -637,6 +643,8 @@ class MangaReaderActivity : AppCompatActivity() {
         // 退出阅读器：停止前台队列并回退手动模式（章节后台任务保留）。
         // ⚠️ 提示统一在 onStop 里发（`isFinishing` 那条路径），这里**只兜底**：
         // Activity 正在销毁时弹的东西经常看不见
+        cancelPendingManualTranslateClick()
+        lastTranslateClickMs = 0L
         setTranslatingPulse(false)
         val wasActive = translationController?.translateMode?.value != ReaderTranslationController.MODE_MANUAL
         translationController?.let { c ->
@@ -721,6 +729,7 @@ class MangaReaderActivity : AppCompatActivity() {
             ImportedMangaStore.patch(applicationContext, manga) { it.copy(lastReadPage = currentPage) }
             // 翻页后重置双击判定窗口：否则「单击 → 翻页 → 300ms 内再单击」会被当成双击，
             // 直接取消翻译（连击状态在 Activity 这侧，controller 的 onCurrentPageChanged 管不到）
+            cancelPendingManualTranslateClick()
             lastTranslateClickMs = 0L
             translationController?.onCurrentPageChanged()
             refreshOverlay()
@@ -1046,64 +1055,7 @@ class MangaReaderActivity : AppCompatActivity() {
         // 否则开屏几十毫秒内右下角会闪一个翻译按钮（此时点它只会弹"该模式不支持"）
         refreshTranslationChrome()
         val controller = translationController ?: return
-        binding.btnTranslate.setOnClickListener {
-            // ⚠️ "点了没反应"排查的第一现场：这条日志只说明"点击到了"，后面没别的日志
-            // 才说明是流程里被拦住了（配合 ReaderAnim 已限流，日志窗口不会再被刷掉）
-            LogCollector.d("ReaderTranslate", "翻译按钮点击：page=$currentPage mode=$mode disableByMode=${isTranslateDisabledByMode()}")
-            // 「重新翻译 / 重新 OCR」才转一圈；显示态切换不要旋转。
-            val currentState = translationController?.stateOf(currentPage)
-            val ocrComplete = translationController?.isOcrOnlyMode() == true &&
-                translationController?.hasOcr(currentPage) == true
-            if (currentState == ImportedPageTranslation.STATE_SUCCESS || ocrComplete) {
-                binding.ivTranslate.animate().rotationBy(360f).setDuration(420).start()
-            }
-            if (isTranslateDisabledByMode()) {
-                notifyUser(getString(R.string.reader_translate_disabled_mode))
-                return@setOnClickListener
-            }
-            // 单击 = **只提示，绝不打断**；快速双击 = 取消并回退手动（用户明确要求）
-            val now = SystemClock.elapsedRealtime()
-            val isDouble = now - lastTranslateClickMs <= DOUBLE_CLICK_MS
-            lastTranslateClickMs = if (isDouble) 0L else now
-
-            when (val r = controller.onTranslateButtonClick(isDouble)) {
-                is TranslateClick.Hint -> {
-                    // 提示走「替换顶部芯片」的进度样式（与截屏翻译同一套）。浮层开关被关掉、
-                    // 或没有悬浮窗权限时，[notifyUser] 会退回 Toast —— 否则点翻译「毫无反馈」。
-                    notifyUser(r.text, AppNotice.Style.PROGRESS)
-                }
-                TranslateClick.CancelledToManual -> {
-                    setTranslatingPulse(false)
-                    TranslationStatusOverlay.getInstance(this).dismiss()
-                    // 双击强制取消 = 强制退出 + 回退手动（用户口径：提示前一句固定，后一句只在真回退时才接）。
-                    // 走统一出口：浮层画不出来时至少还有 Toast，否则"双击了但什么都没说"
-                    notifyUser(
-                        getString(
-                            if (controller.isOcrOnlyMode()) R.string.reader_ocr_force_stopped_to_manual
-                            else R.string.reader_translate_force_stopped_to_manual
-                        )
-                    )
-                    refreshTranslationChrome()
-                    refreshProgressTranslation()
-                }
-                is TranslateClick.CancelledBatch -> {
-                    // 双击关掉的是**批量**（超分本章 / 翻译本章）：只关那一个，**不变模式、不清屏**
-                    //（各自的取消路径已经处理了在途清理），文案由控制器给（按关掉的是谁）。
-                    setTranslatingPulse(false)
-                    notifyUser(r.text)
-                    refreshTranslationChrome()
-                    refreshProgressTranslation()
-                }
-                TranslateClick.Busy -> {
-                    notifyUser(getString(
-                        if (controller.isOcrOnlyMode()) R.string.reader_ocr_busy
-                        else R.string.reader_translate_busy
-                    ))
-                    refreshTranslationChrome()
-                }
-                TranslateClick.StartedManual, TranslateClick.Ignored -> Unit
-            }
-        }
+        binding.btnTranslate.setOnClickListener { onTranslateButtonTapped() }
         // 翻译成功页三态循环（译文/原文/纯原图）；OCR-only 页两态切换（原文/纯原图）。
         // Webtoon 没有单页三态（连续滚动下"当前页"语义不唯一），整屏切换改由阅读模式分段器
         // 上「连续滑动」按钮的两态控制（见 ReaderMenuSheet），本按钮在 Webtoon 下整组隐藏。
@@ -1130,6 +1082,119 @@ class MangaReaderActivity : AppCompatActivity() {
             binding.btnSrPage, binding.btnSrToggle, binding.btnSrClear, binding.btnPrev, binding.btnNext,
         )
         applyPageImageSource()
+    }
+
+    /**
+     * 手动空闲时先等一个双击窗口：单击照常翻当前页，双击则直接开启自动模式。
+     * 已有任务时不延迟，继续保留单击提示、双击取消的既有行为。
+     */
+    private fun onTranslateButtonTapped() {
+        val controller = translationController ?: return
+        LogCollector.d(
+            "ReaderTranslate",
+            "翻译按钮点击：page=$currentPage mode=$mode disableByMode=${isTranslateDisabledByMode()}"
+        )
+        if (isTranslateDisabledByMode()) {
+            cancelPendingManualTranslateClick()
+            lastTranslateClickMs = 0L
+            notifyUser(getString(R.string.reader_translate_disabled_mode))
+            return
+        }
+
+        val now = SystemClock.elapsedRealtime()
+        val pending = pendingManualTranslateClick
+        if (pending != null) {
+            val isDouble = now - pendingManualTranslateClickMs <= DOUBLE_CLICK_MS
+            cancelPendingManualTranslateClick()
+            if (isDouble) {
+                lastTranslateClickMs = 0L
+                performTranslateButtonClick(controller, isDouble = true)
+                return
+            }
+            // 主线程延迟回调若被阻塞，补交已经超时的第一次单击，再处理这一次。
+            lastTranslateClickMs = now - DOUBLE_CLICK_MS - 1L
+            performTranslateButtonClick(controller, isDouble = false)
+        }
+
+        if (controller.canStartAutoFromTranslateButton()) {
+            lastTranslateClickMs = 0L
+            val action = object : Runnable {
+                override fun run() {
+                    if (pendingManualTranslateClick !== this) return
+                    pendingManualTranslateClick = null
+                    pendingManualTranslateClickMs = 0L
+                    if (isFinishing || isDestroyed) return
+                    val currentController = translationController ?: return
+                    if (isTranslateDisabledByMode()) {
+                        notifyUser(getString(R.string.reader_translate_disabled_mode))
+                    } else {
+                        performTranslateButtonClick(currentController, isDouble = false)
+                    }
+                }
+            }
+            pendingManualTranslateClick = action
+            pendingManualTranslateClickMs = now
+            binding.btnTranslate.postDelayed(action, DOUBLE_CLICK_MS)
+            return
+        }
+
+        val isDouble = now - lastTranslateClickMs <= DOUBLE_CLICK_MS
+        lastTranslateClickMs = if (isDouble) 0L else now
+        performTranslateButtonClick(controller, isDouble)
+    }
+
+    private fun cancelPendingManualTranslateClick() {
+        pendingManualTranslateClick?.let { action ->
+            if (::binding.isInitialized) binding.btnTranslate.removeCallbacks(action)
+        }
+        pendingManualTranslateClick = null
+        pendingManualTranslateClickMs = 0L
+    }
+
+    private fun performTranslateButtonClick(controller: ReaderTranslationController, isDouble: Boolean) {
+        // 「重新翻译 / 重新 OCR」才转一圈；快捷开自动与状态提示都不旋转。
+        if (!isDouble) {
+            val currentState = controller.stateOf(currentPage)
+            val ocrComplete = controller.isOcrOnlyMode() && controller.hasOcr(currentPage)
+            if (currentState == ImportedPageTranslation.STATE_SUCCESS || ocrComplete) {
+                binding.ivTranslate.animate().rotationBy(360f).setDuration(420).start()
+            }
+        }
+
+        when (val r = controller.onTranslateButtonClick(isDouble)) {
+            is TranslateClick.Hint -> notifyUser(r.text, AppNotice.Style.PROGRESS)
+            TranslateClick.CancelledToManual -> {
+                setTranslatingPulse(false)
+                TranslationStatusOverlay.getInstance(this).dismiss()
+                notifyUser(
+                    getString(
+                        if (controller.isOcrOnlyMode()) R.string.reader_ocr_force_stopped_to_manual
+                        else R.string.reader_translate_force_stopped_to_manual
+                    )
+                )
+                refreshTranslationChrome()
+                refreshProgressTranslation()
+            }
+            is TranslateClick.CancelledBatch -> {
+                setTranslatingPulse(false)
+                notifyUser(r.text)
+                refreshTranslationChrome()
+                refreshProgressTranslation()
+            }
+            TranslateClick.Busy -> {
+                notifyUser(getString(
+                    if (controller.isOcrOnlyMode()) R.string.reader_ocr_busy
+                    else R.string.reader_translate_busy
+                ))
+                refreshTranslationChrome()
+            }
+            TranslateClick.StartedAuto -> {
+                lastTranslateClickMs = 0L
+                notifyUser(getString(R.string.reader_auto_mode_started))
+                refreshTranslationChrome()
+            }
+            TranslateClick.StartedManual, TranslateClick.Ignored -> Unit
+        }
     }
 
     /**
@@ -2189,6 +2254,8 @@ class MangaReaderActivity : AppCompatActivity() {
     // ===== 底部工具栏 =====
 
     private fun showMenu() {
+        cancelPendingManualTranslateClick()
+        lastTranslateClickMs = 0L
         if (supportFragmentManager.findFragmentByTag(ReaderMenuSheet.TAG) != null) return
         val dark = isDarkBackground()
         // 调色对比图：异步加载当前页
@@ -2328,6 +2395,8 @@ class MangaReaderActivity : AppCompatActivity() {
                 // RadioButton 同组内重复选中不派发回调 → 模式彻底切不动。
                 currentTranslateMode = { translationController?.translateMode?.value ?: 0 },
                 onTranslateMode = { m ->
+                    cancelPendingManualTranslateClick()
+                    lastTranslateClickMs = 0L
                     translationController?.setMode(m)
                     // 切回手动时队列已停，「翻译中…」常驻芯片必须清掉，否则会一直挂在屏幕上
                     if (m == ReaderTranslationController.MODE_MANUAL) {
@@ -2341,6 +2410,8 @@ class MangaReaderActivity : AppCompatActivity() {
                 // 翻译面板开合：打开时暂停队列（用户在调设置），关闭后才恢复 ——
                 // 即"选了自动/增量也要等退出面板才开始翻"
                 onPanelOpened = {
+                    cancelPendingManualTranslateClick()
+                    lastTranslateClickMs = 0L
                     translationController?.setPanelOpen(true)
                     TranslationStatusOverlay.getInstance(this@MangaReaderActivity).dismiss()
                     // 回退到手动必须告知（modeBeforeOpen 是回退前的模式，见上方说明）

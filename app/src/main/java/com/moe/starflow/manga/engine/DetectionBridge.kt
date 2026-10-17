@@ -412,6 +412,7 @@ object DetectionBridge {
     ): List<TextBlockInfo> {
         val keepTextFree = resolveKeepTextFree(context, keepTextFree)
         val resolvedRt = resolveRtTextDirection(context, rtDirection)
+        val croppedBitmaps = mutableListOf<Bitmap>()
         try {
             LogCollector.d(TAG, "使用 RT-DETR-V2 + MangaOcr 检测文字区域... rtDirection=$resolvedRt")
 
@@ -458,7 +459,15 @@ object DetectionBridge {
             LogCollector.d(TAG, "RT-DETR-V2 过滤后 ${sortedBubbles.size} 个区域 (text_bubble=${allBubbles.count { it.classId == 1 }}, text_free=${if (keepTextFree) "保留(${allBubbles.count { it.classId == 2 }})" else "丢弃"}, bubble保留=${dedupedBubbles.size - greenBubbles.size})")
 
             // Step 5: 裁剪图片（10px padding）
-            val croppedBitmaps = sortedBubbles.map { bubble -> cropBitmap(bitmap, bubble.rect) }
+            for (bubble in sortedBubbles) {
+                val crop = cropBitmap(bitmap, bubble.rect)
+                try {
+                    croppedBitmaps.add(crop)
+                } catch (e: Throwable) {
+                    if (crop !== bitmap && !crop.isRecycled) crop.recycle()
+                    throw e
+                }
+            }
 
             // Step 6: MangaOcr 识别
             val results = mutableListOf<TextBlockInfo>()
@@ -480,11 +489,6 @@ object DetectionBridge {
                 }
             }
 
-            // 释放裁剪的图片
-            for (cropped in croppedBitmaps) {
-                if (cropped !== bitmap) cropped.recycle()
-            }
-
             LogCollector.d(TAG, "RT-DETR-V2 + MangaOcr 完成，共 ${results.size} 个文字块")
             return results
 
@@ -495,6 +499,8 @@ object DetectionBridge {
         } catch (e: Exception) {
             LogCollector.e(TAG, "RT-DETR-V2 检测失败", e)
             throw e
+        } finally {
+            croppedBitmaps.forEach { if (it !== bitmap && !it.isRecycled) it.recycle() }
         }
     }
 
@@ -510,7 +516,7 @@ object DetectionBridge {
     suspend fun detectAndCropRTDetrV2(
         bitmap: Bitmap,
         keepTextFree: Boolean = false
-    ): List<CroppedBubble> = withContext(Dispatchers.IO) {
+    ): List<CroppedBubble> = withContext(Dispatchers.IO + OcrExecution.context()) {
         LogCollector.d(TAG, "detectAndCropRTDetrV2: 开始检测, keepTextFree=$keepTextFree...")
 
         // Step 1: RT-DETR-V2 检测
@@ -559,23 +565,33 @@ object DetectionBridge {
         // （分批管线 / 阅读器复用路径 / 悬浮窗都会 recycle）—— 一旦那张"裁剪图"其实就是调用方的
         // 源位图，回收它 = 把调用方马上还要用的截图/页图 recycle 掉（随后 Recycled bitmap 崩溃或垃圾像素）。
         // 这种框本来就是无效检测（整个框在图外），丢掉既正确又安全。
-        val cropped = sortedBubbles.mapNotNull { bubble ->
-            val crop = cropBitmap(bitmap, bubble.rect)
-            if (crop === bitmap) {
-                LogCollector.w(TAG, "detectAndCropRTDetrV2: 跳过退化检测框（裁剪区在图外）rect=${bubble.rect}")
-                null
-            } else {
-                CroppedBubble(
-                    croppedBitmap = crop,
-                    rect = bubble.rect,
-                    classId = bubble.classId,
-                    confidence = bubble.confidence
-                )
+        val cropped = mutableListOf<CroppedBubble>()
+        try {
+            for (bubble in sortedBubbles) {
+                val crop = cropBitmap(bitmap, bubble.rect)
+                if (crop === bitmap) {
+                    LogCollector.w(TAG, "detectAndCropRTDetrV2: 跳过退化检测框（裁剪区在图外）rect=${bubble.rect}")
+                    continue
+                }
+                try {
+                    cropped.add(CroppedBubble(
+                        croppedBitmap = crop,
+                        rect = bubble.rect,
+                        classId = bubble.classId,
+                        confidence = bubble.confidence
+                    ))
+                } catch (e: Throwable) {
+                    if (!crop.isRecycled) crop.recycle()
+                    throw e
+                }
             }
-        }
 
-        LogCollector.d(TAG, "detectAndCropRTDetrV2: 完成，${cropped.size} 个裁剪区域")
-        cropped
+            LogCollector.d(TAG, "detectAndCropRTDetrV2: 完成，${cropped.size} 个裁剪区域")
+            cropped
+        } catch (e: Throwable) {
+            cropped.forEach { if (!it.croppedBitmap.isRecycled) it.croppedBitmap.recycle() }
+            throw e
+        }
     }
 
     /**
@@ -594,37 +610,35 @@ object DetectionBridge {
          * 默认竖排右→左（日漫正文常态），且**不做横竖几何判断**（只有矩形气泡框，判不准）。
          */
         rtDirection: TextDirection = TextDirection.VERTICAL_RL
-    ): List<TextBlockInfo> = withContext(Dispatchers.IO) {
+    ): List<TextBlockInfo> = withContext(Dispatchers.IO + OcrExecution.context()) {
         if (croppedBubbles.isEmpty()) return@withContext emptyList()
 
-        LogCollector.d(TAG, "recognizeCroppedBubbles: ${croppedBubbles.size} 个气泡, engine=MangaOcr")
-
-        val croppedBitmaps = croppedBubbles.map { it.croppedBitmap }
-        val results = mutableListOf<TextBlockInfo>()
-
-        val texts = MangaOcrRecognizer.recognizeBatch(croppedBitmaps)
-        for (i in croppedBubbles.indices) {
-            val text = texts[i].trim()
-            if (text.isNotBlank() && !isDotOnlyPattern(text)) {
-                val bubble = croppedBubbles[i]
-                val isVertical = rtDirection != TextDirection.HORIZONTAL
-                results.add(TextBlockInfo(
-                    text = text,
-                    boundingBox = bubble.rect,
-                    cornerPoints = null,
-                    isVertical = isVertical
-                ))
-                LogCollector.d(TAG, "recognizeCroppedBubbles(MangaOcr) [$i]: rect=${bubble.rect}, text='$text', isVertical=$isVertical(设置=$rtDirection)")
+        try {
+            LogCollector.d(TAG, "recognizeCroppedBubbles: ${croppedBubbles.size} 个气泡, engine=MangaOcr")
+            val croppedBitmaps = croppedBubbles.map { it.croppedBitmap }
+            val results = mutableListOf<TextBlockInfo>()
+            val texts = MangaOcrRecognizer.recognizeBatch(croppedBitmaps)
+            for (i in croppedBubbles.indices) {
+                val text = texts[i].trim()
+                if (text.isNotBlank() && !isDotOnlyPattern(text)) {
+                    val bubble = croppedBubbles[i]
+                    val isVertical = rtDirection != TextDirection.HORIZONTAL
+                    results.add(TextBlockInfo(
+                        text = text,
+                        boundingBox = bubble.rect,
+                        cornerPoints = null,
+                        isVertical = isVertical
+                    ))
+                    LogCollector.d(TAG, "recognizeCroppedBubbles(MangaOcr) [$i]: rect=${bubble.rect}, text='$text', isVertical=$isVertical(设置=$rtDirection)")
+                }
             }
-        }
 
-        // 释放裁剪图片
-        for (cropped in croppedBubbles) {
-            cropped.croppedBitmap.recycle()
+            LogCollector.d(TAG, "recognizeCroppedBubbles: 完成，${results.size} 个文字块")
+            results
+        } finally {
+            // 该识别入口接管裁剪图所有权；成功、OOM、取消和推理异常都必须释放。
+            croppedBubbles.forEach { if (!it.croppedBitmap.isRecycled) it.croppedBitmap.recycle() }
         }
-
-        LogCollector.d(TAG, "recognizeCroppedBubbles: 完成，${results.size} 个文字块")
-        results
     }
 
     /**
@@ -644,29 +658,36 @@ object DetectionBridge {
             return channel
         }
 
-        LogCollector.d(TAG, "recognizeCroppedBubblesStreaming: ${croppedBubbles.size} 个气泡, engine=MangaOcr")
+        try {
+            LogCollector.d(TAG, "recognizeCroppedBubblesStreaming: ${croppedBubbles.size} 个气泡, engine=MangaOcr")
 
-        val croppedBitmaps = croppedBubbles.map { it.croppedBitmap }
-        val ocrChannel = MangaOcrRecognizer.recognizeStreaming(croppedBitmaps)
+            val croppedBitmaps = croppedBubbles.map { it.croppedBitmap }
+            val ocrChannel = MangaOcrRecognizer.recognizeStreaming(croppedBitmaps)
 
-        // 转换 OCR 结果为 TextBlockInfo
-        for ((i, text) in ocrChannel) {
-            val trimmed = text.trim()
-            if (trimmed.isNotBlank() && !isDotOnlyPattern(trimmed)) {
-                val bubble = croppedBubbles[i]
-                val isVertical = rtDirection != TextDirection.HORIZONTAL
-                channel.send(Pair(i, TextBlockInfo(
-                    text = trimmed,
-                    boundingBox = bubble.rect,
-                    cornerPoints = null,
-                    isVertical = isVertical
-                )))
-                LogCollector.d(TAG, "recognizeCroppedBubblesStreaming(MangaOcr) [$i]: rect=${bubble.rect}, text='$trimmed', isVertical=$isVertical(设置=$rtDirection)")
+            // 转换 OCR 结果为 TextBlockInfo
+            for ((i, text) in ocrChannel) {
+                val trimmed = text.trim()
+                if (trimmed.isNotBlank() && !isDotOnlyPattern(trimmed)) {
+                    val bubble = croppedBubbles[i]
+                    val isVertical = rtDirection != TextDirection.HORIZONTAL
+                    channel.send(Pair(i, TextBlockInfo(
+                        text = trimmed,
+                        boundingBox = bubble.rect,
+                        cornerPoints = null,
+                        isVertical = isVertical
+                    )))
+                    LogCollector.d(TAG, "recognizeCroppedBubblesStreaming(MangaOcr) [$i]: rect=${bubble.rect}, text='$trimmed', isVertical=$isVertical(设置=$rtDirection)")
+                }
             }
-        }
 
-        channel.close()
-        return channel
+            channel.close()
+            return channel
+        } catch (e: Throwable) {
+            channel.close(e)
+            throw e
+        } finally {
+            croppedBubbles.forEach { if (!it.croppedBitmap.isRecycled) it.croppedBitmap.recycle() }
+        }
     }
 
     /**
@@ -746,10 +767,10 @@ object DetectionBridge {
          * 其余引擎忽略（PP-OCRv5/v6 自动判断横竖）。
          */
         rtDirection: TextDirection? = null
-    ): List<TextBlockInfo> {
+    ): List<TextBlockInfo> = OcrExecution.cancellable {
         val det = DetEngine.fromValue(detEngine)
         val ocr = OcrEngine.fromValue(ocrEngine)
-        return PpRecRecognizer.withMemoryGuard(context, TAG, "OCR det=$det ocr=$ocr image=${bitmap.width}x${bitmap.height}") {
+        PpRecRecognizer.withMemoryGuard(context, TAG, "OCR det=$det ocr=$ocr image=${bitmap.width}x${bitmap.height}") {
             when (det) {
                 DetEngine.MLKIT -> {
                     LogCollector.d(TAG, "使用 ML Kit 检测+识别, language=$language")
@@ -838,7 +859,7 @@ object DetectionBridge {
         context: android.content.Context,
         bitmap: Bitmap,
         verticalDirection: TextDirection
-    ): List<CroppedTextLine> = withContext(Dispatchers.IO) {
+    ): List<CroppedTextLine> = withContext(Dispatchers.IO + OcrExecution.context()) {
         PpRecRecognizer.withMemoryGuard(context, TAG, "PP-OCRv5 detection/crop image=${bitmap.width}x${bitmap.height}") {
             LogCollector.d(TAG, "detectAndCropPPOcrV5Lines: 开始检测")
 
@@ -913,7 +934,7 @@ object DetectionBridge {
         context: android.content.Context,
         bitmap: Bitmap,
         verticalDirection: TextDirection
-    ): List<CroppedTextLine> = withContext(Dispatchers.IO) {
+    ): List<CroppedTextLine> = withContext(Dispatchers.IO + OcrExecution.context()) {
         PpRecRecognizer.withMemoryGuard(context, TAG, "PP-OCRv6 detection/crop image=${bitmap.width}x${bitmap.height}") {
             LogCollector.d(TAG, "detectAndCropPPOcrV6Lines: 开始检测")
 
@@ -992,7 +1013,7 @@ object DetectionBridge {
                 return emptyList()
             }
 
-            val result = withContext(Dispatchers.IO) {
+            val result = withContext(Dispatchers.IO + OcrExecution.context()) {
                 PPOcrV5Engine.runOCR(context, bitmap, recLang, useDet = true)
             }
 
@@ -1114,7 +1135,7 @@ object DetectionBridge {
         try {
             LogCollector.d(TAG, "使用 PP-OCRv6 独立检测+识别, language=$language")
 
-            val result = withContext(Dispatchers.IO) {
+            val result = withContext(Dispatchers.IO + OcrExecution.context()) {
                 PPOcrV6Engine.runOCR(context, bitmap, useDet = true)
             }
 
@@ -1224,18 +1245,8 @@ object DetectionBridge {
     suspend fun detectWithMLKitDebug(
         bitmap: Bitmap,
         language: String
-    ): MLKitDebugResult = suspendCancellableCoroutine { continuation ->
-        val recognizer = when (language) {
-            "ja" -> TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
-            "zh", "zh-CN", "zh-TW" -> TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
-            else -> TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-        }
-
-        LogCollector.d(TAG, "ML Kit Debug: bitmap=${bitmap.width}x${bitmap.height}, lang=$language")
-        val image = InputImage.fromBitmap(bitmap, 0)
-
-        recognizer.process(image)
-            .addOnSuccessListener { result ->
+    ): MLKitDebugResult {
+        val result = MlKitRecognition.recognize(bitmap, language)
                 var totalLines = 0
                 var totalElements = 0
 
@@ -1282,14 +1293,6 @@ object DetectionBridge {
                 )
 
                 LogCollector.d(TAG, "ML Kit Debug: 完成, blocks=${debugBlocks.size}, lines=$totalLines, elements=$totalElements")
-                continuation.resume(result_obj)
-            }
-            .addOnFailureListener { e ->
-                LogCollector.e(TAG, "ML Kit Debug: 失败", e)
-                continuation.resumeWithException(e)
-            }
-            .addOnCompleteListener {
-                recognizer.close()
-            }
+                return result_obj
     }
 }

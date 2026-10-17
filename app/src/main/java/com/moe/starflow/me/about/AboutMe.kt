@@ -33,9 +33,6 @@ import android.os.Handler
 import android.os.Looper
 import android.text.SpannableString
 import android.text.Spanned
-import android.text.TextPaint
-import android.text.method.LinkMovementMethod
-import android.text.style.ClickableSpan
 import android.text.style.ForegroundColorSpan
 import androidx.fragment.app.Fragment
 import android.view.LayoutInflater
@@ -188,7 +185,6 @@ class AboutMe : Fragment() {
         } else {
             val spannable = buildLogSpannable(logEntries)
             logContent.text = spannable
-            logContent.movementMethod = LinkMovementMethod.getInstance()
         }
 
         val dialog = AlertDialog.Builder(requireContext())
@@ -226,9 +222,8 @@ class AboutMe : Fragment() {
     }
 
     /**
-     * 构建带样式的日志 SpannableString：
-     * - E 级别日志：红色高亮，点击可复制该条错误到剪切板
-     * - 其他级别：默认颜色
+     * 构建带样式的日志 SpannableString：E 级别日志红色高亮，其余级别使用默认颜色。
+     * 日志文本保持可选择，用户可长按并跨行框选后调用系统的复制/翻译动作。
      */
     private fun buildLogSpannable(entries: List<LogCollector.LogEntry>): SpannableString {
         val sb = StringBuilder()
@@ -250,23 +245,6 @@ class AboutMe : Fragment() {
             // 红色高亮
             spannable.setSpan(
                 ForegroundColorSpan(ContextCompat.getColor(requireContext(), android.R.color.holo_red_dark)),
-                start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-            )
-            // 点击复制该条错误信息
-            val errorText = fullText.substring(start, end).trimEnd()
-            spannable.setSpan(
-                object : ClickableSpan() {
-                    override fun onClick(widget: View) {
-                        val clipboard = requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        clipboard.setPrimaryClip(ClipData.newPlainText("error_log", errorText))
-                        UiUtils.showToast(requireContext(), getString(R.string.log_error_copied), isShort = true)
-                    }
-
-                    override fun updateDrawState(ds: TextPaint) {
-                        ds.color = ContextCompat.getColor(requireContext(), android.R.color.holo_red_dark)
-                        ds.isUnderlineText = false
-                    }
-                },
                 start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
             )
         }

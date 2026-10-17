@@ -14,24 +14,20 @@ import com.moe.starflow.manga.config.*
 import android.graphics.Color
 import com.moe.starflow.translate.TranslationResult
 import com.moe.starflow.translate.TranslationTextAPI
+import com.moe.starflow.translate.TranslationAwaiter
+import com.moe.starflow.utils.LocalTranslationCoordinator
 import com.moe.starflow.utils.ContextBudget
 import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.LogCollector
-import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import com.moe.starflow.llamacpp.LlamaCppTranslation
 import com.moe.starflow.translate.isLocalHeavyEngine
 import translationapi.openaitranslation.OpenAITranslation
 import java.util.LinkedList
-import kotlin.coroutines.resume
 import kotlin.math.abs
 
 /**
@@ -64,7 +60,7 @@ object TranslateUtils {
 
     // 批量翻译超时策略：
     //  - 网络 API：请求发出起 35s 内必须返回（无响应即超时）
-    //  - 本地引擎（Hy-MT2）：不设总时长（本地总会翻完），改为「30s 无任何新输出」的卡死看门狗
+    //  - 本地引擎（Hy-MT2）：不设总时长，改为「30s 无任何新输出」的卡死看门狗
     private const val API_TIMEOUT_MS = 35_000L
     private const val LOCAL_STALL_TIMEOUT_MS = 30_000L
 
@@ -86,74 +82,78 @@ object TranslateUtils {
         /** 用户停止翻译的检测回调：返回 true 时立即解除等待并中止翻译（修复网络 API cancel 后回调永不触发导致卡死） */
         isCancelled: (() -> Boolean)? = null
     ): List<TranslatedBubble> {
-        LogCollector.d(TAG, "translateBubbles: ${bubbles.size} bubbles, translator=${translator.javaClass.simpleName}")
+        val local = translator.isLocalHeavyEngine()
+        val lease = if (local) LocalTranslationCoordinator.acquire(isCancelled) else null
+        try {
+            LogCollector.d(TAG, "translateBubbles: ${bubbles.size} bubbles, translator=${translator.javaClass.simpleName}")
 
-        // 准备气泡数据：清理文本，过滤空的，分离「不需要翻译」的气泡（纯符号 / 纯数字页码）
-        val preparedBubbles = mutableListOf<Pair<BubbleRegion, String>>()
-        val passthroughBubbles = mutableListOf<TranslatedBubble>()
+            // 准备气泡数据：清理文本，过滤空的，分离「不需要翻译」的气泡（纯符号 / 纯数字页码）
+            val preparedBubbles = mutableListOf<Pair<BubbleRegion, String>>()
+            val passthroughBubbles = mutableListOf<TranslatedBubble>()
 
-        for (bubble in bubbles) {
-            val cleaned = bubble.texts.map { cleanOcrText(it) }.filter { it.isNotBlank() }
-            if (cleaned.isEmpty()) continue
-            val combinedText = cleaned.joinToString("")
+            for (bubble in bubbles) {
+                val cleaned = bubble.texts.map { cleanOcrText(it) }.filter { it.isNotBlank() }
+                if (cleaned.isEmpty()) continue
+                val combinedText = cleaned.joinToString("")
 
-            // 纯符号与纯数字（页码 "330"）都原文回填、**不进翻译批次**：
-            // 页码本身翻不出内容，却要占掉批量编号里的一位 —— 而模型把它原样返回成"纯数字行"时，
-            // 正是 2026-09-25 那批「整批译文前移一位 + 末条空白」的触发源。从源头掐掉最稳。
-            val reason = when {
-                isSymbolOnlyText(combinedText) -> "symbol-only"
-                isNumericOnlyText(combinedText) -> "numeric"
-                else -> null
+                // 纯符号与纯数字（页码 "330"）都原文回填、**不进翻译批次**：
+                // 页码本身翻不出内容，却要占掉批量编号里的一位 —— 而模型把它原样返回成"纯数字行"时，
+                // 正是 2026-09-25 那批「整批译文前移一位 + 末条空白」的触发源。从源头掐掉最稳。
+                val reason = when {
+                    isSymbolOnlyText(combinedText) -> "symbol-only"
+                    isNumericOnlyText(combinedText) -> "numeric"
+                    else -> null
+                }
+                if (reason != null) {
+                    LogCollector.d(TAG, "translateBubbles: skipping $reason: '$combinedText'")
+                    passthroughBubbles.add(TranslatedBubble(
+                        rect = bubble.rect,
+                        originalText = combinedText,
+                        translatedText = combinedText,
+                        backgroundColor = Color.TRANSPARENT,
+                        fontSize = bubble.fontSize,
+                        direction = bubble.direction,
+                        angle = bubble.angle,
+                        centerX = bubble.centerX,
+                        centerY = bubble.centerY
+                    ))
+                } else {
+                    preparedBubbles.add(bubble to combinedText)
+                }
             }
-            if (reason != null) {
-                LogCollector.d(TAG, "translateBubbles: skipping $reason: '$combinedText'")
-                passthroughBubbles.add(TranslatedBubble(
-                    rect = bubble.rect,
-                    originalText = combinedText,
-                    translatedText = combinedText,
-                    backgroundColor = Color.TRANSPARENT,
-                    fontSize = bubble.fontSize,
-                    direction = bubble.direction,
-                    angle = bubble.angle,
-                    centerX = bubble.centerX,
-                    centerY = bubble.centerY
-                ))
+            if (preparedBubbles.isEmpty()) return passthroughBubbles
+
+            // AI 翻译（OpenAI 兼容 / 本地 Hy-MT2）用批量请求，其余机器翻译用逐个请求
+            // Hy-MT2 走批量：输入 [N] 编号，模型按官方默认模板只输出译文并保持 [N] 编号，管线按编号解析
+            val isAI = translator is OpenAITranslation
+                    || translator.javaClass.simpleName.contains("Custom")
+                    || translator is LlamaCppTranslation
+
+            val translatedResults = if (isAI && (preparedBubbles.size > 1 || translator is LlamaCppTranslation)) {
+                // Hy-MT2 即使只有 1 个气泡也走批量编号+流式路径：统一享受「30s 无输出卡死检测」，避免 sequential 的 30s 总时限误杀
+                translateBubblesBatch(translator, preparedBubbles, sourceLang, targetLang, prefs, contextHistory, forceContext, onPhase, onPartialBubbles, isCancelled)
             } else {
-                preparedBubbles.add(bubble to combinedText)
+                translateBubblesSequential(translator, preparedBubbles, sourceLang, targetLang, isCancelled)
             }
-        }
-        if (preparedBubbles.isEmpty()) return passthroughBubbles
 
-        // AI 翻译（OpenAI 兼容 / 本地 Hy-MT2）用批量请求，其余机器翻译用逐个请求
-        // Hy-MT2 走批量：输入 [N] 编号，模型按官方默认模板只输出译文并保持 [N] 编号，管线按编号解析
-        val isAI = translator is OpenAITranslation
-                || translator.javaClass.simpleName.contains("Custom")
-                || translator is LlamaCppTranslation
-
-        val translatedResults = if (isAI && (preparedBubbles.size > 1 || translator is LlamaCppTranslation)) {
-            // Hy-MT2 即使只有 1 个气泡也走批量编号+流式路径：统一享受「30s 无输出卡死检测」，避免 sequential 的 30s 总时限误杀
-            translateBubblesBatch(translator, preparedBubbles, sourceLang, targetLang, prefs, contextHistory, forceContext, onPhase, onPartialBubbles, isCancelled)
-        } else {
-            translateBubblesSequential(translator, preparedBubbles, sourceLang, targetLang)
-        }
-
-        // 译文后处理：只做**点串归一化**（`.\n.\n.` → `...`，硬保证；顺序路径的译文没走
-        // parseNumberedTranslations，所以这里兜一次，幂等）。
-        // ⚠️ 用户「译文替换表」**不在这里**：它在渲染时套用（OverlayRenderer）—— 译文只存文本、
-        // overlay 后期才画，所以改规则只需重新渲染，不必重翻 API。
-        //
-        // ⚠️ **空译文绝不能进结果**：解析错位、模型漏给、机器翻译返回空串都会产出 `""`，
-        // 渲染出来就是「识别到了但没翻」（用户看到的空白格）。回退原文至少让用户看见"这句没翻"，
-        // 而不是一片空白；调用方（管道/阅读器）也据此把这条当作"没译出来"。
-        val blankCount = (passthroughBubbles + translatedResults).count { it.translatedText.isBlank() }
-        if (blankCount > 0) {
-            LogCollector.w(TAG, "translateBubbles: $blankCount/${preparedBubbles.size} 条译文为空，已回退原文")
-        }
-        return (passthroughBubbles + translatedResults).map { bubble ->
-            val normalized = TranslationTextRules.normalizeEllipsis(bubble.translatedText)
-            val out = normalized.ifBlank { bubble.originalText }
-            if (out == bubble.translatedText) bubble else bubble.copy(translatedText = out)
-        }
+            // 译文后处理：只做**点串归一化**（`.\n.\n.` → `...`，硬保证；顺序路径的译文没走
+            // parseNumberedTranslations，所以这里兜一次，幂等）。
+            // ⚠️ 用户「译文替换表」**不在这里**：它在渲染时套用（OverlayRenderer）—— 译文只存文本、
+            // overlay 后期才画，所以改规则只需重新渲染，不必重翻 API。
+            //
+            // ⚠️ **空译文绝不能进结果**：解析错位、模型漏给、机器翻译返回空串都会产出 `""`，
+            // 渲染出来就是「识别到了但没翻」（用户看到的空白格）。回退原文至少让用户看见"这句没翻"，
+            // 而不是一片空白；调用方（管道/阅读器）也据此把这条当作"没译出来"。
+            val blankCount = (passthroughBubbles + translatedResults).count { it.translatedText.isBlank() }
+            if (blankCount > 0) {
+                LogCollector.w(TAG, "translateBubbles: $blankCount/${preparedBubbles.size} 条译文为空，已回退原文")
+            }
+            return (passthroughBubbles + translatedResults).map { bubble ->
+                val normalized = TranslationTextRules.normalizeEllipsis(bubble.translatedText)
+                val out = normalized.ifBlank { bubble.originalText }
+                if (out == bubble.translatedText) bubble else bubble.copy(translatedText = out)
+            }
+        } finally { lease?.close() }
     }
 
     // ========== AI 批量翻译 ==========
@@ -180,9 +180,6 @@ object TranslateUtils {
             "[${index + 1}] $text"
         }.joinToString("\n")
 
-        val latch = java.util.concurrent.CountDownLatch(1)
-        var resultText: String? = null
-        var errorMsg: String? = null
 
         // 分批渲染强制开启上下文（仅批次间传递）；正常漫画翻译不使用上下文
         val currentContextEnabled = forceContext
@@ -200,124 +197,34 @@ object TranslateUtils {
             prefs
         )
 
-        // 等待翻译结果。超时策略：
-        //  - 网络 API：请求发出起 API_TIMEOUT_MS 内必须返回（无响应即超时）
-        //  - 本地引擎（Hy-MT2）：不设总时长（本地总会翻完），由看门狗按「30s 无新输出」判卡死——有输出就一直等
-        val isLocalEngine = translator.isLocalHeavyEngine()   // 判据唯一来源：覆盖 LlamaCpp + NLLB（曾漏 NLLB）
-        val lastProgressAt = java.util.concurrent.atomic.AtomicLong(System.currentTimeMillis())
-        val timedOut = java.util.concurrent.atomic.AtomicBoolean(false)
-        val cancelledByUser = java.util.concurrent.atomic.AtomicBoolean(false)
-        val translationFinished = java.util.concurrent.atomic.AtomicBoolean(false)
-        val contRef = java.util.concurrent.atomic.AtomicReference<CancellableContinuation<Unit>?>(null)
-
-        // 看门狗：① 用户停止翻译（isCancelled）→ 立即解除等待，中止在途请求；
-        // ② 本地引擎 30s 无任何新输出 → 判卡死解除阻塞（网络引擎由 withTimeoutOrNull 兜底）
-        val watchdogJob = launch {
-            while (!translationFinished.get()) {
-                delay(200)
-                if (isCancelled?.invoke() == true) {
-                    cancelledByUser.set(true)
-                    translationFinished.set(true)
-                    if (isLocalEngine) translator.cancelTranslation()  // 中止引擎 / 取消 HTTP
-                    // 强制结束等待：网络 API 取消后回调永不触发，必须主动 resume 才能解除 isProcessing 阻塞
-                    contRef.getAndSet(null)?.let { if (it.isActive) it.resume(Unit) }  // 原子取并置空：看门狗/回调竞争时只 resume 一次
-                    break
+        var lastRenderedCount = 0
+        val response = TranslationAwaiter.await(
+            translator, numberedText, sourceLang, targetLang,
+            onPhase = onPhase,
+            onPartial = { partialText ->
+                val partialBubbles = parseNumberedTranslationsPartial(partialText).mapNotNull { (number, translated) ->
+                    val (bubble, originalText) = bubbles.getOrNull(number - 1) ?: return@mapNotNull null
+                    TranslatedBubble(bubble.rect, originalText, translated, Color.TRANSPARENT,
+                        bubble.fontSize, bubble.direction, bubble.angle, bubble.centerX, bubble.centerY)
                 }
-                if (isLocalEngine && System.currentTimeMillis() - lastProgressAt.get() > LOCAL_STALL_TIMEOUT_MS) {
-                    timedOut.set(true)
-                    translationFinished.set(true)
-                    if (isLocalEngine) translator.cancelTranslation()  // 中止引擎，释放 g_mutex
-                    // 强制结束等待：即使 native 彻底卡死不回调，也解除阻塞向上抛错
-                    contRef.getAndSet(null)?.let { if (it.isActive) it.resume(Unit) }  // 原子取并置空：看门狗/回调竞争时只 resume 一次
-                    break
+                if (partialBubbles.size > lastRenderedCount) {
+                    lastRenderedCount = partialBubbles.size
+                    onPartialBubbles(partialBubbles)
                 }
-            }
-        }
-
-        val waitForResult: suspend () -> Unit = {
-            suspendCancellableCoroutine { cont ->
-                contRef.set(cont)
-                cont.invokeOnCancellation {
-                    // 协程被取消时尝试主动取消翻译任务
-                    if (isLocalEngine) translator.cancelTranslation()
-                }
-                var lastRenderedCount = 0
-                translator.getTranslationStreaming(
-                    numberedText,
-                    sourceLang,
-                    targetLang,
-                    onPhase = { phase ->
-                        if (isLocalEngine) lastProgressAt.set(System.currentTimeMillis())
-                        onPhase(phase)
-                    },
-                    onPartial = { partialText ->
-                        if (isLocalEngine) lastProgressAt.set(System.currentTimeMillis())
-                        // 流式：解析已完整的气泡条目并回调渲染（每完成一个气泡渲染一次）
-                        val completed = parseNumberedTranslationsPartial(partialText)
-                        if (completed.size > lastRenderedCount && completed.isNotEmpty()) {
-                            lastRenderedCount = completed.size
-                            // 按 [N] 编号匹配气泡；越界/幻觉编号（如超出输入条数）跳过，防止 IndexOutOfBounds 与错位
-                            val partialBubbles = completed.mapNotNull { (number, translated) ->
-                                val index = number - 1
-                                if (index !in bubbles.indices) return@mapNotNull null
-                                val (bubble, originalText) = bubbles[index]
-                                TranslatedBubble(
-                                    rect = bubble.rect,
-                                    originalText = originalText,
-                                    translatedText = translated,
-                                    backgroundColor = Color.TRANSPARENT,
-                                    fontSize = bubble.fontSize,
-                                    direction = bubble.direction,
-                                    angle = bubble.angle,
-                                    centerX = bubble.centerX,
-                                    centerY = bubble.centerY
-                                )
-                            }
-                            if (partialBubbles.isNotEmpty()) onPartialBubbles(partialBubbles)
-                        }
-                    },
-                    callback = { result ->
-                        translationFinished.set(true)
-                        watchdogJob?.cancel()
-                        when (result) {
-                            is TranslationResult.Success -> {
-                                resultText = result.translatedText
-                            }
-                            is TranslationResult.Error -> {
-                                errorMsg = result.error.message ?: "Unknown error"
-                            }
-                        }
-                        // 原子取并置空：与看门狗竞争时只 resume 一次（避免 Already resumed）
-                        contRef.getAndSet(null)?.let { if (it.isActive) it.resume(Unit) }
-                    }
-                )
-            }
-        }
-        val completed = if (isLocalEngine) waitForResult() else withTimeoutOrNull(API_TIMEOUT_MS) { waitForResult() }
-        watchdogJob.cancel()
-        if (cancelledByUser.get()) {
-            // 用户停止翻译：抛专用异常向上（不能用 CancellationException，会取消整个 collector 协程）。
-            // 上层按类型识别「已取消」：不保存、不报错、isProcessing 复位
-            throw TranslationCancelledException()
-        }
-        if (timedOut.get()) {
-            if (isLocalEngine) translator.cancelTranslation()
-            val stallSec = (LOCAL_STALL_TIMEOUT_MS / 1000).toInt()
-            throw RuntimeException(
-                appContext?.getString(R.string.error_local_engine_stall, stallSec)
-                    ?: "Local engine not responding (no output for $stallSec s)"
-            )
-        }
-        if (completed == null) {
-            if (isLocalEngine) translator.cancelTranslation()
-            throw RuntimeException("AI batch translation timeout (${API_TIMEOUT_MS / 1000}s)")
-        }
-        if (errorMsg != null) {
-            throw RuntimeException("AI batch translation failed: $errorMsg")
+            },
+            isCancelled = isCancelled,
+            timeoutMs = API_TIMEOUT_MS,
+            stallMs = LOCAL_STALL_TIMEOUT_MS,
+            stallMessage = appContext?.getString(R.string.error_local_engine_stall, (LOCAL_STALL_TIMEOUT_MS / 1000).toInt())
+                ?: "Local engine not responding",
+        )
+        val resultText = when (response) {
+            is TranslationResult.Success -> response.translatedText
+            is TranslationResult.Error -> throw response.error
         }
 
         // 按编号解析结果（支持 JSON 格式和编号格式）
-        val result = resultText!!.trim()
+        val result = resultText.trim()
         val translations = if (result.startsWith("{")) {
             parseJsonTranslations(result, bubbles.size)
         } else {
@@ -372,76 +279,27 @@ object TranslateUtils {
         translator: TranslationTextAPI,
         bubbles: List<Pair<BubbleRegion, String>>,
         sourceLang: String,
-        targetLang: String
+        targetLang: String,
+        isCancelled: (() -> Boolean)?,
     ): List<TranslatedBubble> = coroutineScope {
-        LogCollector.d(TAG, "translateBubblesConcurrent: ${bubbles.size} bubbles, concurrent")
-
-        val deferreds = bubbles.map { (bubble, combinedText) ->
-            async(Dispatchers.IO) {
-                LogCollector.d(TAG, "translateBubblesConcurrent: translating '$combinedText'")
-
-                val latch = java.util.concurrent.CountDownLatch(1)
-                var successResult: TranslatedBubble? = null
-                var errorMsg: String? = null
-
-                translator.getTranslation(
-                    combinedText,
-                    sourceLang,
-                    targetLang
-                ) { result ->
-                    when (result) {
-                        is TranslationResult.Success -> {
-                            LogCollector.d(TAG, "translateBubblesConcurrent: SUCCESS for '$combinedText'")
-                            successResult = TranslatedBubble(
-                                rect = bubble.rect,
-                                originalText = combinedText,
-                                translatedText = result.translatedText,
-                                backgroundColor = Color.TRANSPARENT,
-                                fontSize = bubble.fontSize,
-                                direction = bubble.direction,
-                                angle = bubble.angle,
-                                centerX = bubble.centerX,
-                                centerY = bubble.centerY
-                            )
-                        }
-                        is TranslationResult.Error -> {
-                            errorMsg = result.error.message ?: "Unknown error"
-                            LogCollector.e(TAG, "translateBubblesConcurrent: ERROR: $errorMsg")
-                        }
-                    }
-                    latch.countDown()
-                }
-
-                val completed = latch.await(30, java.util.concurrent.TimeUnit.SECONDS)
-                if (!completed) {
-                    // 超时：主动取消翻译任务。Hy-MT2 等本地引擎取消后解码循环提前退出，释放占用的引擎，
-                    // 否则该线程会继续生成并阻塞后续所有翻译。
-                    if (translator.isLocalHeavyEngine()) translator.cancelTranslation()
-                    errorMsg = "Translation timeout (30s)"
-                }
-
-                Pair(successResult, errorMsg)
+        suspend fun one(item: Pair<BubbleRegion, String>): Pair<TranslatedBubble?, String?> {
+            val (bubble, text) = item
+            val response = TranslationAwaiter.await(translator, text, sourceLang, targetLang,
+                isCancelled = isCancelled, timeoutMs = 30_000L)
+            when (response) {
+                is TranslationResult.Success -> return TranslatedBubble(
+                    bubble.rect, text, response.translatedText, Color.TRANSPARENT, bubble.fontSize,
+                    bubble.direction, bubble.angle, bubble.centerX, bubble.centerY) to null
+                is TranslationResult.Error -> return null to response.error.message
             }
         }
-
-        val allResults = deferreds.awaitAll()
-        val results = mutableListOf<TranslatedBubble>()
-        val errors = mutableListOf<String>()
-
-        for ((successResult, errorMsg) in allResults) {
-            if (successResult != null) {
-                results.add(successResult)
-            } else if (errorMsg != null) {
-                errors.add(errorMsg)
-            }
-        }
-
-        LogCollector.d(TAG, "translateBubblesConcurrent: ${results.size} successful out of ${bubbles.size}")
-        if (results.isEmpty() && bubbles.isNotEmpty()) {
-            val errorDetail = errors.distinct().joinToString("; ")
-            throw RuntimeException("All bubbles failed to translate: $errorDetail")
-        }
-        results
+        // NLLB is a local model too; launching one request per bubble concurrently defeats cancellation.
+        val all = if (translator.isLocalHeavyEngine()) bubbles.map { one(it) }
+            else bubbles.map { async(Dispatchers.IO) { one(it) } }.awaitAll()
+        val translated = all.mapNotNull { it.first }
+        if (translated.isEmpty() && bubbles.isNotEmpty())
+            throw IllegalStateException("All bubbles failed to translate: ${all.mapNotNull { it.second }.distinct().joinToString("; ")}")
+        translated
     }
 
     // ========== 结果解析 ==========

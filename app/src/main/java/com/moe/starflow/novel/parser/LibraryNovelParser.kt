@@ -19,6 +19,9 @@ internal class LibraryNovelParser(private val format: NovelFormat, private val d
     override suspend fun loadChapter(file: File, locator: String): String = LibrarySources.acquire(file).use {
         delegate.loadChapter(prepareChapter(file, locator), locator)
     }
+    override suspend fun loadChapterText(file: File, locator: String): ChapterText = LibrarySources.acquire(file).use {
+        delegate.loadChapterText(prepareChapter(file, locator), locator)
+    }
     override suspend fun loadChapterSource(file: File, locator: String): ChapterSource = LibrarySources.acquire(file).use {
         delegate.loadChapterSource(prepareChapter(file, locator), locator)
     }

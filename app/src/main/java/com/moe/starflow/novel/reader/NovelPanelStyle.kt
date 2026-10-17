@@ -42,12 +42,19 @@ object NovelPanelStyle {
     const val FONT_SIZE_DEFAULT = 20f
 
     private const val KEY_FONT_SIZE = "novel_font_size"
+    private const val KEY_FONT_SIZE_AUTO = "novel_font_size_auto"
 
     fun fontSizeSp(prefs: SharedPreferences): Float =
         prefs.getFloat(KEY_FONT_SIZE, FONT_SIZE_DEFAULT).coerceIn(FONT_SIZE_MIN, FONT_SIZE_MAX)
 
     fun setFontSizeSp(prefs: SharedPreferences, sp: Float) =
         prefs.edit().putFloat(KEY_FONT_SIZE, sp.coerceIn(FONT_SIZE_MIN, FONT_SIZE_MAX)).apply()
+
+    /** Auto applies EPUB CSS sizes; a document without size rules falls back to [fontSizeSp]. */
+    fun fontSizeAuto(prefs: SharedPreferences): Boolean = prefs.getBoolean(KEY_FONT_SIZE_AUTO, true)
+
+    fun setFontSizeAuto(prefs: SharedPreferences, enabled: Boolean) =
+        prefs.edit().putBoolean(KEY_FONT_SIZE_AUTO, enabled).apply()
 
     // ===== 背景 / 翻页动画（键与漫画共用） =====
 
@@ -249,6 +256,7 @@ object NovelPanelStyle {
         prefs.edit()
             .putBoolean(KEY_KEEP_PARAGRAPHS_WHOLE, false)
             .putFloat(KEY_FONT_SIZE, FONT_SIZE_DEFAULT)
+            .putBoolean(KEY_FONT_SIZE_AUTO, true)
             .putInt(KEY_LINE_SPACING, LINE_SPACING_DEFAULT)
             .putInt(KEY_PARA_SPACING, PARA_SPACING_DEFAULT)
             .putInt(KEY_PADDING, SIDE_PADDING_DEFAULT)
@@ -322,6 +330,7 @@ object NovelPanelStyle {
         }
         return NovelTextStyle(
             fontSizePx = fontSp * density,
+            useEpubFontSizes = fontSizeAuto(prefs),
             typeface = font.typeface,
             fontKey = font.key,
             lineSpacingMultiplier = lineSpacingStep(prefs) / 10f,

@@ -199,6 +199,7 @@ class ImportMangaFragment : Fragment() {
         refresh()
 
         com.moe.starflow.library.LibraryShelfBinding.observe(this, "manga", binding.libraryStatus,
+            binding.libraryScanSpinner, binding.libraryScanInlineStatus, binding.libraryImportCancel,
             { refresh() }, ::enqueueScanFailures, { adapter.exitSelection() }, { currentTab == ImportTab.MANGA }, ::confirmCancelImport)
 
         // LibraryShelfBinding shows import progress above the shelf; tasks never become book rows.

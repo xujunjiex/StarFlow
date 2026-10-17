@@ -52,79 +52,47 @@ Claude 只在动那个目录时才读：
    使用脚本初始化；不要先运行 `git submodule update`，否则会生成与脚本预期不同的 `.git` 布局。
 5. `./gradlew assembleDebug` 验证构建
 
-## 构建命令
+## 构建与验证
 
-> 新 clone 后需运行 `pwsh llamacpp/setup-submodule.ps1` 准备 `llama.cpp`，否则 `:llamacpp` 无法构建。
-> 脚本会按仓库 gitlink 固定的提交创建稀疏检出；不要先运行 `git submodule update`。固定提交可用 `git submodule status` 查看。
+构建使用 Gradle Wrapper，复用 `gradle.properties` 已启用的 daemon、构建缓存与增量编译。日常不加 `clean`、`--rerun-tasks`、`--no-daemon`；只有确认缓存或进程故障时才针对处理。Windows 从 PowerShell 调用 Wrapper；先核对实际错误，不把历史 Git Bash 的 PATH 问题当作每次重启 JVM 的理由。
 
-```bash
-# 构建 debug APK（需要配置既有共享签名密钥，见 guard/README.md）
-./gradlew assembleDebug
+```powershell
+# 需要安装包时才打包；不附带单元测试或完整 lint
+.\gradlew.bat :app:assembleDebug
 
-# 构建 release APK（需要配置同一份既有共享签名密钥，见 guard/README.md）
-./gradlew assembleRelease
-
-# 安装/更新 debug APK（用户授权后；自动做签名预检）
-python guard/install_safe.py app/build/outputs/apk/debug/app-debug.apk --confirm
-
-# 清理并构建 debug APK（同样需要既有共享签名密钥）
-./gradlew clean assembleDebug
-
-# 运行单元测试（⚠️ 直接 ./gradlew test 会因 Git Bash 弄乱 PATH 使 test worker 崩溃
-# ClassNotFoundException: Files\Git\mingw64\bin;...，需用 PowerShell + 干净 PATH + --no-daemon + 指定测试类）：
-# powershell:
-#   $env:JAVA_HOME='<本机 JDK 17 安装目录>'
-#   $env:PATH=$env:JAVA_HOME+'\bin;'+$env:PATH
-#   .\gradlew.bat --no-daemon :app:testDebugUnitTest --tests com.moe.starflow.data.XxxTest
-
-# Robolectric 测试：app/src/test/resources/robolectric.properties 全局 sdk=34（Robolectric 4.11
-# 最高支持 targetSdk 34，项目是 35——不加会在初始化报 "targetSdkVersion=35 > maxSdkVersion=34"）；
-# app/build.gradle 的 unitTests.includeAndroidResources=true 已开启（UI 交互测试需 inflate XML 布局）
-
-# 耗时基线：全量 :app:testDebugUnitTest 约 1–2 分钟；:app:assembleRelease 约 4 分钟
-#
-# ⚠️ **默认只跑改动涉及的包，不要每次全量**（用户口径 2026-10-01：「不要每次都做全量单测，
-#    太浪费时间了……在涉及到相关功能的情况下测试相关位置」）：
-#      .\gradlew.bat --no-daemon :app:testDebugUnitTest --tests 'com.moe.starflow.mangaimport.*'
-#    `--tests` 收的是**类名/包名通配**，改哪块就点哪块（改 3 个包跑 3 个 --tests，秒级到十几秒）。
-#    全量只在**用户明确要求**时跑（发布前那一次由用户说了算，别自作主张顺手跑）。
-#    ⚠️ 但"相关"要按**真实依赖**算，不是按目录：改了共享布局/共享工具（如
-#    `sheet_reader_menu.xml`、`utils/`、`TranslationStatusOverlay`）就要把**所有消费方**一起点进去，
-#    跨模块的（novel 用 mangaimport 的布局/工具）尤其容易漏。
-# ⚠️ 卡在 "Failed to delete some children"（连 build 都起不来）= 上一轮被打断的 Gradle test worker
-#    还占着 app/build/test-results。先杀掉再跑（--no-daemon 也会留）。PowerShell：
-#      Get-CimInstance Win32_Process -Filter "Name='java.exe'" |
-#        Where-Object { $_.CommandLine -match 'gradle|kotlin|GradleWorkerMain' } |
-#        ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
-# ⚠️ 过滤 gradle 输出用 -Pattern '^e: |FAILED|BUILD '：只筛 '^e: ' 会漏掉**资源合并 / XML 解析**
-#    那类失败（它们不走 Kotlin 编译器的 e: 前缀），表现为「没有任何报错但 build 挂了」
-
-# 实时查看应用日志
-adb logcat --pid=$(adb shell pidof com.moe.starflow)
-
-# 指定设备安装（多设备时；用户授权后）
+# 用户授权安装后，用安全脚本覆盖更新；多设备时必须指定目标
 python guard/install_safe.py app/build/outputs/apk/debug/app-debug.apk -s <serial> --confirm
-
-# 查看连接设备
-adb devices
 ```
 
-### 本地化检查
+可安装构建需要既有共享签名配置，见 [安装与数据保护](guard/README.md)。原生依赖准备见上一节；不要通过卸载、清数据或临时更换签名处理安装失败。
 
-`app/build.gradle` 将 `MissingTranslation` 设为 fatal。新增字符串时同步维护 `values/` 和 `values-zh/`；`lintDebug` 与 `lintVitalRelease` 的检查范围不同，按改动运行对应任务并以本次输出为准。
+### 日常验证范围
+
+- 文档、文案、局部样式：核对变更，不自动启动 Gradle 测试或完整 lint。
+- 行为修复：有必要且用户未要求跳过时，默认选 1–3 个直接覆盖失败场景的行为测试。明确它能验证什么；JVM 模拟不代表真机推理或视觉效果已经验证。
+- 新增双语字符串：核对 `values/` 与 `values-zh/` 对应 key 和格式参数，不因为改一条文案就启动完整 lint。`MissingTranslation` 的发布构建门槛保留。
+- 完整测试套件仅在用户明确要求时运行；完整 lint 和源码守卫为按需显式选项。检查已通过且没有新变更或新风险时，不追加重复检查。用户明确要求不测试时，不运行这些检查。
+
+### 精确选择测试
+
+普通 `--tests` 只过滤运行阶段，仍编译整个测试目录。使用 `testFocused` 和 `testClasses` 可同时裁剪 Kotlin/kapt 编译输入，保留共享夹具；无关测试的编译错误不会阻塞该选集。
 
 ```powershell
-./gradlew :app:lintDebug
+# 只查看计划与实际编译输入；不会编译或执行测试
+.\gradlew.bat :app:verificationPlan '-PtestClasses=com.moe.starflow.manga.OcrCancellationLifecycleTest'
+
+# 确实需要时，只编译并运行指定类；多个完整类名以逗号分隔，不接受包通配符
+.\gradlew.bat :app:testFocused '-PtestClasses=com.moe.starflow.manga.OcrCancellationLifecycleTest,com.moe.starflow.translate.LocalTranslationLifecycleTest'
+
+# 以下仅在明确需要相应范围时使用
+.\gradlew.bat :app:testSourceGuards
+.\gradlew.bat :app:testAllUnit
+.\gradlew.bat :app:lintDebug
 ```
 
-**Windows 注意：** 确保 Android SDK 的 `platform-tools` 已加入本机 `PATH`，然后通过 PowerShell 调用 `adb`：
-```powershell
-# 安装 APK
-adb install -r app\build\outputs\apk\debug\app-debug.apk
+`gradle/source-guards.txt` 只列纯源码文本断言；它们在普通单元测试中默认不编译、不运行。混合行为与源码检查的测试不因名称带 Guard/Wiring 就被排除。旧守卫失败应先判断是否只是格式或实现重构，不要为迁就字符串修改正确的产品代码，也不要顺势扩大全部回归。
 
-# 监控日志（按 tag 过滤）
-adb logcat --pid=$(adb shell pidof com.moe.starflow) | Select-String -Pattern "MangaFloatingService|OpenAITranslation|FloatingBallService"
-```
+测试入口与限制见 [验证配置](gradle/README.md)。Robolectric 使用 `app/src/test/resources/robolectric.properties` 的 SDK 34；设备测试仍遵循 [AGENTS.md](AGENTS.md) 的授权与数据保护规则。
 
 ## 架构
 

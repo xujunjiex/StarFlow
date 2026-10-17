@@ -20,19 +20,30 @@ import com.moe.starflow.mangaimport.data.ImportPhase
 import com.moe.starflow.novel.data.NovelImportManager
 
 object LibraryShelfBinding {
-    private fun renderStatus(status: TextView, message: CharSequence, visible: Boolean, scanning: Boolean, error: Boolean = false) {
+    private fun renderStatus(
+        status: TextView,
+        toolbarSpinner: ProgressBar,
+        inlineScanStatus: TextView,
+        message: CharSequence,
+        visible: Boolean,
+        busy: Boolean,
+        showScanInline: Boolean,
+        error: Boolean = false,
+    ) {
         val row = status.parent as? ViewGroup
-        row?.visibility = if (visible) View.VISIBLE else View.GONE
-        status.visibility = if (visible) View.VISIBLE else View.GONE
+        row?.visibility = if (visible && !showScanInline) View.VISIBLE else View.GONE
+        status.visibility = if (visible && !showScanInline) View.VISIBLE else View.GONE
         status.text = message
         status.setTextColor(ContextCompat.getColor(status.context, if (error) R.color.red else R.color.text_secondary))
         status.setOnClickListener { if (error) AppNotice.show(status.context, message.toString(), AppNotice.Style.ERROR) }
-        row?.findViewById<ProgressBar>(R.id.library_scan_spinner)?.visibility =
-            if (visible && scanning) View.VISIBLE else View.GONE
+        toolbarSpinner.visibility = if (visible && busy) View.VISIBLE else View.GONE
+        inlineScanStatus.text = message
+        inlineScanStatus.visibility = if (showScanInline) View.VISIBLE else View.GONE
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     fun observe(fragment: Fragment, kind: String, status: TextView,
+        toolbarSpinner: ProgressBar, inlineScanStatus: TextView, toolbarCancel: View,
         refresh: () -> Unit, failures: (List<String>) -> Unit, rootChanged: () -> Unit = {}, isActive: () -> Boolean = { true },
         cancelImport: (Long) -> Unit = {}) {
         val scope = fragment.viewLifecycleOwner.lifecycleScope
@@ -80,6 +91,7 @@ object LibraryShelfBinding {
                     val deleting = current.deletion.running && current.deletion.kind == kind && current.deletion.location == location
                     val tasks = current.imports
                     val task = tasks.firstOrNull()
+                    val importScanning = task?.progress?.phase == ImportPhase.SCANNING
                     val message = when {
                         saved.error != null -> fragment.getString(R.string.library_unsaved) + "：" + saved.error
                         task != null -> fragment.getString(R.string.library_import_active, tasks.size, taskLabel(fragment, task))
@@ -87,19 +99,25 @@ object LibraryShelfBinding {
                         deleting -> fragment.getString(R.string.library_deleting)
                         else -> fragment.getString(R.string.library_saving)
                     }
-                    renderStatus(status, message, saved.error != null || saved.saving || scanning || deleting || tasks.isNotEmpty(),
-                        scanning || deleting || tasks.isNotEmpty(), saved.error != null)
+                    val showScanInline = saved.error == null && (scanning && task == null || importScanning)
+                    renderStatus(status, toolbarSpinner, inlineScanStatus, message,
+                        saved.error != null || saved.saving || scanning || deleting || tasks.isNotEmpty(),
+                        scanning || deleting || tasks.isNotEmpty(), showScanInline, saved.error != null)
                     if (saved.error != null) {
                         status.setOnClickListener { LibraryStorageDialog.offerRecovery(fragment, saved.error, automatic = false) }
                         if (isActive()) LibraryStorageDialog.offerRecovery(fragment, saved.error)
                     }
-                    val cancel = (status.parent as? ViewGroup)?.findViewById<View>(R.id.library_import_cancel)
-                    cancel?.visibility = if (tasks.isNotEmpty()) View.VISIBLE else View.GONE
-                    cancel?.setOnClickListener {
+                    toolbarCancel.visibility = if (tasks.isNotEmpty()) View.VISIBLE else View.GONE
+                    toolbarCancel.setOnClickListener {
                         if (tasks.size == 1) cancelImport(tasks.single().id)
                         else showImportTasks(fragment, tasks, cancelImport)
                     }
-                    if (saved.error == null && tasks.isNotEmpty()) status.setOnClickListener { showImportTasks(fragment, tasks, cancelImport) }
+                    if (saved.error == null && tasks.isNotEmpty()) {
+                        status.setOnClickListener { showImportTasks(fragment, tasks, cancelImport) }
+                        inlineScanStatus.setOnClickListener { showImportTasks(fragment, tasks, cancelImport) }
+                    } else {
+                        inlineScanStatus.setOnClickListener(null)
+                    }
                 }
         }
         scope.launch {

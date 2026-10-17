@@ -92,51 +92,50 @@ public class TranslationCore {
 
         final Thread t = new Thread("textTranslation") {
             public void run() {
-                onnxEnv = OrtEnvironment.getEnvironment();
-
-                try {
-                    OrtSession.SessionOptions decoderOptions = new OrtSession.SessionOptions();
+                try (OrtSession.SessionOptions decoderOptions = new OrtSession.SessionOptions();
+                     OrtSession.SessionOptions encoderOptions = new OrtSession.SessionOptions();
+                     OrtSession.SessionOptions cacheInitOptions = new OrtSession.SessionOptions();
+                     OrtSession.SessionOptions embedAndLmHeadOptions = new OrtSession.SessionOptions()) {
+                    onnxEnv = OrtEnvironment.getEnvironment();
                     decoderOptions.setMemoryPatternOptimization(false);
                     decoderOptions.setCPUArenaAllocator(false);
                     decoderOptions.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.NO_OPT);
                     decoderSession = onnxEnv.createSession(decoderPath, decoderOptions);
 
-                    OrtSession.SessionOptions encoderOptions = new OrtSession.SessionOptions();
                     encoderOptions.setMemoryPatternOptimization(false);
                     encoderOptions.setCPUArenaAllocator(false);
                     encoderOptions.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.NO_OPT);
                     encoderSession = onnxEnv.createSession(encoderPath, encoderOptions);
 
-                    OrtSession.SessionOptions cacheInitOptions = new OrtSession.SessionOptions();
                     cacheInitOptions.setMemoryPatternOptimization(false);
                     cacheInitOptions.setCPUArenaAllocator(false);
                     cacheInitOptions.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.NO_OPT);
                     cacheInitSession = onnxEnv.createSession(cacheInitializerPath, cacheInitOptions);
 
-                    OrtSession.SessionOptions embedAndLmHeadOptions = new OrtSession.SessionOptions();
                     embedAndLmHeadOptions.setMemoryPatternOptimization(false);
                     embedAndLmHeadOptions.setCPUArenaAllocator(false);
                     embedAndLmHeadOptions.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.NO_OPT);
 
                     embedAndLmHeadSession = onnxEnv.createSession(embedAndLmHeadPath, embedAndLmHeadOptions);
 
-                    decoderOptions.close();
-                    encoderOptions.close();
-                    cacheInitOptions.close();
+
+                    tokenizer = new Tokenizer(vocabPath, Tokenizer.NLLB);
 
                     // 告知初始化完成
                     mainHandler.post(() -> initListener.onInitializationComplete());
 
 
-                } catch (OrtException e) {
-                    e.printStackTrace();
-
-                    // 告知初始化失败
-                    mainHandler.post(() -> initListener.onInitializationError(e));
-
+                } catch (Exception | LinkageError | OutOfMemoryError error) {
+                    // A partial load is never usable. Report tokenizer/library failures too.
+                    for (OrtSession session : new OrtSession[] {
+                            decoderSession, encoderSession, cacheInitSession, embedAndLmHeadSession }) {
+                        if (session != null) try { session.close(); } catch (Exception ignored) { }
+                    }
+                    Exception failure = error instanceof Exception ? (Exception) error
+                            : new IllegalStateException("NLLB initialization failed", error);
+                    mainHandler.post(() -> initListener.onInitializationError(failure));
                 }
 
-                tokenizer = new Tokenizer(vocabPath, Tokenizer.NLLB);
 
             }
         };
@@ -182,6 +181,45 @@ public class TranslationCore {
         }
     }
 
+    private final ThreadLocal<ArrayList<AutoCloseable>> requestResources = new ThreadLocal<>();
+    private final ThreadLocal<Runnable> requestProgress = new ThreadLocal<>();
+
+    private <T extends AutoCloseable> T own(T resource) {
+        ArrayList<AutoCloseable> resources = requestResources.get();
+        if (resources != null) resources.add(resource);
+        Runnable progress = requestProgress.get();
+        if (progress != null) progress.run();
+        return resource;
+    }
+
+    private void releaseOwned(AutoCloseable resource) {
+        ArrayList<AutoCloseable> resources = requestResources.get();
+        if (resources != null) resources.remove(resource);
+        try { resource.close(); } catch (Exception ignored) { }
+    }
+
+    public String translateBlocking(String text, CustomLocale source, CustomLocale target) {
+        return translateBlocking(text, source, target, () -> { });
+    }
+
+    public String translateBlocking(String text, CustomLocale source, CustomLocale target, Runnable progress) {
+        ArrayList<AutoCloseable> resources = new ArrayList<>();
+        requestResources.set(resources);
+        requestProgress.set(progress);
+        try {
+            com.moe.starflow.manga.engine.OcrExecution.INSTANCE.checkCancellation();
+            translating = true;
+            return performTextTranslation(text, source, target);
+        } finally {
+            for (int i = resources.size() - 1; i >= 0; i--) {
+                try { resources.get(i).close(); } catch (Exception ignored) { }
+            }
+            requestResources.remove();
+            requestProgress.remove();
+            translating = false;
+        }
+    }
+
     // 参数待翻译文字，源语言，目标语言，集束搜索束宽，是否保存结果
     public void translate(final String textToTranslate, final CustomLocale languageInput, final CustomLocale languageOutput, final TranslationListener listener) {
         // 启动一个新的线程来进行翻译
@@ -189,7 +227,7 @@ public class TranslationCore {
             public void run() {
                 try {
                     translating = true;
-                    String result = performTextTranslation(textToTranslate, languageInput, languageOutput);
+                    String result = translateBlocking(textToTranslate, languageInput, languageOutput);
                     if (listener != null) {
                         listener.onTranslationComplete(result);
                     }
@@ -208,27 +246,27 @@ public class TranslationCore {
     @Nullable
     private OnnxTensor executeEncoder(int[] inputIDs, int[] attentionMask){
         try {
-            OnnxTensor inputIDsTensor = TensorUtils.convertIntArrayToTensor(onnxEnv, inputIDs);
-            OnnxTensor attentionMaskTensor = TensorUtils.convertIntArrayToTensor(onnxEnv, attentionMask);
+            OnnxTensor inputIDsTensor = own(TensorUtils.convertIntArrayToTensor(onnxEnv, inputIDs));
+            OnnxTensor attentionMaskTensor = own(TensorUtils.convertIntArrayToTensor(onnxEnv, attentionMask));
             Map<String,OnnxTensor> input = new HashMap<String,OnnxTensor>();
             OrtSession.Result embedResult = null;
 
             //we do the embedding separately and then we pass the result to the encoder
             Map<String,OnnxTensor> embedInput = new HashMap<String,OnnxTensor>();
             embedInput.put("input_ids", inputIDsTensor);
-            embedInput.put("pre_logits", TensorUtils.createFloatTensorWithSingleValue(onnxEnv, 0, new long[]{EMPTY_BATCH_SIZE, 1, 1024}));
-            embedInput.put("use_lm_head", TensorUtils.convertBooleanToTensor(onnxEnv, false));
+            embedInput.put("pre_logits", own(TensorUtils.createFloatTensorWithSingleValue(onnxEnv, 0, new long[]{EMPTY_BATCH_SIZE, 1, 1024})));
+            embedInput.put("use_lm_head", own(TensorUtils.convertBooleanToTensor(onnxEnv, false)));
             ArraySet<String> requestedOutputs = new ArraySet<>();
             requestedOutputs.add("embed_matrix");
-            embedResult = embedAndLmHeadSession.run(embedInput, requestedOutputs);
+            embedResult = own(com.moe.starflow.manga.engine.OcrExecution.INSTANCE.runRequested(embedAndLmHeadSession, embedInput, requestedOutputs));
 
             input.put("input_ids",inputIDsTensor);
             input.put("attention_mask",attentionMaskTensor);
             input.put("embed_matrix", (OnnxTensor) embedResult.get(0));
 
-            OrtSession.Result result = encoderSession.run(input);
+            OrtSession.Result result = own(com.moe.starflow.manga.engine.OcrExecution.INSTANCE.run(encoderSession, input));
 
-            embedResult.close();
+            releaseOwned(embedResult);
 
             Optional<OnnxValue> output = result.get("last_hidden_state");
             //Object value = output.get().getValue();   //utile solo per il debug
@@ -256,8 +294,8 @@ public class TranslationCore {
 
             input_ids = new int[]{2};
 
-            OnnxTensor inputIDsTensor = TensorUtils.convertIntArrayToTensor(onnxEnv, input_ids);
-            OnnxTensor encoderAttentionMaskTensor = TensorUtils.convertIntArrayToTensor(onnxEnv, input.getAttentionMask());
+            OnnxTensor inputIDsTensor = own(TensorUtils.convertIntArrayToTensor(onnxEnv, input_ids));
+            OnnxTensor encoderAttentionMaskTensor = own(TensorUtils.convertIntArrayToTensor(onnxEnv, input.getAttentionMask()));
             OnnxTensor decoderOutput = null;
             Map<String,OnnxTensor> decoderInput = new HashMap<String,OnnxTensor>();
             float[][][] value = null;
@@ -268,17 +306,18 @@ public class TranslationCore {
             initInput.put("encoder_hidden_states", encoderResult);
             //cache initializer execution
             OrtSession.Result initResult = null;
-            initResult = cacheInitSession.run(initInput);
+            initResult = own(com.moe.starflow.manga.engine.OcrExecution.INSTANCE.run(cacheInitSession, initInput));
             android.util.Log.i("performance", "Cache initialization done in: " + (System.currentTimeMillis()-time) + "ms");
 
             //we begin the iterative execution of the decoder
             OrtSession.Result result = null;
             OrtSession.Result oldResult = null;
-            OnnxTensor emptyPreLogits = TensorUtils.createFloatTensorWithSingleValue(onnxEnv, 0, new long[]{EMPTY_BATCH_SIZE, 1, 1024});
-            OnnxTensor emptyInputIds = TensorUtils.createInt64TensorWithSingleValue(onnxEnv, 0, new long[]{EMPTY_BATCH_SIZE, 2});
+            OnnxTensor emptyPreLogits = own(TensorUtils.createFloatTensorWithSingleValue(onnxEnv, 0, new long[]{EMPTY_BATCH_SIZE, 1, 1024}));
+            OnnxTensor emptyInputIds = own(TensorUtils.createInt64TensorWithSingleValue(onnxEnv, 0, new long[]{EMPTY_BATCH_SIZE, 2}));
             int max = -1;
             int j = 1;
             while(max != eos){
+                com.moe.starflow.manga.engine.OcrExecution.INSTANCE.checkCancellation();
                 initialTime = System.currentTimeMillis();
                 time = System.currentTimeMillis();
                 //we prepare the decoder input
@@ -292,17 +331,17 @@ public class TranslationCore {
                     Map<String, OnnxTensor> embedInput = new HashMap<String, OnnxTensor>();
                     embedInput.put("input_ids", inputIDsTensor);
                     embedInput.put("pre_logits", emptyPreLogits);
-                    embedInput.put("use_lm_head", TensorUtils.convertBooleanToTensor(onnxEnv, false));
+                    embedInput.put("use_lm_head", own(TensorUtils.convertBooleanToTensor(onnxEnv, false)));
                     ArraySet<String> requestedOutputs = new ArraySet<>();
                     requestedOutputs.add("embed_matrix");
-                    embedResult = embedAndLmHeadSession.run(embedInput, requestedOutputs);
+                    embedResult = own(com.moe.starflow.manga.engine.OcrExecution.INSTANCE.runRequested(embedAndLmHeadSession, embedInput, requestedOutputs));
 
                     decoderInput.put("embed_matrix", (OnnxTensor) embedResult.get(0));
                 }
 
                 if(j == 1){
                     long[] shape = {1, 16, 0, hiddenSize};
-                    OnnxTensor decoderPastTensor = TensorUtils.createFloatTensorWithSingleValue(onnxEnv, 0, shape);
+                    OnnxTensor decoderPastTensor = own(TensorUtils.createFloatTensorWithSingleValue(onnxEnv, 0, shape));
                     for (int i = 0; i < nLayers; i++) {
                         decoderInput.put("past_key_values." + i + ".decoder.key", decoderPastTensor);
                         decoderInput.put("past_key_values." + i + ".decoder.value", decoderPastTensor);
@@ -321,17 +360,17 @@ public class TranslationCore {
                 android.util.Log.i("performance", "pre-execution of"+j+"th word done in: " + (System.currentTimeMillis()-time) + "ms");
                 time = System.currentTimeMillis();
                 //decoder execution (with cache)
-                result = decoderSession.run(decoderInput);
+                result = own(com.moe.starflow.manga.engine.OcrExecution.INSTANCE.run(decoderSession, decoderInput));
 
                 android.util.Log.i("performance", "execution of"+j+"th word done in: " + (System.currentTimeMillis()-time) + "ms");
                 time = System.currentTimeMillis();
 
                 if(oldResult != null) {
-                    oldResult.close(); //serves to release the memory occupied by the result (otherwise it accumulates and increases a lot)
+                    releaseOwned(oldResult); //serves to release the memory occupied by the result (otherwise it accumulates and increases a lot)
                     android.util.Log.i("performance", "release RAM of"+j+"th word done in: " + (System.currentTimeMillis()-time) + "ms");
                 }
 
-                embedResult.close();
+                releaseOwned(embedResult);
 
                 //we take the logits and the max value
                 OrtSession.Result lmHeadResult = null;
@@ -341,10 +380,10 @@ public class TranslationCore {
                     Map<String, OnnxTensor> lmHeadInput = new HashMap<String, OnnxTensor>();
                     lmHeadInput.put("input_ids", emptyInputIds);
                     lmHeadInput.put("pre_logits", (OnnxTensor) result.get("pre_logits").get());
-                    lmHeadInput.put("use_lm_head", TensorUtils.convertBooleanToTensor(onnxEnv, true));
+                    lmHeadInput.put("use_lm_head", own(TensorUtils.convertBooleanToTensor(onnxEnv, true)));
                     ArraySet<String> requestedOutputs = new ArraySet<>();
                     requestedOutputs.add("logits");
-                    lmHeadResult = embedAndLmHeadSession.run(lmHeadInput, requestedOutputs);
+                    lmHeadResult = own(com.moe.starflow.manga.engine.OcrExecution.INSTANCE.runRequested(embedAndLmHeadSession, lmHeadInput, requestedOutputs));
                     decoderOutput = (OnnxTensor) lmHeadResult.get(0);
                 }
 
@@ -353,7 +392,7 @@ public class TranslationCore {
                 max = NNUtils.getIndexOfLargest(outputValues);
                 completeOutput.add(max);
 
-                lmHeadResult.close();
+                releaseOwned(lmHeadResult);
 
                 //we prepare the inputs of the next iteration
                 if(j == 1) {
@@ -362,7 +401,7 @@ public class TranslationCore {
                     input_ids[0] = max;
                 }
 
-                inputIDsTensor = TensorUtils.convertIntArrayToTensor(onnxEnv, input_ids);
+                inputIDsTensor = own(TensorUtils.convertIntArrayToTensor(onnxEnv, input_ids));
                 android.util.Log.i("performance", "post-execution of"+j+"th word done in: " + (System.currentTimeMillis()-time) + "ms");
                 android.util.Log.i("performance", "Generation of"+j+"th word done in: " + (System.currentTimeMillis() - initialTime) + "ms");
                 //we return the partial result
@@ -393,9 +432,9 @@ public class TranslationCore {
                 }
             }
             if(result != null) {
-                result.close();
+                releaseOwned(result);
             }
-            initResult.close();
+            releaseOwned(initResult);
 
         } catch (OrtException e) {
             e.printStackTrace();
@@ -440,6 +479,7 @@ public class TranslationCore {
         // 打印分词日志
         android.util.Log.i("result", "Input text splitted in "+textSplit.size()+" subtexts:");
         for (String subtext : textSplit) {
+            com.moe.starflow.manga.engine.OcrExecution.INSTANCE.checkCancellation();
             android.util.Log.i("result", subtext);
         }
         android.util.Log.i("performance", "Text split done in: " + (System.currentTimeMillis() - initTime) + "ms");
@@ -529,7 +569,7 @@ public class TranslationCore {
 
             //we convert the ids of completeOutputs into a string and return it
             // 释放编码器资源
-            encoderResult.close();
+            releaseOwned(encoderResult);
             int[] completeOutputArray;
 
 

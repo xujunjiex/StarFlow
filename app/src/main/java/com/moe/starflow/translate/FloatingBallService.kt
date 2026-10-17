@@ -76,6 +76,7 @@ import com.moe.starflow.utils.UiUtils
 import com.moe.starflow.utils.UtilTools
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import translationapi.azuretranslation.AzureTranslation
@@ -153,7 +154,9 @@ class FloatingBallService : LifecycleService() {
     // 是否正在翻译，默认false
     private val isTranslating = AtomicBoolean(false)
     private val screenshotBusyHeld = AtomicBoolean(false)
-    private val localTranslationHeld = AtomicBoolean(false)
+    private val localTranslationLease = java.util.concurrent.atomic.AtomicReference<LocalTranslationCoordinator.Lease?>()
+    private val translationGeneration = java.util.concurrent.atomic.AtomicLong()
+    @Volatile private var textRequest: TranslationRequestSlot? = null
 
     private fun enterScreenshotBusy() {
         if (screenshotBusyHeld.compareAndSet(false, true)) TranslationBusyRegistry.enter()
@@ -164,9 +167,7 @@ class FloatingBallService : LifecycleService() {
     }
 
     private fun releaseLocalTranslationLock() {
-        if (localTranslationHeld.compareAndSet(true, false)) {
-            LocalTranslationCoordinator.mutex.unlock()
-        }
+        localTranslationLease.getAndSet(null)?.close()
     }
 
     /** 用户主动停止翻译：忽略本次结果回调、不保存 */
@@ -1671,7 +1672,9 @@ class FloatingBallService : LifecycleService() {
     private fun cancelInFlightTranslation(showMessage: Boolean = true) {
         translationCancelled = true
         partialResultShown = false  // 已停止：再点悬浮球不再弹确认，直接幂等终止
-        translatorText?.cancelTranslation()
+        translationGeneration.incrementAndGet()
+        textRequest?.cancel()
+        textRequest = null
         translatorPic?.cancelTranslation()
         releaseLocalTranslationLock()
         isTranslating.set(false)
@@ -1784,6 +1787,10 @@ class FloatingBallService : LifecycleService() {
                     translationCancelled = false  // 每次新截图翻译重置取消标志
                     partialResultShown = false    // 每次新截图翻译重置部分结果标志
                     processScreenshot(bitmap)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    if (!kotlinx.coroutines.currentCoroutineContext().isActive) throw e
+                    isTranslating.set(false)
+                    LogCollector.d(TAG, "Screenshot OCR cancelled")
                 } catch (e: OcrMemoryException) {
                     isTranslating.set(false)
                     LogCollector.e(TAG, e.diagnostic, e)
@@ -1841,6 +1848,13 @@ class FloatingBallService : LifecycleService() {
     }
 
     private suspend fun processScreenshot(bitmap: Bitmap) {
+        val generation = translationGeneration.get()
+        withContext(com.moe.starflow.manga.engine.OcrExecution.context { translationCancelled || generation != translationGeneration.get() }) {
+            processScreenshotCancellable(bitmap)
+        }
+    }
+
+    private suspend fun processScreenshotCancellable(bitmap: Bitmap) {
         try {
             if (prefs.getInt("Translate_Mode", 0) == 0) {
                 val engine = autoTranslateEngine
@@ -2007,6 +2021,8 @@ class FloatingBallService : LifecycleService() {
                 val bitmapCopy = bitmap.copy(bitmap.config!!, true)
                 translateByPic(bitmapCopy)
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: OcrMemoryException) {
             // The screenshot collector stops automatic capture and shows the memory-specific error.
             throw e
@@ -2054,18 +2070,23 @@ class FloatingBallService : LifecycleService() {
     // 文本翻译
     private fun translateByText(str: String) {
         val localTranslation = translatorText?.isLocalHeavyEngine() == true
-        if (localTranslation && !LocalTranslationCoordinator.mutex.tryLock()) {
+        val lease = if (localTranslation) LocalTranslationCoordinator.tryAcquire() else null
+        if (localTranslation && lease == null) {
             isTranslating.set(false)
             showToast(getString(R.string.reader_translate_waiting_other), true)
             return
         }
-        if (localTranslation) localTranslationHeld.set(true)
+        if (lease != null) localTranslationLease.set(lease)
+        val generation = translationGeneration.incrementAndGet()
+        val request = TranslationRequestSlot()
+        textRequest = request
         val sourceLang = prefs.getString("Source_Language", "ja")
         val targetLang = prefs.getString("Target_Language", "zh")
         LogCollector.d(TAG, "开始文本翻译: ${str.take(50)}..., $sourceLang → $targetLang")
 
         // 更新 AI 上下文（唯一入口）：网络 API 按设置的 token 预算裁剪，
         // 本地 LlamaCpp 忽略该设置、按模型自己的 ctx 裁剪（见 ContextBudget / ContextAwareTranslation）
+        try {
         ContextBudget.applyTo(
             translatorText,
             contextHistory.toList(),
@@ -2073,12 +2094,13 @@ class FloatingBallService : LifecycleService() {
             prefs
         )
 
-        try {
-            translatorText?.getTranslationStreaming(
+            val engine = checkNotNull(translatorText)
+            request.attach(engine.startTranslation(
                 str, sourceLang, targetLang,
             onPhase = { phase ->
                 // 阶段提示：读取原文中 → 生成译文中
                 lifecycleScope.launch(Dispatchers.Main) {
+                    if (generation != translationGeneration.get() || translationCancelled) return@launch
                     when (phase) {
                         "prefill" -> statusOverlay.showImmediate(getString(R.string.manga_reading), autoDismiss = false)
                         "generate" -> statusOverlay.showImmediate(getString(R.string.text_translate_translating), autoDismiss = false)
@@ -2088,14 +2110,18 @@ class FloatingBallService : LifecycleService() {
             onPartial = { partial ->
                 // 流式显示：Hy-MT2 等本地引擎边生成边更新悬浮窗，不等翻译完成
                 lifecycleScope.launch(Dispatchers.Main) {
+                    if (generation != translationGeneration.get() || translationCancelled) return@launch
                     if (partial.isNotBlank()) partialResultShown = true  // 已有部分结果上屏 → 再单击走确认弹窗
                     if (!isResultViewShowing) showResultView()
                     translationResultView.setText(partial)
                 }
             },
             callback = { result ->
-            releaseLocalTranslationLock()
+            request.finish()
+            lease?.close()
+            if (lease != null) localTranslationLease.compareAndSet(lease, null)
             lifecycleScope.launch(Dispatchers.Main) {
+                if (generation != translationGeneration.get()) return@launch
                 when (result) {
                     is TranslationResult.Success -> {
                         if (translationCancelled) {
@@ -2163,23 +2189,28 @@ class FloatingBallService : LifecycleService() {
                     }
                 }
                 isTranslating.set(false)
+                exitScreenshotBusy()
             }
             }
-            )
+            ))
         } catch (e: Throwable) {
-            releaseLocalTranslationLock()
+            request.cancel()
+            lease?.close()
+            if (lease != null) localTranslationLease.compareAndSet(lease, null)
             isTranslating.set(false)
             throw e
         }
     }
 
     private fun translateByPic(bitmap: Bitmap){
+        val generation = translationGeneration.incrementAndGet()
         val sourceLang = prefs.getString("Source_Language", "ja")
         val targetLang = prefs.getString("Target_Language", "zh")
         LogCollector.d(TAG, "开始图片翻译: ${bitmap.width}x${bitmap.height}, $sourceLang → $targetLang")
         translatorPic?.getTranslation(bitmap, sourceLang, targetLang){
                 result->
             lifecycleScope.launch(Dispatchers.Main) {
+                if (generation != translationGeneration.get()) return@launch
                 when (result) {
                     is TranslationResult.Success -> {
                         if (translationCancelled) {
@@ -2219,6 +2250,7 @@ class FloatingBallService : LifecycleService() {
                     }
                 }
                 isTranslating.set(false)
+                exitScreenshotBusy()
             }
         }
     }
@@ -2324,6 +2356,7 @@ class FloatingBallService : LifecycleService() {
     }
 
     private fun stopServiceAndRemoveViews() {
+        cancelInFlightTranslation(showMessage = false)
         try {
             // 停止自动翻译引擎
             autoTranslateEngine?.stop()
@@ -2372,6 +2405,7 @@ class FloatingBallService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        cancelInFlightTranslation(showMessage = false)
         LogCollector.d(TAG, "FloatingBallService onDestroy")
         super.onDestroy()
         // 服务停止 = 一次翻译会话结束 → 清空上下文（用户口径：「关闭截屏翻译进程」时重置）

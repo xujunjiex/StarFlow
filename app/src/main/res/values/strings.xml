@@ -699,10 +699,10 @@
     <string name="copied">Copied to clipboard</string>
     <string name="log_empty">No logs yet</string>
     <string name="log_count_format">%d log entries</string>
+    <string name="log_selection_hint">Long-press to select multiple lines, then use Copy or Translate.</string>
     <string name="log_export">Export</string>
     <string name="log_exported">Logs exported to: %s</string>
     <string name="log_export_failed">Export failed: %s</string>
-    <string name="log_error_copied">Error copied to clipboard</string>
     <!-- 内置 API -->
     <string name="builtin_providers_title">Built-in APIs</string>
     <string name="reset_to_default">Reset to Default</string>
@@ -1093,7 +1093,8 @@
     <string name="reader_auto_turn_hint">Auto turn (pauses on touch)</string>
     <string name="reader_interval">Turn interval</string>
     <string name="reader_translate_pending">Translation coming soon…</string>
-    <string name="reader_translate_busy">Another page is translating</string>
+    <string name="reader_translate_busy">The OCR engine is processing another task. Please wait.</string>
+    <string name="reader_ocr_stopping">Finishing the previous OCR or upscaling task. Please wait.</string>
     <string name="reader_ocr_busy">The OCR engine is busy with another task. Please wait.</string>
     <string name="reader_translate_model_missing">OCR models not ready: %1$s</string>
     <string name="reader_translate_api_not_configured">Please configure a translation API first</string>
@@ -1107,6 +1108,7 @@
     <string name="reader_execution_mode_ocr_only">Execution mode: OCR only</string>
     <string name="reader_translate_mode_manual">Manual</string>
     <string name="reader_translate_mode_auto">Auto</string>
+    <string name="reader_auto_mode_started">Automatic mode enabled</string>
     <string name="reader_translate_mode_incremental">Incremental</string>
     <string name="reader_ocr_mode_manual">Manual OCR</string>
     <string name="reader_ocr_mode_auto">Auto OCR</string>
@@ -1683,6 +1685,7 @@
     <string name="novel_tab_translate">Translate</string>
     <string name="novel_tab_more">More</string>
     <string name="novel_style_font_size">Font size</string>
+    <string name="novel_style_font_size_hint">Auto applies EPUB font sizes; if none are defined, the slider size is used.</string>
     <string name="novel_style_line_spacing">Line spacing</string>
     <string name="novel_style_paragraph_spacing">Paragraph spacing</string>
     <string name="novel_style_padding">Side margin</string>
@@ -1701,6 +1704,7 @@
     <string name="novel_download_original">Original (txt)</string>
     <string name="novel_download_bilingual">Bilingual (original + translation)</string>
     <string name="novel_download_writing">Exporting…</string>
+    <string name="novel_loading_chapter">Loading and laying out chapter…</string>
     <string name="novel_download_failed">Export failed: %1$s</string>
     <string name="novel_translate_filter_done">Done</string>
     <string name="novel_translate_filter_running">In progress</string>

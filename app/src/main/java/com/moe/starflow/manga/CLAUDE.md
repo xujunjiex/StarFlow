@@ -352,3 +352,9 @@ View 层并与 `imageMatrix` 逐帧同步，改动横跨 `ReaderAdapters`/`Zooma
 ⚠️ **环境限制（别再试）**：Robolectric 的 Canvas **既不兑现 `canvas.scale()`，也不兑现
 `drawBitmap(src, srcRect, dstRect, paint)` 的目标矩形**（实测 2 倍输出右下角全透明、白块位置不放大）。
 所以「文字变清晰」**只能真机验证**，单元测试锁不到它；「排版不变」由构造保证（该分支没动任何绘制坐标）。
+
+## 原生 OCR 取消与占用
+
+ONNX 推理统一走 `OcrExecution.run`，取消信号随协程上下文传入 PP-OCR、RT-DETR 与 MangaOCR；同步解码循环也要检查取消。`NativeOperation` 发送终止信号后等待原生返回，返回前不关闭输入、输出或运行选项。ML Kit 每次请求持有独立输入和识别器，SDK 完成后回收，取消调用方不能提前回收 SDK 正在读取的图片。
+
+`OcrLock.acquire` 必须传实际执行任务及来源。心跳由锁持有者生命周期管理；取消中的原生任务不能被超时自愈抢占，任务真正完成后自动清理残留。自动阅读器在 OCR 完成后释放锁，文本推理使用本地翻译协调器。

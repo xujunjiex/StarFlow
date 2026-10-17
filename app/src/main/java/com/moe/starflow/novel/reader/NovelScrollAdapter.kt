@@ -152,6 +152,7 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
         val para = c.visibleParas.getOrNull(position) ?: return
         holder.view.bind(
             c.displayOf(para.index), style, textColor, backgroundColor,
+            fontSizeSpans = c.displayFontSizeSpans[para.index].orEmpty(),
             image = c.images[para.index],
             payload = imageTranslations[para.index],
             visual = imageVisuals[para.index] ?: NovelImageVisual.TRANSLATED,
@@ -209,6 +210,8 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
         private var layout: StaticLayout? = null
         private var layoutText: String? = null
         private var layoutStyle: NovelTextStyle? = null
+        private var fontSizeSpans: List<com.moe.starflow.novel.parser.NovelFontSizeSpan> = emptyList()
+        private var layoutFontSizeSpans: List<com.moe.starflow.novel.parser.NovelFontSizeSpan> = emptyList()
 
         /** 这份 layout 是按哪个正文宽度排的（宽度变了必须重排，否则行数与真机不符）。 */
         private var layoutWidth: Int = -1
@@ -223,13 +226,16 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
             val t = text
             if (t.isEmpty()) return null
             val cached = layout
-            if (cached != null && layoutText == t && layoutStyle == style && layoutWidth == contentWidth) {
+            if (cached != null && layoutText == t && layoutStyle == style &&
+                layoutFontSizeSpans == fontSizeSpans && layoutWidth == contentWidth
+            ) {
                 return cached
             }
-            return NovelTextRenderer.build(t, style, contentWidth).also {
+            return NovelTextRenderer.build(t, style, contentWidth, fontSizeSpans = fontSizeSpans).also {
                 layout = it
                 layoutText = t
                 layoutStyle = style
+                layoutFontSizeSpans = fontSizeSpans
                 layoutWidth = contentWidth
             }
         }
@@ -247,6 +253,7 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
             style: NovelTextStyle,
             textColor: Int,
             backgroundColor: Int,
+            fontSizeSpans: List<com.moe.starflow.novel.parser.NovelFontSizeSpan> = emptyList(),
             image: NovelImage? = null,
             payload: NovelImageTranslation? = null,
             visual: NovelImageVisual = NovelImageVisual.TRANSLATED,
@@ -258,6 +265,7 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
             statusColors: NovelStatusColors = NovelStatusColors(),
         ) {
             if (this.text == text && this.style == style && this.textColor == textColor &&
+                this.fontSizeSpans == fontSizeSpans &&
                 this.backgroundColor == backgroundColor && this.image == image &&
                 this.payload == payload && this.visual == visual && this.focused == focused &&
                 this.selected == selected && this.active == active && this.failed == failed &&
@@ -268,9 +276,10 @@ class NovelScrollAdapter : RecyclerView.Adapter<NovelScrollAdapter.VH>() {
             // ⚠️ 「要不要重新测量」必须在**赋值之前**判定：item 是 `WRAP_CONTENT`，
             // `requestLayout()` 必然带回一遍 `onMeasure`（那里要拿 layout / 图片的高度）。
             // ⚠️ 三态 / 聚焦**不进**这里：它们只换画哪张位图，条目高度一点没变（插图高度按图片自身尺寸算）
-            val remeasure = this.text != text || this.style != style || this.image != image
+            val remeasure = this.text != text || this.style != style || this.fontSizeSpans != fontSizeSpans || this.image != image
             this.text = text
             this.style = style
+            this.fontSizeSpans = fontSizeSpans
             this.textColor = textColor
             this.backgroundColor = backgroundColor
             this.image = image

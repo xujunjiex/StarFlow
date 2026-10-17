@@ -633,10 +633,10 @@
     <string name="copied">已复制到剪贴板</string>
     <string name="log_empty">暂无日志</string>
     <string name="log_count_format">共 %d 条日志</string>
+    <string name="log_selection_hint">长按可跨行框选，再使用系统的复制或翻译。</string>
     <string name="log_export">导出</string>
     <string name="log_exported">日志已导出到：%s</string>
     <string name="log_export_failed">导出失败：%s</string>
-    <string name="log_error_copied">错误信息已复制到剪贴板</string>
     <!-- 内置 API -->
     <string name="builtin_providers_title">内置 API</string>
     <string name="reset_to_default">重置为默认</string>
@@ -1029,7 +1029,8 @@
     <string name="reader_auto_turn_hint">自动翻页（触摸自动暂停）</string>
     <string name="reader_interval">翻页间隔</string>
     <string name="reader_translate_pending">翻译功能开发中…</string>
-    <string name="reader_translate_busy">另一页正在翻译</string>
+    <string name="reader_translate_busy">OCR 引擎正在处理其他任务，请稍候</string>
+    <string name="reader_ocr_stopping">正在结束上一次识别或超分，请稍候</string>
     <string name="reader_ocr_busy">OCR 引擎正在处理其他任务，请稍候</string>
     <string name="reader_translate_model_missing">识别模型未就绪：%1$s</string>
     <string name="reader_translate_api_not_configured">请先在设置中配置翻译 API</string>
@@ -1043,6 +1044,7 @@
     <string name="reader_execution_mode_ocr_only">执行模式：仅 OCR</string>
     <string name="reader_translate_mode_manual">手动</string>
     <string name="reader_translate_mode_auto">自动</string>
+    <string name="reader_auto_mode_started">已开启自动模式</string>
     <string name="reader_translate_mode_incremental">增量</string>
     <string name="reader_ocr_mode_manual">手动识别</string>
     <string name="reader_ocr_mode_auto">自动识别</string>
@@ -1684,6 +1686,7 @@
     <string name="novel_tab_translate">翻译</string>
     <string name="novel_tab_more">更多</string>
     <string name="novel_style_font_size">字体大小</string>
+    <string name="novel_style_font_size_hint">自动模式应用 EPUB 内的字号；没有字号信息时使用滑块字号。</string>
     <string name="novel_style_line_spacing">行间距</string>
     <string name="novel_style_paragraph_spacing">段间距</string>
     <string name="novel_style_padding">左右边距</string>
@@ -1702,6 +1705,7 @@
     <string name="novel_download_original">原文（txt）</string>
     <string name="novel_download_bilingual">双语（原文 + 译文）</string>
     <string name="novel_download_writing">正在导出…</string>
+    <string name="novel_loading_chapter">正在读取并排版正文…</string>
     <string name="novel_download_failed">导出失败：%1$s</string>
     <string name="novel_translate_filter_done">完成</string>
     <string name="novel_translate_filter_running">进行中</string>

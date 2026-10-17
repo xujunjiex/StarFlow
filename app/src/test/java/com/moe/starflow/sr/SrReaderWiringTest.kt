@@ -44,7 +44,7 @@ class SrReaderWiringTest {
         // ③ 底图决定走纯函数（可单测），不在渲染路径里散写 if
         assertTrue(
             "底图选择必须走 SrDisplayBase（纯函数，有真值表守卫）",
-            src.contains("SrDisplayBase.resolveBaseKind("),
+            src.contains("SrDisplayBase.isUsableBase(stored.width, spaceWidth)"),
         )
     }
 
@@ -63,7 +63,7 @@ class SrReaderWiringTest {
     fun bothTranslatePathsStartUpscaling() {
         val src = controller()
         // 整章批量翻译：OCR 之后（translatePhase 收到 prep）启动，本地引擎则串行
-        assertTrue("批量路径必须调 maybeStartAutoSr", src.contains("srJob = maybeStartAutoSr(page, prep)"))
+        assertTrue("允许自动超分时才在 OCR 完成后启动", src.contains("if(allowAutoSr)srJob=maybeStartAutoSr(page,prep)"))
         assertTrue(
             "本地引擎（LlamaCpp/NLLB）必须串行等待超分",
             src.contains("if (translator.isLocalHeavyEngine()) srJob?.join()"),
@@ -74,7 +74,7 @@ class SrReaderWiringTest {
                 "而兜底只在没能提前启动时才跑）",
             // 合并后放锁带 OcrLock 持有者令牌（master 的修复），意图不变：条件释放、恰好一次
             src.contains("if (lockHeld) OcrLock.release(ocrToken)") &&
-                src.contains("if (!srStarted && !cancel.get()) maybeStartSrAfterTranslate(page)"),
+                src.contains("if (!srStarted && !cancel.get() && currentCoroutineContext().isActive) maybeStartSrAfterTranslate(page)"),
         )
     }
 
@@ -259,8 +259,8 @@ class SrReaderWiringTest {
                 act.contains("binding.btnSrClear.visibility = if (hasResult) View.VISIBLE else View.GONE"),
         )
         assertTrue("删除超分结果必须二次确认", act.contains("R.string.reader_sr_clear_confirm_title"))
-        assertTrue("删除走控制器的 deleteSrResult", act.contains("controller.deleteSrResult(currentPage)"))
-        assertTrue("二态切换走控制器的 toggleSrBase", act.contains("controller.toggleSrBase(currentPage)"))
+        assertTrue("删除走控制器的 deleteSrResult", act.contains("controller.deleteSrResult(page)"))
+        assertTrue("二态切换走控制器的 toggleSrBase", act.contains("controller.toggleSrBase(page)"))
     }
 
     @Test
@@ -315,7 +315,7 @@ class SrReaderWiringTest {
         )
         assertTrue(
             "超分要有唯一执行入口（提示才天然成对）",
-            ctl.contains("private suspend fun runSr(page: Int, src: Bitmap)"),
+            Regex("""private suspend fun runSr\(page:\s*Int,\s*src:\s*Bitmap,""").containsMatchIn(ctl),
         )
         assertEquals(
             "不许有人绕开 runSr 直接调 SrProcessor.enhanceAndStore（那就绕开了「正在超分…」提示）",

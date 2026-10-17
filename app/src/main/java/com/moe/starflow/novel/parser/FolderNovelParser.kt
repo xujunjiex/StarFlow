@@ -156,6 +156,19 @@ object FolderNovelParser : NovelParser {
     override suspend fun loadChapter(file: File, locator: String): String =
         loadChapterSource(file, locator).text
 
+    override suspend fun loadChapterText(file: File, locator: String): ChapterText = withContext(Dispatchers.IO) {
+        val sep = locator.indexOf(INNER_SEP)
+        if (sep >= 0) {
+            val volume = File(file, locator.substring(0, sep))
+            val inner = locator.substring(sep + 1)
+            return@withContext when (NovelFormatDetector.detect(volume)) {
+                NovelFormat.EPUB -> EpubParser.loadChapterText(volume, inner)
+                else -> ChapterText(loadChapterSource(file, locator).text)
+            }
+        }
+        ChapterText(loadChapterSource(file, locator).text)
+    }
+
     /**
      * 正文 + 图片。
      *

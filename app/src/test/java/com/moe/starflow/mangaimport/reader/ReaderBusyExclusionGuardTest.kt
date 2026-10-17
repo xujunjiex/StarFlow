@@ -162,6 +162,17 @@ class ReaderBusyExclusionGuardTest {
         )
     }
 
+    /** 手动空闲双击开自动；忙碌任务仍沿用单击提示、双击取消。 */
+    @Test
+    fun manualIdleDoubleTapStartsAutoAfterDeferringSingleTap() {
+        val click = block(controller, "fun onTranslateButtonClick(")
+        assertTrue("控制器必须能区分真正的手动空闲", controller.contains("fun canStartAutoFromTranslateButton()"))
+        assertTrue("手动空闲双击必须开启自动模式", click.contains("setMode(MODE_AUTO)") && click.contains("TranslateClick.StartedAuto"))
+        assertTrue("按钮单击必须等待 300ms，避免先启动单页任务", activity.contains("postDelayed(action, DOUBLE_CLICK_MS)"))
+        assertTrue("空闲双击时要呈现自动模式已开启", activity.contains("TranslateClick.StartedAuto"))
+        assertTrue("活动任务的取消分支仍然存在", click.contains("CancelledToManual") && click.contains("CancelledBatch"))
+    }
+
     // ========== 「这个开关只影响手动/自动/增量」 ==========
 
     /**

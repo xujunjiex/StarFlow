@@ -65,22 +65,33 @@ object EpubParser : NovelParser {
             val opf = parseOpf(budget.readEntry(zip, opfEntry).inputStream())
 
             val base = if (opfDir.isEmpty()) "" else "$opfDir/"
+            val manifestById = opf.manifest.associateBy { it.id }
             val idToHref = opf.manifest.associate { it.id to it.href }
 
-            val chapterPaths = opf.spine.mapNotNull { idref ->
-                idToHref[idref]?.let { normalize(base, it) }
+            // Keep every spine entry so the chapter list matches the EPUB's declared
+            // structure. Mark cover/navigation entries as auxiliary; the reader can then
+            // preserve them without using them as the default reading position.
+            val spineItems = opf.spine.mapNotNull { ref ->
+                val item = manifestById[ref.idRef] ?: return@mapNotNull null
+                val properties = item.properties.orEmpty().split(Regex("\\s+"))
+                SpineChapter(
+                    path = normalize(base, item.href),
+                    isAuxiliary = !ref.linear || properties.any { it.equals("nav", ignoreCase = true) },
+                )
             }
-            if (chapterPaths.isEmpty()) throw IllegalStateException("NO_TEXT_CHAPTER")
+            if (spineItems.isEmpty()) throw IllegalStateException("NO_TEXT_CHAPTER")
 
             val tocTitles = readTocTitles(zip, opf, base, budget)
 
-            val chapters = chapterPaths.mapIndexed { i, path ->
+            val chapters = spineItems.mapIndexed { i, spineItem ->
+                val path = spineItem.path
                 NovelChapterMeta(
                     index = i,
                     title = tocTitles[path]
                         ?: headTitleOf(zip, path, budget)
                         ?: defaultTitle(i),
                     locator = path,
+                    isAuxiliary = spineItem.isAuxiliary,
                 )
             }
 
@@ -94,12 +105,16 @@ object EpubParser : NovelParser {
         }
     }
 
-    override suspend fun loadChapter(file: File, locator: String): String = withContext(Dispatchers.IO) {
-        val raw = ZipFile(file).use { zip ->
-            val entry = zip.getEntry(locator) ?: return@withContext ""
-            NovelReadLimits.readZipEntry(zip, entry)
+    override suspend fun loadChapter(file: File, locator: String): String =
+        loadChapterText(file, locator).text
+
+    override suspend fun loadChapterText(file: File, locator: String): ChapterText = withContext(Dispatchers.IO) {
+        ZipFile(file).use { zip ->
+            val entry = zip.getEntry(locator) ?: return@withContext ChapterText("")
+            val budget = NovelReadLimits.ZipBudget()
+            val html = TextEncoding.decode(budget.readEntry(zip, entry))
+            EpubFontSizeExtractor.extract(html, readStylesheets(zip, locator, html, budget))
         }
-        HtmlTextExtractor.extract(TextEncoding.decode(raw))
     }
 
     /**
@@ -116,11 +131,32 @@ object EpubParser : NovelParser {
                 val entry = zip.getEntry(locator) ?: return@withContext ChapterSource.EMPTY
                 val budget = NovelReadLimits.ZipBudget()
                 val html = TextEncoding.decode(budget.readEntry(zip, entry))
-                val ex = HtmlTextExtractor.extractWithImages(html)
+                val chapter = EpubFontSizeExtractor.extractChapter(
+                    html,
+                    readStylesheets(zip, locator, html, budget),
+                )
                 // ⚠️ 相对地址的基准目录**必须带结尾的 `/`**（见 [ZipImages.baseDirOf]）
-                ChapterSource(ex.text, ZipImages.read(zip, ZipImages.baseDirOf(locator), ex.imageSources, budget))
+                ChapterSource(
+                    chapter.text,
+                    ZipImages.read(zip, ZipImages.baseDirOf(locator), chapter.imageSources, budget),
+                    chapter.fontSizeSpans,
+                )
             }
         }
+
+    private fun readStylesheets(
+        zip: ZipFile,
+        locator: String,
+        html: String,
+        budget: NovelReadLimits.ZipBudget,
+    ): List<String> {
+        val baseDir = ZipImages.baseDirOf(locator)
+        return EpubFontSizeExtractor.stylesheetHrefs(html).mapNotNull { href ->
+            val path = ZipImages.resolveUri(baseDir, href)
+            val entry = zip.getEntry(path) ?: return@mapNotNull null
+            runCatching { TextEncoding.decode(budget.readEntry(zip, entry)) }.getOrNull()
+        }
+    }
 
     // ===== 加密 =====
 
@@ -176,11 +212,21 @@ object EpubParser : NovelParser {
         val properties: String?,
     )
 
+    private data class SpineItemRef(
+        val idRef: String,
+        val linear: Boolean,
+    )
+
+    private data class SpineChapter(
+        val path: String,
+        val isAuxiliary: Boolean,
+    )
+
     private class Opf(
         val title: String?,
         val creator: String?,
         val manifest: List<ManifestItem>,
-        val spine: List<String>,
+        val spine: List<SpineItemRef>,
         val metaCoverId: String?,
         val ncxPath: String?,
         val navPath: String?,
@@ -190,7 +236,7 @@ object EpubParser : NovelParser {
     private fun parseOpf(input: InputStream): Opf {
         val parser = newParser(input)
         val manifest = mutableListOf<ManifestItem>()
-        val spine = mutableListOf<String>()
+        val spine = mutableListOf<SpineItemRef>()
         var title: String? = null
         var creator: String? = null
         var description: String? = null
@@ -239,7 +285,11 @@ object EpubParser : NovelParser {
                             }
                         }
                         "itemref" -> {
-                            parser.getAttributeValue(null, "idref")?.let { spine.add(it) }
+                            parser.getAttributeValue(null, "idref")?.let { idRef ->
+                                val linear = parser.getAttributeValue(null, "linear")
+                                    ?.equals("no", ignoreCase = true) != true
+                                spine.add(SpineItemRef(idRef, linear))
+                            }
                         }
                         "spine" -> {
                             spineTocAttr = parser.getAttributeValue(null, "toc")

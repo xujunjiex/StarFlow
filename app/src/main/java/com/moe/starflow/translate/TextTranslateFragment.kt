@@ -70,7 +70,12 @@ class TextTranslateFragment : Fragment() {
         reloadRecent()
     }
 
+    private var activeTranslationRequest: TranslationRequestSlot? = null
+
     override fun onDestroyView() {
+        activeTranslationRequest?.cancel()
+        activeTranslationRequest = null
+        isTranslating = false
         // 本地 GGUF 走进程级共享实例（LlamaCppSharedHolder）：跨页面切换保留模型，避免每次重载整个模型。
         // 共享实例页面销毁不调 release()（keepAlive 模型常驻）→ 不在 Main 线程 join/nativeRelease 阻塞、
         // 也不清掉游戏/漫画服务正在显示的共享状态浮层。
@@ -298,10 +303,13 @@ class TextTranslateFragment : Fragment() {
         val failedText = getString(R.string.translation_failed, "%s")
         lifecycleScope.launch {
             try {
-                t.getTranslationStreaming(
+                val request = TranslationRequestSlot()
+                activeTranslationRequest = request
+                request.attach(t.startTranslation(
                     text, srcCode, tgtCode,
                     onPhase = { phase ->
                         lifecycleScope.launch {
+                            if (activeTranslationRequest !== request || forceLeaveCancelled) return@launch
                             LogCollector.d(TAG, "translate: phase=$phase (+${System.currentTimeMillis() - tStart}ms)")
                             when (phase) {
                                 "prefill" -> b.outputText.text = readingText
@@ -313,11 +321,15 @@ class TextTranslateFragment : Fragment() {
                         val now = android.os.SystemClock.elapsedRealtime()  // 单调时钟：系统改时间/NTP 校准不会冻结输出
                         if (now - lastUiUpdate >= UI_THROTTLE_MS) {
                             lastUiUpdate = now
-                            lifecycleScope.launch { b.outputText.text = partial }
+                            lifecycleScope.launch {
+                                if (activeTranslationRequest === request && !forceLeaveCancelled) b.outputText.text = partial
+                            }
                         }
                     },
                     callback = { result ->
+                    request.finish()
                     lifecycleScope.launch {
+                        if (activeTranslationRequest !== request || forceLeaveCancelled) return@launch
                         val elapsed = System.currentTimeMillis() - tStart
                         LogCollector.d(TAG, "translate: 回调=${result.javaClass.simpleName} 总耗时=${elapsed}ms")
                         isTranslating = false
@@ -346,7 +358,7 @@ class TextTranslateFragment : Fragment() {
                         }
                     }
                 }
-            )
+            ))
             } catch (e: Exception) {
                 // 引擎同步抛异常（如自定义 API 配置非法、JSON 构建失败）：callback 永远不会触发，
                 // 手动恢复 UI 状态，否则 isTranslating 卡 true、按钮禁用、confirmLeave 无限拦截
@@ -374,7 +386,9 @@ class TextTranslateFragment : Fragment() {
                 leaveDialogShowing = false
                 pendingLeave = null
                 forceLeaveCancelled = true
-                translator?.cancelTranslation()
+                isTranslating = false
+                activeTranslationRequest?.cancel()
+                activeTranslationRequest = null
                 onLeave()
             }
             .setNegativeButton(R.string.text_translate_stay_button) { _, _ ->

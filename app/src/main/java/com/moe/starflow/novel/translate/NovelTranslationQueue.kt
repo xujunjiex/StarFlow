@@ -1,6 +1,5 @@
 package com.moe.starflow.novel.translate
 
-import com.moe.starflow.manga.OcrLock
 import com.moe.starflow.novel.data.ImportedNovel
 import com.moe.starflow.utils.LogCollector
 import kotlinx.coroutines.CoroutineScope
@@ -63,7 +62,7 @@ data class NovelQueueState(
  * 语义由 `NovelBatchPlannerTest` 与 `NovelTranslationQueueTest` 两处钉死。
  *
  * ⚠️ 三条纪律别改回去（都是踩过的坑）：
- * 1. **`OcrLock` 必须轮询等**，拿不到就 return 会让本轮什么都不做、下一轮又选到同一批 → 空转
+ * 1. 文本推理不持 OCR/SR 锁；本地引擎由请求工作线程统一串行，插图独立申请 OCR 锁
  * 2. **失败的批要记进 [failedAnchors] 跳过**，否则每轮重挑同一批 → 无限重试、额度烧光
  * 3. **面板打开时状态置空**（`NovelQueueState()`），否则用户看到一条永远不动的假进度
  *
@@ -74,8 +73,7 @@ data class NovelQueueState(
  * ⚠️ **自动模式恒为 1（串行）**：用户口径 2026-10-03「自动翻译只会一批一批向后翻译，
  * 前一批没结束不会去开启下一批；**只有增量与整章**才受最大请求数限制」。
  * 所以 [slots] 在 AUTO 下被夹成 1，N 只作用于 AHEAD（整章走 `ChapterJobRunner`，是另一条路）。
- * ⚠️ 但**持不持 `OcrLock` 只看引擎**（[serial] = `concurrency() == 1`）：锁的语义是"本地引擎串行"，
- * 与"自动模式串行"是两件事，别用 `slots == 1` 去推。
+
  *
  * ⚠️ 只是把「串行等结果」换成「最多 N 个在飞」，**推进语义一个字都没改**：
  * 锚点/成批仍走 [NovelBatchPlanner]、`done` 仍是 `已译 ∪ failedAnchors ∪ 在飞批段号`、
@@ -152,15 +150,8 @@ class NovelTranslationQueue(
     private companion object {
         const val TAG = "NovelTranslationQueue"
 
-        /** `OcrLock` 没有 await，只能轮询。 */
+        /** 等待运行条件恢复的轮询间隔。 */
         const val LOCK_POLL_MS = 200L
-        const val LOCK_WAIT_TIMEOUT_MS = 30_000L
-
-        /**
-         * 持锁期间的心跳间隔。必须**远小于** `OcrLock.STALE_TIMEOUT_MS`(30s) ——
-         * 本地引擎整批几分钟，不打心跳会被自愈机制误判成"持有者已死"（见 [withLockHeartbeat]）。
-         */
-        const val LOCK_HEARTBEAT_MS = 5_000L
 
         /** 停下之后的空转间隔（等用户翻页/切模式）。 */
         const val DRAINED_POLL_MS = 800L
@@ -270,10 +261,7 @@ class NovelTranslationQueue(
             val inflightParas = java.util.concurrent.ConcurrentHashMap.newKeySet<Int>()
             // 并发：**AUTO 恒 1**（用户口径 2026-10-03：「自动翻译只会一批一批向后翻译，
             // 前一批没结束不会去开启下一批」），N 只作用于增量（整章走 ChapterJobRunner 那条路）。
-            // ⚠️ `serial`（持 OcrLock）只看**引擎**并发，与 AUTO 被夹成 1 无关：那把锁是"本地引擎串行"，
-            // 远端 API 下 AUTO 也不该去抢 OCR 锁。
             val engineSlots = concurrency().coerceAtLeast(1)
-            val serial = engineSlots == 1
             val slots = if (mode == NovelTranslateMode.AUTO) 1 else engineSlots
             /** 已经为哪一屏排过防抖（`null` = 还没排过）。只在"这一屏第一次要翻"时排一次。 */
             var debouncedSpanKey: String? = null
@@ -436,14 +424,10 @@ class NovelTranslationQueue(
                     synchronized(lock) { batchesDone }, remaining,
                 )
 
-                // 并发 == 1（本地引擎）时**整批持 OcrLock** —— 与旧实现逐字一致，
-                // 也保证本地推理/别的翻译任务不会同时进来；并发 > 1（远端 API）不持锁：
-                // OcrLock 是 **OCR 引擎**锁，小说的翻译请求不碰 OCR（漫画 translatePhase 同样不持锁）
-                // ⚠️ 用 [serial]（只看引擎）而不是 `slots == 1`：AUTO 被夹成 1 是**调度**上的串行，
-                // 远端 API 下 AUTO 不该去抢 OCR 锁。
+                // 本地推理串行由请求工作线程保证；这里仅控制批次调度。
                 launch {
                     try {
-                        runInFlight(book, chapter, batch, serial) { result ->
+                        runInFlight(book, chapter, batch) { result ->
                             synchronized(lock) {
                                 if (result.isEmpty) {
                                     // 内容性失败（空响应 / 解析不出编号 / 锁超时）：记账跳过，别死循环重试
@@ -489,65 +473,23 @@ class NovelTranslationQueue(
         }
     }
 
-    /**
-     * 一个在飞批的实际请求：抢锁（仅 [serial] 且**批里没有插图**）→ 翻 → 落库。
-     *
-     * ⚠️ 与 [runBatch] 的区别只有两处：**不写 `_state`**（并发下多个工人会互相覆盖状态，
-     * 调度器才是状态的唯一写入者），以及只在 [serial] 时持 `OcrLock`（见调用点的说明）。
-     *
-     * ⚠️⚠️ **批里含插图时绝不能在外面持 `OcrLock`**（2026-10-04 真机事故：
-     * 「翻译过程中只要遇到图片就会卡住，等了很长时间显示：IllegalStateException:
-     * OCR 引擎被占用（别的翻译/超分正在跑），稍后再试」，而用户**没有任何别的占用**）：
-     * 插图翻译要**自己**拿这把锁做 OCR（`NovelImagePipeline.ocrWithLock`），而 `OcrLock` 不是
-     * 可重入的 —— 外面持着、里面再 `acquire()` 只会拿到 0，于是干等 60s 后报一句
-     * "OCR 引擎被占用"，把责任推给根本不存在的"别的任务"。
-     * AUTO 模式 `slots` 被夹成 1、以及本地引擎（`serial=true`）都会走进这条死路。
-     * 现在：含图批**不持外锁**（OCR 锁由插图流水线自己按张持有；批级串行由 `imageBusy` 保证）。
-     */
+    /** 执行并结算一批；OCR 锁只由插图流水线持有。 */
     private suspend fun runInFlight(
         book: ImportedNovel,
         chapterIndex: Int,
         batch: List<Int>,
-        serial: Boolean,
         settled: suspend (NovelBatchResult) -> Unit,
     ) {
-        val batchHasImage = batch.any {
-            runCatching { isImagePara(chapterIndex, it) }.getOrDefault(false)
-        }
-        val holdLock = serial && !batchHasImage
-        var lockToken = 0L
         try {
-            if (holdLock) {
-                _state.value = NovelQueueState(NovelQueuePhase.WAITING_LOCK, chapterIndex, batch)
-                lockToken = acquireLockWithWait()
-                if (lockToken == 0L) {
-                    settled(NovelBatchResult(emptyMap(), "翻译引擎被占用（别的翻译正在跑）"))
-                    return
-                }
-                _state.value = NovelQueueState(NovelQueuePhase.TRANSLATING, chapterIndex, batch)
-            }
-            settled(
-                withLockHeartbeat(lockToken) {
-                    translator.translateBatch(
-                        book = book,
-                        chapterIndex = chapterIndex,
-                        paragraphs = paragraphsOf(book, chapterIndex),
-                        paraIndexes = batch,
-                        sourceLang = sourceLang(),
-                        targetLang = targetLang(),
-                        translatorName = translatorName(),
-                    )
-                },
-            )
+            settled(translator.translateBatch(
+                book = book, chapterIndex = chapterIndex, paragraphs = paragraphsOf(book, chapterIndex),
+                paraIndexes = batch, sourceLang = sourceLang(), targetLang = targetLang(), translatorName = translatorName(),
+            ))
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
             LogCollector.e(TAG, "第 $chapterIndex 章翻译失败", e)
-            settled(
-                NovelBatchResult(emptyMap(), "${e.javaClass.simpleName}: ${e.message.orEmpty()}"),
-            )
-        } finally {
-            if (lockToken != 0L) OcrLock.release(lockToken)
+            settled(NovelBatchResult(emptyMap(), "${e.javaClass.simpleName}: ${e.message.orEmpty()}"))
         }
     }
 
@@ -651,82 +593,11 @@ class NovelTranslationQueue(
         chapterIndex: Int,
         batch: List<Int>,
     ): NovelBatchResult {
-        val batchHasImage = batch.any {
-            runCatching { isImagePara(chapterIndex, it) }.getOrDefault(false)
-        }
-        if (batchHasImage) {
-            _state.value = NovelQueueState(NovelQueuePhase.TRANSLATING, chapterIndex, batch)
-            return translator.translateBatch(
-                book = book,
-                chapterIndex = chapterIndex,
-                paragraphs = paragraphsOf(book, chapterIndex),
-                paraIndexes = batch,
-                sourceLang = sourceLang(),
-                targetLang = targetLang(),
-                translatorName = translatorName(),
-            )
-        }
-        _state.value = NovelQueueState(NovelQueuePhase.WAITING_LOCK, chapterIndex, batch)
-        val lockToken = acquireLockWithWait()
-        if (lockToken == 0L) return NovelBatchResult(emptyMap(), "翻译引擎被占用（别的翻译正在跑）")
-        try {
-            _state.value = NovelQueueState(NovelQueuePhase.TRANSLATING, chapterIndex, batch)
-            return withLockHeartbeat(lockToken) {
-                translator.translateBatch(
-                    book = book,
-                    chapterIndex = chapterIndex,
-                    paragraphs = paragraphsOf(book, chapterIndex),
-                    paraIndexes = batch,
-                    sourceLang = sourceLang(),
-                    targetLang = targetLang(),
-                    translatorName = translatorName(),
-                )
-            }
-        } finally {
-            OcrLock.release(lockToken)
-            _state.value = NovelQueueState()
-        }
-    }
-
-    /**
-     * 持锁跑 [block]，整段期间在后台打心跳（[token] 为 0 = 没持锁，直接跑）。
-     *
-     * ⚠️ **心跳是必须的**：本地引擎（LlamaCpp / NLLB）一整批可以跑几分钟，而 `OcrLock` 的
-     * `STALE_TIMEOUT_MS`(30s) 无心跳自愈会把**仍活着**的持有者判成死锁 → 强制放锁 →
-     * 另一个翻译任务（另一本书的章节任务 / 漫画阅读器 OCR / 超分）随即拿到锁，
-     * 两个线程同时用同一个本地引擎。漫画侧 `ReaderTranslationController.runTranslate`
-     * 一直在这么打，小说侧这两处一直漏。
-     */
-    private suspend fun <T> withLockHeartbeat(token: Long, block: suspend () -> T): T {
-        if (token == 0L) return block()
-        return coroutineScope {
-            // ⚠️ **不要写 `launch(Dispatchers.IO)`**：本 queue 的 scope 在宿主那边就是应用级
-            //    `Dispatchers.IO`，继承即可；显式指定真实派发器会把「跑到真实线程池上」
-            //    这个非确定性带进用 `runTest` 虚拟时钟写的单测里（实测让 `NovelTranslationQueueTest`
-            //    多挑一轮批次而挂掉）。心跳本身只是一次赋值，不需要专门换线程。
-            val ticker = launch {
-                while (isActive) {
-                    OcrLock.heartbeat(token)
-                    delay(LOCK_HEARTBEAT_MS)
-                }
-            }
-            try {
-                block()
-            } finally {
-                ticker.cancel()
-            }
-        }
-    }
-
-    /** 轮询等锁：拿到 true；超时 false。 */
-    private suspend fun acquireLockWithWait(): Long {
-        var waited = 0L
-        while (true) {
-            OcrLock.acquire().let { if (it != 0L) return it }
-            if (waited >= LOCK_WAIT_TIMEOUT_MS) return 0L
-            delay(LOCK_POLL_MS)
-            waited += LOCK_POLL_MS
-        }
+        _state.value = NovelQueueState(NovelQueuePhase.TRANSLATING, chapterIndex, batch)
+        return translator.translateBatch(
+            book = book, chapterIndex = chapterIndex, paragraphs = paragraphsOf(book, chapterIndex),
+            paraIndexes = batch, sourceLang = sourceLang(), targetLang = targetLang(), translatorName = translatorName(),
+        )
     }
 
     fun stop() {

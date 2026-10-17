@@ -22,6 +22,7 @@ import java.util.zip.ZipFile
 class ChapterSource(
     val text: String,
     val images: List<ByteArray?> = emptyList(),
+    val fontSizeSpans: List<NovelFontSizeSpan> = emptyList(),
 ) {
     companion object {
         val EMPTY = ChapterSource("")
@@ -51,6 +52,10 @@ interface NovelParser {
      * - FOLDER = `"<夹内相对路径>"`；夹内 epub 的某一章是 `"<相对路径>|<epub 内 locator>"`
      */
     suspend fun loadChapter(file: File, locator: String): String
+
+    /** Read chapter text with optional source typography. Non-EPUB formats use plain text. */
+    suspend fun loadChapterText(file: File, locator: String): ChapterText =
+        ChapterText(loadChapter(file, locator))
 
     /**
      * 读取一章的**正文 + 内嵌图片**（见 [ChapterSource]）。

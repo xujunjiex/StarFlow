@@ -22,6 +22,8 @@ data class NovelChapterMeta(
     val index: Int,
     val title: String,
     val locator: String,
+    /** Spine 中的封面/导航等辅助条目仍保留在章节目录，但打开新书时不作为正文起点。 */
+    val isAuxiliary: Boolean = false,
 )
 
 /**

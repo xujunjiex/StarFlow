@@ -64,7 +64,6 @@ import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.LogCollector
 import com.moe.starflow.utils.TranslationConcurrency
 import com.moe.starflow.utils.TranslationExecutionMode
-import com.moe.starflow.utils.LocalTranslationCoordinator
 import com.moe.starflow.utils.TranslationBusyRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -110,9 +109,11 @@ sealed interface TranslateClick {
     data class CancelledBatch(val text: String) : TranslateClick
     /** 手动模式下开始翻译当前页（已在控制器内启动）。 */
     data object StartedManual : TranslateClick
+    /** 手动空闲时双击：已切到自动模式并启动队列。 */
+    data object StartedAuto : TranslateClick
     /** OCR 引擎被占用（截屏翻译正在翻 / 上一次取消的任务还没退出 native）→ 提示用户稍后。 */
     data object Busy : TranslateClick
-    /** 无事可做（空闲时双击 / Webtoon 模式禁用）。 */
+    /** 无事可做（Webtoon 模式禁用）。 */
     data object Ignored : TranslateClick
 }
 
@@ -1256,13 +1257,14 @@ class ReaderTranslationController(
     fun resumeFromBackground() {
         if (!backgroundPaused) return
         backgroundPaused = false
+        setPageModeBusy(translateMode.value != MODE_MANUAL)
         restartQueue()
     }
 
     private var manualJob: Job? = null
     @Volatile private var pageModeBusyHeld = false
 
-    private fun setPageModeBusy(active: Boolean) {
+    @Synchronized private fun setPageModeBusy(active: Boolean) {
         if (active && !pageModeBusyHeld) {
             pageModeBusyHeld = true
             TranslationBusyRegistry.enter()
@@ -1368,6 +1370,7 @@ class ReaderTranslationController(
      */
     private fun pauseToManual() {
         cancelEverything()
+        setPageModeBusy(false)
         if (translateMode.value != MODE_MANUAL) {
             translateMode.value = MODE_MANUAL
             version.value += 1
@@ -1415,7 +1418,7 @@ class ReaderTranslationController(
                     if (OcrLock.isRunning) {
                         if (!waitingNotified) {
                             waitingNotified = true
-                            LogCollector.d(TAG, "queue: OcrLock busy, waiting")
+                            LogCollector.d(TAG, "queue: OCR busy, ${OcrLock.describeOwner()}")
                             onPhase(
                                 if (isOcrOnlyMode()) ReaderTranslatePhase.DETECTING else ReaderTranslatePhase.TRANSLATING,
                                 context.getString(
@@ -1725,6 +1728,10 @@ class ReaderTranslationController(
         else -> BusySource.NONE
     }
 
+    /** 手动空闲且共享执行锁未占用时，Activity 可暂缓单击以识别「双击开启自动」。 */
+    fun canStartAutoFromTranslateButton(): Boolean =
+        translateMode.value == MODE_MANUAL && busySource() == BusySource.NONE && !OcrLock.isRunning
+
     /**
      * 被挡时的**单击提示**（只说"先关掉谁"，不打断）。`NONE` 不该被调，兜底给空串。
      *
@@ -1749,6 +1756,7 @@ class ReaderTranslationController(
         // 页面模式 = 翻译按钮的老语义：强制退出 + 回退手动
         BusySource.PAGE_MODE -> {
             cancelEverything()
+            setPageModeBusy(false)
             translateMode.value = MODE_MANUAL
             version.value += 1
             context.getString(
@@ -2060,12 +2068,12 @@ class ReaderTranslationController(
     }
 
     private suspend fun acquireOcrLockWithWait(page: Int): Long {
-        OcrLock.acquire().let { if (it != 0L) return it }
+        OcrLock.acquire(currentCoroutineContext()[Job], "reader OCR page=$page").let { if (it != 0L) return it }
         var waited = 0L
         while (waited < OCR_LOCK_WAIT_TIMEOUT_MS) {
             delay(OCR_LOCK_POLL_MS)
             waited += OCR_LOCK_POLL_MS
-            OcrLock.acquire().let { if (it != 0L) return it }
+            OcrLock.acquire(currentCoroutineContext()[Job], "reader OCR page=$page").let { if (it != 0L) return it }
             if (waited % 5_000L < OCR_LOCK_POLL_MS) {
                 LogCollector.d(TAG, "OCR 阶段：等待引擎锁 ${waited}ms（page=$page，持有 ${OcrLock.heldMs()}ms）")
             }
@@ -2120,6 +2128,8 @@ class ReaderTranslationController(
             val (det, ocr) = try {
                 // startHeartbeat 覆盖模型加载和后续 native OCR，避免长页识别触发 30s 锁自愈。
                 TranslationEngineInit.ensureReady(context)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 LogCollector.e(TAG, "engine init failed page=$page", e)
                 val msg = context.getString(R.string.reader_translate_model_missing, e.message.orEmpty())
@@ -2218,7 +2228,6 @@ class ReaderTranslationController(
         // ⚠️ 声明在 try 之外：`finally` 里要 `join()` 它再回收 prep.bitmap
         //    （并行超分时那张图还在用）。—— 分支的超分接线，合并时保留
         var srJob: Job? = null
-        var localTranslationLockHeld = false
         val startedAt = System.currentTimeMillis()
         // ⚠️ **进入/离开翻译阶段各留一条日志**：这段以前只有"成功"才打日志，
         // 于是"进没进来、是不是卡住了"完全看不出来（排查 2026-09-28 那个 bug 时吃了大亏）。
@@ -2256,12 +2265,6 @@ class ReaderTranslationController(
             // • 本地引擎（LlamaCpp/NLLB）：都是 CPU 重活，**必须串行** → 立刻 join
             // ⚠️ 只有**增量**这条路才自动超分（见 [allowAutoSr]）；翻译本章是纯翻译批量。
             if (translator.isLocalHeavyEngine()) srJob?.join()
-            // Local translation is a process-wide native/CPU singleton. Keep different reader
-            // controllers from entering NLLB/LlamaCpp at the same time.
-            if (translator.isLocalHeavyEngine()) {
-                LocalTranslationCoordinator.mutex.lock()
-                localTranslationLockHeld = true
-            }
             val overlayConfig = cacheManager.getOverlayConfig(appPrefs)
             val cfg = BatchPipelineConfig(
                 detEngine = prep.det,
@@ -2353,10 +2356,6 @@ class ReaderTranslationController(
             //    → 后面那行 recycle 永不执行（取消一整批页时留下可观的 native 堆峰值）。
             if(!currentCoroutineContext().isActive)srJob?.cancel()
             withContext(NonCancellable) { runCatching { srJob?.join() } }
-            if (localTranslationLockHeld) {
-                LocalTranslationCoordinator.mutex.unlock()
-                localTranslationLockHeld = false
-            }
             if (!prep.bitmap.isRecycled) prep.bitmap.recycle()
             LogCollector.d(
                 TAG,
@@ -2497,11 +2496,11 @@ class ReaderTranslationController(
 
     /**
      * 翻译按钮点击（三模式统一）：
-     * - **单击** → 只弹提示，**绝不打断**（提示"正在翻译 Pxx 页，双击暂停翻译"）
-     * - **双击** → 强制取消当前翻译并回退到手动模式
-     * - 手动模式空闲时单击 → 开始翻译当前页
+     * - 页面模式 / 前台任务运行时：**单击**只提示，**双击**取消并回退手动模式
+     * - 手动空闲时：**单击**开始翻当前页，**双击**切到自动模式
      *
-     * [isDouble] 由 Activity 按双击时间窗判定后传入。
+     * [isDouble] 由 Activity 按双击时间窗判定后传入；手动空闲时 Activity 会延迟单击 300ms，
+     * 避免双击快捷开启自动时先误启动一页手动翻译。
      */
     fun onTranslateButtonClick(isDouble: Boolean): TranslateClick {
         // ⚠️ 判据收敛到 [busySource]（用户口径 2026-10-01）：以前这里只认"页面模式 + 翻译本章"，
@@ -2520,23 +2519,30 @@ class ReaderTranslationController(
             return TranslateClick.CancelledBatch(cancelBusy(source))
         }
 
-        // 手动模式且空闲
-        if (isDouble) return TranslateClick.Ignored
         // 引擎被占用（截屏翻译在翻 / 上一次取消的任务仍卡在 native OCR 中，PP-OCR 要 1~3s 才退出）：
-        // 直接反馈，否则这一击被静默吞掉、按钮看起来像坏了。
+        // 单击直接反馈；双击也不能把「引擎忙」误判成「手动空闲」，更不能启动自动队列。
         if (OcrLock.isRunning) {
             // ⚠️ "点了没反应"排查关键：这条说明锁被别的翻译占着（截屏翻译在跑 / 上一次取消的任务
             // 还卡在 native OCR 里）。频繁出现 = 有地方没释放锁，别当成用户没点。
-            LogCollector.w(TAG, "翻译按钮：OcrLock 被占用 → 提示忙（page=$currentPageProvider()）")
+            LogCollector.w(TAG, "翻译按钮：OcrLock 被占用 → 提示忙（page=${currentPageProvider()}，${OcrLock.describeOwner()}）")
             // ⚠️ **超分也抢这把锁**（v2 起自动超分在翻译结束、锁释放后立刻启动）——
             //    那种情况下面文案必须说清是谁在占，否则用户看到"翻译引擎被占用"会以为坏了。
             //    （R6.5 把手动路径的锁范围缩到 OCR 之后，这条提示自然就消失了。）
-            return if (SrProcessor.isBusy()) {
+            return if (OcrLock.isStopping) {
+                TranslateClick.Hint(context.getString(R.string.reader_ocr_stopping))
+            } else if (SrProcessor.isBusy()) {
                 TranslateClick.Hint(context.getString(R.string.reader_translate_busy_sr))
             } else {
                 TranslateClick.Busy
             }
         }
+        // 手动模式空闲时，Activity 已用 300ms 窗口确认这是真正的双击。
+        // 开启自动模式会取消任何残留的手动态并启动同一条页面队列。
+        if (isDouble) {
+            setMode(MODE_AUTO)
+            return TranslateClick.StartedAuto
+        }
+
         val page = currentPageProvider()
         queuePage.value = page
         val job = scope.launch(Dispatchers.IO) {
@@ -2604,6 +2610,7 @@ class ReaderTranslationController(
         // 以前这里是唯一把"共用取消标志"置 true 的地方，而章节页读的是同一个标志，
         // 于是"启动章节任务前先停队列"这一步会把整章打成"已取消"（见 ReaderCancelSignals）。
         readerCancel.cancelAll()
+        setPageModeBusy(false)
         autoSrJobs.values.forEach {it.cancel()}
         queueJob?.cancel()
         queueJob = null
@@ -2764,7 +2771,7 @@ class ReaderTranslationController(
                 return
             }
         }
-        val ocrToken = OcrLock.acquire()
+        val ocrToken = OcrLock.acquire(currentCoroutineContext()[Job], "reader OCR page=$page")
         if (ocrToken == 0L) {
             LogCollector.d(TAG, "runTranslate: OcrLock 被占用，跳过 page=$page")
             return
@@ -2778,14 +2785,17 @@ class ReaderTranslationController(
         //   · `srStarted`：判断"超分是否已启动过"，收尾时才决定要不要兜底启动。
         var lockHeld = true
         var srStarted = false
-        // ⚠️ 本方法**从 OCR 一直持锁到翻译结束**（自动模式要页内分批+流式），一次最长可达分钟级，
-        // 而 OcrLock 的 30s 无心跳自愈会把仍活着的持有者误判成死锁 → 强制释放 → 单例引擎被并发调用。
-        // 这里整段持锁期间后台打心跳（5s 一次），把这个误判的窗口堵死。
+        // 分批路径仍在交错识别；其余路径在 onOcrDone 释放，文本推理不持 OCR 锁。
         val heartbeatJob = OcrLock.startHeartbeat(ocrToken, OCR_LOCK_POLL_MS * 100)
 
         // 引擎组与语言先解析出来：逐气泡日志的「来源/引擎」字段要它们，失败记录也要它们兜底
         val (det, ocr) = try {
             TranslationEngineInit.ensureReady(context)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            heartbeatJob.cancel()
+            OcrLock.release(ocrToken)
+            readerCancel.retire(cancel)
+            throw e
         } catch (e: Exception) {
             LogCollector.e(TAG, "engine init failed page=$page", e)
             val msg = context.getString(R.string.reader_translate_model_missing, e.message.orEmpty())
@@ -2859,24 +2869,12 @@ class ReaderTranslationController(
                     page = page,
                     cancelled = { cancel.get() },
                     onOcrDone = ocrDone@{ t ->
-                        // ⚠️ **只有手动路径（`!fromQueue`）提前放锁**，两条理由：
-                        //
-                        // ① **队列路径本来就没有跨页重叠**（拆锁前逐页串行，拆锁后也不该引入）：
-                        //    自动/增量模式会连续翻很多页，一旦放锁就变成「上一页在发请求、这一页在
-                        //    OCR」—— 而两页共享的 AI 上下文历史 `readerContextHistory` 是
-                        //    **LinkedList（非线程安全）**，分批路线（`forceContext=true`）会
-                        //    `size`/`addLast`/`trimInPlace`/回滚并发踩踏。那是既存隐患
-                        //    （章节路径 `incrementalEnabled=false` 走不到分批流程，所以现在没暴露），
-                        //    **不该借着这次拆锁把它扩大到阅读器队列**。
-                        // ② 手动路径同一时刻只有一个任务（`manualJob` 串行 + 队列只在非手动模式跑），
-                        //    提前放锁**不引入任何跨页并发** —— 用户口径「点了翻译之后超分与翻译请求
-                        //    并行」说的正是这一条路径。
-                        if (fromQueue) return@ocrDone   // 队列：什么都不做，交给 finally 兜底
-
+                        // Queue order is preserved by awaiting runTranslate; text inference does not own OCR.
                         // ① 放锁：往下只剩翻译请求，不碰 OCR 引擎单例
                         if (lockHeld) {
                                 // ⚠️ 必须带 token：无参 release 会把**别人的**锁放掉
                                 //（30s 自愈强释后旧持有者 finally 再放一次 → 第三个调用方闯进单例引擎）
+                                heartbeatJob.cancel()
                                 OcrLock.release(ocrToken)
                                 lockHeld = false
                             }

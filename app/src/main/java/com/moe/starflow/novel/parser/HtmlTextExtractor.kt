@@ -163,7 +163,7 @@ object HtmlTextExtractor {
      * 本来就宽容（所以 `</head >` 一直能剥），这里只是把 script/style 统一过来；完本文档
      * （`</script>`）两边行为完全一致。
      */
-    private fun stripClosedBlock(html: String, tag: String): String {
+    internal fun stripClosedBlock(html: String, tag: String): String {
         val open = "<$tag"
         val close = "</$tag"
         var from = 0
@@ -254,7 +254,7 @@ object HtmlTextExtractor {
      *
      * 认不出的实体原样保留（宁可显示 `&foo;`，也不要静默吞掉）。
      */
-    private fun decodeEntities(s: String): String = ENTITY.replace(s) { m ->
+    internal fun decodeEntities(s: String): String = ENTITY.replace(s) { m ->
         val body = m.groupValues[1]
         if (body.startsWith("#")) {
             val code = if (body.startsWith("#x", ignoreCase = true)) {

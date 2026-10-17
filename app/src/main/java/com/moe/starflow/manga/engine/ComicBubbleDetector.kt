@@ -59,6 +59,7 @@ object ComicBubbleDetector {
      * 初始化模型。仅从 filesDir 加载（需先下载）。
      */
     suspend fun initialize(context: Context) {
+        OcrExecution.checkCancellation()
         if (isInitialized) return
 
         val modelFile = RTDetrModelFiles.getFilesDirModelFile(context)
@@ -105,36 +106,7 @@ object ComicBubbleDetector {
             val origW = bitmap.width
             val origH = bitmap.height
 
-            // 预处理
-            val inputTensor = preprocessImage(bitmap)
-            val sizeTensor = OnnxTensor.createTensor(
-                ortEnv!!,
-                java.nio.LongBuffer.wrap(longArrayOf(origW.toLong(), origH.toLong())),
-                longArrayOf(1, 2)
-            )
-
-            // 推理
-            val inputs = mapOf(
-                "images" to inputTensor,
-                "orig_target_sizes" to sizeTensor
-            )
-            val results = session!!.run(inputs)
-            inputTensor.close()
-            sizeTensor.close()
-
-            // 解析输出
-            val labelsTensor = results.get("labels").get() as OnnxTensor
-            val boxesTensor = results.get("boxes").get() as OnnxTensor
-            val scoresTensor = results.get("scores").get() as OnnxTensor
-
-            val labels = OnnxUtils.extractLongArray(labelsTensor)
-            val boxes = OnnxUtils.extractFloatArray(boxesTensor)
-            val scores = OnnxUtils.extractFloatArray(scoresTensor)
-
-            labelsTensor.close()
-            boxesTensor.close()
-            scoresTensor.close()
-            results.close()
+            val (labels, boxes, scores) = infer(bitmap)
 
             // 后处理：NMS 去重（不过滤类别，由调用方决定保留哪些）
             postprocessAllClasses(labels, boxes, scores, confThreshold)
@@ -160,26 +132,7 @@ object ComicBubbleDetector {
         try {
             val origW = bitmap.width
             val origH = bitmap.height
-            val inputTensor = preprocessImage(bitmap)
-            val sizeTensor = OnnxTensor.createTensor(
-                ortEnv!!,
-                java.nio.LongBuffer.wrap(longArrayOf(origW.toLong(), origH.toLong())),
-                longArrayOf(1, 2)
-            )
-            val results = session!!.run(mapOf("images" to inputTensor, "orig_target_sizes" to sizeTensor))
-            inputTensor.close()
-            sizeTensor.close()
-
-            val labelsTensor = results.get("labels").get() as OnnxTensor
-            val boxesTensor = results.get("boxes").get() as OnnxTensor
-            val scoresTensor = results.get("scores").get() as OnnxTensor
-            val labels = OnnxUtils.extractLongArray(labelsTensor)
-            val boxes = OnnxUtils.extractFloatArray(boxesTensor)
-            val scores = OnnxUtils.extractFloatArray(scoresTensor)
-            labelsTensor.close()
-            boxesTensor.close()
-            scoresTensor.close()
-            results.close()
+            val (labels, boxes, scores) = infer(bitmap)
 
             // 调试模式：不过滤 classId=0，全部返回
             val candidates = mutableListOf<Triple<Int, RectF, Float>>()
@@ -205,6 +158,20 @@ object ComicBubbleDetector {
         } catch (e: Exception) {
             LogCollector.e(TAG, "调试检测失败", e)
             throw e
+        }
+    }
+
+    private data class Output(val labels: LongArray, val boxes: FloatArray, val scores: FloatArray)
+
+    private fun infer(bitmap: Bitmap): Output = preprocessImage(bitmap).use { input ->
+        OnnxTensor.createTensor(ortEnv!!,
+            java.nio.LongBuffer.wrap(longArrayOf(bitmap.width.toLong(), bitmap.height.toLong())),
+            longArrayOf(1, 2)).use { size ->
+            OcrExecution.run(session!!, mapOf("images" to input, "orig_target_sizes" to size)).use { result ->
+                Output(OnnxUtils.extractLongArray(result.get("labels").get() as OnnxTensor),
+                    OnnxUtils.extractFloatArray(result.get("boxes").get() as OnnxTensor),
+                    OnnxUtils.extractFloatArray(result.get("scores").get() as OnnxTensor))
+            }
         }
     }
 

@@ -1,0 +1,21 @@
+# Legacy source-text assertions. Opt in with :app:testSourceGuards.
+# Paths are relative to app/src/test/java. Mixed behavior/source tests stay in the normal suite.
+translationapi/TranslationEngineRequestCancelGuardTest.kt
+com/moe/starflow/download/ModelDownloadRepositorySelfHealingTest.kt
+com/moe/starflow/sr/SrProcessorLockGuardTest.kt
+com/moe/starflow/sr/SrReaderWiringTest.kt
+com/moe/starflow/sr/SrRecordSystemWiringTest.kt
+com/moe/starflow/translate/OrientationHandlerOrderingTest.kt
+com/moe/starflow/translate/TranslationStatusOverlayInvariantsTest.kt
+com/moe/starflow/utils/ReaderThemeGuardTest.kt
+com/moe/starflow/mangaimport/data/PdfImportWiringTest.kt
+com/moe/starflow/mangaimport/reader/PanelThemeGuardTest.kt
+com/moe/starflow/mangaimport/reader/ReaderBusyExclusionGuardTest.kt
+com/moe/starflow/mangaimport/reader/ReaderNoticeOutletTest.kt
+com/moe/starflow/mangaimport/reader/ReaderTopPillInsetTest.kt
+com/moe/starflow/mangaimport/translate/ChapterTranslationCancelGuardTest.kt
+com/moe/starflow/mangaimport/translate/ReaderControllerConcurrencyTest.kt
+com/moe/starflow/mangaimport/translate/ReaderIncrementalConcurrencyGuardTest.kt
+com/moe/starflow/novel/reader/NovelImageEditWiringTest.kt
+com/moe/starflow/novel/reader/NovelReaderTranslateRulesTest.kt
+com/moe/starflow/novel/translate/NovelImageConcurrencyGuardTest.kt

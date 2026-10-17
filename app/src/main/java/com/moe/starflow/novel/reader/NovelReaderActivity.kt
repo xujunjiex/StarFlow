@@ -115,6 +115,9 @@ class NovelReaderActivity : AppCompatActivity() {
         /** 视口尺寸变化后的重排防抖（尺寸是连续事件，见 [scheduleRepaginate]）。 */
         private const val REPAGINATE_DEBOUNCE_MS = 180L
 
+        /** 快速章节不闪等待态；长章节超过此时间后展示进度动画。 */
+        private const val CHAPTER_LOADING_INDICATOR_DELAY_MS = 180L
+
         /** 滚动模式按比例跳转时最多补齐几次（估算值会漂、一次 scrollBy 未必吃到目标，见 [seekScrollTo]）。 */
         private const val MAX_SEEK_PASSES = 60
 
@@ -195,6 +198,10 @@ class NovelReaderActivity : AppCompatActivity() {
 
     /** 翻译按钮双击判定用的上次单击时刻（elapsedRealtime）。 */
     private var lastTranslateClickMs = 0L
+
+    /** 手动空闲时暂缓第一次单击，以便区分单击翻一批与双击开启自动模式。 */
+    private var pendingManualTranslateClick: Runnable? = null
+    private var pendingManualTranslateClickMs = 0L
     private var lastInteractionMs = 0L
     private var rotateMode = 0
 
@@ -286,6 +293,10 @@ class NovelReaderActivity : AppCompatActivity() {
      * 一旦让过期结果落地就会把用户已经翻好的位置拽回去 —— 表现为「翻页/切章都没反应」。
      */
     private var loadToken = 0
+
+    /** Loading a newer chapter/reflow supersedes the old full-chapter parse and pagination job. */
+    private var chapterLoadJob: Job? = null
+    private var chapterLoadingRunnable: Runnable? = null
 
     /** 本次离开是去「个性化设置」页 —— 返回时重建 Activity，让设置项真正生效。 */
     private var returnedFromSettings = false
@@ -421,7 +432,8 @@ class NovelReaderActivity : AppCompatActivity() {
         rotateMode = prefs.getInt(KEY_ROTATE, 0)
 
         val id = intent.getLongExtra(EXTRA_NOVEL_ID, -1L)
-        lifecycleScope.launch {
+        val startupLoadToken = loadToken
+        val startupJob = lifecycleScope.launch {
         try {
             com.moe.starflow.library.LibrarySessions.prepare(this@NovelReaderActivity)
             com.moe.starflow.library.LibrarySessions.checkReaderIntent(this@NovelReaderActivity, intent, "novel", id)
@@ -429,20 +441,44 @@ class NovelReaderActivity : AppCompatActivity() {
             if (e is kotlinx.coroutines.CancellationException) throw e
             com.moe.starflow.utils.AppNotice.show(this@NovelReaderActivity, e.message ?: "入口已失效"); finish(); return@launch
         }
-        val loaded = NovelStore.load(this@NovelReaderActivity).firstOrNull { it.id == id }
-        if (loaded == null) {
+        val foundBook = NovelStore.load(this@NovelReaderActivity).firstOrNull { it.id == id }
+        if (foundBook == null) {
             LogCollector.w(TAG, "找不到书籍 id=$id，关闭阅读器")
             finish()
             return@launch
         }
+        var loaded = foundBook
         book = loaded
         librarySourceLease = com.moe.starflow.library.LibrarySources.acquire(java.io.File(loaded.localRoot))
-        chapterCount = loaded.chapterCount
 
         // ⚠️ 传 `novel_import/` 作为插图落盘根目录：epub 里的插图在这一层解出来，
         // 落到独立的隐藏图片缓存目录（按 id + addedAt 隔离，删书时一起清掉）。
         // 不传的话图片段就永远是占位文本 `📷 [图片]`（阅读器是唯一需要真图的地方）
         repository = NovelChapterRepository(imagesRoot = NovelStorageDir.root(this@NovelReaderActivity))
+        beginChapterLoading(startupLoadToken)
+        val parsedChapters = repository.chaptersOf(loaded)
+        if (parsedChapters.isNotEmpty()) {
+            val actualChapterCount = parsedChapters.size
+            val firstContentChapter = parsedChapters.indexOfFirst { !it.isAuxiliary }
+                .takeIf { it >= 0 } ?: 0
+            val savedChapterIsAuxiliary = parsedChapters
+                .getOrNull(loaded.lastReadChapter)
+                ?.isAuxiliary == true
+            val needsPositionReset = loaded.lastReadChapter !in parsedChapters.indices || savedChapterIsAuxiliary
+            if (actualChapterCount != loaded.chapterCount || needsPositionReset) {
+                loaded = loaded.copy(
+                    chapterCount = actualChapterCount,
+                    lastReadChapter = if (needsPositionReset) firstContentChapter else loaded.lastReadChapter,
+                    lastReadParaIndex = if (needsPositionReset) 0 else loaded.lastReadParaIndex,
+                    lastReadPage = if (needsPositionReset) 0 else loaded.lastReadPage,
+                )
+                NovelStore.update(this@NovelReaderActivity, loaded)
+                book = loaded
+            }
+            chapterCount = actualChapterCount
+        } else {
+            chapterCount = loaded.chapterCount
+        }
         pageAdapter = NovelPageAdapter()
         scrollAdapter = NovelScrollAdapter()
         binding.novelPager.adapter = pageAdapter
@@ -468,6 +504,13 @@ class NovelReaderActivity : AppCompatActivity() {
             chapterIndex = savedInstanceState.getInt(STATE_CURRENT_CHAPTER, chapterIndex)
             pendingAnchor = NovelAnchor(savedInstanceState.getInt(STATE_ANCHOR_PARA, pendingAnchor.paraIndex),
                 savedInstanceState.getFloat(STATE_ANCHOR_FRACTION, pendingAnchor.fraction))
+        }
+        if (chapterIndex !in 0 until chapterCount ||
+            parsedChapters.getOrNull(chapterIndex)?.isAuxiliary == true
+        ) {
+            chapterIndex = parsedChapters.indexOfFirst { !it.isAuxiliary }
+                .takeIf { it >= 0 } ?: 0
+            pendingAnchor = NovelAnchor(0)
         }
 
         // 章批量翻译的**应用级宿主**：同一本书永远只有一份（任务/进度不会分裂）
@@ -508,6 +551,11 @@ class NovelReaderActivity : AppCompatActivity() {
             refreshChapterStats()
             refreshTranslations()
         }
+        }
+        startupJob.invokeOnCompletion {
+            if (!isDestroyed && ::binding.isInitialized) {
+                binding.novelLoading.post { finishChapterLoading(startupLoadToken) }
+            }
         }
     }
 
@@ -566,6 +614,8 @@ class NovelReaderActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
+        cancelPendingManualTranslateClick()
+        lastTranslateClickMs = 0L
         autoTurnJob?.cancel()
         autoTurnJob = null
         // 摘掉整章任务的插图进度回调（宿主是应用级的，挂着就是泄漏 + 往死界面刷 UI）
@@ -675,9 +725,14 @@ class NovelReaderActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        cancelPendingManualTranslateClick()
+        lastTranslateClickMs = 0L
         val closingLease = librarySourceLease
         librarySourceLease = null
         val finishingLifecycle = lifecycleScope.coroutineContext[kotlinx.coroutines.Job]
+        finishChapterLoading(loadToken)
+        chapterLoadJob?.cancel()
+        chapterLoadJob = null
         com.moe.starflow.library.LibrarySessions.release {
             finishingLifecycle?.join()
             try { closingLease?.close() } finally { libraryReadLease.close() }
@@ -914,7 +969,11 @@ class NovelReaderActivity : AppCompatActivity() {
         // 滚动模式：滚动即翻段，同步当前段/进度条/lastRead
         binding.novelScroll.clipToPadding = false
         binding.novelScroll.addOnScrollListener(object : RecyclerView.OnScrollListener() {
-            override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) = updateFromScroll()
+            override fun onScrolled(rv: RecyclerView, dx: Int, dy: Int) {
+                cancelPendingManualTranslateClick()
+                lastTranslateClickMs = 0L
+                updateFromScroll()
+            }
         })
         // ⚠️ **程序化跳转不派发 onScrolled**：换章/续读走的是 `scrollToPosition`，
         // 布局跑完才知道自己滚到了哪 —— 少了这一句，从中间续读长章节时进度条会一直停在 0
@@ -1020,6 +1079,8 @@ class NovelReaderActivity : AppCompatActivity() {
         }
 
         override fun onPageSelected(position: Int) {
+            cancelPendingManualTranslateClick()
+            lastTranslateClickMs = 0L
             if (animationMode == NovelPanelStyle.ANIM_NONE) animState.anchorPage = position
             // 跳页（setCurrentItem(_, false)，无动画模式与点击翻页都走它）不会产生滚动，
             // 于是**不会有任何一次 transformPage 去把新页从"动画中途态"复位**。
@@ -1098,6 +1159,8 @@ class NovelReaderActivity : AppCompatActivity() {
     }
 
     private fun toggleChrome() {
+        cancelPendingManualTranslateClick()
+        lastTranslateClickMs = 0L
         chromeHidden = !chromeHidden
         lastInteractionMs = SystemClock.elapsedRealtime()
         applyChromeVisibility()
@@ -1234,6 +1297,8 @@ class NovelReaderActivity : AppCompatActivity() {
      * 那样"点一下会发生什么"取决于看不见的译文状态。
      */
     private fun handleLongPress(x: Float, y: Float) {
+        cancelPendingManualTranslateClick()
+        lastTranslateClickMs = 0L
         lastInteractionMs = SystemClock.elapsedRealtime()
         val para = paragraphAt(x, y)
         if (para == null) return
@@ -1672,6 +1737,8 @@ class NovelReaderActivity : AppCompatActivity() {
      * 拖了没反应就是「控件在、功能不在」。滚动模式的 [page] 是 [NovelScrollProgress] 的格。
      */
     private fun goToPage(page: Int) {
+        cancelPendingManualTranslateClick()
+        lastTranslateClickMs = 0L
         val pages = content?.pages ?: return
         if (isScrollMode()) {
             seekScrollTo(NovelScrollProgress.fractionOfStep(page))
@@ -1723,6 +1790,8 @@ class NovelReaderActivity : AppCompatActivity() {
             toast(R.string.novel_last_chapter)
             return
         }
+        cancelPendingManualTranslateClick()
+        lastTranslateClickMs = 0L
         // 选择集是按**段号**记的，换章后段号会撞上别的段 —— 必须先清
         exitSelection()
         // 换章：位置由目标章自己决定，不许带上上一章的带位锚点；高亮同理
@@ -1892,7 +1961,9 @@ class NovelReaderActivity : AppCompatActivity() {
             refreshRecentHighlight()
         }
         val token = ++loadToken
-        lifecycleScope.launch {
+        chapterLoadJob?.cancel()
+        beginChapterLoading(token)
+        chapterLoadJob = lifecycleScope.launch {
             val style = NovelPanelStyle.textStyle(this@NovelReaderActivity, prefs)
             val w = binding.root.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
             val h = binding.root.height.takeIf { it > 0 } ?: resources.displayMetrics.heightPixels
@@ -1901,11 +1972,21 @@ class NovelReaderActivity : AppCompatActivity() {
             // 那个表是「paraIndex -> 译文」，换章后 paraIndex 会撞上，于是新章每一段都显示
             // **上一章同一段号的译文** —— 用户看到的就是「切了章内容却一点没变」。
             // 而且分页是在「显示文本」上做的，译文换了就必须重排。
-            val map = runCatching { translator().loadTranslations(b, index) }
-                .getOrDefault(translations)
+            val map = try {
+                translator().loadTranslations(b, index)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                translations
+            }
             // 图片段的译文载荷（矩形 + OCR 原文 + 译文）：**与文本译文分开读**，缺了它插图就画不出覆盖层
-            val imageMap = runCatching { translator().loadImageTranslations(b, index) }
-                .getOrDefault(emptyMap())
+            val imageMap = try {
+                translator().loadImageTranslations(b, index)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                emptyMap()
+            }
             if (token != loadToken) {
                 return@launch
             }
@@ -1999,6 +2080,45 @@ class NovelReaderActivity : AppCompatActivity() {
             persistProgress()
             restartQueueIfNeeded()
         }
+        chapterLoadJob?.invokeOnCompletion {
+            if (!isDestroyed && ::binding.isInitialized) {
+                binding.novelLoading.post { finishChapterLoading(token) }
+            }
+        }
+    }
+
+    /** 仅较慢的章节才显示等待层，加载请求以 [loadToken] 保证与最新任务对应。 */
+    private fun beginChapterLoading(token: Int) {
+        val alreadyVisible = binding.novelLoading.visibility == View.VISIBLE
+        chapterLoadingRunnable?.let(binding.novelLoading::removeCallbacks)
+        chapterLoadingRunnable = null
+        binding.novelLoading.animate().cancel()
+        if (!alreadyVisible) {
+            binding.novelLoading.visibility = View.GONE
+            binding.novelLoading.alpha = 1f
+        }
+        showStatus(null)
+
+        // 启动流程切换到正式章节加载时，保持已显示的动画连续，不闪回空白。
+        if (alreadyVisible) return
+
+        val showLoading = Runnable {
+            if (token != loadToken || isFinishing || isDestroyed) return@Runnable
+            binding.novelLoading.alpha = 0f
+            binding.novelLoading.visibility = View.VISIBLE
+            binding.novelLoading.animate().alpha(1f).setDuration(140L).start()
+        }
+        chapterLoadingRunnable = showLoading
+        binding.novelLoading.postDelayed(showLoading, CHAPTER_LOADING_INDICATOR_DELAY_MS)
+    }
+
+    private fun finishChapterLoading(token: Int) {
+        if (token != loadToken || !::binding.isInitialized) return
+        chapterLoadingRunnable?.let(binding.novelLoading::removeCallbacks)
+        chapterLoadingRunnable = null
+        binding.novelLoading.animate().cancel()
+        binding.novelLoading.visibility = View.GONE
+        binding.novelLoading.alpha = 1f
     }
 
     /**
@@ -2604,22 +2724,98 @@ class NovelReaderActivity : AppCompatActivity() {
         chapterFailures[chapterIndex].orEmpty().isNotEmpty()
 
     /**
-     * 右下角翻译按钮（语义**与漫画 `ReaderTranslationController.onTranslateButtonClick` 逐条对齐**）：
-     * - **单击**：手动模式空闲 → 从当前页第一段没翻的段起翻**一批**；
-     *   自动/增量在跑 → **只提示，绝不打断**（用户明确要求）
-     * - **双击**：取消在途翻译并**回退手动**
+     * 右下角翻译按钮（使用相同的 300ms 双击窗口；文本侧保留自己的批次与选择规则）：
+     * - **手动空闲双击**：快捷开启自动模式；单击先等 300ms 窗口，超时后从当前页未翻段起翻一批
+     * - **自动/增量在跑**：单击只提示，双击停止队列并回退手动
+     * - **手动批次在途**：双击不取消；普通单击沿用既有行为，取消当前手动 job 后重新开一批
+     * - **选择模式**：点击直接翻所选段，绕过双击判定
      */
     private fun onTranslateButtonClick() {
         // 选择模式：单击就是**按选择翻**（翻译 / 重翻 / 翻译+重翻）——
         // 意图已经由选择集说清了，不走下面那套「双击=取消」的判定
         if (selecting && selectedPara.isNotEmpty()) {
+            cancelPendingManualTranslateClick()
+            lastTranslateClickMs = 0L
             translateSelectionNow()
             return
         }
+
         val now = SystemClock.elapsedRealtime()
+        val pending = pendingManualTranslateClick
+        if (pending != null) {
+            val isDouble = now - pendingManualTranslateClickMs <= DOUBLE_CLICK_MS
+            cancelPendingManualTranslateClick()
+            if (isDouble) {
+                lastTranslateClickMs = 0L
+                if (canStartAutoFromTranslateButton()) {
+                    startAutoFromTranslateButton()
+                } else {
+                    handleTranslateButtonClick(isDouble = true)
+                }
+                return
+            }
+            // 主线程延迟回调若被阻塞，先补交超时的第一次单击，再处理这一次。
+            lastTranslateClickMs = now - DOUBLE_CLICK_MS - 1L
+            handleTranslateButtonClick(isDouble = false)
+        }
+
+        if (canStartAutoFromTranslateButton()) {
+            scheduleManualTranslateClick(now)
+            return
+        }
+
         val isDouble = now - lastTranslateClickMs <= DOUBLE_CLICK_MS
         lastTranslateClickMs = if (isDouble) 0L else now
+        handleTranslateButtonClick(isDouble)
+    }
 
+    /** 手动空闲时才延迟单击；自动队列运行时仍立即提示并保留原有双击退出手势。 */
+    private fun canStartAutoFromTranslateButton(): Boolean =
+        NovelPanelStyle.translateMode(prefs) == NovelTranslateMode.MANUAL &&
+            !queueRunning && translationJob?.isActive != true && imageJob?.isActive != true &&
+            !selecting && focusedImagePara == null
+
+    private fun scheduleManualTranslateClick(now: Long) {
+        lastTranslateClickMs = 0L
+        val action = object : Runnable {
+            override fun run() {
+                if (pendingManualTranslateClick !== this) return
+                pendingManualTranslateClick = null
+                pendingManualTranslateClickMs = 0L
+                if (isFinishing || isDestroyed) return
+                handleTranslateButtonClick(isDouble = false)
+            }
+        }
+        pendingManualTranslateClick = action
+        pendingManualTranslateClickMs = now
+        binding.btnTranslate.postDelayed(action, DOUBLE_CLICK_MS)
+    }
+
+    private fun cancelPendingManualTranslateClick() {
+        pendingManualTranslateClick?.let { action ->
+            if (::binding.isInitialized) binding.btnTranslate.removeCallbacks(action)
+        }
+        pendingManualTranslateClick = null
+        pendingManualTranslateClickMs = 0L
+    }
+
+    private fun startAutoFromTranslateButton() {
+        // 缺少引擎配置时不留下「自动已开启」但实际无队列的假状态。
+        if (queueOrNull() == null) {
+            toast(R.string.novel_translate_need_config)
+            return
+        }
+        lastTranslateClickMs = 0L
+        NovelPanelStyle.setTranslateMode(prefs, NovelTranslateMode.AUTO)
+        restartQueueIfNeeded(force = true)
+        if (queueRunning) {
+            showOverlayToast(getString(R.string.reader_auto_mode_started), error = false)
+        }
+        refreshTranslationChrome()
+        pushPanelState()
+    }
+
+    private fun handleTranslateButtonClick(isDouble: Boolean) {
         val mode = NovelPanelStyle.translateMode(prefs)
         if (queueRunning && mode != NovelTranslateMode.MANUAL) {
             if (!isDouble) {
@@ -3235,6 +3431,8 @@ class NovelReaderActivity : AppCompatActivity() {
     }
 
     private fun showMenu() {
+        cancelPendingManualTranslateClick()
+        lastTranslateClickMs = 0L
         val b = book ?: return
         if (supportFragmentManager.findFragmentByTag(NovelPanelSheet.TAG) != null) return
         // 章节目录要读文件（EPUB 读 OPF+NCX；TXT 跑一遍分章正则），不能在主线程取
@@ -3269,6 +3467,7 @@ class NovelReaderActivity : AppCompatActivity() {
                 customText = NovelAppearance.customText(prefs),
                 fontName = NovelReaderFont.label(this),
                 fontSizeSp = fontSp,
+                fontSizeAuto = NovelPanelStyle.fontSizeAuto(prefs),
                 lineSpacingStep = NovelPanelStyle.lineSpacingStep(prefs),
                 paragraphSpacingDp = NovelPanelStyle.paragraphSpacingDp(prefs),
                 paddingDp = NovelPanelStyle.paddingDp(prefs),
@@ -3331,6 +3530,11 @@ class NovelReaderActivity : AppCompatActivity() {
                 },
                 onFontSize = { sp ->
                     NovelPanelStyle.setFontSizeSp(prefs, sp)
+                    NovelPanelStyle.setFontSizeAuto(prefs, false)
+                    loadChapter(chapterIndex, anchor = pendingAnchor)
+                },
+                onFontSizeAuto = { auto ->
+                    NovelPanelStyle.setFontSizeAuto(prefs, auto)
                     loadChapter(chapterIndex, anchor = pendingAnchor)
                 },
                 onLineSpacing = { v ->
@@ -3364,6 +3568,8 @@ class NovelReaderActivity : AppCompatActivity() {
                     com.moe.starflow.library.BookRef(book!!.libraryLocationId, "novel", book!!.bookUuid), runtimePages = content?.pages?.size) },
                 onSettings = { openPersonalization() },
                 onTranslateMode = { m ->
+                    cancelPendingManualTranslateClick()
+                    lastTranslateClickMs = 0L
                     NovelPanelStyle.setTranslateMode(prefs, m)
                     if (m == NovelTranslateMode.MANUAL) {
                         queue?.stop()
@@ -3407,6 +3613,8 @@ class NovelReaderActivity : AppCompatActivity() {
                 onChapterJump = { ch -> gotoChapter(ch) },
                 onNeedChapterTotal = { ch -> ensureChapterTotal(ch) },
                 onPanelOpened = {
+                    cancelPendingManualTranslateClick()
+                    lastTranslateClickMs = 0L
                     // 与漫画一致：面板一打开就**暂停并回退手动** —— 用户在看面板时若按旧设置继续翻，
                     // 既浪费额度也可能翻错；要重新选模式才会继续
                     queue?.setPanelOpen(true)

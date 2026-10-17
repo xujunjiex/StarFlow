@@ -159,6 +159,7 @@ class NovelShelfFragment : Fragment() {
 
         observeImportTasks()
         com.moe.starflow.library.LibraryShelfBinding.observe(this, "novel", binding.libraryStatus,
+            binding.libraryScanSpinner, binding.libraryScanInlineStatus, binding.libraryImportCancel,
             { refresh() }, ::showScanFailures, { adapter.exitSelection() }, cancelImport = ::confirmCancelImport)
         refresh()
     }

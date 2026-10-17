@@ -69,7 +69,11 @@ class IncrementalBatchPipeline(
      * 返回 [BatchOutcome.NotApplicable] 时调用方应回退到普通单批流程
      * （包含"气泡太少"与"中途出错"两种情况，与旧 `return false` 语义一致）。
      */
-    suspend fun run(bitmap: Bitmap): BatchOutcome {
+    suspend fun run(bitmap: Bitmap): BatchOutcome = withContext(com.moe.starflow.manga.engine.OcrExecution.context { host.isCancelled() }) {
+        runCancellable(bitmap)
+    }
+
+    private suspend fun runCancellable(bitmap: Bitmap): BatchOutcome {
         // Hy-MT2 本地引擎：不走分批渲染（合并一次翻译 + 流式逐个显示，避免多次 prefill 拖慢）
         if (host.translator is LlamaCppTranslation) {
             LogCollector.d(TAG, "run: Hy-MT2 禁用分批渲染，走普通一次翻译+流式")
@@ -229,7 +233,7 @@ class IncrementalBatchPipeline(
             } else {
                 MangaSpatialGrouping.textBlocksToBubbleRegions(firstTextBlocks, config.renderTextDirection)
             }
-            val ocr = scope.async(Dispatchers.IO) {
+            val ocr = scope.async(Dispatchers.IO + com.moe.starflow.manga.engine.OcrExecution.context()) {
                 ops.recognizeCroppedBubbles(secondBatch, config.sourceLang, config.rtTextDirection)
             }
             ocrJob = ocr
@@ -260,12 +264,15 @@ class IncrementalBatchPipeline(
             // 取消同样要回收第二批裁剪图：它不属于任何缓存，不回收就等 GC，下一批还要再分配一批
             secondBatch.forEach { if (!it.croppedBitmap.isRecycled) it.croppedBitmap.recycle() }
             throw e
+        } catch (e: OcrMemoryException) {
+            cancelAndJoinQuietly(ocrJob)
+            firstBatch.forEach { if (!it.croppedBitmap.isRecycled) it.croppedBitmap.recycle() }
+            secondBatch.forEach { if (!it.croppedBitmap.isRecycled) it.croppedBitmap.recycle() }
+            throw e
         } catch (e: Exception) {
             LogCollector.e(TAG, "rtDetrMangaOcr: 失败", e)
             cancelAndJoinQuietly(ocrJob)
-            // ⚠️ 首批裁剪图也要回收：`recognizeCroppedBubbles` 只在**识别成功后**回收，
-            // 识别本身抛异常（引擎未初始化 / native 异常）时首批就漏在这儿了。
-            // isRecycled 守卫保证成功过的那批（已回收）不会重复回收。
+            // 保底回收识别异常时尚未由 recognizeCroppedBubbles finally 回收的裁剪图。
             firstBatch.forEach { if (!it.croppedBitmap.isRecycled) it.croppedBitmap.recycle() }
             secondBatch.forEach { if (!it.croppedBitmap.isRecycled) it.croppedBitmap.recycle() }
             return BatchOutcome.NotApplicable
@@ -320,7 +327,7 @@ class IncrementalBatchPipeline(
             } else {
                 MangaSpatialGrouping.textBlocksToBubbleRegions(firstTextBlocks, config.textDirection)
             }
-            val ocr = scope.async(Dispatchers.IO) { recognizePpBatchV5(secondBatch, ppRecLang) }
+            val ocr = scope.async(Dispatchers.IO + com.moe.starflow.manga.engine.OcrExecution.context()) { recognizePpBatchV5(secondBatch, ppRecLang) }
             ocrJob = ocr
             val batch = translateFirstThenSecondBatch(firstBubbleRegions, ocr)
 
@@ -398,7 +405,7 @@ class IncrementalBatchPipeline(
             } else {
                 MangaSpatialGrouping.textBlocksToBubbleRegions(firstTextBlocks, config.textDirection)
             }
-            val ocr = scope.async(Dispatchers.IO) { recognizePpBatchV6(secondBatch) }
+            val ocr = scope.async(Dispatchers.IO + com.moe.starflow.manga.engine.OcrExecution.context()) { recognizePpBatchV6(secondBatch) }
             ocrJob = ocr
             val batch = translateFirstThenSecondBatch(firstBubbleRegions, ocr)
 
@@ -449,7 +456,7 @@ class IncrementalBatchPipeline(
         val angles = batch.map { it.angle }
         val centers = batch.map { PointF(it.centerX, it.centerY) }
         val recResults = try {
-            withContext(Dispatchers.IO) {
+            withContext(Dispatchers.IO + com.moe.starflow.manga.engine.OcrExecution.context()) {
                 ops.recognizeV5(host.context, crops, lang)
             }
         } catch (e: java.io.FileNotFoundException) {
@@ -492,7 +499,7 @@ class IncrementalBatchPipeline(
         val angles = batch.map { it.angle }
         val centers = batch.map { PointF(it.centerX, it.centerY) }
         val recResults = try {
-            withContext(Dispatchers.IO) {
+            withContext(Dispatchers.IO + com.moe.starflow.manga.engine.OcrExecution.context()) {
                 ops.recognizeV6(host.context, crops)
             }
         } catch (e: java.io.FileNotFoundException) {

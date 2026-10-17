@@ -45,6 +45,7 @@ object MangaOcrRecognizer {
     private var encoderSessions: List<OrtSession> = emptyList()
     private var decoderSessions: List<OrtSession> = emptyList()
     private var tokenizer: MangaOcrTokenizer? = null
+    @Volatile private var appContext: Context? = null
 
     // Session 数量：取 CPU 核心数，限制在 2-4 之间
     private val sessionCount = Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
@@ -68,54 +69,67 @@ object MangaOcrRecognizer {
      */
     suspend fun initialize(context: Context, modelDir: String = "manga_ocr", useAssets: Boolean = true) {
         synchronized(initLock) {
+            OcrExecution.checkCancellation()
             if (isInitialized) return
+            appContext = context.applicationContext
 
             try {
-                LogCollector.d(TAG, "开始初始化 manga-ocr 模型 (useAssets=$useAssets, sessions=$sessionCount)...")
+                PpRecRecognizer.withMemoryGuard(context, TAG, "manga-ocr initialization") {
+                    LogCollector.d(TAG, "开始初始化 manga-ocr 模型 (useAssets=$useAssets, sessions=$sessionCount)...")
 
-                val env = OrtEnvironment.getEnvironment()
-                ortEnv = env
+                    val env = OrtEnvironment.getEnvironment()
+                    ortEnv = env
 
-                val sessionOptions = OrtSession.SessionOptions().apply {
-                    setMemoryPatternOptimization(true)
-                    setCPUArenaAllocator(true)
-                    setOptimizationLevel(OrtSession.SessionOptions.OptLevel.BASIC_OPT)
-                    setIntraOpNumThreads(2)
-                }
+                    OrtSession.SessionOptions().use { sessionOptions ->
+                        sessionOptions.apply {
+                            setMemoryPatternOptimization(true)
+                            setCPUArenaAllocator(true)
+                            setOptimizationLevel(OrtSession.SessionOptions.OptLevel.BASIC_OPT)
+                            setIntraOpNumThreads(2)
+                        }
 
-                // 加载 encoder（1 个 session，支持动态 batch_size）
-                val encoderPath = if (useAssets) {
-                    copyAssetToCache(context, "$modelDir/manga_ocr_encoder.onnx")
-                } else {
-                    MangaOcrModelFiles.getEncoderFile(context).absolutePath
-                }
-                encoderSessions = listOf(env.createSession(encoderPath, sessionOptions))
-                LogCollector.d(TAG, "Encoder 加载完成 (1 session, 支持动态 batch)")
+                        // 加载 encoder（1 个 session，支持动态 batch_size）
+                        val encoderPath = if (useAssets) {
+                            copyAssetToCache(context, "$modelDir/manga_ocr_encoder.onnx")
+                        } else {
+                            MangaOcrModelFiles.getEncoderFile(context).absolutePath
+                        }
+                        encoderSessions = listOf(env.createSession(encoderPath, sessionOptions))
+                        LogCollector.d(TAG, "Encoder 加载完成 (1 session, 支持动态 batch)")
 
-                // 加载 decoder（多个 session）
-                val decoderPath = if (useAssets) {
-                    copyAssetToCache(context, "$modelDir/manga_ocr_decoder.onnx")
-                } else {
-                    MangaOcrModelFiles.getDecoderFile(context).absolutePath
-                }
-                decoderSessions = (1..sessionCount).map {
-                    env.createSession(decoderPath, sessionOptions)
-                }
-                LogCollector.d(TAG, "Decoder 加载完成 ($sessionCount sessions)")
+                        // 加载 decoder（多个 session）
+                        val decoderPath = if (useAssets) {
+                            copyAssetToCache(context, "$modelDir/manga_ocr_decoder.onnx")
+                        } else {
+                            MangaOcrModelFiles.getDecoderFile(context).absolutePath
+                        }
+                        val decoders = mutableListOf<OrtSession>()
+                        decoderSessions = decoders
+                        repeat(sessionCount) {
+                            OcrExecution.checkCancellation()
+                            val decoder = env.createSession(decoderPath, sessionOptions)
+                            try { decoders.add(decoder) } catch (e: Throwable) { decoder.close(); throw e }
+                        }
+                        LogCollector.d(TAG, "Decoder 加载完成 ($sessionCount sessions)")
 
-                // 加载 tokenizer
-                tokenizer = MangaOcrTokenizer(context).apply {
-                    if (useAssets) {
-                        loadFromAssets(modelDir)
-                    } else {
-                        loadFromFile(MangaOcrModelFiles.getVocabFile(context))
+                        // 加载 tokenizer
+                        tokenizer = MangaOcrTokenizer(context).apply {
+                            if (useAssets) {
+                                loadFromAssets(modelDir)
+                            } else {
+                                loadFromFile(MangaOcrModelFiles.getVocabFile(context))
+                            }
+                        }
+                        LogCollector.d(TAG, "Tokenizer 加载完成")
+
+                        isInitialized = true
+                        LogCollector.d(TAG, "manga-ocr 模型初始化完成 ($sessionCount sessions)")
                     }
                 }
-                LogCollector.d(TAG, "Tokenizer 加载完成")
 
-                isInitialized = true
-                LogCollector.d(TAG, "manga-ocr 模型初始化完成 ($sessionCount sessions)")
-
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                releaseInternal()
+                throw e
             } catch (e: Exception) {
                 LogCollector.e(TAG, "初始化失败", e)
                 releaseInternal()
@@ -128,7 +142,10 @@ object MangaOcrRecognizer {
      * 识别图片中的文字（使用 session 0）
      */
     fun recognize(bitmap: Bitmap): String {
-        return recognizeWithSession(bitmap, 0)
+        val context = appContext ?: throw IllegalStateException("MangaOcrRecognizer 未初始化")
+        return PpRecRecognizer.withMemoryGuard(context, TAG, "manga-ocr recognition") {
+            recognizeWithSession(bitmap, 0)
+        }
     }
 
     /**
@@ -144,19 +161,17 @@ object MangaOcrRecognizer {
         val decSession = decoderSessions[idx]
 
         try {
-            // 1. 预处理图片
-            val inputTensor = preprocessImage(bitmap)
+            // 1. 预处理与 encoder 推理。Result 持有输出 tensor，统一在 finally 关闭。
+            val tokenIds = preprocessImage(bitmap).use { inputTensor ->
+                sessionLock.withLock {
+                    OcrExecution.run(encSession, Collections.singletonMap("pixel_values", inputTensor))
+                }.use { encoderResults ->
+                    val encoderOutputs = encoderResults.get("last_hidden_state").get() as OnnxTensor
+                    runDecoderWithSession(decSession, encoderOutputs)
+                }
+            }
 
-            // 2. Encoder 推理
-            val encoderResults = sessionLock.withLock { encSession.run(Collections.singletonMap("pixel_values", inputTensor)) }
-            val encoderOutputs = encoderResults.get("last_hidden_state").get() as OnnxTensor
-            inputTensor.close()
-
-            // 3. Decoder 自回归生成
-            val tokenIds = runDecoderWithSession(decSession, encoderOutputs)
-            encoderOutputs.close()
-
-            // 4. 解码为文字
+            // 2. 解码为文字
             return tokenizer!!.decode(tokenIds)
 
         } catch (e: Exception) {
@@ -175,48 +190,76 @@ object MangaOcrRecognizer {
      * @param bitmaps 待识别的裁剪图片列表
      * @return 识别结果列表，与输入顺序一一对应
      */
-    suspend fun recognizeBatch(bitmaps: List<Bitmap>): List<String> {
+    suspend fun recognizeBatch(bitmaps: List<Bitmap>): List<String> = OcrExecution.cancellable {
+        recognizeBatchCancellable(bitmaps)
+    }
+
+    private suspend fun recognizeBatchCancellable(bitmaps: List<Bitmap>): List<String> {
         if (!isInitialized) {
             throw IllegalStateException("MangaOcrRecognizer 未初始化")
         }
         if (bitmaps.isEmpty()) return emptyList()
         if (bitmaps.size == 1) return listOf(recognize(bitmaps[0]))
 
-        val encSession = encoderSessions[0]
-        val tok = tokenizer!!
-
         try {
-            // 1. 统一 resize 到 [N, 3, 224, 224] 并堆叠（但 resize 扭曲问题未解决）
-            val inputTensor = preprocessImages(bitmaps)
+            val context = appContext ?: throw IllegalStateException("MangaOcrRecognizer 未初始化")
+            return PpRecRecognizer.withMemoryGuardSuspend(
+                context, TAG, "manga-ocr batch recognition count=${bitmaps.size}"
+            ) {
+                val encSession = encoderSessions[0]
+                val tok = tokenizer!!
 
-            // 2. Encoder 一次推理
-            LogCollector.d(TAG, "Encoder batch 推理: ${bitmaps.size} 张图片")
-            val t0 = System.currentTimeMillis()
-            val encoderResults = sessionLock.withLock { encSession.run(Collections.singletonMap("pixel_values", inputTensor)) }
-            val encoderOutputs = encoderResults.get("last_hidden_state").get() as OnnxTensor
-            inputTensor.close()
-            LogCollector.d(TAG, "Encoder batch 完成: ${System.currentTimeMillis() - t0}ms")
-
-            // 3. 逐个 Decoder 解码
-            val t1 = System.currentTimeMillis()
-            val results = coroutineScope {
-                (0 until bitmaps.size).map { i ->
-                    async(Dispatchers.Default) {
-                        val singleHidden = extractSingleBatch(encoderOutputs, i)
-                        val tokenIds = runDecoderWithSession(decoderSessions[i % decoderSessions.size], singleHidden)
-                        singleHidden.close()
-                        tok.decode(tokenIds)
+                // 1. 统一 resize 到 [N, 3, 224, 224] 并堆叠（但 resize 扭曲问题未解决）
+                val inputTensor = preprocessImages(bitmaps)
+                try {
+                    // 2. Encoder 一次推理
+                    LogCollector.d(TAG, "Encoder batch 推理: ${bitmaps.size} 张图片")
+                    val t0 = System.currentTimeMillis()
+                    val encoderResults = sessionLock.withLock {
+                        OcrExecution.run(encSession, Collections.singletonMap("pixel_values", inputTensor))
                     }
-                }.awaitAll()
-            }
-            LogCollector.d(TAG, "Decoder 完成: ${System.currentTimeMillis() - t1}ms, 共 ${bitmaps.size} 个")
+                    try {
+                        val encoderOutputs = encoderResults.get("last_hidden_state").get() as OnnxTensor
+                        // ORT 的 floatBuffer 会复制完整张量。每个样本共用一次快照，避免 N 次复制整批输出。
+                        val encoderBuffer = encoderOutputs.floatBuffer
+                        LogCollector.d(TAG, "Encoder batch 完成: ${System.currentTimeMillis() - t0}ms")
 
-            encoderOutputs.close()
-            return results
+                        // 3. 逐个 Decoder 解码
+                        val t1 = System.currentTimeMillis()
+                        val results = coroutineScope {
+                            (0 until bitmaps.size).map { i ->
+                                async(Dispatchers.Default) {
+                                    OcrExecution.cancellable {
+                                        extractSingleBatch(encoderBuffer, i, encoderOutputs.info.shape).use { singleHidden ->
+                                            val tokenIds = runDecoderWithSession(
+                                                decoderSessions[i % decoderSessions.size], singleHidden
+                                            )
+                                            tok.decode(tokenIds)
+                                        }
+                                    }
+                                }
+                            }.awaitAll()
+                        }
+                        LogCollector.d(TAG, "Decoder 完成: ${System.currentTimeMillis() - t1}ms, 共 ${bitmaps.size} 个")
+                        results
+                    } finally {
+                        encoderResults.close()
+                    }
+                } finally {
+                    inputTensor.close()
+                }
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: OcrMemoryException) {
+            throw e
 
         } catch (e: Exception) {
             LogCollector.e(TAG, "批量识别失败，回退到逐个识别", e)
-            return bitmaps.map { recognize(it) }
+            val context = appContext ?: throw IllegalStateException("MangaOcrRecognizer 未初始化")
+            return PpRecRecognizer.withMemoryGuardSuspend(
+                context, TAG, "manga-ocr per-image fallback count=${bitmaps.size}"
+            ) { bitmaps.map { recognize(it) } }
         }
     }
 
@@ -224,7 +267,11 @@ object MangaOcrRecognizer {
      * 流式批量识别：encoder 一次推理，decoder 并行解码，每个完成立即返回。
      * @return Channel<Pair<Int, String>> (索引, 文字)，按完成顺序返回
      */
-    suspend fun recognizeStreaming(bitmaps: List<Bitmap>): Channel<Pair<Int, String>> {
+    suspend fun recognizeStreaming(bitmaps: List<Bitmap>): Channel<Pair<Int, String>> = OcrExecution.cancellable {
+        recognizeStreamingCancellable(bitmaps)
+    }
+
+    private suspend fun recognizeStreamingCancellable(bitmaps: List<Bitmap>): Channel<Pair<Int, String>> {
         if (!isInitialized) {
             throw IllegalStateException("MangaOcrRecognizer 未初始化")
         }
@@ -240,47 +287,74 @@ object MangaOcrRecognizer {
             return channel
         }
 
-        val encSession = encoderSessions[0]
-        val tok = tokenizer!!
-
         try {
-            // 1. Encoder 一次推理
-            val inputTensor = preprocessImages(bitmaps)
-            LogCollector.d(TAG, "Encoder batch 推理: ${bitmaps.size} 张图片")
-            val t0 = System.currentTimeMillis()
-            val encoderResults = sessionLock.withLock { encSession.run(Collections.singletonMap("pixel_values", inputTensor)) }
-            val encoderOutputs = encoderResults.get("last_hidden_state").get() as OnnxTensor
-            inputTensor.close()
-            LogCollector.d(TAG, "Encoder batch 完成: ${System.currentTimeMillis() - t0}ms")
+            val context = appContext ?: throw IllegalStateException("MangaOcrRecognizer 未初始化")
+            PpRecRecognizer.withMemoryGuardSuspend(
+                context, TAG, "manga-ocr streaming recognition count=${bitmaps.size}"
+            ) {
+                val encSession = encoderSessions[0]
+                val tok = tokenizer!!
+                val inputTensor = preprocessImages(bitmaps)
+                try {
+                    // 1. Encoder 一次推理
+                    LogCollector.d(TAG, "Encoder batch 推理: ${bitmaps.size} 张图片")
+                    val t0 = System.currentTimeMillis()
+                    val encoderResults = sessionLock.withLock {
+                        OcrExecution.run(encSession, Collections.singletonMap("pixel_values", inputTensor))
+                    }
+                    try {
+                        val encoderOutputs = encoderResults.get("last_hidden_state").get() as OnnxTensor
+                        val encoderBuffer = encoderOutputs.floatBuffer
+                        LogCollector.d(TAG, "Encoder batch 完成: ${System.currentTimeMillis() - t0}ms")
 
-            // 2. Decoder 并行，每个完成立即发送到 channel
-            val t1 = System.currentTimeMillis()
-            val completedCount = java.util.concurrent.atomic.AtomicInteger(0)
-            val totalCount = bitmaps.size
-            coroutineScope {
-                (0 until bitmaps.size).map { i ->
-                    launch(Dispatchers.Default) {
-                        try {
-                            val singleHidden = extractSingleBatch(encoderOutputs, i)
-                            val tokenIds = runDecoderWithSession(decoderSessions[i % decoderSessions.size], singleHidden)
-                            singleHidden.close()
-                            val text = tok.decode(tokenIds)
-                            channel.send(Pair(i, text))
-                            LogCollector.d(TAG, "Decoder [$i] 完成: ${System.currentTimeMillis() - t1}ms")
-                        } catch (e: Exception) {
-                            LogCollector.e(TAG, "Decoder [$i] 失败", e)
-                        } finally {
-                            // 最后一个完成的 decoder 关闭 channel
-                            if (completedCount.incrementAndGet() == totalCount) {
-                                channel.close()
-                                LogCollector.d(TAG, "Decoder 全部完成: ${System.currentTimeMillis() - t1}ms")
+                        // 2. Decoder 并行，每个完成立即发送到 channel
+                        val t1 = System.currentTimeMillis()
+                        val completedCount = java.util.concurrent.atomic.AtomicInteger(0)
+                        val totalCount = bitmaps.size
+                        coroutineScope {
+                            (0 until bitmaps.size).map { i ->
+                                launch(Dispatchers.Default) {
+                                    try {
+                                        OcrExecution.cancellable {
+                                            extractSingleBatch(encoderBuffer, i, encoderOutputs.info.shape).use { singleHidden ->
+                                                val tokenIds = runDecoderWithSession(
+                                                    decoderSessions[i % decoderSessions.size], singleHidden
+                                                )
+                                                val text = tok.decode(tokenIds)
+                                                channel.send(Pair(i, text))
+                                                LogCollector.d(TAG, "Decoder [$i] 完成: ${System.currentTimeMillis() - t1}ms")
+                                            }
+                                        }
+                                    } catch (e: kotlinx.coroutines.CancellationException) {
+                                        throw e
+                                    } catch (e: OcrMemoryException) {
+                                        throw e
+                                    } catch (e: Exception) {
+                                        LogCollector.e(TAG, "Decoder [$i] 失败", e)
+                                    } finally {
+                                        // 最后一个完成的 decoder 关闭 channel
+                                        if (completedCount.incrementAndGet() == totalCount) {
+                                            channel.close()
+                                            LogCollector.d(TAG, "Decoder 全部完成: ${System.currentTimeMillis() - t1}ms")
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
+                    finally {
+                        encoderResults.close()
+                    }
+                } finally {
+                    inputTensor.close()
                 }
             }
-
-            encoderOutputs.close()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            channel.close(e)
+            throw e
+        } catch (e: OcrMemoryException) {
+            channel.close(e)
+            throw e
         } catch (e: Exception) {
             LogCollector.e(TAG, "流式识别失败", e)
             channel.close()
@@ -294,43 +368,9 @@ object MangaOcrRecognizer {
      */
     private fun preprocessImage(bitmap: Bitmap): OnnxTensor {
         val resized = Bitmap.createScaledBitmap(bitmap, IMAGE_SIZE, IMAGE_SIZE, true)
-
-        val floatBuffer = FloatBuffer.allocate(1 * 3 * IMAGE_SIZE * IMAGE_SIZE)
-        val pixels = IntArray(IMAGE_SIZE * IMAGE_SIZE)
-        resized.getPixels(pixels, 0, IMAGE_SIZE, 0, 0, IMAGE_SIZE, IMAGE_SIZE)
-
-        // CHW 格式，RGB 通道，归一化到 [-1, 1]
-        for (c in 0 until 3) {
-            for (i in pixels.indices) {
-                val pixel = pixels[i]
-                val value = when (c) {
-                    0 -> ((pixel shr 16 and 0xFF) / 255.0f - 0.5f) / 0.5f  // R
-                    1 -> ((pixel shr 8 and 0xFF) / 255.0f - 0.5f) / 0.5f   // G
-                    2 -> ((pixel and 0xFF) / 255.0f - 0.5f) / 0.5f         // B
-                    else -> 0f
-                }
-                floatBuffer.put(value)
-            }
-        }
-        floatBuffer.rewind()
-
-        if (resized != bitmap) resized.recycle()
-
-        return OnnxTensor.createTensor(ortEnv!!, floatBuffer, longArrayOf(1, 3, IMAGE_SIZE.toLong(), IMAGE_SIZE.toLong()))
-    }
-
-    /**
-     * 批量预处理：将 N 张图片堆叠为 [N, 3, 224, 224] tensor。
-     * 所有图片按 CHW 格式排列，归一化到 [-1, 1]。
-     */
-    private fun preprocessImages(bitmaps: List<Bitmap>): OnnxTensor {
-        val N = bitmaps.size
-        val channelSize = IMAGE_SIZE * IMAGE_SIZE
-        val floatBuffer = FloatBuffer.allocate(N * 3 * channelSize)
-
-        for (bitmap in bitmaps) {
-            val resized = Bitmap.createScaledBitmap(bitmap, IMAGE_SIZE, IMAGE_SIZE, true)
-            val pixels = IntArray(channelSize)
+        try {
+            val floatBuffer = FloatBuffer.allocate(3 * IMAGE_SIZE * IMAGE_SIZE)
+            val pixels = IntArray(IMAGE_SIZE * IMAGE_SIZE)
             resized.getPixels(pixels, 0, IMAGE_SIZE, 0, 0, IMAGE_SIZE, IMAGE_SIZE)
 
             // CHW 格式，RGB 通道，归一化到 [-1, 1]
@@ -346,8 +386,48 @@ object MangaOcrRecognizer {
                     floatBuffer.put(value)
                 }
             }
+            floatBuffer.rewind()
 
+            return OnnxTensor.createTensor(
+                ortEnv!!, floatBuffer, longArrayOf(1, 3, IMAGE_SIZE.toLong(), IMAGE_SIZE.toLong())
+            )
+        } finally {
             if (resized !== bitmap) resized.recycle()
+        }
+    }
+
+    /**
+     * 批量预处理：将 N 张图片堆叠为 [N, 3, 224, 224] tensor。
+     * 所有图片按 CHW 格式排列，归一化到 [-1, 1]。
+     */
+    private fun preprocessImages(bitmaps: List<Bitmap>): OnnxTensor {
+        val N = bitmaps.size
+        val channelSize = IMAGE_SIZE * IMAGE_SIZE
+        val floatBuffer = FloatBuffer.allocate(Math.multiplyExact(N, 3 * channelSize))
+
+        for (bitmap in bitmaps) {
+            OcrExecution.checkCancellation()
+            val resized = Bitmap.createScaledBitmap(bitmap, IMAGE_SIZE, IMAGE_SIZE, true)
+            try {
+                val pixels = IntArray(channelSize)
+                resized.getPixels(pixels, 0, IMAGE_SIZE, 0, 0, IMAGE_SIZE, IMAGE_SIZE)
+
+                // CHW 格式，RGB 通道，归一化到 [-1, 1]
+                for (c in 0 until 3) {
+                    for (i in pixels.indices) {
+                        val pixel = pixels[i]
+                        val value = when (c) {
+                            0 -> ((pixel shr 16 and 0xFF) / 255.0f - 0.5f) / 0.5f  // R
+                            1 -> ((pixel shr 8 and 0xFF) / 255.0f - 0.5f) / 0.5f   // G
+                            2 -> ((pixel and 0xFF) / 255.0f - 0.5f) / 0.5f         // B
+                            else -> 0f
+                        }
+                        floatBuffer.put(value)
+                    }
+                }
+            } finally {
+                if (resized !== bitmap) resized.recycle()
+            }
         }
 
         floatBuffer.rewind()
@@ -362,20 +442,21 @@ object MangaOcrRecognizer {
      * 输入: [N, 197, 768] OnnxTensor
      * 输出: [1, 197, 768] OnnxTensor
      */
-    private fun extractSingleBatch(batchedOutput: OnnxTensor, index: Int): OnnxTensor {
-        val shape = batchedOutput.info.shape  // [N, 197, 768]
-        val seqLen = shape[1].toInt()
-        val hiddenSize = shape[2].toInt()
-
-        val count: Int = seqLen * hiddenSize
-        val buffer = FloatBuffer.allocate(count)
-        val fullBuffer = batchedOutput.floatBuffer
-        val offset: Int = index * count
-
-        // 安全读取：支持 direct buffer 和 heap buffer
-        for (i in 0 until count) {
-            buffer.put(fullBuffer.get(offset + i))
+    private fun extractSingleBatch(fullBuffer: FloatBuffer, index: Int, shape: LongArray): OnnxTensor {
+        require(shape.size == 3 && index >= 0 && index.toLong() < shape[0]) {
+            "Invalid encoder output shape/index"
         }
+        val seqLen = Math.toIntExact(shape[1])
+        val hiddenSize = Math.toIntExact(shape[2])
+
+        val count = Math.multiplyExact(seqLen, hiddenSize)
+        val offset = Math.multiplyExact(index, count)
+        val buffer = FloatBuffer.allocate(count)
+        val sample = fullBuffer.duplicate().apply {
+            position(offset)
+            limit(Math.addExact(offset, count))
+        }
+        buffer.put(sample)
         buffer.rewind()
 
         return OnnxTensor.createTensor(ortEnv!!, buffer, longArrayOf(1, seqLen.toLong(), hiddenSize.toLong()))
@@ -392,37 +473,47 @@ object MangaOcrRecognizer {
         var currentIds = mutableListOf(tok.getBosTokenId())
 
         for (step in 0 until MAX_NEW_TOKENS) {
+            OcrExecution.checkCancellation()
             // 传完整序列 [1, seq_len]（decoder 支持动态 seq_len）
             val inputIdsArray = currentIds.map { it.toLong() }.toLongArray()
             val inputIdsBuffer = java.nio.LongBuffer.wrap(inputIdsArray)
             val inputIdsTensor = OnnxTensor.createTensor(ortEnv!!, inputIdsBuffer, longArrayOf(1, inputIdsArray.size.toLong()))
+            val nextTokenId = inputIdsTensor.use { input ->
+                val inputs = mapOf(
+                    "input_ids" to input,
+                    "encoder_hidden_states" to encoderHiddenStates
+                )
+                sessionLock.withLock { OcrExecution.run(decSession, inputs) }.use { outputs ->
+                    // 获取最后一个 token 的 logits。floatBuffer 本身仍是 ORT 的完整输出副本，
+                    // 但直接扫描末尾切片，避免再复制一份 vocab 数组。
+                    val logitsTensor = outputs.get("logits").get() as OnnxTensor
+                    val shape = logitsTensor.info.shape
+                    require(shape.size == 3 && shape[0] == 1L && shape[1] == currentIds.size.toLong()) {
+                        "Invalid manga-ocr logits shape: ${shape.contentToString()}"
+                    }
+                    val vocabSize = Math.toIntExact(shape[2])
+                    require(vocabSize > 0) { "Invalid manga-ocr vocabulary size: $vocabSize" }
+                    val logits = logitsTensor.floatBuffer
+                    val lastLogitsStart = Math.multiplyExact(currentIds.size - 1, vocabSize)
 
-            // 运行 decoder
-            val inputs = mapOf(
-                "input_ids" to inputIdsTensor,
-                "encoder_hidden_states" to encoderHiddenStates
-            )
-            val outputs = sessionLock.withLock { decSession.run(inputs) }
-
-            // 获取最后一个 token 的 logits
-            val logitsTensor = outputs.get("logits").get() as OnnxTensor
-            val logits = logitsTensor.floatBuffer.array()
-            val vocabSize = logits.size / currentIds.size
-            val lastLogitsStart = (currentIds.size - 1) * vocabSize
-            val lastLogits = logits.sliceArray(lastLogitsStart until lastLogitsStart + vocabSize)
-
-            // Greedy decoding
-            val nextTokenId = lastLogits.indices.maxByOrNull { lastLogits[it] } ?: 0
+                    var bestId = 0
+                    var bestValue = Float.NEGATIVE_INFINITY
+                    for (tokenId in 0 until vocabSize) {
+                        val value = logits.get(lastLogitsStart + tokenId)
+                        if (value > bestValue) {
+                            bestValue = value
+                            bestId = tokenId
+                        }
+                    }
+                    bestId
+                }
+            }
 
             // 检查 EOS
             if (nextTokenId == tok.getEosTokenId()) break
 
             generatedTokens.add(nextTokenId)
             currentIds.add(nextTokenId)
-
-            // 清理
-            inputIdsTensor.close()
-            logitsTensor.close()
         }
 
         return generatedTokens

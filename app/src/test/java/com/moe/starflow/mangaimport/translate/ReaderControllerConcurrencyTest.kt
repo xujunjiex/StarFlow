@@ -89,11 +89,11 @@ class ReaderControllerConcurrencyTest {
     }
 
     @Test
-    fun queuePathDoesNotReleaseTheLockEarly() {
+    fun automaticTranslationReleasesOcrWhilePreservingQueueOrder() {
         val s = src()
-        // ⚠️ 队列（自动/增量）刻意不提前放锁：两页一旦重叠，共享的 AI 上下文历史
-        // （`readerContextHistory`，LinkedList）就会并发踩踏；手动路径只有一个任务，
-        // 提前放锁不引入任何跨页并发。
-        assertTrue("队列路径必须显式跳过提前放锁", s.contains("if (fromQueue) return@ocrDone"))
+        val hook = s.substringAfter("onOcrDone = ocrDone@{ t ->").substringBefore(") ?: return")
+        assertFalse("自动队列不能把文本推理算作 OCR 占用", hook.contains("if (fromQueue) return@ocrDone"))
+        assertTrue("OCR 结束回调必须放锁", hook.contains("OcrLock.release(ocrToken)"))
+        assertTrue("页队列仍同步等待当前页，无需靠 OCR 锁串行", s.contains("runTranslate(target, fromQueue = true)"))
     }
 }

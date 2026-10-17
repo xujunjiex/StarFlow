@@ -27,7 +27,7 @@ object SrProcessor {
         var token=0L
         var heartbeat: Job?=null
         try {
-            while(token==0L) {ensureActive();if(!OcrLock.isRunning && !OcrLock.hasOcrDemand())token=OcrLock.acquire();if(token==0L)delay(50)}
+            while(token==0L) {ensureActive();if(!OcrLock.isRunning && !OcrLock.hasOcrDemand())token=OcrLock.acquire(currentCoroutineContext()[Job], "super resolution");if(token==0L)delay(50)}
             heartbeat=OcrLock.startHeartbeat(token)
             SuperResolutionEngines.obtain(context,PreferenceManager.getDefaultSharedPreferences(context),request)
         } finally {heartbeat?.cancel();if(token!=0L)OcrLock.release(token)}
@@ -64,7 +64,7 @@ object SrProcessor {
             if(src.width<=0 || src.height<=0)return@withContext SrOutcome.fail(SrFailReason.PAGE_LOAD_FAILED)
             while(token==0L) {
                 ensureActive()
-                if(!OcrLock.isRunning && !OcrLock.hasOcrDemand())token=OcrLock.acquire()
+                if(!OcrLock.isRunning && !OcrLock.hasOcrDemand())token=OcrLock.acquire(currentCoroutineContext()[Job], "super resolution")
                 if(token==0L)delay(50)
             }
             // The detached heartbeat is cancelled only after native processing exits.
