@@ -9,6 +9,8 @@ import kotlinx.coroutines.withContext
 import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.OutputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
@@ -80,13 +82,13 @@ internal sealed interface ExportOutcome {
     /** 导出被异常中断（临时包不可用）。 */
     data object Failed : ExportOutcome
 
-    /** 跑完：[written] 写进包的页数，[skipped] 因渲染/读图失败被跳过的页数。 */
     /**
-     * 跑完：[written] 写进包的页数，[skipped] 因渲染/读图失败被跳过的页数，
-     * [untranslated] **在包里但没有译文**的页数（PDF 才有这个口径，见 [ReaderPdfExport]）。
+     * 跑完：[written] 写进包的页数（双语一页可能两个条目，按**页**计），
+     * [skipped] 因读图失败被跳过的页数，
+     * [untranslated] **在包里但没有译文**的页数（zip 的原图回填页 / 未译页只出原文，PDF 同口径）。
      *
-     * ⚠️ 两个计数**语义不同，提示语也必须不同**：zip 里"跳过"= 这一页没进包；
-     * 而 PDF 的译文导出会把未译页**回填原图**（页在、只是没译文）——把它也说成"跳过"就是在骗用户。
+     * ⚠️ 两个计数**语义不同，提示语也必须不同**：`skipped` = 这一页没进包（真缺页）；
+     * `untranslated` = 页在、只是没译文。把它说成"跳过"就是在骗用户。
      */
     data class Done(val written: Int, val skipped: Int, val untranslated: Int = 0) : ExportOutcome
 }
@@ -105,64 +107,151 @@ internal object ReaderExport {
     private const val JPEG_QUALITY = 95
 
     /**
-     * 导出**已翻译页**到 [tempFile]。
+     * 导出到 [tempFile]（zip）。
      *
-     * [both] = true → 双语包：每页两个条目（原文原名 + `_译文.jpg`）；false → 只出译文。
-     * 未翻译/翻译失败的页不导出（所以包内页数比原包少，但序号仍是原序号）。
+     * 口径（用户口径 2026-10）：
+     * - [both] = true → **双语包恒全书页**：已译页两个条目（原文原名 + `_译文.jpg`）；
+     *   没有译文的页**只出原文那一半**（同一张图不重复放两次）。
+     * - [both] = false → 译文包：
+     *   [includeUntranslated] = true → 全书页，没有译文的页用**原图回填**（沿用原名原扩展名，
+     *   原样搬字节 → 零二次有损压缩）；false → 旧口径，只出已成功翻译的页。
      *
      * [translatedSuffix] 由调用方按界面语言传入（中文 `_译文` / 英文 `_translated`），
      * 不在本类硬编码中文。
      *
-     * @param onProgress 每完成一页回调一次（**主线程**），参数为 (已写入, 总数)。
+     * @param onProgress 每完成一页回调一次（**主线程**），参数为 (已写入, 参与导出的页数)。
      */
     suspend fun exportTranslated(
         source: ReaderPageSource,
         controller: ReaderTranslationController,
         both: Boolean,
+        includeUntranslated: Boolean,
         translatedSuffix: String,
         tempFile: File,
         onProgress: (done: Int, total: Int) -> Unit,
+    ): ExportOutcome {
+        // 已译页取**导出开始那一刻**的快照：用户完全可能在导出过程中删掉某页译文 / 清空本章
+        val translated = controller.translatedPages()
+        return exportToZip(
+            pageCount = source.size,
+            isTranslated = { it in translated },
+            isAvailable = source::pageAvailable,
+            exportKey = source::exportKey,
+            openOriginal = source::openEntry,
+            renderTranslated = controller::renderForExport,
+            both = both,
+            includeUntranslated = includeUntranslated,
+            translatedSuffix = translatedSuffix,
+            tempFile = tempFile,
+            onProgress = onProgress,
+        )
+    }
+
+    /**
+     * [exportTranslated] 的实现（依赖全部以 lambda 传入）。
+     *
+     * 这样拆是为了**能对页数/两个计数/未译页回填写行为测试**：`ReaderPageSource` 与
+     * `ReaderTranslationController` 都是重型 Android 依赖，绑死就测不了（与 `ReaderPdfExport`
+     * 当初拆 `readOriginal`/`renderTranslated`/`encodeJpeg` 是同一个理由）。
+     */
+    internal suspend fun exportToZip(
+        pageCount: Int,
+        isTranslated: (Int) -> Boolean,
+        isAvailable: (Int) -> Boolean,
+        exportKey: (Int) -> String?,
+        openOriginal: (Int) -> InputStream?,
+        renderTranslated: (Int) -> Bitmap?,
+        both: Boolean,
+        includeUntranslated: Boolean,
+        translatedSuffix: String,
+        tempFile: File,
+        onProgress: (done: Int, total: Int) -> Unit,
+        compressRendered: (Bitmap, OutputStream) -> Unit = { bmp, out ->
+            bmp.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
+        },
     ): ExportOutcome = withContext(Dispatchers.IO) {
-        val pages = controller.translatedPages().sorted()
+        // 参与导出的页：双语恒全书页；译文模式按 includeUntranslated 决定要不要未译页。
+        // ⚠️ 全书页口径下真缺页也要进循环，才会落进 skipped 计数并被如实告知；
+        //    旧口径只导已译页 —— 那些**本来就不导出**的未译页即使源文件缺失也不该报「跳过」，
+        //    否则用户会以为包不完整（"跳过"的语义只能是"这页本该在包里"）。
+        val pages = (0 until pageCount).filter { page ->
+            both || includeUntranslated || isTranslated(page)
+        }
         if (pages.isEmpty()) return@withContext ExportOutcome.Empty
         var written = 0
         var skipped = 0
+        var untranslated = 0
         val used = HashSet<String>()
         try {
             ZipOutputStream(BufferedOutputStream(FileOutputStream(tempFile))).use { zip ->
                 for (page in pages) {
-                    if (!source.pageAvailable(page)) { skipped++; continue }
-                    val key = source.exportKey(page)
-                    // ⚠️ **先渲染译文，再写任何条目**：渲染不出来就整页跳过。反过来的话，
-                    // 双语包里会留下一张没有 `_译文` 配对的孤儿原图（用户以为这页翻译丢了）
-                    val bmp = if (key != null) controller.renderForExport(page) else null
-                    if (key == null || bmp == null) {
+                    if (!isAvailable(page)) {
                         skipped++
                         continue
                     }
-                    try {
-                        if (both &&
-                            !copyOriginal(source, zip, page, ExportNaming.uniqueEntryName(ExportNaming.originalPairEntry(key), used))
-                        ) {
-                            skipped++
-                            continue
-                        }
-                        val entryName = ExportNaming.uniqueEntryName(
-                            if (both) ExportNaming.translatedPairEntry(key, translatedSuffix)
-                            else ExportNaming.translatedEntry(key),
-                            used,
-                        )
-                        zip.putNextEntry(ZipEntry(entryName))
-                        bmp.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, zip)
-                        zip.closeEntry()
-                    } finally {
-                        bmp.recycle() // 渲染产物是独立副本（renderOverlay 内部 copy），用完即回收
+                    val key = exportKey(page)
+                    if (key == null) {
+                        skipped++
+                        continue
                     }
-                    written++
+                    // ⚠️ **先渲染译文，再写任何条目**：渲染要几秒，先把包写脏了再发现失败，
+                    // 用户看到的就是"这一页只有原图"却没人告诉他为什么
+                    val bmp = if (isTranslated(page)) renderTranslated(page) else null
+                    try {
+                        when {
+                            both -> {
+                                // 双语：先原文（未译页就靠这一张），再译文
+                                val originalName = ExportNaming.uniqueEntryName(
+                                    ExportNaming.originalPairEntry(key), used,
+                                )
+                                if (!copyOriginal(openOriginal, zip, page, originalName)) {
+                                    skipped++
+                                    continue
+                                }
+                                if (bmp == null) {
+                                    // 页在、只是没译文：原图那一半已经进包，如实计数（不是 skipped）
+                                    untranslated++
+                                } else {
+                                    val entryName = ExportNaming.uniqueEntryName(
+                                        ExportNaming.translatedPairEntry(key, translatedSuffix), used,
+                                    )
+                                    zip.putNextEntry(ZipEntry(entryName))
+                                    compressRendered(bmp, zip)
+                                    zip.closeEntry()
+                                }
+                                written++
+                            }
+
+                            bmp != null -> {
+                                val entryName = ExportNaming.uniqueEntryName(
+                                    ExportNaming.translatedEntry(key), used,
+                                )
+                                zip.putNextEntry(ZipEntry(entryName))
+                                compressRendered(bmp, zip)
+                                zip.closeEntry()
+                                written++
+                            }
+
+                            includeUntranslated -> {
+                                // 未译页回填：**原始字节 + 原名原扩展名**（不 decode/不重编码）
+                                if (!copyOriginal(openOriginal, zip, page, ExportNaming.uniqueEntryName(key, used))) {
+                                    skipped++
+                                    continue
+                                }
+                                untranslated++
+                                written++
+                            }
+
+                            else -> skipped++
+                        }
+                    } finally {
+                        // 渲染产物是独立副本（renderOverlay 内部 copy），用完即回收
+                        if (bmp != null && !bmp.isRecycled) bmp.recycle()
+                    }
                     withContext(Dispatchers.Main) { onProgress(written, pages.size) }
                 }
             }
-            ExportOutcome.Done(written, skipped)
+            ExportOutcome.Done(written, skipped, untranslated)
         } catch (e: CancellationException) {
             // 取消（退出阅读器 → onDestroy 取消 lifecycleScope）要按结构化并发继续上抛，
             // 不能当成「导出失败」吞掉 —— 否则协程被取消后还在往下跑
@@ -170,19 +259,23 @@ internal object ReaderExport {
         } catch (e: Exception) {
             // ⚠️ 必须落盘：否则用户只看到一句「导出失败」，重名条目 / 磁盘满 / 渲染异常
             // 三种完全不同的原因长得一模一样，排查无门（CLAUDE.md：错误要能在日志查看器看到）
-            LogCollector.e(TAG, "exportTranslated failed both=$both tmp=$tempFile", e)
-            if (written > 0) ExportOutcome.Done(written, skipped) else ExportOutcome.Failed
+            LogCollector.e(
+                TAG,
+                "exportTranslated failed both=$both includeUntranslated=$includeUntranslated tmp=$tempFile",
+                e,
+            )
+            if (written > 0) ExportOutcome.Done(written, skipped, untranslated) else ExportOutcome.Failed
         }
     }
 
     /** 把原始条目字节原样写入 zip。 */
     private fun copyOriginal(
-        source: ReaderPageSource,
+        openOriginal: (Int) -> InputStream?,
         zip: ZipOutputStream,
         page: Int,
         entryName: String,
     ): Boolean = try {
-        source.openEntry(page)?.use { input ->
+        openOriginal(page)?.use { input ->
             zip.putNextEntry(ZipEntry(entryName))
             input.copyTo(zip)
             zip.closeEntry()

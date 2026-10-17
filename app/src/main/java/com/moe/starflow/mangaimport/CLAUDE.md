@@ -35,8 +35,10 @@
   | 入口 | 内容 | 包内命名 |
   |------|------|---------|
   | 原文（已有） | 全部页 | archive 直接复制原 zip；目录包扁平名 |
-  | 译文 | **只有已成功翻译的页**（失败/未译不导出） | `<原目录>/<原名主干>.jpg`（统一 JPEG 95） |
-  | 双语 | 每个已翻译页**两个条目**：原文原文 + 译文 | 原文用**原名原扩展名**，译文 `<主干>_译文.jpg`，同层混放 |
+  | 译文 | **全书页**：已译页出译文，没有译文的页（纯图片 OCR 空 / 翻译失败 / 没翻）**原图回填** | 已译页 `<原目录>/<原名主干>.jpg`（JPEG 95）；回填页**原样搬原名原扩展名**（`006.png` 还是 `006.png`） |
+  | 双语 | **全书页**：已译页两个条目（原文 + 译文），未译页**只出原文那一半**（同一张图不重复放） | 原文用**原名原扩展名**，译文 `<主干>_译文.jpg`，同层混放 |
+  - **译文模式导出前会问一句**（`reader_download_untranslated_*`，只在 zip 且确实存在未译页时弹）：一并导出 → 全书页；只导译文 → 旧口径（包内只有已译页），收尾提示换成 `reader_download_done_translated_only`。**双语不问**（恒全书页）。**PDF 书也不问**（它本来就全页回填，见下）
+  - 一页都没译过时仍提示 `reader_download_nothing`：全书原图 == 原文下载，不给名不副实的包
   ⚠️ **PDF 书例外**：PDF 的下载出口是 **PDF**（原文=复制原文件 / 译文=全页回填 / 双语=原图页+译图页），
   走 `ReaderPdfExport` + `PdfJpegWriter`，不套用下面这一整套 zip 命名规则 —— 见「PDF 导入」一节 ⑤。
   - ⚠️ **命名一律沿用原压缩包的序号**，绝不按「第几个已翻译页」重编号：原包 1..10 只翻了 1/2/5/6 → 导出就是 `001/002/005/006`，不是 `1/2/3/4`。规则收在 `ExportNaming`（纯函数，`ExportNamingTest` 12 例覆盖）
@@ -46,7 +48,9 @@
   - 进度走 `TranslationStatusOverlay.showImmediate`「正在导出 %1$d/%2$d…」（受 `status_overlay_enabled` 开关控制，关闭时静默），结束 `dismiss()` + toast 落盘结果
   - ⚠️ **文件名后缀走 strings**（`reader_export_suffix_translated` / `reader_export_zip_suffix_*`），不硬编码中文：英文界面下是 `_translated` / `-translated.zip`
   - ⚠️ **条目名必须去重**（`ExportNaming.uniqueEntryName`，撞名加 `_2` 后缀）：「谁先写谁保名」。撞名不是假想 —— 同目录 `005.png` 与 `005.jpg` 译文都映射成 `005.jpg`；双语包**再导入当新书读**时原图那半 `005_译文.jpg` 会和本次生成的译文名撞上。撞了就是 `ZipException: duplicate entry` → **整包导出失败**
-  - ⚠️ **先渲染译文再写任何条目**：反了的话，渲染失败会在双语包里留下一张没有 `_译文` 配对的孤儿原图（用户以为这页翻译丢了）；跳过的页要计数并如实告知（`ExportOutcome.Done(written, skipped)`），一页都没成功按「导出失败」处理，不能把空包当成功交付
+  - ⚠️ **先渲染译文再写任何条目**：渲染要几秒，先把包写脏了再发现失败，用户看到的就是"这一页只有原图"却没人告诉他原因（zip/PDF 同一约束）
+  - ⚠️ **三个计数语义各不同，别互相顶替**：`written` = 进包的**页**数（双语一页两个条目仍算一页，且它同时是"有没有交付东西"的判据：`written == 0 → 导出失败`）；`skipped` = 这一页**没进包**（源页缺失 / 读图失败 / 重名异常）；`untranslated` = **页在、只是没译文**（原图回填 / 双语只出原文 / 渲染时译文已被删）。把后两者混用就是在骗用户 —— 说「跳过」他会以为包里缺页。一页都没成功按「导出失败」处理，不能把空包当成功交付
+  - 守卫：`ReaderZipExportAccountingTest`（6 例，Robolectric + 假编码器：旧口径/全书页回填/双语不重复/缺页算 skipped/渲染失败算 untranslated）、`ExportNamingTest`、`ReaderPdfExportAccountingTest`
   - ⚠️ 导出异常必须 `LogCollector.e` 落盘（重名/磁盘满/渲染异常现在长得一模一样），且 **`CancellationException` 要重抛**（协程取消不是「导出失败」）
   - ⚠️ 临时 zip 的 `delete()` 必须在 `finally`：导出中途退出阅读器会取消 `lifecycleScope`，否则几百 MB 残留 `cacheDir` 无人清
   - ⚠️ **导出进度只在「前台」显示**（`lifecycle.currentState.isAtLeast(STARTED)`）：状态浮层是进程级 `TYPE_APPLICATION_OVERLAY` 窗口，而导出是**跨 onStop 继续跑**的任务（翻译队列 onStop 会暂停，导出不会）→ 后台再 `showImmediate` 会把「正在导出」芯片贴到别的应用上挂到导出结束

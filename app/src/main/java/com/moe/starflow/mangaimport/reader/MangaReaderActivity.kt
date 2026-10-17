@@ -2631,10 +2631,17 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     /**
-     * 打包导出**已翻译页**：[both] = true 出双语包（每页原名原文 + `_译文.jpg`），false 只出译文。
+     * 打包导出（译文 / 双语）。
      *
-     * 文件名沿用原包的序号（见 [ExportNaming]）——只翻译了 1/2/5/6 页，包里就是 001/002/005/006，
-     * 不是 1/2/3/4；未翻译的页不导出（译文无从谈起）。渲染在 IO 逐页进行，进度走状态浮层。
+     * 口径（用户口径 2026-10）：
+     * - **译文包**：**全书页** —— 没有译文的页（纯图片页 OCR 空、翻译失败、还没翻）用**原图回填**，
+     *   包内页数 = 原书页数，文件名仍沿用原序号（见 [ExportNaming]）。**zip 书**确实存在未译页时，
+     *   导出前先问一句「是否一并导出」；选否就退回旧口径（只出已译页），收尾提示也会如实说「只导出已翻译页」。
+     *   ⚠️ **PDF 书不问**：它本来就全页回填（见 [ReaderPdfExport]），页码不能缺。
+     * - **双语包**：已译页「原文原名 + `_译文.jpg`」两个条目，未译页**只出原文那一半** ——
+     *   同一张图不重复放两次，包同样是全书页。
+     *
+     * 渲染在 IO 逐页进行，进度走状态浮层。
      */
     private fun exportTranslated(both: Boolean) {
         val controller = translationController ?: return
@@ -2642,13 +2649,42 @@ class MangaReaderActivity : AppCompatActivity() {
             notifyUser(getString(R.string.reader_download_busy))
             return
         }
-        val total = controller.translatedPages().size
-        if (total == 0) {
+        val translatedCount = controller.translatedPages().size
+        // 一页都没译过：全书原图等于「原文下载」，别给用户一个名不副实的译文包
+        if (translatedCount == 0) {
             notifyUser(getString(R.string.reader_download_nothing))
             return
         }
+        // 双语恒全书页（未译页只出原文那一半）；译文模式只在**确实有未译页且是 zip 书**时问一句 ——
+        // ⚠️ PDF 书不问：它本来就「全页回填、页码不能缺」（见 ReaderPdfExport），问也只会给出无效选项
+        val missing = (source.size - translatedCount).coerceAtLeast(0)
+        if (both || missing == 0 || manga.isPdf) {
+            startTranslatedExport(both, includeUntranslated = true, translatedCount = translatedCount)
+            return
+        }
+        ReaderDialogs.show(this, isDarkBackground()) {
+            setTitle(R.string.reader_download_untranslated_title)
+            setMessage(getString(R.string.reader_download_untranslated_message, missing))
+            setPositiveButton(R.string.reader_download_untranslated_yes) { _, _ ->
+                startTranslatedExport(both = false, includeUntranslated = true, translatedCount = translatedCount)
+            }
+            setNegativeButton(R.string.reader_download_untranslated_no) { _, _ ->
+                startTranslatedExport(both = false, includeUntranslated = false, translatedCount = translatedCount)
+            }
+        }
+    }
+
+    /**
+     * 导出执行体（弹窗选择已经定下来）。
+     *
+     * [includeUntranslated] 只对译文包有意义：双语包恒全书页（见 [ReaderExport.exportTranslated]）。
+     */
+    private fun startTranslatedExport(both: Boolean, includeUntranslated: Boolean, translatedCount: Int) {
+        val controller = translationController ?: return
         notifyUser(getString(R.string.reader_download_started))
         val isPdf = manga.isPdf
+        // 用户明确选了「只导已翻译页」：收尾提示要如实说，不能再说"全部"
+        val translatedOnly = !both && !includeUntranslated
         exportJob = lifecycleScope.launch {
             val overlay = TranslationStatusOverlay.getInstance(this@MangaReaderActivity)
             val showProgress = statusOverlayEnabled()
@@ -2660,7 +2696,8 @@ class MangaReaderActivity : AppCompatActivity() {
             // lifecycleScope 上**跨 onStop 继续跑**的任务（翻译队列 onStop 会暂停，导出不会）——
             // 不在前台还继续 showImmediate，就会把「正在导出」芯片重新贴到别的应用上挂到导出结束。
             fun progressVisible() = showProgress && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
-            val denominator = if (isPdf) source.size else total
+            // 进度分母：PDF 恒全书页（未译页回填原图）；zip 按**本次真正参与导出的页数**
+            val denominator = if (isPdf || both || includeUntranslated) source.size else translatedCount
             if (progressVisible()) {
                 progressShown = true
                 overlay.showImmediate(getString(R.string.reader_download_progress, 0, denominator), autoDismiss = false)
@@ -2674,7 +2711,8 @@ class MangaReaderActivity : AppCompatActivity() {
                         overlay.showImmediate(getString(R.string.reader_download_progress, done, sum), autoDismiss = false)
                     }
                 }
-                // PDF 书出 PDF（`ReaderPdfExport`，全页口径），其余照旧出 zip（`ReaderExport`，只出已译页）
+                // PDF 书出 PDF（`ReaderPdfExport`，全页口径），其余出 zip（`ReaderExport`，全书页口径：
+                // 未译页原图回填；用户选了「只导译文」时退回旧口径）
                 val outcome = if (isPdf) {
                     exportPdfToDownloads(controller, both, ::onStep)
                 } else {
@@ -2684,6 +2722,7 @@ class MangaReaderActivity : AppCompatActivity() {
                         source = source,
                         controller = controller,
                         both = both,
+                        includeUntranslated = includeUntranslated,
                         // 后缀随界面语言（中文 `_译文` / 英文 `_translated`），不在导出层硬编码
                         translatedSuffix = getString(R.string.reader_export_suffix_translated),
                         tempFile = zipTmp,
@@ -2694,7 +2733,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 // dismiss() 清空**全部**堆叠消息，开关开着但没显示过时静默收尾会误伤别的芯片
                 if (progressShown) overlay.dismiss()
                 // 结果同样走 app 顶部浮层（用户口径：阅读器的提示全部用它），失败 = 红底芯片
-                val notice = exportMessage(outcome, both, tmp)
+                val notice = exportMessage(outcome, both, translatedOnly, tmp)
                 notifyUser(notice.text, if (notice.isError) AppNotice.Style.ERROR else AppNotice.Style.INFO)
             } finally {
                 // ⚠️ 清理必须在 finally：导出中途退出阅读器会取消 lifecycleScope，上面所有
@@ -2752,6 +2791,7 @@ class MangaReaderActivity : AppCompatActivity() {
     private suspend fun exportMessage(
         outcome: ExportOutcome,
         both: Boolean,
+        translatedOnly: Boolean,
         tmp: File?,
     ): ExportNotice = when (outcome) {
         ExportOutcome.Empty -> ExportNotice(getString(R.string.reader_download_nothing), false)
@@ -2772,10 +2812,14 @@ class MangaReaderActivity : AppCompatActivity() {
                     outcome.skipped > 0 -> ExportNotice(
                         getString(R.string.reader_download_done_skipped, display, outcome.skipped), false
                     )
-                    // ⚠️ **页在、只是没译文**（PDF 的未译页回填原图 / 双语只出了原图页）：
-                    //    这**不是**"跳过"，说成跳过会让用户以为下载的 PDF 缺页。
+                    // ⚠️ **页在、只是没译文**（未译页回填原图 / 双语只出了原图页）：
+                    //    这**不是**"跳过"，说成跳过会让用户以为下载的包缺页。
                     outcome.untranslated > 0 -> ExportNotice(
                         getString(R.string.reader_download_done_untranslated, display, outcome.untranslated), false
+                    )
+                    // 用户在弹窗里明确选了「只导译文」：包就是旧口径，如实说明（别再说"全部"）
+                    translatedOnly -> ExportNotice(
+                        getString(R.string.reader_download_done_translated_only, display), false
                     )
                     else -> ExportNotice(getString(R.string.reader_download_done, display), false)
                 }
