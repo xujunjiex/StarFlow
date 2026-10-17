@@ -37,6 +37,12 @@
   中途失败会留下"一半新序一半旧序"的行；也不能逐行 `UPDATE pageIndex` —— 它是主键的一部分，
   置换过程中会与尚未搬迁的行撞键（`REPLACE` 会静默吃掉一行）。调用点在阅读器打开时（见 `mangaimport/CLAUDE.md`）。
 - 历史 UI：`ui/history/HistoryFragment`，游戏和漫画均按时间+会话分组显示
+- **历史变更通知**：`TranslationCacheManager.observeHistoryChanges()`（`Flow<Unit>`，底层是
+  `TranslationHistoryDao.observeHistoryChange()` 的 `SELECT id ... LIMIT 1`）—— 历史页靠它
+  **自动刷新**，翻译写库后无需用户点刷新。由 Room 的 InvalidationTracker 驱动，任何写入/更新/删除
+  都会发一次，所以与写入方无关（游戏服务、漫画、删除、清空都覆盖）。
+  ⚠️ 别给这个 Flow 加 `distinctUntilChanged`：`refreshGameCache` 替换或原地更新旧记录时最新 id 可能不变，
+  但列表内容已经变了。⚠️ 也别拿它的返回值当页面数据渲染（它只是「变化了」的信号）。
 - 漫画图片浏览：`MangaViewerActivity` 全屏翻页 + 底部译文详情面板
 - 重翻引擎选择：`history_retranslate_engine` 偏好（PP_OCR_V5/MANGA_OCR/MLKIT），通过 `mapEngineToDetOcr` 映射
   - ⚠️ **manga-ocr 必须配 `RT_DETR_V2`**（不可配 `PP_OCR_V5`，后者 `runOCR` 忽略 ocr 参数直接走独立管线）

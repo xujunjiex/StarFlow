@@ -75,6 +75,35 @@ IDLE（跳过OCR）──像素变化──→ CHANGED ──稳定1帧──→
 - 自动翻译时不能关闭悬浮球
 - 可穿透性：⚠️ 结果容器本身**没有 alpha 开关**（原来这条写的是"通过 alpha 控制"，代码里查无实现）。半透明是**悬浮球**自己的 `Floating_Ball_Alpha`；漫画侧的"穿透"是复制模式的触摸分支（`isCopyMode`）
 
+**结果上屏只有一个入口：`FloatingBallService.showGameResult()`**（新增）。四条成功路径 —— 自动模式的
+内存 LRU 命中、自动模式的数据库命中、手动模式的数据库命中、`translateByText` 的成功回调 ——
+都必须走它；图片翻译（`translateByPic`）也走它（`source = null`）。它负责三件事，别在调用点各写一遍：
+① 记入最近译文队列（`GameRecentResultQueue`，只保存译文，按完成时间从旧到新）；
+② 按设置渲染单条 / 多条（`renderResults`）；③ 按「隐藏结果浮窗」开关决定要不要加窗口。
+⚠️ 失败、流式中间态（`onPartial`）、仅 OCR 的原文**不进**最近列表，也不走这个入口
+（它们仍然直接 `translationResultView.setText(...)`）：它们不是「翻译完成」。
+
+**「结果浮窗显示」相关设置**（键与解析都在 `translate/GameRecentResults.kt`，XML 在 `personalization.xml`
+的「游戏/视频翻译结果设置」分类）：
+
+| 键 | 默认 | 语义 |
+|---|---|---|
+| `game_recent_results_enabled` | `false` | 打开后浮窗一次显示最近 N 条译文（多条只画译文，用 `————————` 分隔，不拼原文） |
+| `game_recent_results_count` | `3` | 条数，字符串存储，取值收敛到 1..5；上限 5 是因为浮窗 `wrap_content` 且**不带滚动** |
+| `game_hide_result_overlay` | `false` | 翻译时隐藏结果浮窗 |
+
+⚠️ `game_hide_result_overlay` 只拦**结果浮窗**（`showResultView()` 第一句就返回），悬浮球、
+框选窗（`CropView`）、截图、OCR、翻译、历史入库都不受影响 —— 需求要的正是「不显示浮窗但仍能框选、
+结果去主窗口看」。因此打开它之后：`partialResultShown` 不会被流式回调置位（屏幕上本来就没东西可丢），
+关闭浮窗按钮自然也不可见，重新翻译改从悬浮菜单的历史对话框长按进入。
+⚠️ **图片翻译**平时不写历史，浮窗一隐藏就没有任何地方能看到结果 —— 所以 `translateByPic` 只在
+「隐藏浮窗」打开时补写一条历史（`saveImageTranslationToCache`，`sourceText = null`，用
+`saveToCache` 而不是 `refreshGameCache`：后者按原文去重，null 原文会互相顶掉）。别把这条
+条件改掉，否则图片翻译的用户开了隐藏就彻底看不到结果。
+
+⚠️ 最近译文队列**只活在本次服务会话里**（`onDestroy` 清空），不落库、不从数据库恢复：
+历史里同一原文会被 `refreshGameCache` 覆盖成一条，用它当「最近 N 条」会给出错误顺序。
+
 **悬浮球长按延迟：** 默认 300ms（`FloatingBallConfig.LONG_PRESS_DELAY`）
 
 **悬浮球手势自定义：**

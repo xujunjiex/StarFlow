@@ -6,6 +6,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
+import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface TranslationHistoryDao {
@@ -14,6 +15,17 @@ interface TranslationHistoryDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertHistory(entry: HistoryEntity): Long
+
+    /**
+     * **只用于监听表变化**的轻量查询（主窗口自动刷新）：`translation_history` 任何插入/
+     * 更新/删除都会让 Room 重新执行它，从而向下游发出一次通知。
+     *
+     * ⚠️ 返回的是「最新一条的 id」，不是页面数据，别拿它渲染列表。
+     * ⚠️ 调用方**不要**加 `distinctUntilChanged`：替换或原地更新旧记录时最新 id 可能不变，
+     * 但列表内容已经变了，仍需要刷新。
+     */
+    @Query("SELECT id FROM translation_history ORDER BY updated_at DESC LIMIT 1")
+    fun observeHistoryChange(): Flow<List<Long>>
 
     @Update
     suspend fun updateHistory(entry: HistoryEntity)

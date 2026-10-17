@@ -12,6 +12,8 @@ import com.moe.starflow.manga.types.TranslatedBubble
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import java.io.File
 import java.io.FileOutputStream
 
@@ -788,6 +790,14 @@ class TranslationCacheManager(private val context: Context) {
     }
 
     // ========== 历史操作 ==========
+
+    /**
+     * 历史表变化通知：任何写入/更新/删除都会发出一次，用来让**主窗口（历史页）自动刷新**。
+     *
+     * 由 Room 的 InvalidationTracker 驱动，因此与写入方无关 —— 游戏翻译服务、漫画翻译、
+     * 删除与清空都会触发。收集方负责生命周期（页面不在前台时不要动视图）。
+     */
+    fun observeHistoryChanges(): Flow<Unit> = dao.observeHistoryChange().map { }
 
     /**
      * 获取历史记录列表。

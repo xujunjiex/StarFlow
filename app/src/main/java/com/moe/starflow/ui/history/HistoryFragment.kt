@@ -16,6 +16,7 @@ import android.widget.ArrayAdapter
 import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import android.app.Activity
@@ -44,6 +45,9 @@ class HistoryFragment : Fragment() {
 
     companion object {
         private const val TAG = "HistoryFragment"
+
+        /** 游戏历史的紧凑列表开关（只显示译文、留白最小），见 item_history_game_compact.xml。 */
+        private const val KEY_GAME_COMPACT = "history_game_compact"
     }
 
     private var _binding: FragmentHistoryBinding? = null
@@ -88,6 +92,29 @@ class HistoryFragment : Fragment() {
         setupSettingsButton()
 
         loadHistory()
+        observeHistoryChanges()
+    }
+
+    /**
+     * 翻译完成后自动刷新列表。
+     *
+     * 由 Room 的表变化通知驱动（`TranslationCacheManager.observeHistoryChanges`）：
+     * 游戏翻译把结果写库后，这里会自动重新加载，不再需要用户点刷新按钮。
+     *
+     * ⚠️ 主窗口没显示时**不要动视图**：页面不在 STARTED 状态、或视图已销毁，直接跳过这次
+     * 通知（回到前台时由 `onViewCreated` 的 `loadHistory()` 与下一次通知补齐）。
+     * 收集器挂在 `viewLifecycleOwner` 上，视图销毁会自动取消。
+     */
+    private fun observeHistoryChanges() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            cacheManager.observeHistoryChanges().collect {
+                if (_binding == null) return@collect
+                if (!viewLifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+                    return@collect
+                }
+                loadHistory()
+            }
+        }
     }
 
     private fun setupTabs() {
@@ -118,6 +145,10 @@ class HistoryFragment : Fragment() {
         )
         binding.rvGameHistory.layoutManager = LinearLayoutManager(requireContext())
         binding.rvGameHistory.adapter = gameGroupAdapter
+        // 紧凑模式（只显示译文）：读设置决定初始形态，切换在历史设置弹窗里
+        gameGroupAdapter.setCompactMode(
+            CustomPreference.getInstance(requireContext()).getBoolean(KEY_GAME_COMPACT, false)
+        )
 
         // 漫画历史：分组适配器
         val prefs = CustomPreference.getInstance(requireContext())
@@ -196,6 +227,14 @@ class HistoryFragment : Fragment() {
         }
         container.addView(displayGroup)
 
+        // 游戏历史紧凑模式：只显示译文、留白最小（小尺寸屏/横屏一屏看更多结果）
+        val compactCheck = android.widget.CheckBox(requireContext()).apply {
+            text = getString(R.string.history_game_compact_title)
+            isChecked = prefs.getBoolean(KEY_GAME_COMPACT, false)
+            setPadding(0, 24, 0, 0)
+        }
+        container.addView(compactCheck)
+
         val cacheCountValues = intArrayOf(0, 20, 50, 100, 200, 500)
         val currentCacheCount = prefs.getString("translation_cache_count", "100").toIntOrNull() ?: 100
         val currentCacheIdx = cacheCountValues.indexOfFirst { it == currentCacheCount }.coerceAtLeast(3)
@@ -249,6 +288,7 @@ class HistoryFragment : Fragment() {
                 if (newDisplayIdx >= 0) {
                     prefs.setString("history_display_mode", displayValues[newDisplayIdx])
                 }
+                prefs.setBoolean(KEY_GAME_COMPACT, compactCheck.isChecked)
                 prefs.setString("translation_cache_count", cacheCountValues[cacheSeekBar.progress].toString())
                 val newEngineIdx = engineGroup.checkedRadioButtonId
                 if (newEngineIdx >= 0) {
@@ -345,6 +385,7 @@ class HistoryFragment : Fragment() {
                 when (currentTab) {
                     TranslationCacheManager.MODE_GAME -> {
                         // 游戏历史始终按进程（sessionId）分组，不按日期合并
+                        gameGroupAdapter.setCompactMode(prefs.getBoolean(KEY_GAME_COMPACT, false))
                         val groups = cacheManager.getHistoryGrouped(currentTab, sortByUpdated = false)
                         gameGroupAdapter.submitList(groups)
                         updateEmptyState(groups.isEmpty())

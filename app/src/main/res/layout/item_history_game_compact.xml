@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  游戏历史的「紧凑」行（个性化/历史设置里的紧凑模式）：
+  只显示译文，四边留白尽量小，便于小尺寸屏或横屏一屏看到更多翻译结果。
+  原文、翻译器名、时间都不显示（需求：隐去翻译原文与元数据）。
+  点按复制、长按删除与卡片模式保持一致，见 HistoryGameAdapter。
+-->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/tv_compact_translated_text"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:layout_marginStart="4dp"
+    android:layout_marginEnd="4dp"
+    android:layout_marginTop="1dp"
+    android:layout_marginBottom="1dp"
+    android:foreground="?attr/selectableItemBackground"
+    android:paddingStart="8dp"
+    android:paddingEnd="8dp"
+    android:paddingTop="4dp"
+    android:paddingBottom="4dp"
+    android:textColor="@color/text_primary"
+    android:textSize="14sp" />

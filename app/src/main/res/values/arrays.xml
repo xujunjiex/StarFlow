@@ -15,6 +15,24 @@
         <item>2</item>
     </string-array>
 
+    <!-- 结果浮窗一次显示的最近译文条数（值 = 条数，与 game_recent_results_count 一一对应）。
+         上限 5：浮窗不带滚动，条数越多、越长，越容易超出屏幕。 -->
+    <string-array name="game_recent_results_count_entries">
+        <item>1</item>
+        <item>2</item>
+        <item>3</item>
+        <item>4</item>
+        <item>5</item>
+    </string-array>
+
+    <string-array name="game_recent_results_count_values">
+        <item>1</item>
+        <item>2</item>
+        <item>3</item>
+        <item>4</item>
+        <item>5</item>
+    </string-array>
+
     <string-array name="pixel_threshold_entries">
         <item>1%</item>
         <item>2%</item>
