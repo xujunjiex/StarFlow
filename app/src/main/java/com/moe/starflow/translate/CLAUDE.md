@@ -88,7 +88,7 @@ IDLE（跳过OCR）──像素变化──→ CHANGED ──稳定1帧──→
 
 | 键 | 默认 | 语义 |
 |---|---|---|
-| `game_recent_results_enabled` | `false` | 打开后浮窗一次显示最近 N 条译文（多条只画译文，用 `————————` 分隔，不拼原文） |
+| `game_recent_results_enabled` | `false` | 打开后浮窗一次显示最近 N 条译文（多条只画译文，相邻条目之间是**满宽实线**，不拼原文） |
 | `game_recent_results_count` | `3` | 条数，字符串存储，取值收敛到 1..5；上限 5 是因为浮窗 `wrap_content` 且**不带滚动** |
 
 ⚠️ **「同时显示原文」只在单条模式生效**：多条模式刻意不拼原文（N 条再拼原文会高到出屏），
@@ -101,6 +101,12 @@ IDLE（跳过OCR）──像素变化──→ CHANGED ──稳定1帧──→
 的原文贴到这次图片译文上。
 ⚠️ 最近译文队列**只活在本次服务会话里**（`onDestroy` 清空），不落库、不从数据库恢复：
 历史里同一原文会被 `refreshGameCache` 覆盖成一条，用它当「最近 N 条」会给出错误顺序。
+
+⚠️ **多条之间的分隔线不是字符**：`TranslationResultView.setEntries()` 用 `LineBackgroundSpan`
+在占位行上按 `layout.width` 画满宽实线，颜色取 `textView.currentTextColor`（跟着「字体颜色」设置）。
+不要退回 `————————` 那种字符画线 —— 字符数固定，框一宽/字号一大就只剩前半段，
+而 `drawBackground` 回调里的 left/right 是**当前行文本边界**（占位行只有一个空格 ⇒ 画出来很短），
+必须用 `layout.width` 才铺满。
 
 **悬浮球长按延迟：** 默认 300ms（`FloatingBallConfig.LONG_PRESS_DELAY`）
 

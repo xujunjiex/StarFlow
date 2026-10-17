@@ -17,16 +17,18 @@ object GameRecentResults {
     const val DEFAULT_ENABLED = false
     const val DEFAULT_COUNT = 3
 
+    const val MIN_COUNT = 1
+
     /**
      * 条数上限取 5 而不是更大：结果浮窗是 `wrap_content` 且**不带滚动**，
      * 条数越多浮窗越高，越多条长译文越可能超出屏幕。5 条约等于 15 行文本，
      * 竖屏也放得下。
      */
-    const val MIN_COUNT = 1
     const val MAX_COUNT = 5
 
-    /** 多条显示时插在相邻两条之间的分隔线（纯文本，保持浮窗结构不变以便拖动）。 */
-    const val SEPARATOR = "————————"
+    // 注：多条之间的分隔线**不是字符**。早先想用 `————————`，但字符数固定，框宽/字号一变
+    // 就只剩前半段；现由 `TranslationResultView.setEntries` 用 LineBackgroundSpan 画满宽实线
+    // （颜色直接取 TextView 当前文字色，跟着「字体颜色」设置走）。
 
     /** 解析 `ListPreference` 存下来的条数：缺省/非法值回默认档，越界向 1..5 收敛。 */
     fun parseCount(raw: String?): Int {

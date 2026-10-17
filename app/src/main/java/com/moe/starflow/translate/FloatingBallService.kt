@@ -1711,18 +1711,16 @@ class FloatingBallService : LifecycleService() {
         val entries = recentResults.snapshot()
         if (entries.isEmpty()) return
 
-        val multi = recentResultsEnabled && entries.size > 1
-        val body = if (multi) {
-            entries.mapIndexed { index, item ->
-                if (index == entries.lastIndex && newestFromMemoryCache) "⚡$item" else item
-            }.joinToString("\n" + GameRecentResults.SEPARATOR + "\n")
-        } else {
-            val newest = entries.last()
-            val composed = composeResultText(lastRenderedSource, newest) ?: newest
-            // ⚠️ 只有单条时才在开头补 ⚡：多条已在最新那条上标过，再补一个会标到**最旧**那条头上
-            if (newestFromMemoryCache && !composed.startsWith("⚡")) "⚡$composed" else composed
+        // 多条显示：条目之间由 TranslationResultView 画满宽分隔线（颜色跟随字体），这里只交条目
+        if (recentResultsEnabled && entries.size > 1) {
+            translationResultView.setEntries(entries, newestFromMemoryCache)
+            return
         }
-        translationResultView.setText(body)
+
+        // 单条显示（默认）：与旧版一致，走 composeResultText（受「同时显示原文」设置影响）
+        val newest = entries.last()
+        val composed = composeResultText(lastRenderedSource, newest) ?: newest
+        translationResultView.setText(composed, fromCache = newestFromMemoryCache)
     }
 
     /**

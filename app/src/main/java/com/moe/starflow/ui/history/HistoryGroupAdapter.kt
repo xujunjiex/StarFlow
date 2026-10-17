@@ -65,9 +65,9 @@ class HistoryGroupAdapter(
 
         fun bind(group: HistoryGroup) {
             tvDateHeader.text = group.dateLabel
-            // 紧凑模式下连分组标题的留白一起收，否则标题本身仍会吃掉不少高度
-            val headerPadH = if (compactMode) 8 else 16
-            val headerPadV = if (compactMode) 4 else 10
+            // 紧凑模式：日期标题的留白收窄，左边缘与紧凑行文字对齐（都从 14dp 起）
+            val headerPadH = if (compactMode) 14 else 16
+            val headerPadV = if (compactMode) 8 else 10
             tvDateHeader.setPadding(
                 dp(headerPadH), dp(headerPadV), dp(headerPadH), dp(headerPadV)
             )
@@ -108,9 +108,9 @@ class HistoryGroupAdapter(
                 val endTime = timeFormat.format(Date(session.endTime))
                 tvSessionHeader.text = "$startTime - $endTime (${session.entries.size})"
 
-                // 紧凑模式：会话标题只留最小留白（下载按钮的位置与语义不变）
-                val padH = if (compactMode) 8 else 24
-                val padV = if (compactMode) 2 else 6
+                // 紧凑模式：会话标题的留白收窄并与行文字左对齐（下载按钮位置与语义不变）
+                val padH = if (compactMode) 14 else 24
+                val padV = if (compactMode) 4 else 6
                 (tvSessionHeader.parent as? View)?.setPadding(
                     dp(padH), dp(padV), dp(padH), dp(padV)
                 )

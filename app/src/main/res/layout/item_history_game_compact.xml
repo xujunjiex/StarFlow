@@ -1,22 +1,34 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   游戏历史的「紧凑」行（历史记录设置里的紧凑模式）：
-  只显示译文，四边留白尽量小，便于小尺寸屏或横屏一屏看到更多翻译结果。
+  只显示译文，留白最小，便于小尺寸屏或横屏一屏看到更多翻译结果。
   原文、翻译器名、时间都不显示。
+  底部 1px 分隔线把相邻记录隔开（颜色用语义色 @color/divider，随暗色主题翻转）；
   点按复制、长按删除与卡片模式保持一致，见 HistoryGameAdapter。
 -->
-<TextView xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/tv_compact_translated_text"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_marginStart="4dp"
-    android:layout_marginEnd="4dp"
-    android:layout_marginTop="1dp"
-    android:layout_marginBottom="1dp"
-    android:foreground="?attr/selectableItemBackground"
-    android:paddingStart="8dp"
-    android:paddingEnd="8dp"
-    android:paddingTop="4dp"
-    android:paddingBottom="4dp"
-    android:textColor="@color/text_primary"
-    android:textSize="14sp" />
+    android:background="?attr/selectableItemBackground"
+    android:orientation="vertical">
+
+    <TextView
+        android:id="@+id/tv_compact_translated_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:lineSpacingExtra="2dp"
+        android:paddingStart="14dp"
+        android:paddingTop="9dp"
+        android:paddingEnd="14dp"
+        android:paddingBottom="9dp"
+        android:textColor="@color/text_primary"
+        android:textSize="14sp" />
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1px"
+        android:layout_marginStart="14dp"
+        android:layout_marginEnd="14dp"
+        android:background="@color/divider" />
+
+</LinearLayout>

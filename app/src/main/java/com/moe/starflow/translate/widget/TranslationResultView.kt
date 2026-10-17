@@ -12,9 +12,15 @@ import android.annotation.SuppressLint
 import android.content.ClipData
 import android.content.Context
 import android.content.ClipboardManager
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.LineBackgroundSpan
+import android.text.style.RelativeSizeSpan
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.MotionEvent
@@ -220,6 +226,87 @@ class TranslationResultView(
 
     fun setText(text: String, fromCache: Boolean = false) {
         textView.text = if (fromCache) "⚡$text" else text
+    }
+
+    /**
+     * 多条结果的「最近 N 条」排版：条目之间画一条**满宽实线**，颜色与结果文字一致。
+     *
+     * 为什么不用 `————————` 这种字符画线：字符数是固定的，框宽/字号一变就只剩「前半段」，
+     * 而且它和译文一样受字重影响，看起来不齐。这里用 [RuleLineSpan]（LineBackgroundSpan）
+     * 在一个占位空行上按文本区实际宽度画线 —— 框变宽、字号变大都自动铺满。
+     *
+     * 分隔行本身用 [RelativeSizeSpan] 压到 0.35 倍行高，避免 N 条时行距过大把浮窗撑高。
+     *
+     * @param newestFromMemoryCache 内存缓存命中：⚡ 只标在**最新一条**（最后一条）上
+     */
+    fun setEntries(entries: List<String>, newestFromMemoryCache: Boolean = false) {
+        if (entries.isEmpty()) return
+        if (entries.size == 1) {
+            setText(entries.first(), fromCache = newestFromMemoryCache)
+            return
+        }
+
+        val thickness = 1f * resources.displayMetrics.density
+        val sb = SpannableStringBuilder()
+        entries.forEachIndexed { index, raw ->
+            if (index > 0) {
+                // 分隔行：`\n 占位空格\n`，span 只覆盖那个空格 → 只作用于这一行
+                sb.append('\n')
+                val start = sb.length
+                sb.append(' ')
+                sb.setSpan(
+                    RuleLineSpan(thickness),
+                    start, sb.length,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+                sb.setSpan(
+                    RelativeSizeSpan(0.35f),
+                    start, sb.length,
+                    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+                sb.append('\n')
+            }
+            if (index == entries.lastIndex && newestFromMemoryCache) sb.append('⚡')
+            sb.append(raw)
+        }
+        textView.text = sb
+    }
+
+    /**
+     * 在占位行上画一条满宽横线，颜色取 TextView 当前文字色（跟随「字体颜色」设置）。
+     *
+     * 坐标系说明：TextView 已经把 canvas 平移到文本区原点，所以 `0..layout.width`
+     * 就是「去掉内边距后的整行宽度」；不要用 drawBackground 传进来的 left/right ——
+     * 那是当前行的文本边界，占位行只有一个空格，会画成很短的一截（就是「只有前半段」）。
+     */
+    private inner class RuleLineSpan(
+        private val thickness: Float
+    ) : LineBackgroundSpan {
+
+        private val paint = Paint().apply {
+            isAntiAlias = true
+            style = Paint.Style.FILL
+        }
+
+        override fun drawBackground(
+            canvas: Canvas,
+            defPaint: Paint,
+            left: Int,
+            right: Int,
+            top: Int,
+            baseline: Int,
+            bottom: Int,
+            text: CharSequence,
+            start: Int,
+            end: Int,
+            lineNumber: Int
+        ) {
+            val width = textView.layout?.width?.toFloat() ?: 0f
+            if (width <= 0f) return
+            paint.color = textView.currentTextColor
+            val cy = (top + bottom) / 2f
+            canvas.drawRect(0f, cy - thickness / 2f, width, cy + thickness / 2f, paint)
+        }
     }
 
     fun getText(): String = textView.text.toString()
