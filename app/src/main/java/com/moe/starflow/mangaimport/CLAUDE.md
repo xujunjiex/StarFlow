@@ -34,7 +34,7 @@
 - **三种打包下载**（更多 → 下载；全部走 `MediaStore.Downloads`，临时 zip 在 `cacheDir`；三态共用一个 `exportJob` 槽位，导出中再点提示「正在导出中」）：
   | 入口 | 内容 | 包内命名 |
   |------|------|---------|
-  | 原文（已有） | 全部页 | archive 直接复制原 zip；目录包扁平名 |
+  | 原文（已有） | 全部页 | 未启用超分时 archive 直接复制原包；目录保留路径 |
   | 译文 | **全书页**：已译页出译文，没有译文的页（纯图片 OCR 空 / 翻译失败 / 没翻）**原图回填** | 已译页 `<原目录>/<原名主干>.jpg`（JPEG 95）；回填页**原样搬原名原扩展名**（`006.png` 还是 `006.png`） |
   | 双语 | **全书页**：已译页两个条目（原文 + 译文），未译页**只出原文那一半**（同一张图不重复放） | 原文用**原名原扩展名**，译文 `<主干>_译文.jpg`，同层混放 |
   - **译文模式导出前会问一句**（`reader_download_untranslated_*`，只在 zip 且确实存在未译页时弹）：一并导出 → 全书页；只导译文 → 旧口径（包内只有已译页），收尾提示换成 `reader_download_done_translated_only`。**双语不问**（恒全书页）。**PDF 书也不问**（它本来就全页回填，见下）
@@ -43,7 +43,8 @@
   走 `ReaderPdfExport` + `PdfJpegWriter`，不套用下面这一整套 zip 命名规则 —— 见「PDF 导入」一节 ⑤。
   - ⚠️ **命名一律沿用原压缩包的序号**，绝不按「第几个已翻译页」重编号：原包 1..10 只翻了 1/2/5/6 → 导出就是 `001/002/005/006`，不是 `1/2/3/4`。规则收在 `ExportNaming`（纯函数，`ExportNamingTest` 12 例覆盖）
   - ⚠️ **条目名必须保留原目录前缀**（`ch1/005.jpg` → `ch1/005.jpg`）：zip 里重名会让 `ZipOutputStream.putNextEntry` 抛 `ZipException: duplicate entry`，**整个导出直接失败**（子目录漫画 `ch1/005` 与 `ch2/005` 会撞）
-  - ⚠️ 双语包的原文条目走 `ReaderPageSource.openEntry` **原样搬运字节**，不能 `loadFull` + 重新编码 —— 原图多是 JPEG，解成 Bitmap 再压回去是二次有损压缩（掉画质、体积还可能更大）
+  - 下载弹窗共用 `reader_export_prefer_sr` 开关（默认关闭，记住选择）。开启时三种导出优先读取持久超分产物，不受显示/模型开关影响；无产物保留原图。双语 ZIP 每页共用同一超分副本渲染原文和译文；超分条目用 `.jpg`，原图仍保留原字节及扩展名。PDF 原文开启时按页重建图片 PDF。
+  - ⚠️ 未使用超分时，双语包的原文条目走 `ReaderPageSource.openEntry` **原样搬运字节**，不能 `loadFull` + 重新编码 —— 原图多是 JPEG，解成 Bitmap 再压回去是二次有损压缩（掉画质、体积还可能更大）
   - ⚠️ 译文图渲染用 `ReaderTranslationController.renderForExport`，**不写 `renderLru`**：导出动辄上百页，走 `visualBitmap` 会把 100MB 渲染缓存一路冲干净，连用户正在看的那页译图一起挤掉；`renderOverlay` 开头就 `copy()` 出独立副本 → 源图渲染完 `finally` 里立刻 `recycle()`（逐页进行，别攒内存）
   - 进度走 `TranslationStatusOverlay.showImmediate`「正在导出 %1$d/%2$d…」（受 `status_overlay_enabled` 开关控制，关闭时静默），结束 `dismiss()` + toast 落盘结果
   - ⚠️ **文件名后缀走 strings**（`reader_export_suffix_translated` / `reader_export_zip_suffix_*`），不硬编码中文：英文界面下是 `_translated` / `-translated.zip`
@@ -279,7 +280,7 @@
   不至于交白卷）；正式出口是 PDF 导出。
 
 **⑤ 导出 PDF：自己写、JPEG 直嵌（`PdfJpegWriter`）**
-- 三种出口（PDF 书）：**原文** = 原样复制那个 PDF（不重新生成 —— 那会丢矢量/文本层、体积还涨）；
+- 三种出口（PDF 书）：**原文** = 关闭超分选项时原样复制 PDF，开启时优先超分并按页重建图片 PDF；
   **译文** = 全页（已译页出译图，**未译页回填原图** —— PDF 少页会让页码错位，比"某几页还是原文"难用）；
   **双语** = 已译页「原图页 + 译图页」成对，未译页只出原图页（页数 = `N + 已译页数`，不是 `2N`）。
 - ⚠️ **三条出口都直写 `MediaStore`（`streamToDownloads`），不落 `cacheDir` 临时文件**：
@@ -321,7 +322,7 @@
 - ⚠️ **导出进度芯片的 dismiss 不能挪进 `finally`**：它必须在 `notifyUser(结果)` **之前**执行
   （`showImmediate` 是替换、`show` 是追加，顺序反了会变成两条芯片）；取消路径靠阅读器 `onDestroy`
   的 `dismiss()` 兜底（取消只会发生在退出阅读器时）。
-- 页的**点尺寸**由像素尺寸按 `PdfRasterPolicy.RASTER_DPI` 反推（= 原页面尺寸），
+- 页的**点尺寸**由源页像素尺寸按 `PdfRasterPolicy.RASTER_DPI` 反推，超分只提高嵌入图片像素，不改变纸张尺寸，
   所以导出 PDF 的"纸"和原书一致；进度按**原书页**上报（双语下一页可能写两张）。
 
 **⑥ 打不开的两种原因（`ImportFailureReason.PDF_ENCRYPTED / PDF_INVALID`）**

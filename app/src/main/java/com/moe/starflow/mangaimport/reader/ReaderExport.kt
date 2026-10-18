@@ -5,6 +5,8 @@ import com.moe.starflow.mangaimport.translate.ReaderTranslationController
 import com.moe.starflow.utils.LogCollector
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.BufferedOutputStream
 import java.io.File
@@ -129,6 +131,7 @@ internal object ReaderExport {
         translatedSuffix: String,
         tempFile: File,
         onProgress: (done: Int, total: Int) -> Unit,
+        preferSr: Boolean = false,
     ): ExportOutcome {
         // 已译页取**导出开始那一刻**的快照：用户完全可能在导出过程中删掉某页译文 / 清空本章
         val translated = controller.translatedPages()
@@ -138,7 +141,9 @@ internal object ReaderExport {
             isAvailable = source::pageAvailable,
             exportKey = source::exportKey,
             openOriginal = source::openEntry,
-            renderTranslated = controller::renderForExport,
+            renderTranslated = { controller.renderForExport(it) },
+            readSr = { if (preferSr) controller.loadSrForExport(it) else null },
+            renderTranslatedWithBase = { page, sr -> controller.renderForExport(page, sr) },
             both = both,
             includeUntranslated = includeUntranslated,
             translatedSuffix = translatedSuffix,
@@ -167,8 +172,10 @@ internal object ReaderExport {
         tempFile: File,
         onProgress: (done: Int, total: Int) -> Unit,
         compressRendered: (Bitmap, OutputStream) -> Unit = { bmp, out ->
-            bmp.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)
+            check(bmp.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out))
         },
+        readSr: (Int) -> Bitmap? = { null },
+        renderTranslatedWithBase: ((Int, Bitmap?) -> Bitmap?)? = null,
     ): ExportOutcome = withContext(Dispatchers.IO) {
         // 参与导出的页：双语恒全书页；译文模式按 includeUntranslated 决定要不要未译页。
         // ⚠️ 全书页口径下真缺页也要进循环，才会落进 skipped 计数并被如实告知；
@@ -185,6 +192,7 @@ internal object ReaderExport {
         try {
             ZipOutputStream(BufferedOutputStream(FileOutputStream(tempFile))).use { zip ->
                 for (page in pages) {
+                    currentCoroutineContext().ensureActive()
                     if (!isAvailable(page)) {
                         skipped++
                         continue
@@ -196,15 +204,23 @@ internal object ReaderExport {
                     }
                     // ⚠️ **先渲染译文，再写任何条目**：渲染要几秒，先把包写脏了再发现失败，
                     // 用户看到的就是"这一页只有原图"却没人告诉他为什么
-                    val bmp = if (isTranslated(page)) renderTranslated(page) else null
+                    val sr = readSr(page)
+                    val bmp = try {
+                        if (!isTranslated(page)) null
+                        else if (renderTranslatedWithBase != null) renderTranslatedWithBase(page, sr)
+                        else renderTranslated(page)
+                    } catch (e: Throwable) {
+                        sr?.recycle()
+                        throw e
+                    }
                     try {
                         when {
                             both -> {
                                 // 双语：先原文（未译页就靠这一张），再译文
                                 val originalName = ExportNaming.uniqueEntryName(
-                                    ExportNaming.originalPairEntry(key), used,
+                                    if (sr == null) key else ExportNaming.translatedEntry(key), used,
                                 )
-                                if (!copyOriginal(openOriginal, zip, page, originalName)) {
+                                if (!writeOriginal(openOriginal, zip, page, originalName, sr, compressRendered)) {
                                     skipped++
                                     continue
                                 }
@@ -234,7 +250,8 @@ internal object ReaderExport {
 
                             includeUntranslated -> {
                                 // 未译页回填：**原始字节 + 原名原扩展名**（不 decode/不重编码）
-                                if (!copyOriginal(openOriginal, zip, page, ExportNaming.uniqueEntryName(key, used))) {
+                                if (!writeOriginal(openOriginal, zip, page, ExportNaming.uniqueEntryName(
+                                        if (sr == null) key else ExportNaming.translatedEntry(key), used), sr, compressRendered)) {
                                     skipped++
                                     continue
                                 }
@@ -247,6 +264,7 @@ internal object ReaderExport {
                     } finally {
                         // 渲染产物是独立副本（renderOverlay 内部 copy），用完即回收
                         if (bmp != null && !bmp.isRecycled) bmp.recycle()
+                        sr?.recycle()
                     }
                     withContext(Dispatchers.Main) { onProgress(written, pages.size) }
                 }
@@ -268,6 +286,44 @@ internal object ReaderExport {
         }
     }
 
+    /** 超分页重新编码为 JPEG；其余页面保留源条目字节和扩展名。 */
+    suspend fun exportOriginal(
+        source: ReaderPageSource,
+        tempFile: File,
+        readSr: (Int) -> Bitmap?,
+    ): ExportOutcome = withContext(Dispatchers.IO) {
+        var written = 0
+        var skipped = 0
+        val used = HashSet<String>()
+        ZipOutputStream(BufferedOutputStream(FileOutputStream(tempFile))).use { zip ->
+            for (page in 0 until source.size) {
+                currentCoroutineContext().ensureActive()
+                val key = source.exportKey(page)
+                if (key == null || !source.pageAvailable(page)) { skipped++; continue }
+                val sr = readSr(page)
+                try {
+                    val name = if (sr == null) key else ExportNaming.translatedEntry(key)
+                    if (writeOriginal(source::openEntry, zip, page, ExportNaming.uniqueEntryName(name, used), sr)) written++
+                    else skipped++
+                } finally { sr?.recycle() }
+            }
+        }
+        if (written == 0) ExportOutcome.Failed else ExportOutcome.Done(written, skipped)
+    }
+
+    private fun writeOriginal(
+        openOriginal: (Int) -> InputStream?, zip: ZipOutputStream, page: Int, entryName: String, sr: Bitmap?,
+        compress: (Bitmap, OutputStream) -> Unit = { bmp, out ->
+            check(bmp.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out))
+        },
+    ): Boolean {
+        if (sr == null) return copyOriginal(openOriginal, zip, page, entryName)
+        zip.putNextEntry(ZipEntry(entryName))
+        compress(sr, zip)
+        zip.closeEntry()
+        return true
+    }
+
     /** 把原始条目字节原样写入 zip。 */
     private fun copyOriginal(
         openOriginal: (Int) -> InputStream?,
@@ -282,6 +338,7 @@ internal object ReaderExport {
             true
         } ?: false
     } catch (e: Exception) {
+        if (e is CancellationException) throw e
         LogCollector.e(TAG, "copyOriginal failed page=$page entry=$entryName", e)
         false
     }

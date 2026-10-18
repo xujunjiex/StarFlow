@@ -56,6 +56,8 @@ internal object ReaderPdfExport {
      * @param out **调用方拥有**的输出流（本函数只 flush，不 close）
      * @param onProgress 每处理完一页原书页回调一次（**主线程**），参数为 (已处理, 总页数)
      * @param encodeJpeg 位图 → JPEG 字节（测试缝：默认实现就是 `Bitmap.compress(JPEG, 88)`）
+     * @param originalOnly 只导出底图，允许没有任何译文。
+     * @param pageDimensions 原页像素尺寸；超分后仍按此尺寸计算纸张大小。
      */
     suspend fun export(
         pageCount: Int,
@@ -66,12 +68,14 @@ internal object ReaderPdfExport {
         out: OutputStream,
         onProgress: (done: Int, total: Int) -> Unit,
         encodeJpeg: (Bitmap) -> ByteArray? = ::encodeJpeg,
+        originalOnly: Boolean = false,
+        pageDimensions: ((Int) -> Pair<Int, Int>)? = null,
     ): ExportOutcome = withContext(Dispatchers.IO) {
         val total = pageCount
         if (total <= 0) return@withContext ExportOutcome.Empty
         val translated = translatedPages
         // 一页都没翻过 → 与 zip 导出同一条口径：不产出"纯原图"的假译文包
-        if (translated.isEmpty()) return@withContext ExportOutcome.Empty
+        if (!originalOnly && translated.isEmpty()) return@withContext ExportOutcome.Empty
 
         var written = 0
         /**
@@ -90,10 +94,16 @@ internal object ReaderPdfExport {
         try {
             val writer = PdfJpegWriter(buffered)
             for (page in 0 until total) {
+                val dimensions = pageDimensions?.invoke(page)
+                if (originalOnly) {
+                    if (writeOriginalPage(writer, readOriginal, encodeJpeg, page, dimensions)) written++ else skipped++
+                    withContext(Dispatchers.Main) { onProgress(page + 1, total) }
+                    continue
+                }
                 /** 本页写进 PDF 的张数（双语模式下已译页是 2 张），同时作为"这页有没有产出"的判据。 */
                 var wroteThisPage = false
                 // ① 双语：先出"原图页"（未翻译页就靠这一张，所以不能省）
-                if (both && writeOriginalPage(writer, readOriginal, encodeJpeg, page)) {
+                if (both && writeOriginalPage(writer, readOriginal, encodeJpeg, page, dimensions)) {
                     written++
                     wroteThisPage = true
                 }
@@ -108,7 +118,7 @@ internal object ReaderPdfExport {
                 }
                 if (rendered != null) {
                     try {
-                        if (writeBitmapPage(writer, rendered, encodeJpeg)) {
+                        if (writeBitmapPage(writer, rendered, encodeJpeg, dimensions)) {
                             written++
                             wroteThisPage = true
                         }
@@ -118,7 +128,7 @@ internal object ReaderPdfExport {
                     }
                 } else if (!both) {
                     // 译文 PDF：未翻译页回填原图，保证整本页数一致、可连续阅读
-                    if (writeOriginalPage(writer, readOriginal, encodeJpeg, page)) {
+                    if (writeOriginalPage(writer, readOriginal, encodeJpeg, page, dimensions)) {
                         written++
                         wroteThisPage = true
                     }
@@ -160,10 +170,11 @@ internal object ReaderPdfExport {
         readOriginal: (Int) -> Bitmap?,
         encodeJpeg: (Bitmap) -> ByteArray?,
         page: Int,
+        dimensions: Pair<Int, Int>?,
     ): Boolean {
         val bmp = readOriginal(page) ?: return false
         return try {
-            writeBitmapPage(writer, bmp, encodeJpeg)
+            writeBitmapPage(writer, bmp, encodeJpeg, dimensions)
         } finally {
             bmp.recycle()
         }
@@ -174,6 +185,7 @@ internal object ReaderPdfExport {
         writer: PdfJpegWriter,
         bitmap: Bitmap,
         encodeJpeg: (Bitmap) -> ByteArray?,
+        dimensions: Pair<Int, Int>?,
     ): Boolean {
         val w = bitmap.width
         val h = bitmap.height
@@ -181,7 +193,9 @@ internal object ReaderPdfExport {
         val jpeg = encodeJpeg(bitmap) ?: return false
         if (jpeg.isEmpty()) return false
         val ptPerPx = 72f / PdfRasterPolicy.RASTER_DPI
-        writer.addPage(jpeg, w, h, w * ptPerPx, h * ptPerPx)
+        val pageW = dimensions?.first?.takeIf { it > 0 } ?: w
+        val pageH = dimensions?.second?.takeIf { it > 0 } ?: h
+        writer.addPage(jpeg, w, h, pageW * ptPerPx, pageH * ptPerPx)
         return true
     }
 

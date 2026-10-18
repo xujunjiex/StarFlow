@@ -14,6 +14,23 @@
         android:textStyle="bold"
         android:textColor="#333333"/>
 
+    <androidx.appcompat.widget.SwitchCompat
+        android:id="@+id/switch_download_sr"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:minHeight="48dp"
+        android:text="@string/reader_download_prefer_sr"
+        android:textSize="15sp"/>
+
+    <TextView
+        android:id="@+id/text_download_sr_hint"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/reader_download_prefer_sr_hint"
+        android:textSize="12sp"
+        android:paddingBottom="8dp"/>
+
     <LinearLayout
         android:id="@+id/row_download_original"
         android:layout_width="match_parent"

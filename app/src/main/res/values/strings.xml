@@ -2037,4 +2037,7 @@
     <string name="novel_color_invalid">Enter a valid hexadecimal color</string>
     <string name="novel_font_default">System default</string>
     <string name="novel_color_opacity">Opacity</string>
+    <string name="reader_download_prefer_sr">Prefer upscaled images</string>
+    <string name="reader_download_prefer_sr_hint">Use saved upscaled images where available; keep originals for other pages. Both exports use the upscaled image for the original and translation.</string>
+    <string name="reader_download_prefer_sr_pdf_hint">Use saved upscaled images where available; keep originals for other pages. Both original and translated pages use the upscaled image. PDFs are regenerated as image pages.</string>
 </resources>

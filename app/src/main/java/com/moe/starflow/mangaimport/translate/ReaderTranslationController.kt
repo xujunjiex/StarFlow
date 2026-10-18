@@ -3389,41 +3389,49 @@ class ReaderTranslationController(
     }
 
     /**
-     * 导出用：按**原图全分辨率**渲染某页译文（`useOriginalText=false`）。仅成功页可渲染。
+     * 导出用：按所选底图的实际分辨率渲染某页译文。仅成功页可渲染。
      *
      * ⚠️ 不能复用 [visualBitmap]：它会把结果放进 100MB 的 `renderLru`，而导出动辄上百页 →
      * 一路把 LRU 冲干净，把用户正在看的那页译图也挤掉，退回阅读器还得重渲。
      *
-     * ⚠️ **刻意不用超分底图**（`base = null`）：导出包是给别人/别的设备看的，
-     * 不该因为"这台机器开过超分"就换一套分辨率；而且 2x 底图会让导出体积翻几倍。
+     * [exportBase] 是调用方持有的超分底图；按实际尺寸缩放气泡，保留产物分辨率。
+     * 不读取阅读器显示开关，不占用显示缓存，也不回收调用方的底图。
      *
      * ⚠️ **必须在 IO 线程调用**（全尺寸解码 + 全页渲染）；调用方负责 `recycle()` 返回值。
      *
      * ⚠️ 渲染倍率固定 **1f**（导出不上屏、不吃屏幕分辨率）：按 2f 栅格化会把导出图放大 4 倍像素
      * （内存/时间白花，见 manga/CLAUDE.md 的「低分辨率漫画译文模糊」一节里"导出/查看器一律传 1f"）。
      */
-    fun renderForExport(pageIndex: Int): Bitmap? {
+    fun renderForExport(pageIndex: Int, exportBase: Bitmap? = null): Bitmap? {
         if (!sourcePageAvailable(pageIndex)) return null
         val row = rows.value[pageIndex] ?: return null
         if (row.state != ImportedPageTranslation.STATE_SUCCESS) return null
         val config = cacheManager.getOverlayConfig(appPrefs)
         val bubbles = PageTranslationCodec.fromRow(row, config.fontSize, config.bgColor) ?: return null
-        val orig = loadFull(pageIndex) ?: return null
+        val orig = exportBase ?: loadFull(pageIndex) ?: return null
+        val sourceWidth = if (exportBase != null) ownSource.originalWidth(pageIndex) else orig.width
+        if (sourceWidth <= 0) return null
+        val scale = orig.width.toFloat() / sourceWidth
         return try {
             renderBubbles(
-                original = orig, bubbles = bubbles,
-                mode = TranslationCacheManager.OverlayMode.TRANSLATED, cfg = config, base = null,
+                original = orig, bubbles = if (exportBase != null) bubbles.map { it.scaledBy(scale) } else bubbles,
+                mode = TranslationCacheManager.OverlayMode.TRANSLATED,
+                cfg = if (exportBase != null) config.copy(fontSize = config.fontSize * scale) else config, base = null,
                 det = lastDet,
             )
         } finally {
             // renderOverlay 开头就 copy() 出独立副本 → 源图渲染完即可回收（导出逐页进行，别攒内存）
-            orig.recycle()
+            if (exportBase == null) orig.recycle()
         }
     }
 
+    /** IO 线程读取独立超分副本；与当前显示模式、模型选择无关，由调用方回收。 */
+    fun loadSrForExport(pageIndex: Int): Bitmap? =
+        SrStore.load(context, manga.id, pageIndex, manga.translationKey)
+
     /**
-     * 把气泡从「原图坐标空间」等比缩放到「采样图坐标空间」。
-     * Webtoon 按屏宽采样解码后用得到（见 [prewarmWebtoon]）；角度不随缩放变化。
+     * 把气泡从原图坐标等比缩放到目标底图坐标；用于 Webtoon 采样与超分导出。
+     * 角度不随缩放变化。
      */
     private fun TranslatedBubble.scaledBy(s: Float): TranslatedBubble = copy(
         rect = Rect(

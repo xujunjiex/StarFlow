@@ -2595,35 +2595,48 @@ class MangaReaderActivity : AppCompatActivity() {
         // （那正是"白底白字"的来源：面板底是主题给的白色，文字却被刷成了浅色）
         val themed = ReaderDialogs.context(this, dark)
         val view = LayoutInflater.from(themed).inflate(R.layout.dialog_reader_download, null, false)
+        if (manga.isPdf) {
+            view.findViewById<android.widget.TextView>(R.id.text_download_sr_hint)
+                .setText(R.string.reader_download_prefer_sr_pdf_hint)
+        }
         val dialog = AlertDialog.Builder(themed).setView(view).setNegativeButton(R.string.cancel, null).create()
         dialog.show()
         ReaderDialogs.style(dialog, dark)
         ReaderDialogs.tintCustomView(view, dark)
 
+        val preferSr = view.findViewById<androidx.appcompat.widget.SwitchCompat>(R.id.switch_download_sr)
+        preferSr.isChecked = prefs.getBoolean("reader_export_prefer_sr", false)
+        preferSr.setOnCheckedChangeListener { _, checked ->
+            prefs.edit().putBoolean("reader_export_prefer_sr", checked).apply()
+        }
         view.findViewById<View>(R.id.row_download_original).setOnClickListener {
-            dialog.dismiss(); exportOriginal()
+            dialog.dismiss(); exportOriginal(preferSr.isChecked)
         }
         view.findViewById<View>(R.id.row_download_translated).setOnClickListener {
-            dialog.dismiss(); exportTranslated(both = false)
+            dialog.dismiss(); exportTranslated(both = false, preferSr = preferSr.isChecked)
         }
         view.findViewById<View>(R.id.row_download_both).setOnClickListener {
-            dialog.dismiss(); exportTranslated(both = true)
+            dialog.dismiss(); exportTranslated(both = true, preferSr = preferSr.isChecked)
         }
     }
 
-    private fun exportOriginal() {
+    private data class OriginalExport(val name: String, val skipped: Int = 0)
+
+    private fun exportOriginal(preferSr: Boolean) {
         if (exportJob?.isActive == true) {
             notifyUser(getString(R.string.reader_download_busy))
             return
         }
         notifyUser(getString(R.string.reader_download_started))
         exportJob = lifecycleScope.launch {
-            val name = withContext(Dispatchers.IO) {
-                // PDF 书：原文 = **原样复制**那个 PDF（重新生成会丢矢量/文本层，体积也涨）
-                if (manga.isPdf) exportOriginalPdf() else exportOriginalZip()
+            val result = withContext(Dispatchers.IO) {
+                // 超分选项决定是否逐页重建；关闭时保留原有直接复制路径。
+                if (manga.isPdf) exportOriginalPdf(preferSr) else exportOriginalZip(preferSr)
             }
-            if (name != null) {
-                notifyUser(getString(R.string.reader_download_done, name))
+            if (result != null) {
+                notifyUser(if (result.skipped > 0) {
+                    getString(R.string.reader_download_done_skipped, result.name, result.skipped)
+                } else getString(R.string.reader_download_done, result.name))
             } else {
                 notifyUser(getString(R.string.reader_download_failed), AppNotice.Style.ERROR)
             }
@@ -2643,7 +2656,7 @@ class MangaReaderActivity : AppCompatActivity() {
      *
      * 渲染在 IO 逐页进行，进度走状态浮层。
      */
-    private fun exportTranslated(both: Boolean) {
+    private fun exportTranslated(both: Boolean, preferSr: Boolean) {
         val controller = translationController ?: return
         if (exportJob?.isActive == true) {
             notifyUser(getString(R.string.reader_download_busy))
@@ -2659,17 +2672,17 @@ class MangaReaderActivity : AppCompatActivity() {
         // ⚠️ PDF 书不问：它本来就「全页回填、页码不能缺」（见 ReaderPdfExport），问也只会给出无效选项
         val missing = (source.size - translatedCount).coerceAtLeast(0)
         if (both || missing == 0 || manga.isPdf) {
-            startTranslatedExport(both, includeUntranslated = true, translatedCount = translatedCount)
+            startTranslatedExport(both, includeUntranslated = true, translatedCount = translatedCount, preferSr = preferSr)
             return
         }
         ReaderDialogs.show(this, isDarkBackground()) {
             setTitle(R.string.reader_download_untranslated_title)
             setMessage(getString(R.string.reader_download_untranslated_message, missing))
             setPositiveButton(R.string.reader_download_untranslated_yes) { _, _ ->
-                startTranslatedExport(both = false, includeUntranslated = true, translatedCount = translatedCount)
+                startTranslatedExport(both = false, includeUntranslated = true, translatedCount = translatedCount, preferSr = preferSr)
             }
             setNegativeButton(R.string.reader_download_untranslated_no) { _, _ ->
-                startTranslatedExport(both = false, includeUntranslated = false, translatedCount = translatedCount)
+                startTranslatedExport(both = false, includeUntranslated = false, translatedCount = translatedCount, preferSr = preferSr)
             }
         }
     }
@@ -2679,7 +2692,7 @@ class MangaReaderActivity : AppCompatActivity() {
      *
      * [includeUntranslated] 只对译文包有意义：双语包恒全书页（见 [ReaderExport.exportTranslated]）。
      */
-    private fun startTranslatedExport(both: Boolean, includeUntranslated: Boolean, translatedCount: Int) {
+    private fun startTranslatedExport(both: Boolean, includeUntranslated: Boolean, translatedCount: Int, preferSr: Boolean) {
         val controller = translationController ?: return
         notifyUser(getString(R.string.reader_download_started))
         val isPdf = manga.isPdf
@@ -2714,7 +2727,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 // PDF 书出 PDF（`ReaderPdfExport`，全页口径），其余出 zip（`ReaderExport`，全书页口径：
                 // 未译页原图回填；用户选了「只导译文」时退回旧口径）
                 val outcome = if (isPdf) {
-                    exportPdfToDownloads(controller, both, ::onStep)
+                    exportPdfToDownloads(controller, both, preferSr, ::onStep)
                 } else {
                     val zipTmp = File(cacheDir, "manga_export_${System.currentTimeMillis()}.zip")
                     tmp = zipTmp
@@ -2726,6 +2739,7 @@ class MangaReaderActivity : AppCompatActivity() {
                         // 后缀随界面语言（中文 `_译文` / 英文 `_translated`），不在导出层硬编码
                         translatedSuffix = getString(R.string.reader_export_suffix_translated),
                         tempFile = zipTmp,
+                        preferSr = preferSr,
                         onProgress = ::onStep,
                     )
                 }
@@ -2754,6 +2768,7 @@ class MangaReaderActivity : AppCompatActivity() {
     private suspend fun exportPdfToDownloads(
         controller: ReaderTranslationController,
         both: Boolean,
+        preferSr: Boolean,
         onProgress: (done: Int, total: Int) -> Unit,
     ): ExportOutcome {
         val display = displayNameFor(both)
@@ -2764,11 +2779,17 @@ class MangaReaderActivity : AppCompatActivity() {
                 // ⚠️ 快照在这一刻取：导出是长任务，中途用户可能删译文（这时 renderTranslated 会给 null，
                 //    由导出侧如实计入 untranslated，见 ReaderPdfExport 的说明）
                 translatedPages = controller.translatedPages(),
-                readOriginal = { page -> source.loadFull(page) },
-                renderTranslated = { page -> controller.renderForExport(page) },
+                readOriginal = { page ->
+                    (if (preferSr) controller.loadSrForExport(page) else null) ?: source.loadFull(page)
+                },
+                renderTranslated = { page ->
+                    val sr = if (preferSr) controller.loadSrForExport(page) else null
+                    try { controller.renderForExport(page, sr) } finally { sr?.recycle() }
+                },
                 both = both,
                 out = out,
                 onProgress = onProgress,
+                pageDimensions = { page -> source.originalWidth(page) to source.originalHeight(page) },
             )
             // 只有真的写完 trailer（Done）才算成功：Failed/Empty 都要让 streamToDownloads 删行
             outcome is ExportOutcome.Done
@@ -2847,27 +2868,49 @@ class MangaReaderActivity : AppCompatActivity() {
     /**
      * 原文导出（**PDF 书**）：原样复制那个 PDF。
      *
-     * ⚠️ 不重新生成为"图片 PDF"：原文件带矢量/文本层/原始压缩，复制是零损失且瞬时；
-     * 重新生成既掉画质又涨体积（见 [ReaderPdfExport] 的说明）。
+     * 关闭超分选项时原样复制，保留矢量与文本层；开启时按页生成，优先使用超分图。
      *
      * ⚠️ **也不经过 `cacheDir`**：先用临时文件再复制 = 同一份数据在磁盘上出现两次，
      * 几百 MB~1GB 的书很容易在"空间不足"上翻车，而且失败时只报一句「导出失败」。
      */
-    private suspend fun exportOriginalPdf(): String? {
+    private suspend fun exportOriginalPdf(preferSr: Boolean): OriginalExport? {
         val display = safeTitle() + getString(R.string.reader_export_pdf_suffix_original)
+        var skipped = 0
         // 流式直写（见 streamToDownloads）——调用方在 IO 协程里，所以直接调 suspend 版本
         val ok = streamToDownloads(display, PDF_MIME) { out ->
-            File(manga.localRoot).inputStream().use { it.copyTo(out) }
-            true
+            if (preferSr) {
+                ReaderPdfExport.export(
+                    pageCount = source.size,
+                    translatedPages = emptySet(),
+                    readOriginal = { page -> translationController?.loadSrForExport(page) ?: source.loadFull(page) },
+                    renderTranslated = { null },
+                    both = false,
+                    out = out,
+                    onProgress = { _, _ -> },
+                    originalOnly = true,
+                    pageDimensions = { page -> source.originalWidth(page) to source.originalHeight(page) },
+                ).let {
+                    if (it is ExportOutcome.Done) skipped = it.skipped
+                    it is ExportOutcome.Done && it.written > 0
+                }
+            } else {
+                File(manga.localRoot).inputStream().use { it.copyTo(out) }
+                true
+            }
         }
-        return if (ok) display else null
+        return if (ok) OriginalExport(display, skipped) else null
     }
 
-    private fun exportOriginalZip(): String? {
+    private suspend fun exportOriginalZip(preferSr: Boolean): OriginalExport? {
         val display = safeTitle() + getString(R.string.reader_export_zip_suffix_original)
         val tmp = File(cacheDir, "manga_export_${System.currentTimeMillis()}.zip")
         return try {
-            if (manga.isArchive) {
+            if (preferSr) {
+                val outcome = ReaderExport.exportOriginal(source, tmp) { page -> translationController?.loadSrForExport(page) }
+                if (outcome !is ExportOutcome.Done || outcome.written == 0) return null
+                if (!writeToDownloads(display, tmp)) return null
+                return OriginalExport(display, outcome.skipped)
+            } else if (manga.isArchive) {
                 File(manga.localRoot).inputStream().use { i -> FileOutputStream(tmp).use { o -> i.copyTo(o) } }
             } else {
                 ZipOutputStream(FileOutputStream(tmp)).use { zip ->
@@ -2885,8 +2928,9 @@ class MangaReaderActivity : AppCompatActivity() {
                 }
             }
             val ok = writeToDownloads(display, tmp)
-            if (ok) display else null
+            if (ok) OriginalExport(display) else null
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             LogCollector.e("MangaReader", "exportOriginalZip failed tmp=$tmp", e)
             null
         } finally {

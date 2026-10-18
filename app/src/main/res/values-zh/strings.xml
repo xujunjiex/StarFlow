@@ -2035,4 +2035,7 @@
     <string name="novel_color_invalid">请输入有效的十六进制颜色值</string>
     <string name="novel_font_default">系统默认</string>
     <string name="novel_color_opacity">不透明度</string>
+    <string name="reader_download_prefer_sr">优先导出超分图</string>
+    <string name="reader_download_prefer_sr_hint">有超分结果的页面使用超分图，未超分的保留原图；双语导出的原文与译文都使用超分底图。</string>
+    <string name="reader_download_prefer_sr_pdf_hint">有超分结果的页面使用超分图，未超分的保留原图；双语的原文与译文都使用超分底图。PDF 将按页重新生成图片 PDF。</string>
 </resources>
