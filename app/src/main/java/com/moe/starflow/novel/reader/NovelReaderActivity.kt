@@ -12,6 +12,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.PopupWindow
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -61,6 +62,7 @@ import com.moe.starflow.novel.translate.NovelTranslationHub
 import com.moe.starflow.novel.translate.NovelTranslationQueue
 import com.moe.starflow.novel.translate.TranslationTextApiAdapter
 import com.moe.starflow.translate.TranslationStatusOverlay
+import com.moe.starflow.ui.reader.ReaderTranslateModePopup
 import com.moe.starflow.translate.batch.ChapterJobState
 import com.moe.starflow.translate.batch.ReaderTranslationNotify
 import com.moe.starflow.translate.batch.TranslationJobService
@@ -71,6 +73,8 @@ import com.moe.starflow.utils.ReaderDialogs
 import com.moe.starflow.utils.UiUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -202,6 +206,9 @@ class NovelReaderActivity : AppCompatActivity() {
     /** 手动空闲时暂缓第一次单击，以便区分单击翻一批与双击开启自动模式。 */
     private var pendingManualTranslateClick: Runnable? = null
     private var pendingManualTranslateClickMs = 0L
+    private var translateModePopup: PopupWindow? = null
+    /** 防止旧的取消清理结束后覆盖用户刚选的新模式。 */
+    private var translateModeChangeId = 0L
     private var lastInteractionMs = 0L
     private var rotateMode = 0
 
@@ -614,6 +621,8 @@ class NovelReaderActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
+        translateModeChangeId += 1
+        dismissTranslateModePopup()
         cancelPendingManualTranslateClick()
         lastTranslateClickMs = 0L
         autoTurnJob?.cancel()
@@ -634,7 +643,8 @@ class NovelReaderActivity : AppCompatActivity() {
         // —— 之前切后台只暂停 + 保留模式（2026-09 的旧口径），现在一律：
         // 停队列 + 中止在途请求 + **回退手动** + 给提示。回来想继续就自己再点一次。
         // ⚠️ **整章任务（应用级宿主）例外**：它继续跑（用户明确"本章翻译除外"）。
-        val wasTranslating = NovelPanelStyle.translateMode(prefs) != NovelTranslateMode.MANUAL
+        val wasTranslating = NovelPanelStyle.translateMode(prefs) != NovelTranslateMode.MANUAL ||
+            translationJob?.isActive == true || imageJob?.isActive == true
         val notifyPause = wasTranslating
         if (notifyPause) pausedToManualNotified = true
         // 手动翻一批 / 按选择翻也要停：它们持有 OcrLock（挡住别的翻译），跑完还会往
@@ -938,6 +948,10 @@ class NovelReaderActivity : AppCompatActivity() {
             if (b != ob) pushNoticeTopBelowPill()
         }
         binding.btnTranslate.setOnClickListener { onTranslateButtonClick() }
+        binding.btnTranslate.setOnLongClickListener {
+            showTranslateModePopup()
+            true
+        }
         binding.btnToggleTranslate.setOnClickListener { cycleDisplayMode() }
         binding.btnFailTranslate.setOnClickListener { showFailBubble() }
         binding.btnClearTranslate.setOnClickListener { confirmClearSelectedTranslations() }
@@ -1159,6 +1173,7 @@ class NovelReaderActivity : AppCompatActivity() {
     }
 
     private fun toggleChrome() {
+        dismissTranslateModePopup()
         cancelPendingManualTranslateClick()
         lastTranslateClickMs = 0L
         chromeHidden = !chromeHidden
@@ -1414,51 +1429,65 @@ class NovelReaderActivity : AppCompatActivity() {
         } else {
             0L
         }
-        imageJob = lifecycleScope.launch {
-            val outcome = runCatching {
-                pipeline.translate(file, ocrLanguageOf(sourceLang()), targetLang())
-            }.getOrNull()
-            imageJob = null
-            manualImagePara = null
-            manualImageChapter = -1
-            if (chip != 0L) TranslationStatusOverlay.getInstance(this@NovelReaderActivity).removeRunning(chip)
-            if (outcome?.payload == null) {
-                // 取消了（error 为 null）就不报错；真失败带原始原因（与文本翻译同一条纪律）
-                outcome?.error?.let {
-                    showOverlayToast(getString(R.string.novel_image_failed, it), error = true)
+        val job = lifecycleScope.launch(start = CoroutineStart.LAZY) {
+            try {
+                val outcome = try {
+                    pipeline.translate(file, ocrLanguageOf(sourceLang()), targetLang())
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (e: Exception) {
+                    LogCollector.e(TAG, "插图翻译失败", e)
+                    showOverlayToast(getString(R.string.novel_image_failed, e.message.orEmpty()), error = true)
+                    return@launch
                 }
-                return@launch
+                if (!isActive) return@launch
+                if (outcome.payload == null) {
+                    // 取消了（error 为 null）就不报错；真失败带原始原因。
+                    outcome.error?.let {
+                        showOverlayToast(getString(R.string.novel_image_failed, it), error = true)
+                    }
+                    return@launch
+                }
+                val payload = outcome.payload
+                // 落库（走翻译器那一份，保证与批量路径写的是同一套字段/状态）
+                try {
+                    translator().saveImageTranslation(
+                        book = b,
+                        chapterIndex = chapter,
+                        paraIndex = paraIndex,
+                        payload = payload,
+                        sourceLang = sourceLang(),
+                        targetLang = targetLang(),
+                        translatorName = "novel",
+                    )
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (e: Exception) {
+                    showOverlayToast(getString(R.string.novel_image_failed, e.message.orEmpty()), error = true)
+                    return@launch
+                }
+                if (!isActive) return@launch
+                if (chapter == chapterIndex) {
+                    imageTranslations = imageTranslations + (paraIndex to payload)
+                    imageVisuals[paraIndex] = NovelImageVisual.TRANSLATED
+                    focusedImagePara = paraIndex
+                    // 不 submit 整章内容，避免阅读位置跳动。
+                    refreshImageChrome()
+                }
+                refreshChapterStats()
+                showOverlayToast(getString(R.string.novel_image_translated, payload.blocks.size), error = false)
+            } finally {
+                if (imageJob === coroutineContext[Job]) {
+                    imageJob = null
+                    manualImagePara = null
+                    manualImageChapter = -1
+                    refreshTranslationChrome()
+                }
+                if (chip != 0L) TranslationStatusOverlay.getInstance(this@NovelReaderActivity).removeRunning(chip)
             }
-            val payload = outcome.payload
-            // 落库（走翻译器那一份，保证与批量路径写的是同一套字段/状态）
-            runCatching {
-                translator().saveImageTranslation(
-                    book = b,
-                    chapterIndex = chapter,
-                    paraIndex = paraIndex,
-                    payload = payload,
-                    sourceLang = sourceLang(),
-                    targetLang = targetLang(),
-                    translatorName = "novel",
-                )
-            }.onFailure {
-                showOverlayToast(getString(R.string.novel_image_failed, it.message.orEmpty()), error = true)
-                return@launch
-            }
-            if (chapter == chapterIndex) {
-                imageTranslations = imageTranslations + (paraIndex to payload)
-                imageVisuals[paraIndex] = NovelImageVisual.TRANSLATED
-                focusedImagePara = paraIndex
-                // ⚠️ **不 submit 整章内容**（那会把阅读位置一起掀掉）：载荷经
-                // `refreshImageChrome` 单独灌给视图，插图高度与有没有译文无关
-                refreshImageChrome()
-            }
-            refreshChapterStats()
-            showOverlayToast(
-                getString(R.string.novel_image_translated, payload.blocks.size),
-                error = false,
-            )
         }
+        imageJob = job
+        job.start()
     }
 
     /** 三态循环（译文 → 识别原文 → 原图 → 译文）。 */
@@ -2596,6 +2625,7 @@ class NovelReaderActivity : AppCompatActivity() {
      */
     private fun refreshTranslationChrome() {
         if (chromeHidden) {
+            dismissTranslateModePopup()
             binding.translateGroup.visibility = View.GONE
             return
         }
@@ -2611,27 +2641,32 @@ class NovelReaderActivity : AppCompatActivity() {
         }
         val showToggle = NovelTranslateChrome.showToggle(translated)
         val showFail = hasFailedChapter(chapterIndex)
+        val showRunningTranslate = NovelPanelStyle.translateMode(prefs) != NovelTranslateMode.MANUAL ||
+            queueRunning || translationJob?.isActive == true || imageJob?.isActive == true
+        val showTranslate = action != null || showRunningTranslate
         // 清除按钮只看**选中集里有没有译过的段**（与三态那套判据不同，见 showClear）
         val showClear = NovelTranslateChrome.showClear(selectedTranslated)
 
         // 四块都不可用时整组收掉：留一个空的黑胶囊在右下角更奇怪
         binding.translateGroup.visibility =
-            if (action != null || showToggle || showFail || showClear) View.VISIBLE else View.GONE
+            if (showTranslate || showToggle || showFail || showClear) View.VISIBLE else View.GONE
 
         binding.btnClearTranslate.visibility = if (showClear) View.VISIBLE else View.GONE
 
-        binding.btnTranslate.visibility = if (action != null) View.VISIBLE else View.GONE
-        if (action != null) {
+        binding.btnTranslate.visibility = if (showTranslate) View.VISIBLE else View.GONE
+        if (!showTranslate) dismissTranslateModePopup()
+        if (showTranslate) {
             binding.ivTranslate.setImageResource(
                 when (action) {
                     // 「翻译」用翻译图标；重翻与"翻+重翻"都含重翻动作 → 刷新图标
-                    NovelTranslateAction.TRANSLATE -> R.drawable.ic_reader_translate
+                    null, NovelTranslateAction.TRANSLATE -> R.drawable.ic_reader_translate
                     NovelTranslateAction.RETRANSLATE,
                     NovelTranslateAction.TRANSLATE_AND_RETRANSLATE,
                     -> R.drawable.ic_refresh
                 }
             )
-            val label = actionLabel(action, selectedPara.size)
+            val label = if (action != null) actionLabel(action, selectedPara.size)
+                else getString(R.string.reader_tab_translate)
             // ⚠️ 没选中任何段时不要报「翻译 0 段」（读屏会念出来）：退回不带计数的普通文案
             binding.btnTranslate.contentDescription =
                 if (selectedPara.isNotEmpty()) label else getString(R.string.reader_tab_translate)
@@ -2727,13 +2762,17 @@ class NovelReaderActivity : AppCompatActivity() {
      * 右下角翻译按钮（使用相同的 300ms 双击窗口；文本侧保留自己的批次与选择规则）：
      * - **手动空闲双击**：快捷开启自动模式；单击先等 300ms 窗口，超时后从当前页未翻段起翻一批
      * - **自动/增量在跑**：单击只提示，双击停止队列并回退手动
-     * - **手动批次在途**：双击不取消；普通单击沿用既有行为，取消当前手动 job 后重新开一批
-     * - **选择模式**：点击直接翻所选段，绕过双击判定
+     * - **手动批次在途**：单击提示，双击取消在途请求并回退手动
+     * - **选择模式**：空闲时点击直接翻所选段；选段翻译在途时也按单击提示、双击取消
      */
     private fun onTranslateButtonClick() {
+        translateModeChangeId += 1
         // 选择模式：单击就是**按选择翻**（翻译 / 重翻 / 翻译+重翻）——
         // 意图已经由选择集说清了，不走下面那套「双击=取消」的判定
-        if (selecting && selectedPara.isNotEmpty()) {
+        if (selecting && selectedPara.isNotEmpty() &&
+            NovelPanelStyle.translateMode(prefs) == NovelTranslateMode.MANUAL && !queueRunning &&
+            translationJob?.isActive != true && imageJob?.isActive != true
+        ) {
             cancelPendingManualTranslateClick()
             lastTranslateClickMs = 0L
             translateSelectionNow()
@@ -2799,6 +2838,60 @@ class NovelReaderActivity : AppCompatActivity() {
         pendingManualTranslateClickMs = 0L
     }
 
+    private fun showTranslateModePopup() {
+        cancelPendingManualTranslateClick()
+        lastTranslateClickMs = 0L
+        dismissTranslateModePopup()
+        translateModePopup = ReaderTranslateModePopup.show(
+            anchor = binding.btnTranslate,
+            selectedMode = NovelPanelStyle.translateMode(prefs).ordinal,
+            ocrOnly = false,
+        ) { mode ->
+            translateModePopup = null
+            applyQuickTranslateMode(NovelTranslateMode.entries[mode])
+        }
+    }
+
+    private fun dismissTranslateModePopup() {
+        translateModePopup?.dismiss()
+        translateModePopup = null
+    }
+
+    private fun applyQuickTranslateMode(mode: NovelTranslateMode) {
+        translateModeChangeId += 1
+        val current = NovelPanelStyle.translateMode(prefs)
+        val hasForegroundTask = queueRunning || translationJob?.isActive == true || imageJob?.isActive == true
+        if (mode == current && !hasForegroundTask) return
+        if (mode == NovelTranslateMode.MANUAL) {
+            pauseToManual(
+                getString(R.string.reader_translate_force_stopped_to_manual).takeIf {
+                    current != NovelTranslateMode.MANUAL || hasForegroundTask
+                }
+            )
+        } else {
+            // 旧批次的 TRANSLATING 复位必须先落库，再让新队列标记在途段。
+            // 只异步等待数据库清理，不在主线程等 native OCR 或持有 OcrLock。
+            val resetJob = pauseToManual()
+            val changeId = translateModeChangeId
+            exitSelection()
+            if (queueOrNull() == null) {
+                toast(R.string.novel_translate_need_config)
+                refreshTranslationChrome()
+                return
+            }
+            lifecycleScope.launch {
+                resetJob?.join()
+                if (!isActive || changeId != translateModeChangeId) return@launch
+                NovelPanelStyle.setTranslateMode(prefs, mode)
+                restartQueueIfNeeded(force = true)
+                refreshTranslationChrome()
+                pushPanelState()
+            }
+        }
+        refreshTranslationChrome()
+        pushPanelState()
+    }
+
     private fun startAutoFromTranslateButton() {
         // 缺少引擎配置时不留下「自动已开启」但实际无队列的假状态。
         if (queueOrNull() == null) {
@@ -2806,6 +2899,7 @@ class NovelReaderActivity : AppCompatActivity() {
             return
         }
         lastTranslateClickMs = 0L
+        translateModeChangeId += 1
         NovelPanelStyle.setTranslateMode(prefs, NovelTranslateMode.AUTO)
         restartQueueIfNeeded(force = true)
         if (queueRunning) {
@@ -2817,14 +2911,27 @@ class NovelReaderActivity : AppCompatActivity() {
 
     private fun handleTranslateButtonClick(isDouble: Boolean) {
         val mode = NovelPanelStyle.translateMode(prefs)
-        if (queueRunning && mode != NovelTranslateMode.MANUAL) {
+        if (mode != NovelTranslateMode.MANUAL) {
             if (!isDouble) {
                 showOverlayToast(
-                    getString(R.string.novel_translate_hint_running, chapterIndex + 1), error = false,
+                    if (queueRunning) getString(R.string.novel_translate_hint_running, chapterIndex + 1)
+                    else getString(
+                        if (mode == NovelTranslateMode.AUTO) R.string.reader_translate_hint_auto_idle
+                        else R.string.reader_translate_hint_ahead_idle
+                    ),
+                    error = false,
                 )
                 return
             }
             pauseToManual(getString(R.string.reader_translate_force_stopped_to_manual))
+            return
+        }
+        if (translationJob?.isActive == true || imageJob?.isActive == true) {
+            if (isDouble) {
+                pauseToManual(getString(R.string.reader_translate_force_stopped_to_manual))
+            } else {
+                showOverlayToast(getString(R.string.novel_translate_hint_manual), error = false)
+            }
             return
         }
         if (isDouble) return
@@ -2841,27 +2948,44 @@ class NovelReaderActivity : AppCompatActivity() {
         }
         // 显式操作 = 新一轮：超长预警重新允许弹窗
         oversizeConfirmer.reset()
-        showOverlay(getString(R.string.reader_translate_in_progress), autoDismiss = false)
         translationJob?.cancel()
-        translationJob = lifecycleScope.launch {
-            val result = runCatching { q.translateOneBatch(b, chapterIndex) }.getOrNull()
-            translationJob = null
-            showOverlay(null)
-            if (result == null || result.isEmpty) {
-                // 失败也要刷面板：不然「失败」状态和原因要等下次开面板才看得到
+        val job = lifecycleScope.launch(start = CoroutineStart.LAZY) {
+            try {
+                val result = try {
+                    q.translateOneBatch(b, chapterIndex)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (e: Exception) {
+                    LogCollector.e(TAG, "手动翻译批次失败", e)
+                    null
+                }
+                if (!isActive) return@launch
+                if (result == null || result.isEmpty) {
+                    // 失败也要刷面板：不然「失败」状态和原因要等下次开面板才看得到
+                    refreshChapterStats()
+                    showOverlayToast(
+                        getString(
+                            R.string.novel_translate_failed_reason,
+                            result?.error ?: getString(R.string.reader_translate_failed),
+                        ),
+                        error = true,
+                    )
+                    return@launch
+                }
                 refreshChapterStats()
-                showOverlayToast(
-                    getString(
-                        R.string.novel_translate_failed_reason,
-                        result?.error ?: getString(R.string.reader_translate_failed),
-                    ),
-                    error = true,
-                )
-                return@launch
+                refreshTranslations()
+            } finally {
+                // 旧任务取消后可能晚于新任务收尾，不能清掉新任务的句柄和进度提示。
+                if (translationJob === coroutineContext[Job]) {
+                    translationJob = null
+                    showOverlay(null)
+                    refreshTranslationChrome()
+                }
             }
-            refreshChapterStats()
-            refreshTranslations()
         }
+        translationJob = job
+        showOverlay(getString(R.string.reader_translate_in_progress), autoDismiss = false)
+        job.start()
     }
 
     /**
@@ -2884,30 +3008,46 @@ class NovelReaderActivity : AppCompatActivity() {
         val chunk = NovelPanelStyle.batchSize(prefs).coerceAtLeast(1)
         // 显式操作 = 新一轮：超长预警重新允许弹窗
         oversizeConfirmer.reset()
-        showOverlay(getString(R.string.reader_translate_in_progress), autoDismiss = false)
         translationJob?.cancel()
-        translationJob = lifecycleScope.launch {
-            var failed: String? = null
-            var done = 0
-            for (group in wanted.chunked(chunk)) {
-                val r = runCatching { q.translateExact(b, chapterIndex, group) }.getOrNull()
-                if (r == null || r.isEmpty) {
-                    failed = r?.error ?: getString(R.string.reader_translate_failed)
-                    break
+        val job = lifecycleScope.launch(start = CoroutineStart.LAZY) {
+            try {
+                var failed: String? = null
+                var done = 0
+                for (group in wanted.chunked(chunk)) {
+                    val r = try {
+                        q.translateExact(b, chapterIndex, group)
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (e: Exception) {
+                        LogCollector.e(TAG, "选段翻译失败", e)
+                        null
+                    }
+                    if (!isActive) return@launch
+                    if (r == null || r.isEmpty) {
+                        failed = r?.error ?: getString(R.string.reader_translate_failed)
+                        break
+                    }
+                    done += group.size
+                    // 每批上屏一次：选十几段时要能看到逐批出译文，而不是最后一起蹦出来
+                    refreshTranslations()
                 }
-                done += group.size
-                // 每批上屏一次：选十几段时要能看到逐批出译文，而不是最后一起蹦出来
-                refreshTranslations()
-            }
-            translationJob = null
-            showOverlay(null)
-            refreshChapterStats()
-            if (failed != null) {
-                showOverlayToast(getString(R.string.novel_translate_failed_reason, failed), error = true)
-            } else {
-                showOverlayToast(getString(R.string.novel_translate_selected_done, done), error = false)
+                refreshChapterStats()
+                if (failed != null) {
+                    showOverlayToast(getString(R.string.novel_translate_failed_reason, failed), error = true)
+                } else {
+                    showOverlayToast(getString(R.string.novel_translate_selected_done, done), error = false)
+                }
+            } finally {
+                if (translationJob === coroutineContext[Job]) {
+                    translationJob = null
+                    showOverlay(null)
+                    refreshTranslationChrome()
+                }
             }
         }
+        translationJob = job
+        showOverlay(getString(R.string.reader_translate_in_progress), autoDismiss = false)
+        job.start()
     }
 
     /**
@@ -3172,7 +3312,17 @@ class NovelReaderActivity : AppCompatActivity() {
      * ⚠️ **不动章批量任务**：那是应用级的后台任务（面板上有暂停/取消按钮），
      * 打开面板就把它停掉与「后台继续翻」直接冲突。
      */
-    private fun pauseToManual(message: String? = null) {
+    private fun pauseToManual(message: String? = null): Job? {
+        translateModeChangeId += 1
+        val hadPageTask = queueRunning || translationJob?.isActive == true
+        // 取消 Job 让挂起请求立刻退栈；stop() 同时 abort 该队列引擎的 HTTP 请求。
+        // 不等待 native OCR 退出，也不提前释放 OcrLock：原调用的 finally 负责释放。
+        translationJob?.cancel()
+        translationJob = null
+        imageJob?.cancel()
+        imageJob = null
+        manualImagePara = null
+        manualImageChapter = -1
         queue?.stop()
         queueRunning = false
         NovelPanelStyle.setTranslateMode(prefs, NovelTranslateMode.MANUAL)
@@ -3185,13 +3335,15 @@ class NovelReaderActivity : AppCompatActivity() {
         // 的代码在 cancel 之后不会执行）→ 面板会把那几张图永远显示成"翻译中"。
         // 这里顺手把它们复位成 IDLE（与进入阅读器时的 `resetStale` 同一件事，只是更及时）。
         val b = book
-        if (b != null) {
+        val resetJob = if (hadPageTask && b != null) {
             lifecycleScope.launch {
                 runCatching { translator().resetTranslating(b) }
             }
-        }
+        } else null
         message?.let { showOverlayToast(it, error = false) }
+        refreshTranslationChrome()
         pushPanelState()
+        return resetJob
     }
 
     /** 三态循环：译文 → 原文 → 双语。 */
@@ -3431,6 +3583,7 @@ class NovelReaderActivity : AppCompatActivity() {
     }
 
     private fun showMenu() {
+        dismissTranslateModePopup()
         cancelPendingManualTranslateClick()
         lastTranslateClickMs = 0L
         val b = book ?: return
@@ -3613,16 +3766,20 @@ class NovelReaderActivity : AppCompatActivity() {
                 onChapterJump = { ch -> gotoChapter(ch) },
                 onNeedChapterTotal = { ch -> ensureChapterTotal(ch) },
                 onPanelOpened = {
+                    translateModeChangeId += 1
+                    dismissTranslateModePopup()
                     cancelPendingManualTranslateClick()
                     lastTranslateClickMs = 0L
                     // 与漫画一致：面板一打开就**暂停并回退手动** —— 用户在看面板时若按旧设置继续翻，
                     // 既浪费额度也可能翻错；要重新选模式才会继续
+                    val hadForegroundTask = NovelPanelStyle.translateMode(prefs) != NovelTranslateMode.MANUAL ||
+                        translationJob?.isActive == true || imageJob?.isActive == true
                     queue?.setPanelOpen(true)
                     showOverlay(null)
                     // 面板一开就退出选择模式：那套浮层被面板挡住，留着只会让状态对不上
                     exitSelection()
                     refreshChapterStats()
-                    if (NovelPanelStyle.translateMode(prefs) != NovelTranslateMode.MANUAL) {
+                    if (hadForegroundTask) {
                         pauseToManual(getString(R.string.reader_translate_force_stopped_to_manual))
                     }
                 },

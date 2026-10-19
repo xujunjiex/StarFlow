@@ -1711,6 +1711,7 @@
     <string name="novel_style_bottom_padding">下间距</string>
     <string name="novel_translate_failed_reason">翻译失败：%1$s</string>
     <string name="novel_translate_hint_running">正在翻译第 %1$d 章，双击暂停</string>
+    <string name="novel_translate_hint_manual">正在手动翻译，双击结束当前翻译进程</string>
     <string name="novel_translate_window_done">已向后翻完 %1$d 批 · 翻页继续</string>
     <string name="novel_translate_pending_batches">翻译本章</string>
     <string name="novel_translate_clear_chapter">清空</string>

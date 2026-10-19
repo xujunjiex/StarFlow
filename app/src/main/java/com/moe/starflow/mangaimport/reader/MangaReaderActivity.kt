@@ -19,6 +19,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.PopupWindow
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
@@ -56,6 +57,7 @@ import com.moe.starflow.mangaimport.translate.ReaderTranslationController
 import com.moe.starflow.mangaimport.translate.TranslateClick
 import com.moe.starflow.me.settings.SettingPageActivity
 import com.moe.starflow.translate.TranslationStatusOverlay
+import com.moe.starflow.ui.reader.ReaderTranslateModePopup
 import com.moe.starflow.utils.AppNotice
 import com.moe.starflow.utils.LogCollector
 import androidx.preference.PreferenceManager
@@ -165,6 +167,7 @@ class MangaReaderActivity : AppCompatActivity() {
     /** 手动空闲时暂缓第一次单击，给第二击留出开启自动模式的 300ms 窗口。 */
     private var pendingManualTranslateClick: Runnable? = null
     private var pendingManualTranslateClickMs = 0L
+    private var translateModePopup: PopupWindow? = null
 
     /** 超分/重新超分按钮双击判定用的上次单击时刻（与翻译按钮同一套语义，见 `onSrEnhanceClicked`）。 */
     private var lastSrClickMs = 0L
@@ -410,6 +413,7 @@ class MangaReaderActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
+        dismissTranslateModePopup()
         cancelPendingManualTranslateClick()
         lastTranslateClickMs = 0L
         autoTurnJob?.cancel()
@@ -1056,6 +1060,10 @@ class MangaReaderActivity : AppCompatActivity() {
         refreshTranslationChrome()
         val controller = translationController ?: return
         binding.btnTranslate.setOnClickListener { onTranslateButtonTapped() }
+        binding.btnTranslate.setOnLongClickListener {
+            showTranslateModePopup()
+            true
+        }
         // 翻译成功页三态循环（译文/原文/纯原图）；OCR-only 页两态切换（原文/纯原图）。
         // Webtoon 没有单页三态（连续滚动下"当前页"语义不唯一），整屏切换改由阅读模式分段器
         // 上「连续滑动」按钮的两态控制（见 ReaderMenuSheet），本按钮在 Webtoon 下整组隐藏。
@@ -1149,6 +1157,48 @@ class MangaReaderActivity : AppCompatActivity() {
         }
         pendingManualTranslateClick = null
         pendingManualTranslateClickMs = 0L
+    }
+
+    private fun showTranslateModePopup() {
+        val controller = translationController ?: return
+        if (isTranslateDisabledByMode()) return
+        cancelPendingManualTranslateClick()
+        lastTranslateClickMs = 0L
+        dismissTranslateModePopup()
+        translateModePopup = ReaderTranslateModePopup.show(
+            anchor = binding.btnTranslate,
+            selectedMode = controller.translateMode.value,
+            ocrOnly = controller.isOcrOnlyMode(),
+        ) { mode ->
+            translateModePopup = null
+            applyQuickTranslateMode(mode)
+        }
+    }
+
+    private fun dismissTranslateModePopup() {
+        translateModePopup?.dismiss()
+        translateModePopup = null
+    }
+
+    private fun applyQuickTranslateMode(mode: Int) {
+        val controller = translationController ?: return
+        val wasActive = controller.translateMode.value != ReaderTranslationController.MODE_MANUAL ||
+            controller.busySource() == BusySource.PAGE_MODE
+        if (mode == ReaderTranslationController.MODE_MANUAL) {
+            if (wasActive) {
+                controller.cancelBusy(BusySource.PAGE_MODE)
+                setTranslatingPulse(false)
+                TranslationStatusOverlay.getInstance(this).dismiss()
+                notifyUser(getString(
+                    if (controller.isOcrOnlyMode()) R.string.reader_ocr_force_stopped_to_manual
+                    else R.string.reader_translate_force_stopped_to_manual
+                ))
+            }
+        } else {
+            controller.setMode(mode)
+        }
+        refreshTranslationChrome()
+        refreshProgressTranslation()
     }
 
     private fun performTranslateButtonClick(controller: ReaderTranslationController, isDouble: Boolean) {
@@ -1982,6 +2032,7 @@ class MangaReaderActivity : AppCompatActivity() {
         // 用户在中间点过一下的「隐藏上下 UI」同理：整组收起，直到再点一次中间。
         // ⚠️ 必须在 controller 判空之前：否则控制器未就绪时整组会留在屏幕上没人收。
         if (chromeHidden || mode == 3) {
+            dismissTranslateModePopup()
             binding.translateGroup.visibility = View.GONE
             // ⚠️ 超分组必须**一起**收起：`refreshSrButtons` 里那句 `mode == 3 → srGroup GONE`
             //    在这个早退分支下永远执行不到（它在本函数末尾才被调）→ 从分页模式切到
@@ -2254,6 +2305,7 @@ class MangaReaderActivity : AppCompatActivity() {
     // ===== 底部工具栏 =====
 
     private fun showMenu() {
+        dismissTranslateModePopup()
         cancelPendingManualTranslateClick()
         lastTranslateClickMs = 0L
         if (supportFragmentManager.findFragmentByTag(ReaderMenuSheet.TAG) != null) return

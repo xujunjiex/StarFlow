@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RadioGroup xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/reader_translate_mode_group"
+    android:layout_width="184dp"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_reader_translate_group"
+    android:orientation="vertical"
+    android:padding="6dp">
+
+    <RadioButton
+        android:id="@+id/reader_quick_mode_manual"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:buttonTint="#8EDCB4"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="8dp"
+        android:text="@string/reader_translate_mode_manual"
+        android:textColor="@android:color/white"
+        android:textSize="14sp" />
+
+    <RadioButton
+        android:id="@+id/reader_quick_mode_auto"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:buttonTint="#8EDCB4"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="8dp"
+        android:text="@string/reader_translate_mode_auto"
+        android:textColor="@android:color/white"
+        android:textSize="14sp" />
+
+    <RadioButton
+        android:id="@+id/reader_quick_mode_ahead"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:buttonTint="#8EDCB4"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="8dp"
+        android:text="@string/reader_translate_mode_incremental"
+        android:textColor="@android:color/white"
+        android:textSize="14sp" />
+</RadioGroup>

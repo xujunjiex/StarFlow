@@ -1710,6 +1710,7 @@
     <string name="novel_style_bottom_padding">Bottom space</string>
     <string name="novel_translate_failed_reason">Translation failed: %1$s</string>
     <string name="novel_translate_hint_running">Translating chapter %1$d — double-tap to pause</string>
+    <string name="novel_translate_hint_manual">Manual translation is in progress. Double-tap to stop it.</string>
     <string name="novel_translate_window_done">%1$d batches ahead done · turn the page to continue</string>
     <string name="novel_translate_pending_batches">Translate chapter</string>
     <string name="novel_translate_clear_chapter">Clear</string>

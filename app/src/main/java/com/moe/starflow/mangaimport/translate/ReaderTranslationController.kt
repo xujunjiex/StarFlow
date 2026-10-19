@@ -1277,14 +1277,10 @@ class ReaderTranslationController(
     /** 切换模式。离开手动模式会启动队列；回到手动模式会停止队列。 */
     fun setMode(mode: Int) {
         if (translateMode.value == mode) return
+        // 切模式时先让旧页面任务退出。只 cancel Job 会留下仍在执行的请求和旧页状态；
+        // cancelEverything 同时置取消标志，锁由原任务的 finally 在 native 真正返回后释放。
+        cancelEverything()
         setPageModeBusy(mode != MODE_MANUAL)
-        // 切走手动模式时，把在途的手动翻译停掉，避免与队列抢 OcrLock
-        if (mode != MODE_MANUAL) {
-            val manualWasRunning = manualJob?.isActive == true
-            manualJob?.cancel()
-            manualJob = null
-            if (manualWasRunning) queuePage.value = -1
-        }
         translateMode.value = mode
         restartQueue()
         version.value += 1
