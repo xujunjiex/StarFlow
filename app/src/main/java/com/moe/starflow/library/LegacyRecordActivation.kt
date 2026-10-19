@@ -6,16 +6,46 @@ import com.moe.starflow.data.ImportedPageTranslation
 import com.moe.starflow.data.NovelParagraphTranslation
 import com.moe.starflow.mangaimport.data.ImportedMangaStore
 import com.moe.starflow.mangaimport.data.MangaPageOrder
+import com.moe.starflow.mangaimport.data.ArchivedMangaReader
+import com.moe.starflow.mangaimport.data.MangaChapterSplitter
+import com.moe.starflow.mangaimport.data.MangaSourceIndex
 import com.moe.starflow.mangaimport.reader.ReaderPageSource
-import com.moe.starflow.novel.data.NovelStore
 import com.moe.starflow.novel.translate.NovelParagraphSplitter
 import com.moe.starflow.utils.LogCollector
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** Promote verified legacy rows after the archival migration, including installations already archived by an older build. */
+/** Activate verified legacy rows only while the initial import's explicit pending intent is valid. */
 internal object LegacyRecordActivation {
     private const val TAG = "LegacyRecordActivation"
+
+    // v0.11.2 also accepts pre-rename title|timestamp keys left by earlier releases.
+    internal fun matchesMangaKey(key: String, stamp: String): Boolean =
+        key == stamp || key.endsWith("|$stamp")
+
+    internal fun markPending(session: LibrarySession, uuid: String) {
+        session.database.catalog().meta(LibraryMeta("legacyActivation:$uuid", "pending"))
+        session.database.catalog().meta(LibraryMeta("legacyProgress:$uuid", "pending"))
+    }
+
+    internal fun cancelPending(session: LibrarySession, uuid: String) {
+        val catalog = session.database.catalog()
+        if (catalog.meta("legacyActivation:$uuid") == "pending")
+            catalog.meta(LibraryMeta("legacyActivation:$uuid", "cancelled"))
+    }
+
+    internal fun cancelProgress(session: LibrarySession, uuid: String) {
+        val catalog = session.database.catalog()
+        if (catalog.meta("legacyProgress:$uuid") == "pending")
+            catalog.meta(LibraryMeta("legacyProgress:$uuid", "cancelled"))
+    }
+
+    private fun eligible(session: LibrarySession, book: LibraryBook): Boolean {
+        val catalog = session.database.catalog()
+        return !book.deleting && catalog.meta("removed:${book.uuid}") != "1" &&
+            catalog.meta("legacyActive:${book.uuid}") != "1" &&
+            catalog.meta("legacyActivation:${book.uuid}") == "pending"
+    }
 
     fun activate(app: Context, session: LibrarySession) {
         val catalog = session.database.catalog()
@@ -23,13 +53,10 @@ internal object LegacyRecordActivation {
             LogCollector.w(TAG, "旧漫画清单不可读，暂不激活旧页记录", it)
             emptyList()
         }
-        val oldNovels = runCatching { NovelStore.loadLegacy(app) }.getOrElse {
-            LogCollector.w(TAG, "旧小说清单不可读，暂不恢复阅读进度", it)
-            emptyList()
-        }
         for (kind in listOf("manga", "novel")) for (book in catalog.books(kind)) {
-            if (book.deleting || catalog.meta("removed:${book.uuid}") == "1" ||
-                catalog.meta("legacyActive:${book.uuid}") == "1") continue
+            // Older archive-only builds did not record clears. Their empty rows/progress cannot
+            // prove that restoration is safe; preserve those archives instead of guessing.
+            if (!eligible(session, book)) continue
             val file = session.recordArchive(".starflow/legacy/${book.uuid}/records.json")
             if (!file.isFile) continue
             runCatching {
@@ -37,36 +64,50 @@ internal object LegacyRecordActivation {
                 require(archive.getString("kind") == kind && archive.getLong("legacyId") == book.id)
                 if (kind == "manga") activateManga(session, book, archive,
                     oldManga.singleOrNull { it.id == book.id && it.addedAt == JSONObject(book.body).getLong("addedAt") })
-                else activateNovel(session, book, archive,
-                    oldNovels.singleOrNull { it.id == book.id && it.addedAt == JSONObject(book.body).getLong("addedAt") })
+                else activateNovel(session, book, archive)
             }.onFailure { LogCollector.w(TAG, "旧作品记录激活失败，保留归档以便重试：${book.uuid}", it) }
         }
     }
 
-    private fun activateManga(session: LibrarySession, book: LibraryBook, archive: JSONObject,
+    private fun activateManga(session: LibrarySession, originalBook: LibraryBook, archive: JSONObject,
                               old: com.moe.starflow.mangaimport.data.ImportedManga?) {
         // Without the old page-order version and a matching source, page-indexed text could appear on another image.
         if (old == null) return
-        val body = JSONObject(book.body)
-        val root = session.local(book.source)
+        val root = session.local(originalBook.source)
         if (!root.exists()) return
+        // Build the same page table the scanner/reader will use before inserting page-indexed rows.
+        // A legacy image directory may now also contain supported ZIP/PDF chapters.
+        session.sourcePresence[originalBook.source] = true
+        val errors = mutableListOf<String>()
+        MangaDirectoryUpdates.refresh(session.context(), session, listOf(originalBook), errors)
+        check(errors.isEmpty()) { errors.joinToString("\n") }
+        val book = session.database.catalog().byUuid(originalBook.uuid) ?: return
+        if (!eligible(session, book)) return
+        val body = JSONObject(book.body)
         val source = ReaderPageSource(body.optBoolean("isArchive"), root.path, body.optBoolean("isPdf"))
         try {
-            if (source.size != old.pageCount) return
-            val plan = if (old.pageOrderVersion < MangaPageOrder.CURRENT_VERSION)
-                MangaPageOrder.legacyToNewPlan(source.rawPageKeys(), source.orderedPageKeys()) else null
-            val planKey = plan?.joinToString(",").orEmpty()
-            val alreadyApplied = plan != null && old.pageOrderPlan == planKey
+            val index = MangaSourceIndex.load(session, body.optString("sourceIndexPath")) ?: return
+            val directory = !body.optBoolean("isArchive") && !body.optBoolean("isPdf")
+            val raw = if (directory) ArchivedMangaReader.listImageFilesInDir(root) else source.rawPageKeys()
+            if (raw.size != old.pageCount) return
+            val chapterOrder = if (body.optBoolean("isPdf")) raw else MangaChapterSplitter.split(raw).keys
+            val legacyPlan = MangaPageOrder.legacyToNewPlan(raw, chapterOrder)
+            val alreadyApplied = legacyPlan != null && old.pageOrderPlan == legacyPlan.joinToString(",")
+            val oldOrder = if (old.pageOrderVersion >= MangaPageOrder.CURRENT_VERSION || alreadyApplied || body.optBoolean("isPdf"))
+                chapterOrder else ArchivedMangaReader.sortNaturally(raw)
+            val positions = if (directory) index.pages.withIndex().filter { it.value.kind == "IMAGE" }
+                .associate { it.value.path to it.index }
+                else source.orderedPageKeys().withIndex().associate { it.value to it.index }
+            if (oldOrder.any { it !in positions }) return
+            val plan = oldOrder.map { positions.getValue(it) }
             fun page(index: Int): Int? {
-                if (index !in 0 until source.size) return null
-                return (if (alreadyApplied) index else MangaPageOrder.mapPage(plan, index))
-                    .takeIf { it in 0 until source.size }
+                return plan.getOrNull(index)
             }
             val records = archive.getJSONObject("records")
             val stamp = body.getLong("addedAt").toString()
             val key = "${session.locationId}:manga:${book.uuid}"
             val translations = records.rows("imported_page_translation").mapNotNull { row ->
-                if (row.optLong("mangaId", -1) != book.id || row.optString("mangaKey") != stamp) return@mapNotNull null
+                if (row.optLong("mangaId", -1) != book.id || !matchesMangaKey(row.optString("mangaKey"), stamp)) return@mapNotNull null
                 ImportedPageTranslation(book.id, page(row.getInt("pageIndex")) ?: return@mapNotNull null,
                     row.optInt("state"), row.text("sourceText"), row.text("translatedText"), row.text("bubbleRects"),
                     row.text("failCode"), row.text("failMessage"), row.optLong("updatedAtMs"), key,
@@ -74,35 +115,34 @@ internal object LegacyRecordActivation {
             }
             val resolutions = records.rows("imported_page_sr").mapNotNull { row ->
                 if (row.optLong("mangaId", -1) != book.id || row.optString("mangaKey") != stamp) return@mapNotNull null
-                val index = page(row.getInt("pageIndex")) ?: return@mapNotNull null
-                ImportedPageSr(book.id, index, row.optInt("state"), row.text("modelName"),
+                val targetPage = page(row.getInt("pageIndex")) ?: return@mapNotNull null
+                ImportedPageSr(book.id, targetPage, row.optInt("state"), row.text("modelName"),
                     row.optInt("srcWidth"), row.optInt("srcHeight"), row.optLong("srcBytes"),
                     row.optInt("outWidth"), row.optInt("outHeight"), row.optLong("outBytes"),
                     row.text("failCode"), row.text("failMessage"), row.optLong("startedAtMs"),
                     row.optLong("finishedAtMs"), row.optLong("updatedAtMs"), key,
-                    source.key(index), row.text("executionJson"))
+                    source.key(targetPage), row.text("executionJson"))
             }
             session.database.runInTransaction {
-                if (session.database.catalog().byUuid(book.uuid)?.id != book.id) return@runInTransaction
                 val catalog = session.database.catalog()
-                if (catalog.meta("legacyActive:${book.uuid}") == "1") return@runInTransaction
+                val latest = catalog.byUuid(book.uuid) ?: return@runInTransaction
+                if (latest != book || !eligible(session, latest)) return@runInTransaction
                 catalog.insertLegacyTranslations(translations)
                 catalog.insertLegacyResolutions(resolutions)
-                val latest = catalog.book("manga", book.id) ?: return@runInTransaction
                 val updated = JSONObject(latest.body)
-                if ((updated.optInt("pageOrderVersion") < MangaPageOrder.CURRENT_VERSION ||
-                        updated.optInt("lastReadPage") == 0) && old.lastReadPage in 0 until source.size)
-                    updated.put("lastReadPage", page(old.lastReadPage) ?: 0)
+                if (catalog.meta("legacyProgress:${book.uuid}") == "pending")
+                    updated.put("lastReadPage", page(updated.optInt("lastReadPage")) ?: 0)
                 updated.put("pageOrderVersion", MangaPageOrder.CURRENT_VERSION)
-                if (planKey.isNotEmpty()) updated.put("pageOrderPlan", planKey)
+                updated.put("pageOrderPlan", "")
                 catalog.put(latest.copy(body = updated.toString()))
                 catalog.meta(LibraryMeta("legacyActive:${book.uuid}", "1"))
+                catalog.meta(LibraryMeta("legacyActivation:${book.uuid}", "complete"))
+                catalog.meta(LibraryMeta("legacyProgress:${book.uuid}", "complete"))
             }
         } finally { source.close() }
     }
 
-    private fun activateNovel(session: LibrarySession, book: LibraryBook, archive: JSONObject,
-                              old: com.moe.starflow.novel.data.ImportedNovel?) {
+    private fun activateNovel(session: LibrarySession, book: LibraryBook, archive: JSONObject) {
         val body = JSONObject(book.body)
         val stamp = body.getLong("addedAt").toString()
         val key = "${session.locationId}:novel:${book.uuid}"
@@ -116,17 +156,13 @@ internal object LegacyRecordActivation {
         }
         session.database.runInTransaction {
             val catalog = session.database.catalog()
-            if (catalog.byUuid(book.uuid)?.id != book.id || catalog.meta("legacyActive:${book.uuid}") == "1")
-                return@runInTransaction
+            val latest = catalog.byUuid(book.uuid) ?: return@runInTransaction
+            if (latest != book || !eligible(session, latest)) return@runInTransaction
             catalog.insertLegacyParagraphs(paragraphs)
-            val latest = catalog.book("novel", book.id) ?: return@runInTransaction
-            if (old != null && JSONObject(latest.body).optLong("lastReadAt") == 0L) {
-                val updated = JSONObject(latest.body).put("lastReadChapter", old.lastReadChapter)
-                    .put("lastReadParaIndex", old.lastReadParaIndex).put("lastReadPage", 0)
-                    .put("lastReadAt", old.lastReadAt)
-                catalog.put(latest.copy(body = updated.toString()))
-            }
+            // Initial import already copied progress. Never restore stale preferences over app records.
             catalog.meta(LibraryMeta("legacyActive:${book.uuid}", "1"))
+            catalog.meta(LibraryMeta("legacyActivation:${book.uuid}", "complete"))
+            catalog.meta(LibraryMeta("legacyProgress:${book.uuid}", "complete"))
         }
     }
 

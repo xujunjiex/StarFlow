@@ -11,6 +11,7 @@ import java.util.UUID
 
 /** One-way, resumable initialization. Legacy files and the global DB are never deleted. */
 internal object LibraryMigration {
+    @Synchronized
     fun migrate(context: Context, session: LibrarySession) {
         if (session.storage !is FileLibraryStorage) return
         val prefs = context.getSharedPreferences("library_locations", Context.MODE_PRIVATE)
@@ -39,14 +40,27 @@ internal object LibraryMigration {
             val original = legacyMangaSource(session, File(old.localRoot))
             val source = locate(session, "manga", old.id, original, (sourceCounts[File(old.localRoot).canonicalPath] ?: 0) > 1)
             val archiveSource = original != File(old.localRoot) || old.isArchive
-            ImportedMangaStore.add(session.context(), old.copy(localRoot = source.path, isArchive = archiveSource,
-                translatedPath = null))
+            val uuid = old.bookUuid.ifEmpty { session.uuid("manga", old.id) }
+            // Normal store writes acquire the store monitor before Room's transaction lock.
+            synchronized(ImportedMangaStore) {
+                session.database.runInTransaction {
+                    ImportedMangaStore.add(session.context(), old.copy(bookUuid = uuid, localRoot = source.path,
+                        isArchive = archiveSource, translatedPath = null))
+                    LegacyRecordActivation.markPending(session, uuid)
+                }
+            }
         }
         oldNovels.forEach { old ->
             if (catalog.book("novel", old.id) != null) return@forEach
             if (old.localRoot.startsWith("content://")) throw IOException("旧小说来源仍为未迁移的授权目录：${old.title}")
             val source = locate(session, "novel", old.id, File(old.localRoot), (sourceCounts[File(old.localRoot).canonicalPath] ?: 0) > 1)
-            NovelStore.add(session.context(), old.copy(localRoot = source.path, lastReadPage = 0))
+            val uuid = old.bookUuid.ifEmpty { session.uuid("novel", old.id) }
+            synchronized(NovelStore) {
+                session.database.runInTransaction {
+                    NovelStore.add(session.context(), old.copy(bookUuid = uuid, localRoot = source.path, lastReadPage = 0))
+                    LegacyRecordActivation.markPending(session, uuid)
+                }
+            }
         }
         session.flush()
         check(session.saveState.value.pending == 0) { "旧资料尚未保存到书库" }
@@ -70,7 +84,8 @@ internal object LibraryMigration {
                 val novel = table == "novel_paragraph_translation"
                 val owner = owners.singleOrNull { it.kind == (if (novel) "novel" else "manga") &&
                     it.id == row.optLong(if (novel) "novelId" else "mangaId", -1) &&
-                    it.stamp == row.optString(if (novel) "novelKey" else "mangaKey") }
+                    (if (novel) it.stamp == row.optString("novelKey")
+                     else LegacyRecordActivation.matchesMangaKey(row.optString("mangaKey"), it.stamp)) }
                 val target = (owner?.let { archives[it.uuid] } ?: unassigned).getJSONObject("records")
                 val list = target.optJSONArray(table) ?: org.json.JSONArray().also { target.put(table, it) }
                 list.put(row)

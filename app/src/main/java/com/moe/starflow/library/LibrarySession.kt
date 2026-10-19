@@ -447,6 +447,12 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
             check(!readOnly) { "书库记录不可写" }
             if (!deleting && (current?.deleting == true || catalog.meta("removed:$uuid") == "1"))
                 throw IOException("作品已删除或正在删除，不能写入旧记录")
+            if (kind == "manga" && current != null) {
+                val previous = JSONObject(current.body)
+                if (previous.optInt("lastReadPage") != body.optInt("lastReadPage") ||
+                    previous.optInt("pageOrderVersion") != body.optInt("pageOrderVersion"))
+                    LegacyRecordActivation.cancelProgress(this, uuid)
+            }
             validateBook(kind, id, body)
             catalog.put(LibraryBook(kind, id, uuid, body.toString(), body.getString("localRoot"), deleting, error))
             catalog.meta(LibraryMeta("importing:$kind:$id", ""))
@@ -684,6 +690,13 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
                             }
                         }
                         val result = database.withTransaction {
+                            // A clear must remain authoritative even while missing legacy sources defer activation.
+                            if (method.name == "deletePage" || method.name == "deletePageRange") {
+                                val key = values.getOrNull(1) as? String
+                                val owner = key?.substringAfterLast(':')?.let(catalog::byUuid)
+                                if (owner != null && key == "$locationId:${owner.kind}:${owner.uuid}" &&
+                                    owner.id == values.firstOrNull()) LegacyRecordActivation.cancelPending(this@LibrarySession, owner.uuid)
+                            }
                             values.forEach { value ->
                                 val rows = if (value is Iterable<*>) value.toList() else listOf(value)
                                 if (!method.name.startsWith("delete")) rows.forEach { row -> when (row) {
