@@ -3,19 +3,30 @@ package com.moe.starflow.translate
 import com.moe.starflow.utils.CustomPreference
 
 /**
- * 「结果浮窗一次显示最近 N 条译文」设置的唯一读取入口。
+ * 「游戏/视频翻译结果浮窗」相关设置的唯一读取入口。
  *
- * 键都写在 `res/xml/personalization.xml` 的「游戏/视频翻译结果设置」分类里：
+ * 键都写在 `res/xml/personalization.xml`：
  * - [KEY_ENABLED] 多条显示开关，默认关闭（关闭时行为与旧版一致，只显示最新一条）
  * - [KEY_COUNT] 显示条数，值为字符串（`ListPreference` 的 entryValues），默认 3
+ *   —— 这两项在「游戏/视频翻译结果设置」分类
+ * - [KEY_HIDE] 不在游戏画面显示结果浮窗，默认关闭 —— 在「游戏分屏翻译」分类
+ *   （分屏场景下结果只从主窗口的历史页看，见 `ui/history/HistoryFragment` 的自动刷新）
  */
 object GameRecentResults {
 
     const val KEY_ENABLED = "game_recent_results_enabled"
     const val KEY_COUNT = "game_recent_results_count"
+    const val KEY_HIDE = "game_hide_result_overlay"
 
     const val DEFAULT_ENABLED = false
     const val DEFAULT_COUNT = 3
+
+    /**
+     * 结果浮窗是否**永不显示**（不是「翻译中临时隐藏」）：开着时
+     * `FloatingBallService.showResultView()` 第一句就返回，翻译结束后也不会弹出来。
+     * 默认关闭 —— 开成 true 会让所有人默认看不到结果浮窗，属于会静默毁功能的默认值。
+     */
+    const val DEFAULT_HIDE = false
 
     const val MIN_COUNT = 1
 
@@ -43,6 +54,12 @@ object GameRecentResults {
     /** 显示条数（已收敛到 [MIN_COUNT]..[MAX_COUNT]）。 */
     fun countOf(prefs: CustomPreference): Int =
         parseCount(prefs.getString(KEY_COUNT, DEFAULT_COUNT.toString()))
+
+    /** 结果浮窗是否永不显示（分屏场景：只看主窗口的历史页）。 */
+    fun isHidden(prefs: CustomPreference): Boolean = isHidden(prefs.getBoolean(KEY_HIDE, DEFAULT_HIDE))
+
+    /** 纯函数重载，供 JVM 单测锁住默认值与取值口径。 */
+    fun isHidden(raw: Boolean?): Boolean = raw ?: DEFAULT_HIDE
 }
 
 /**

@@ -630,6 +630,9 @@ class FloatingBallService : LifecycleService() {
                     recentResults.setLimit(GameRecentResults.countOf(prefs))
                     rerenderResults()
                 }
+                // 游戏分屏翻译：不在游戏画面显示结果浮窗
+                // → 立刻收起 / 恢复，不打断在途翻译（框选、截图、OCR、入库都不依赖这个窗口）
+                key == GameRecentResults.KEY_HIDE -> applyResultOverlayVisibility()
                 // 翻译模型切换：重建 translator（共享 Hy-MT2 实例由 Holder 换出/重建，无需重启服务）
                 key == "Text_API" || key == "Text_AI" -> {
                     if (prefs.getInt("Translate_Mode", Constants.TranslateMode.TEXT.id) == Constants.TranslateMode.TEXT.id) {
@@ -1650,6 +1653,13 @@ class FloatingBallService : LifecycleService() {
     }
 
     private fun showResultView() {
+        // 游戏分屏翻译：结果只在主窗口历史里看 → 连窗口都不加。
+        // 框选（CropView）、截图、OCR、翻译、历史入库都不依赖这个窗口，照常工作；
+        // 收口在这一句，四个调用点（doTranslate / 自动翻译 / 缓存命中 / showGameResult）自动跟随。
+        if (isResultOverlayHidden()) {
+            removeResultView()
+            return
+        }
         if (!isViewAdded(translationResultView)) {
             windowManager.addView(translationResultView, resultViewParams)
             // 保持悬浮球在最上层
@@ -1664,6 +1674,31 @@ class FloatingBallService : LifecycleService() {
             windowManager.removeView(translationResultView)
         }
         isResultViewShowing = false
+    }
+
+    /**
+     * 「不在游戏画面显示结果浮窗」（游戏分屏翻译）开关。
+     *
+     * 每次现读 prefs（方式 1），改完下一次上屏即生效 —— 和 `Status_Position` 一样不需要缓存字段，
+     * 也就没有「改了设置忘了加 watcher」这类坑。
+     */
+    private fun isResultOverlayHidden(): Boolean = GameRecentResults.isHidden(prefs)
+
+    /**
+     * 开关切换时立刻收起 / 恢复浮窗。
+     *
+     * 恢复时只在**本次会话已经有译文**时才弹出来 —— 没有可显示的结果就不凭空弹一个空框。
+     * ⚠️ 恢复时取 `renderResults()` 的默认参数，不带 ⚡（那只是「本次上屏来自内存缓存」的临时标志）。
+     */
+    private fun applyResultOverlayVisibility() {
+        // 悬浮球还没建好（权限未授权时 fullInit 会延后）→ 没有窗口可收
+        if (!::translationResultView.isInitialized) return
+        if (isResultOverlayHidden()) {
+            removeResultView()
+        } else if (!recentResults.isEmpty()) {
+            renderResults()
+            showResultView()
+        }
     }
 
     /**

@@ -10,6 +10,8 @@ import com.moe.starflow.manga.render.OverlayRenderer
 import com.moe.starflow.manga.types.TextDirection
 import com.moe.starflow.manga.types.TranslatedBubble
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -788,6 +790,18 @@ class TranslationCacheManager(private val context: Context) {
     }
 
     // ========== 历史操作 ==========
+
+    /**
+     * 历史表变化通知：任何写入/更新/删除都会发一次，用来让**主窗口（历史页）自动刷新**
+     * （游戏分屏翻译：结果只看主窗口，用户不该需要手动点刷新）。
+     *
+     * 由 Room 的 InvalidationTracker 驱动，因此与写入方无关 —— 游戏翻译服务、漫画翻译、
+     * 删除与清空都会触发。收集方负责生命周期（页面不在前台时不要动视图）。
+     *
+     * ⚠️ 订阅时会先发一次当前状态（Room 的 Flow 立即执行一次查询），收集方通常要 `drop(1)`
+     * 跳过它 —— 首次数据由页面自己的 `loadHistory()` 负责。
+     */
+    fun observeHistoryChanges(): Flow<Unit> = dao.observeHistoryChange().map { }
 
     /**
      * 获取历史记录列表。

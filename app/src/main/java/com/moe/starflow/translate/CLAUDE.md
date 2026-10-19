@@ -94,8 +94,9 @@ IDLE（跳过OCR）──像素变化──→ CHANGED ──稳定1帧──→
 ⚠️ **「同时显示原文」只在单条模式生效**：多条模式刻意不拼原文（N 条再拼原文会高到出屏），
 所以开了「原文 + 译文对照」的用户切到多条后看不到原文 —— 这是有意的取舍，别当 bug 修。
 **与此配套**：开启多条显示时，设置页的「显示原文」被禁用（灰掉）并把摘要换成
-`show_source_text_disabled_summary` 说明原因（`PersonalizationConfig.syncShowSourceAvailability`，
-开关变化时 `view.post` 同步一次、`onResume` 再补一次），关闭多条后自动恢复 —— 否则用户会以为设置坏了。
+`show_source_text_disabled_summary` 说明原因，关闭多条后自动恢复 —— 否则用户会以为设置坏了。
+三者（多条显示 / 条数 / 显示原文）的可用性统一由 `PersonalizationConfig.syncResultSettingsAvailability`
+一处决定（开关变化时 `view.post` 同步一次、`onResume` 再补一次），**别在别处再写 `setEnabled`**。
 ⚠️ 单条模式拼原文用的是 `lastRenderedSource`（**本条结果**的原文），**不是** `lastTranslatedSource`
 （那是「重新翻译」用的、只有文本翻译才更新）。图片翻译没有原文文本，用后者会把上一次文本翻译
 的原文贴到这次图片译文上。
@@ -107,6 +108,28 @@ IDLE（跳过OCR）──像素变化──→ CHANGED ──稳定1帧──→
 不要退回 `————————` 那种字符画线 —— 字符数固定，框一宽/字号一大就只剩前半段，
 而 `drawBackground` 回调里的 left/right 是**当前行文本边界**（占位行只有一个空格 ⇒ 画出来很短），
 必须用 `layout.width` 才铺满。
+
+**「游戏分屏翻译」分类**（`personalization.xml`）：给「游戏在主屏、结果只在副屏主窗口看」的用法，
+两个开关配套使用。
+
+| 键 | 默认 | 语义 |
+|---|---|---|
+| `game_hide_result_overlay` | `false` | **不在游戏画面显示结果浮窗**：结果只进主窗口历史 |
+| `history_auto_refresh` | `true` | 历史页自动刷新（实现在 `ui/history/HistoryFragment`，见 data 模块说明） |
+
+⚠️ **`game_hide_result_overlay` 的语义是「永不显示」，不是「翻译中临时隐藏」**：`showResultView()`
+第一句就返回，翻译**完成后也不会**弹出来。文案按这个口径写，写成「翻译时隐藏」用户会以为翻译完会弹。
+收口就在 `showResultView()` 一句，四个调用点（`doTranslate` / 自动翻译 / 缓存命中 / `showGameResult`）
+自动跟随；框选（`CropView`）、截图、OCR、翻译、入库都不依赖这个窗口。
+- 开着时浮窗不能当「复制译文 / 重新翻译」的入口 —— 只能从悬浮菜单的历史对话框走，摘要里要写清。
+- 流式中间态永不上屏 ⇒ `partialResultShown` 不置位 ⇒ 手动翻译中单击悬浮球退化成**直接终止**
+  （不弹「停止/继续」确认）。逻辑一致，别当 bug 修。
+- 开着时「多条显示 / 条数 / 显示原文」全部失效（浮窗根本不出现），由
+  `PersonalizationConfig.syncResultSettingsAvailability` 统一灰掉。
+- ⚠️ **图片翻译（`translateByPic`）不写历史**，所以隐藏浮窗时它没有任何地方能看到结果（只有状态浮窗一闪）。
+  刻意**不做**「隐藏时补写历史」：落库与否不该由显示开关决定，而且图片翻译没有原文
+  （`sourceText = null`），落库既不能按原文去重、复制/导出时原文为空，`saveToCache` 还会走
+  `evictIfNeeded` 把别的游戏历史挤掉。真要让图片翻译进历史，应该是「一律写」的独立改动。
 
 **悬浮球长按延迟：** 默认 300ms（`FloatingBallConfig.LONG_PRESS_DELAY`）
 

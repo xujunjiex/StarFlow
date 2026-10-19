@@ -37,6 +37,19 @@
   中途失败会留下"一半新序一半旧序"的行；也不能逐行 `UPDATE pageIndex` —— 它是主键的一部分，
   置换过程中会与尚未搬迁的行撞键（`REPLACE` 会静默吃掉一行）。调用点在阅读器打开时（见 `mangaimport/CLAUDE.md`）。
 - 历史 UI：`ui/history/HistoryFragment`，游戏和漫画均按时间+会话分组显示
+- **历史变更通知**（游戏分屏翻译：主窗口历史页自动刷新，个性化页「历史记录自动刷新」开关，默认开）：
+  `TranslationCacheManager.observeHistoryChanges()`（`Flow<Unit>`，底层是
+  `TranslationHistoryDao.observeHistoryChange()` 的 `SELECT id ... ORDER BY updated_at DESC LIMIT 1`）。
+  由 Room 的 InvalidationTracker 驱动，**任何**写入/更新/删除都会发一次，与写入方无关
+  （游戏服务、阅读器批量翻译、删除、清空都覆盖）。
+  - ⚠️ **别加 `distinctUntilChanged`**：`refreshGameCache` 替换或原地更新旧记录时最新 id 可能不变，
+    但列表内容已经变了。
+  - ⚠️ **也别拿它的返回值渲染列表** —— 它只是「变了」的信号。
+  - ⚠️ 订阅时 Room 会**先发一次当前值**，收集方要 `drop(1)`（首屏数据由页面自己的 `loadHistory()` 负责）。
+  - ⚠️ 收集方**必须单飞 + 去抖**（`HistoryFragment.scheduleRefresh`）：`getHistoryGrouped` 在 IO 线程跑，
+    两轮并发时先发的那轮可能后返回 → **旧列表盖掉新列表**（`submitList` 不校验版本）。
+    刷新期间**不要**逐 group/session 打日志：自动刷新是每次写库都跑，会把 `starflow.log`
+    只留 300 行的缓冲冲掉，闪退时反而查不到崩溃块。
 - 漫画图片浏览：`MangaViewerActivity` 全屏翻页 + 底部译文详情面板
 - 重翻引擎选择：`history_retranslate_engine` 偏好（PP_OCR_V5/MANGA_OCR/MLKIT），通过 `mapEngineToDetOcr` 映射
   - ⚠️ **manga-ocr 必须配 `RT_DETR_V2`**（不可配 `PP_OCR_V5`，后者 `runOCR` 忽略 ocr 参数直接走独立管线）

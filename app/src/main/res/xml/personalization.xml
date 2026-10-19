@@ -143,6 +143,29 @@
 
     </PreferenceCategory>
 
+    <!-- 游戏分屏翻译：游戏在主屏、翻译结果只看副屏主窗口（历史页）的用法。
+         两项必须配套 —— 只开「隐藏结果浮窗」而不开自动刷新，用户每翻一句都要回主窗口手点刷新；
+         只开自动刷新则浮窗照样挡在游戏画面上。 -->
+    <PreferenceCategory
+        android:title="@string/game_split_translate_category"
+        app:iconSpaceReserved="false">
+
+        <SwitchPreference
+            android:key="game_hide_result_overlay"
+            app:iconSpaceReserved="false"
+            android:defaultValue="false"
+            android:title="@string/game_hide_result_overlay_title"
+            android:summary="@string/game_hide_result_overlay_summary"/>
+
+        <SwitchPreference
+            android:key="history_auto_refresh"
+            app:iconSpaceReserved="false"
+            android:defaultValue="true"
+            android:title="@string/history_auto_refresh_title"
+            android:summary="@string/history_auto_refresh_summary"/>
+
+    </PreferenceCategory>
+
     <PreferenceCategory
         android:title="@string/manga_result_setting_title"
         app:iconSpaceReserved="false">

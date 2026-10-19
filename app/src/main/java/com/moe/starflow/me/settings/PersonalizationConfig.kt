@@ -227,20 +227,25 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
             true
         }
         showSource.summaryProvider = Preference.SummaryProvider<ListPreference> { _ ->
-            // 「同时显示最近多条翻译」开启时，多条模式只画译文 → 这一项不生效，摘要改成说明
-            if (isMultiRecentEnabled()) {
-                getString(R.string.show_source_text_disabled_summary)
-            } else {
-                getString(R.string.show_source_text_summary, showSource.entry)
+            when {
+                // 「不在游戏画面显示结果浮窗」开着：浮窗不会出现，本项无从生效
+                isResultOverlayHidden() -> getString(R.string.result_box_hidden_disabled_summary)
+                // 「同时显示最近多条翻译」开启时，多条模式只画译文 → 这一项不生效，摘要改成说明
+                isMultiRecentEnabled() -> getString(R.string.show_source_text_disabled_summary)
+                else -> getString(R.string.show_source_text_summary, showSource.entry)
             }
         }
-        // 多条显示的开关一变，立刻灰掉/恢复「显示原文」
+        // 多条显示 / 隐藏结果浮窗任一变化，立刻重算「显示原文」「条数」的可用性与摘要
         findPreference<SwitchPreference>(GameRecentResults.KEY_ENABLED)?.setOnPreferenceChangeListener { _, _ ->
             // 回调发生在持久化之前：排到本次点击处理完之后再按新值同步
-            view?.post { syncShowSourceAvailability() }
+            view?.post { syncResultSettingsAvailability() }
             true
         }
-        syncShowSourceAvailability()
+        findPreference<SwitchPreference>(GameRecentResults.KEY_HIDE)?.setOnPreferenceChangeListener { _, _ ->
+            view?.post { syncResultSettingsAvailability() }
+            true
+        }
+        syncResultSettingsAvailability()
 
         // 文字阴影
         findPreference<SwitchPreference>("text_shadow_enabled")?.apply {
@@ -774,25 +779,52 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
         findPreference<Preference>("manga_translation_replacements")?.let { updateReplacementSummary(it) }
         // 超分模型摘要也要在返回时重刷：用户可能在模型管理页删掉/换了模型
         findPreference<Preference>("sr_model_manage")?.let { updateSrModelSummary(it) }
-        // 「多条显示」可能在别处被改（例如恢复默认），回来时按现值再同步一次
-        syncShowSourceAvailability()
+        // 「多条显示」「隐藏结果浮窗」可能在别处被改（例如恢复默认），回来时按现值再同步一次
+        syncResultSettingsAvailability()
     }
 
     /** 「同时显示最近多条翻译」是否开启。 */
     private fun isMultiRecentEnabled(): Boolean =
         prefs.getBoolean(GameRecentResults.KEY_ENABLED, GameRecentResults.DEFAULT_ENABLED)
 
+    /** 「不在游戏画面显示结果浮窗」（游戏分屏翻译）是否开启。 */
+    private fun isResultOverlayHidden(): Boolean = GameRecentResults.isHidden(prefs)
+
     /**
-     * 「同时显示最近多条翻译」开启时，结果框在多条模式下**只画译文**（高度可控），
-     * 所以「显示原文」这一项实际不起作用 —— 开启期把它禁用（灰掉）+ 改摘要说明原因，
-     * 避免用户以为设置坏了。关闭多条显示后自动恢复。
+     * 结果浮窗三项设置（多条显示 / 条数 / 显示原文）的可用性与摘要统一在这里同步。
+     *
+     * 两个输入决定三个开关：
+     * - **隐藏结果浮窗**（游戏分屏翻译）：浮窗永不出现 → 三项都不影响任何可见结果，全部灰掉；
+     * - **多条显示**：多条只画译文 → 「显示原文」不生效（既有行为）。
+     *
+     * ⚠️ 三者的 `isEnabled` 只有这一个来源：别在别处再写 `setEnabled`，否则两个地方互相打架，
+     * 表现为「关掉开关后某一项永远灰着」。
+     * ⚠️ `notifyChanged()` 是 protected，改 `isEnabled` 本身就会重算摘要 provider，不要显式调。
      */
-    private fun syncShowSourceAvailability() {
-        if (!this::showSource.isInitialized) return
+    private fun syncResultSettingsAvailability() {
+        val hidden = isResultOverlayHidden()
         val multi = isMultiRecentEnabled()
-        // isEnabled 变化本身就是状态镜像：只有值真的变了才写（Preference.setEnabled 内部会 notifyChanged，
-        // 摘要 provider 随之重算）。两者始终同源，不需要额外刷新。
-        if (showSource.isEnabled != !multi) showSource.isEnabled = !multi
+
+        findPreference<SwitchPreference>(GameRecentResults.KEY_ENABLED)?.let { pref ->
+            val wantEnabled = !hidden
+            if (pref.isEnabled != wantEnabled) pref.isEnabled = wantEnabled
+            val summaryRes = if (hidden) {
+                R.string.result_box_hidden_disabled_summary
+            } else {
+                R.string.game_recent_results_summary
+            }
+            val text = getString(summaryRes)
+            if (pref.summary?.toString() != text) pref.summary = text
+        }
+        // 条数本来跟着 XML 的 android:dependency 走，但它不知道「隐藏浮窗」这个维度 → 显式覆盖
+        findPreference<ListPreference>(GameRecentResults.KEY_COUNT)?.let { pref ->
+            val wantEnabled = !hidden && multi
+            if (pref.isEnabled != wantEnabled) pref.isEnabled = wantEnabled
+        }
+        if (this::showSource.isInitialized) {
+            val wantEnabled = !hidden && !multi
+            if (showSource.isEnabled != wantEnabled) showSource.isEnabled = wantEnabled
+        }
     }
 
     private fun handleDefaultIcon(prefKey: String) {

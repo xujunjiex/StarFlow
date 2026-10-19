@@ -376,6 +376,12 @@
     <string name="game_recent_results_title">Show the most recent translations together</string>
     <string name="game_recent_results_summary">The floating result box shows the latest translations in one go. Off by default; when off it keeps showing only the newest result.</string>
     <string name="game_recent_results_count_title">Number of recent translations</string>
+    <string name="game_split_translate_category">Game split-screen translation</string>
+    <string name="game_hide_result_overlay_title">Don\'t show the result box over the game</string>
+    <string name="game_hide_result_overlay_summary">Translation and capture-area adjustment keep working. Results go to the history of the main window only — the result box never pops up over the game, not even after a translation finishes. Copy or retranslate from the floating ball menu → history.</string>
+    <string name="history_auto_refresh_title">Auto-refresh the history list</string>
+    <string name="history_auto_refresh_summary">Reload the history page by itself whenever a translation is saved, so no manual refresh is needed while reading on the second screen.</string>
+    <string name="result_box_hidden_disabled_summary">Unavailable while \"Don\'t show the result box over the game\" is on: the result box never appears.</string>
     <string name="volcapi_name">Volc Engine</string>
     <string name="volcapi_description">Volc Engine API, click \"Manage Volc Engine API\" below to set up the API, and you can also view the API application tutorial (there is a free call quota of 2 million characters per month).</string>
     <string name="manage_volc_api">Manage Volc Engine API</string>

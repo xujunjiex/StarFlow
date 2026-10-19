@@ -313,6 +313,12 @@
     <string name="game_recent_results_title">同时显示最近多条翻译</string>
     <string name="game_recent_results_summary">悬浮窗一次显示最近的若干条译文。默认关闭，关闭时仍只显示最新一条。</string>
     <string name="game_recent_results_count_title">显示条数</string>
+    <string name="game_split_translate_category">游戏分屏翻译</string>
+    <string name="game_hide_result_overlay_title">不在游戏画面显示结果浮窗</string>
+    <string name="game_hide_result_overlay_summary">翻译与框选照常进行，结果只进主窗口的历史记录：游戏画面上不再弹出结果浮窗，翻译完成后也不会弹出。复制译文 / 重新翻译请从悬浮球菜单的历史记录进入。</string>
+    <string name="history_auto_refresh_title">历史记录自动刷新</string>
+    <string name="history_auto_refresh_summary">每次翻译写库后自动重载历史列表，副屏阅读时不必手动点刷新。</string>
+    <string name="result_box_hidden_disabled_summary">已开启「不在游戏画面显示结果浮窗」：结果浮窗不会出现，本项当前不生效。</string>
     <string name="volcapi_name">火山引擎</string>
     <string name="volcapi_description">火山引擎的API，点击下方的"管理火山引擎API"即可设置API，还可以在其中查看API的申请教程（每月有200万字符的免费调用额度）。</string>
     <string name="manage_volc_api">管理火山引擎API</string>

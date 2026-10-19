@@ -34,6 +34,21 @@ class GameRecentResultsTest {
         assertEquals(2, GameRecentResults.parseCount(" 2 "))
     }
 
+    // ───────────────────── 不在游戏画面显示结果浮窗（游戏分屏翻译） ─────────────────────
+
+    @Test
+    fun hideOverlay_defaultsToOff() {
+        // 默认值必须是 false：开成 true 等于让所有人默认看不到结果浮窗（静默毁功能）
+        assertFalse(GameRecentResults.DEFAULT_HIDE)
+        assertFalse(GameRecentResults.isHidden(null))
+    }
+
+    @Test
+    fun hideOverlay_readsStoredValue() {
+        assertFalse(GameRecentResults.isHidden(false))
+        assertTrue(GameRecentResults.isHidden(true))
+    }
+
     // ───────────────────── 最近译文队列 ─────────────────────
 
     @Test

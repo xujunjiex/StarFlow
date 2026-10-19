@@ -16,6 +16,7 @@ import android.widget.ArrayAdapter
 import android.widget.TextView
 import android.widget.Toast
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import android.app.Activity
@@ -31,6 +32,10 @@ import com.moe.starflow.databinding.FragmentHistoryBinding
 import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.LogCollector
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -47,6 +52,20 @@ class HistoryFragment : Fragment() {
 
         /** 游戏历史的紧凑列表开关（只显示译文、留白最小），见 item_history_game_compact.xml。 */
         private const val KEY_GAME_COMPACT = "history_game_compact"
+
+        /**
+         * 历史记录自动刷新（个性化页「游戏分屏翻译」分类）。翻译写库后本页自动重载，
+         * 游戏分屏场景下用户只看副屏主窗口，不该需要每翻一句就点一次刷新。
+         * 默认开启：这是纯增量体验，关掉只是回到手动刷新。
+         */
+        private const val KEY_AUTO_REFRESH = "history_auto_refresh"
+        private const val DEFAULT_AUTO_REFRESH = true
+
+        /**
+         * 自动刷新的合并窗口。一次翻译可能连续写库多次（游戏译文 + 缓存命中更新 updatedAt；
+         * 阅读器批量翻译一次写一整章），逐条刷新既浪费又会打空的日志缓冲。
+         */
+        private const val AUTO_REFRESH_DEBOUNCE_MS = 250L
     }
 
     private var _binding: FragmentHistoryBinding? = null
@@ -58,6 +77,18 @@ class HistoryFragment : Fragment() {
 
     // 0=游戏, 1=漫画
     private var currentTab = TranslationCacheManager.MODE_GAME
+
+    /**
+     * 唯一的刷新协程（单飞）。
+     *
+     * ⚠️ 不能各调各的 `launch`：`loadHistory` 的 `getHistoryGrouped` 在 IO 线程跑，
+     * 两轮并发时**后发的那轮不一定后到**，旧的查询结果会把新列表盖掉（`submitList` 无版本校验）。
+     * 所有刷新入口（切 tab、改设置、手动刷新按钮、自动刷新）都必须走 [scheduleRefresh]。
+     */
+    private var refreshJob: Job? = null
+
+    /** 首次 onResume 与 onViewCreated 的加载重合，跳过以免白查一次。 */
+    private var firstResume = true
 
     // SAF 下载
     private var pendingDownloadZip: File? = null
@@ -85,12 +116,52 @@ class HistoryFragment : Fragment() {
         setupTabs()
         setupViewModeTabs()
         setupRecyclerViews()
+        // 下面这行 switchTab 里已经 loadHistory()，别再补一次（否则首屏查两遍库）
         switchTab(TranslationCacheManager.MODE_GAME) // 初始化游戏 tab 的视图状态
         setupClearAllCacheButton()
         setupRefreshButton()
         setupSettingsButton()
 
-        loadHistory()
+        observeHistoryChanges()
+    }
+
+    /**
+     * 翻译写库后自动刷新本页（游戏分屏翻译：结果只在主窗口看，不该需要手动点刷新）。
+     *
+     * 由 Room 的表变化通知驱动（`TranslationCacheManager.observeHistoryChanges`），与写入方无关：
+     * 游戏翻译服务、阅读器批量翻译、删除/清空都会触发。
+     *
+     * - `drop(1)`：订阅时 Room 会立刻发一次当前状态，首屏数据已经由 `switchTab` 里的
+     *   `loadHistory()` 加载过了，不跳过就会白查一遍库。
+     * - 合并窗口在 [scheduleRefresh] 里（取消上一轮 = 去抖），视图不在时直接丢弃这次通知；
+     *   回到前台由 [onResume] 的补刷兜底（通知不会重放）。
+     */
+    private fun observeHistoryChanges() {
+        viewLifecycleOwner.lifecycleScope.launch {
+            cacheManager.observeHistoryChanges()
+                .drop(1)
+                .collect {
+                    if (_binding == null) return@collect
+                    // 页面不在前台不动视图：后台服务仍在翻译写库，没必要为看不见的列表反复查库
+                    if (!viewLifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+                        return@collect
+                    }
+                    val prefs = CustomPreference.getInstance(requireContext())
+                    if (!prefs.getBoolean(KEY_AUTO_REFRESH, DEFAULT_AUTO_REFRESH)) return@collect
+                    scheduleRefresh(AUTO_REFRESH_DEBOUNCE_MS)
+                }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 页面不在前台期间收到的通知会被丢弃，且不会重放 → 回到前台补刷一次。
+        // 首次进来时 onViewCreated 已经加载过，跳过。
+        if (firstResume) {
+            firstResume = false
+            return
+        }
+        if (_binding != null) scheduleRefresh()
     }
 
     private fun setupTabs() {
@@ -350,43 +421,97 @@ class HistoryFragment : Fragment() {
         loadHistory()
     }
 
-    private fun loadHistory() {
-        viewLifecycleOwner.lifecycleScope.launch {
-            try {
-                val prefs = CustomPreference.getInstance(requireContext())
-                val viewMode = prefs.getString("history_view_mode", "default")
-                val sortByUpdated = (viewMode == "default")
-                val displayMode = prefs.getString("history_display_mode", "large")
+    /**
+     * 刷新列表（原有调用点的入口，语义不变：**取最新**）。
+     *
+     * @param debounceMs >0 时先等一小段，期间再被调用则取消这一轮重新计时 —— 自动刷新用它合并
+     *   一次翻译的多次写库；手动点击/切 tab 传 0，立即刷新。
+     */
+    private fun loadHistory(debounceMs: Long = 0L) = scheduleRefresh(debounceMs)
 
-                when (currentTab) {
-                    TranslationCacheManager.MODE_GAME -> {
-                        // 游戏历史始终按进程（sessionId）分组，不按日期合并
-                        gameGroupAdapter.setCompactMode(prefs.getBoolean(KEY_GAME_COMPACT, false))
-                        val groups = cacheManager.getHistoryGrouped(currentTab, sortByUpdated = false)
-                        gameGroupAdapter.submitList(groups)
-                        updateEmptyState(groups.isEmpty())
-                        LogCollector.d(TAG, "loadHistory: game groups=${groups.size}, sessions total=${groups.sumOf { it.sessions.size }}, entries total=${groups.sumOf { g -> g.sessions.sumOf { it.entries.size } }}")
-                        for ((gi, g) in groups.withIndex()) {
-                            for ((si, s) in g.sessions.withIndex()) {
-                                LogCollector.d(TAG, "  group[$gi].session[$si]: id=${s.sessionId.take(8)}, entries=${s.entries.size}")
-                            }
-                        }
-                    }
-                    TranslationCacheManager.MODE_MANGA -> {
-                        mangaGroupAdapter.isManageView = (viewMode == "manage")
-                        mangaGroupAdapter.setDisplayMode(displayMode)
-                        mangaGroupAdapter.setSortByUpdated(sortByUpdated)
-                        val groups = cacheManager.getHistoryGrouped(currentTab, sortByUpdated = sortByUpdated)
-
-                        mangaGroupAdapter.submitList(groups)
-                        updateEmptyState(groups.isEmpty())
-                        LogCollector.d(TAG, "loadHistory: manga groups=${groups.size}, sort=${if (sortByUpdated) "default" else "manage"}, display=$displayMode")
-                    }
-                }
-            } catch (e: Exception) {
-                LogCollector.e(TAG, "loadHistory failed", e)
-            }
+    /**
+     * 唯一的刷新调度：取消在途那一轮，再起新的。
+     *
+     * ⚠️ 取消是必须的 —— `getHistoryGrouped` 在 IO 线程跑，两轮并发时先发的那轮可能后返回，
+     * 于是**旧列表盖掉新列表**（`submitList` 不校验版本）。取消后 `withContext` 回主线程时
+     * 会检查取消状态，结果直接丢弃。
+     */
+    private fun scheduleRefresh(debounceMs: Long = 0L) {
+        if (_binding == null) return
+        refreshJob?.cancel()
+        refreshJob = viewLifecycleOwner.lifecycleScope.launch {
+            if (debounceMs > 0) delay(debounceMs)
+            loadHistoryNow()
         }
+    }
+
+    private suspend fun loadHistoryNow() {
+        try {
+            val prefs = CustomPreference.getInstance(requireContext())
+            val viewMode = prefs.getString("history_view_mode", "default")
+            val sortByUpdated = (viewMode == "default")
+            val displayMode = prefs.getString("history_display_mode", "large")
+
+            when (currentTab) {
+                TranslationCacheManager.MODE_GAME -> {
+                    // 游戏历史始终按进程（sessionId）分组，不按日期合并
+                    gameGroupAdapter.setCompactMode(prefs.getBoolean(KEY_GAME_COMPACT, false))
+                    val groups = cacheManager.getHistoryGrouped(currentTab, sortByUpdated = false)
+                    // rv 与 atTop 必须在 submitList 之前抓下来：提交回调是异步跑的，
+                    // 那时视图可能已销毁（binding 置空），不能再碰 `binding`
+                    val rv = binding.rvGameHistory
+                    val atTop = isAtTop(rv)
+                    gameGroupAdapter.submitList(groups) {
+                        scrollToNewestIfAtTop(rv, atTop)
+                    }
+                    updateEmptyState(groups.isEmpty())
+                    // ⚠️ 只留一行汇总：自动刷新是每次写库都跑，逐 group/session 打印会把
+                    //    starflow.log（只留最近 300 行）冲掉，闪退时反而查不到崩溃块。
+                    LogCollector.d(TAG, "loadHistory: game groups=${groups.size}, entries=${groups.sumOf { g -> g.sessions.sumOf { it.entries.size } }}")
+                }
+                TranslationCacheManager.MODE_MANGA -> {
+                    mangaGroupAdapter.isManageView = (viewMode == "manage")
+                    mangaGroupAdapter.setDisplayMode(displayMode)
+                    mangaGroupAdapter.setSortByUpdated(sortByUpdated)
+                    val groups = cacheManager.getHistoryGrouped(currentTab, sortByUpdated = sortByUpdated)
+
+                    val atTopRv = binding.rvMangaHistory
+                    val atTop = isAtTop(atTopRv)
+                    mangaGroupAdapter.submitList(groups) {
+                        scrollToNewestIfAtTop(atTopRv, atTop)
+                    }
+                    updateEmptyState(groups.isEmpty())
+                    LogCollector.d(TAG, "loadHistory: manga groups=${groups.size}, sort=${if (sortByUpdated) "default" else "manage"}, display=$displayMode")
+                }
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // 被更新的一轮取消：不是错误，结果本来就要丢
+            throw e
+        } catch (e: Exception) {
+            LogCollector.e(TAG, "loadHistory failed", e)
+        }
+    }
+
+    /** 列表是否贴着顶部（新条目插在顶部，见 [scrollToNewestIfAtTop]）。 */
+    private fun isAtTop(rv: androidx.recyclerview.widget.RecyclerView): Boolean {
+        val lm = rv.layoutManager as? LinearLayoutManager ?: return false
+        return lm.findFirstVisibleItemPosition() <= 0
+    }
+
+    /**
+     * 刷新后让最新一条回到视野里。
+     *
+     * ⚠️ 新条目插在列表顶部，而 RecyclerView 会**保住原来可见的那一项**（`notifyItemInserted(0)`
+     * 不会挪动画面）→ 停在顶部时新结果落在视口**上方**，用户会觉得「自动刷新根本没生效」。
+     * 只在刷新前就贴着顶部时才滚回去，避免打断正在翻旧记录的用户。
+     *
+     * ⚠️ 参数里的 `rv` 必须是调用方**提前抓好的引用**，不能在提交回调里现取 `binding`。
+     */
+    private fun scrollToNewestIfAtTop(
+        rv: androidx.recyclerview.widget.RecyclerView,
+        wasAtTop: Boolean
+    ) {
+        if (wasAtTop) rv.scrollToPosition(0)
     }
 
     private fun updateEmptyState(isEmpty: Boolean) {
@@ -880,6 +1005,8 @@ class HistoryFragment : Fragment() {
 
     override fun onDestroyView() {
         _binding = null
+        // 视图重建（返回栈回来 / 转屏）会再走一次 onViewCreated 的加载 → 重置，别让 onResume 多刷一次
+        firstResume = true
         super.onDestroyView()
     }
 }
