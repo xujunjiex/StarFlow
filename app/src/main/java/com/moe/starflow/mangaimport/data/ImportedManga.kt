@@ -46,7 +46,7 @@ data class ImportedManga(
     /**
      * 页序版本（见 [MangaPageOrder]）：小于 [MangaPageOrder.CURRENT_VERSION] 表示这本书的译文行
      * 可能还是**旧页序**（章节系统之前）存下的 → 阅读器打开时做一次性重排。
-     * 新导入使用当前页序；旧清单无字段时按 0 读取，升级时重置进度并归档旧处理记录。
+     * 新导入使用当前页序；旧清单无字段时按 0 读取，升级时保留旧进度并在确认页序后转换。
      */
     val pageOrderVersion: Int = MangaPageOrder.CURRENT_VERSION,
     /**

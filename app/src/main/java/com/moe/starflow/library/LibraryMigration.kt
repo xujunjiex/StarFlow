@@ -3,7 +3,6 @@ package com.moe.starflow.library
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import com.moe.starflow.mangaimport.data.ImportedMangaStore
-import com.moe.starflow.mangaimport.data.MangaPageOrder
 import com.moe.starflow.novel.data.NovelStore
 import org.json.JSONObject
 import java.io.File
@@ -16,9 +15,12 @@ internal object LibraryMigration {
         if (session.storage !is FileLibraryStorage) return
         val prefs = context.getSharedPreferences("library_locations", Context.MODE_PRIVATE)
         if (session.storage.root.path != prefs.getString("defaultPath", null)) return
-        val catalog = session.database.catalog()
-        if (catalog.meta("legacyMigrated") == "1") return
         val app = session.app
+        val catalog = session.database.catalog()
+        if (catalog.meta("legacyMigrated") == "1") {
+            LegacyRecordActivation.activate(app, session)
+            return
+        }
         val archive = catalog.meta("legacyArchive") ?: UUID.randomUUID().toString().also {
             catalog.meta(LibraryMeta("legacyArchive", it))
         }
@@ -37,20 +39,20 @@ internal object LibraryMigration {
             val original = legacyMangaSource(session, File(old.localRoot))
             val source = locate(session, "manga", old.id, original, (sourceCounts[File(old.localRoot).canonicalPath] ?: 0) > 1)
             val archiveSource = original != File(old.localRoot) || old.isArchive
-            ImportedMangaStore.add(session.context(), old.copy(localRoot = source.path, isArchive = archiveSource, lastReadPage = 0,
-                translatedPath = null, pageOrderVersion = MangaPageOrder.CURRENT_VERSION, pageOrderPlan = ""))
+            ImportedMangaStore.add(session.context(), old.copy(localRoot = source.path, isArchive = archiveSource,
+                translatedPath = null))
         }
         oldNovels.forEach { old ->
             if (catalog.book("novel", old.id) != null) return@forEach
             if (old.localRoot.startsWith("content://")) throw IOException("旧小说来源仍为未迁移的授权目录：${old.title}")
             val source = locate(session, "novel", old.id, File(old.localRoot), (sourceCounts[File(old.localRoot).canonicalPath] ?: 0) > 1)
-            NovelStore.add(session.context(), old.copy(localRoot = source.path,
-                lastReadChapter = 0, lastReadParaIndex = 0, lastReadPage = 0, lastReadAt = 0))
+            NovelStore.add(session.context(), old.copy(localRoot = source.path, lastReadPage = 0))
         }
         session.flush()
         check(session.saveState.value.pending == 0) { "旧资料尚未保存到书库" }
         splitArchive(app, session, path)
         session.persistMeta("legacyMigrated", "1")
+        LegacyRecordActivation.activate(app, session)
     }
     private fun splitArchive(context: Context, session: LibrarySession, path: String) {
         val original = JSONObject(session.recordArchive(path).readText(Charsets.UTF_8))

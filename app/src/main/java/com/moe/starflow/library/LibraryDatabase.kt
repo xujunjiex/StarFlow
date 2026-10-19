@@ -48,6 +48,9 @@ interface LibraryCatalogDao {
     @Query("SELECT * FROM imported_page_translation") fun allTranslations(): List<ImportedPageTranslation>
     @Query("SELECT * FROM imported_page_sr") fun allResolutions(): List<ImportedPageSr>
     @Query("SELECT * FROM novel_paragraph_translation") fun allParagraphs(): List<NovelParagraphTranslation>
+    @Insert(onConflict = OnConflictStrategy.IGNORE) fun insertLegacyTranslations(rows: List<ImportedPageTranslation>)
+    @Insert(onConflict = OnConflictStrategy.IGNORE) fun insertLegacyResolutions(rows: List<ImportedPageSr>)
+    @Insert(onConflict = OnConflictStrategy.IGNORE) fun insertLegacyParagraphs(rows: List<NovelParagraphTranslation>)
 }
 
 @Database(entities = [LibraryBook::class, LibraryWrite::class, LibraryMeta::class,
