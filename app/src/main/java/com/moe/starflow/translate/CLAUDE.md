@@ -133,6 +133,47 @@ IDLE（跳过OCR）──像素变化──→ CHANGED ──稳定1帧──→
 
 **悬浮球长按延迟：** 默认 300ms（`FloatingBallConfig.LONG_PRESS_DELAY`）
 
+## 用户自定义「翻译前 / 后处理」脚本
+
+设置项在个性化页的「文本预处理与后处理」分类，键与预置模板都在 `translate/TextTransformScripts.kt`：
+
+| 键 | 默认 | 语义 |
+|---|---|---|
+| `text_transform_enabled` | `false` | 总开关；关闭时翻译路径完全不碰脚本 |
+| `text_transform_pre` | `return s;` | 原文脚本：**送进翻译引擎的文本** |
+| `text_transform_post` | `return s;` | 译文脚本：**引擎返回的译文 → 最终上屏/入库的译文** |
+
+执行器 `translate/TextTransformer.kt`（Rhino，纯 Java 的 JS 实现；用它的理由与 `compileFunction` 的
+坑见该文件注释）。接线只有两个方法：`FloatingBallService.preprocessSource()` 与
+`postprocessTranslation()`，两者都在总开关关闭时原样透传。
+
+**硬约束（改之前必读）**
+
+- ⚠️ **必须跑在 `Dispatchers.Default` 上**：本服务没有「翻译线程」——`translateByText` 由主线程的
+  截图 collector 与点击回调进来，成功回调也在 `Dispatchers.Main`。因此 `translateByText` 是
+  `suspend`，前后处理各自 `withContext(Dispatchers.Default)`；非协程回调（历史对话框长按、
+  `retranslateCurrentText`）用 `lifecycleScope.launch` 起它。别把脚本改回就地同步执行。
+- ⚠️ **翻译前处理只改「喂给引擎的文本」**：缓存查找、历史 `sourceText`、LRU、AI 上下文仍然用
+  **原始 OCR 原文**。否则处理后的文本与库里存的原文对不上 → 同一个画面每轮都判「未命中」而反复重翻。
+- ⚠️ **只处理最终译文**：流式中间态（`onPartial`）不处理后处理 —— 逐段套用（如「加方括号」）会得到
+  一堆半截结果；最终 `callback` 的 Success 才处理一次。
+  **代价**：译文脚本的结果会随 `saveTranslationToCache` / LRU 落库，改脚本后旧画面走缓存仍是旧结果。
+- ⚠️ **脚本失败一律按原文返回**（`apply` 里 catch + `LogCollector.w`）：翻译是主流程，
+  一段可选脚本不能让它失败。前处理结果为空、后处理结果为空（而引擎译文不空）时都退回上一级文本。
+  **返回 `undefined`/`null`（忘了写 `return`）也按原文返回** —— 否则字面量会当译文喂给引擎。
+- ⚠️ **超时保护有边界**：靠「全局 Context 工厂」的指令计数回调（`initGlobal` + **必须**
+  `optimizationLevel = -1`，否则回调根本不触发）。它拦得住纯 JS 死循环，**拦不住**单条指令里的
+  Java 耗时（灾难性回溯的正则、`'x'.repeat(1e9)`）。锁用 `tryLock`：上一次卡死时后续调用等
+  一个超时就按原文返回，不会把翻译链路永久钉死。
+- ⚠️ 不要用 `Context.compileFunction(...)` 编译用户脚本：该版本不会把源码当**函数体**解析，
+  `return s;` 直接报 `EvaluatorException: invalid return`。现在是自己包一层
+  `function __starflow_transform(s) { ... }` 再取函数。
+- 作用域用 `initSafeStandardObjects()` + `ClassShutter` 全拒：脚本拿不到任何宿主 Java 类。
+- **作用范围**：只接在**游戏/视频的文本翻译**路径上（`translateByText`）。漫画气泡批翻
+  （`TranslateUtils.translateBubblesBatch`）、小说章节翻译、`translateByPic` 都**还没接**。
+- **release 要实测**：Rhino 的 keep 规则在 `minifyEnabled=true` 下出问题只会表现为「脚本静默不生效」，
+  debug 正常不算验证过。
+
 **悬浮球手势自定义：**
 三个手势（单击/双击/长按）分配不同动作，互斥配置（不能重复）。
 - `Constants.BallAction`：TRANSLATE(0)、MENU(1)、AUTO_TRANSLATE(2)、**CLOSE_FLOATING(3)**

@@ -322,6 +322,19 @@
     <string name="history_auto_refresh_title">历史记录自动刷新</string>
     <string name="history_auto_refresh_summary">每次翻译写库后自动重载历史列表，副屏阅读时不必手动点刷新。</string>
     <string name="result_box_hidden_disabled_summary">已开启「不在游戏画面显示结果浮窗」：结果浮窗不会出现，本项当前不生效。</string>
+    <string name="text_transform_category">文本预处理与后处理</string>
+    <string name="text_transform_enabled_title">自定义翻译前/后处理脚本</string>
+    <string name="text_transform_enabled_summary">用 JavaScript 处理送进翻译引擎的原文，以及引擎返回的译文。默认关闭，预置模板不做任何处理。目前只对游戏/视频的文本翻译生效。</string>
+    <string name="text_transform_pre_title">原文处理（翻译前）</string>
+    <string name="text_transform_post_title">译文处理（翻译后）</string>
+    <string name="text_transform_script_hint">脚本是 JavaScript 的函数体，入参为字符串 s，用 return 返回结果。例如：return s.trim();</string>
+    <string name="text_transform_preset_label">预置模板</string>
+    <string name="text_transform_preset_identity">不做处理（return s;）</string>
+    <string name="text_transform_preset_join_lines">去掉换行并合并空格</string>
+    <string name="text_transform_preset_strip_spaces">去掉所有空白字符</string>
+    <string name="text_transform_preset_halfwidth_punctuation">半角标点转全角</string>
+    <string name="text_transform_script_invalid">脚本有错误：%1$s</string>
+    <string name="text_transform_script_no_change">不做处理（return s;）</string>
     <string name="volcapi_name">火山引擎</string>
     <string name="volcapi_description">火山引擎的API，点击下方的"管理火山引擎API"即可设置API，还可以在其中查看API的申请教程（每月有200万字符的免费调用额度）。</string>
     <string name="manage_volc_api">管理火山引擎API</string>
@@ -466,6 +479,8 @@
     <string name="faq_a11">这是<b><u>录屏服务与系统录屏功能冲突</u></b>导致的截图通道失效。\n\n<b>症状表现：</b>\n• 自动翻译：翻页后始终检测不到页面变化，进度条一直显示"自动检测中"，或 30 秒后弹出超时提示\n• 手动翻译：每次点击翻译都提示"⚡ 缓存"（缓存命中），显示的始终是同一页的翻译结果，翻页后翻译内容不更新\n\n<b>原因：</b>\n系统录屏、投屏、或某些应用的屏幕录制功能会独占 MediaProjection 通道，导致本应用的 VirtualDisplay 无法获取新的屏幕画面。截图拿到的永远是卡死前最后一帧画面，所以 pHash 检测不到变化，翻译结果也始终不变。\n\n<b>解决方法：</b>\n• <b>关闭系统录屏</b>：下拉通知栏，关闭系统自带的屏幕录制\n• <b>关闭投屏</b>：断开手机投屏/镜像连接\n• <b>检查其他录屏应用</b>：关闭游戏助手、直播助手等可能占用录屏通道的应用\n• <b>重启翻译服务</b>：关闭所有可能的录屏后，重新开启漫画翻译\n• <b>切换到无障碍截图模式</b>：在「设置 → 关于 → 截图方式」中切换为无障碍服务，不受录屏冲突影响\n\n该问题在所有使用 MediaProjection 的应用中都存在，不是本应用独有的 bug。</string>
     <string name="faq_q12">如何连接本地局域网/电脑上部署的翻译模型？</string>
     <string name="faq_a12">软件支持通过<b><u>OpenAI 兼容接口</u></b>连接<b><u>同一局域网内电脑上部署的本地模型服务</u></b>（如 llama.cpp、LM Studio、Ollama 等），无需公网 API 密钥。\n\n<b><u>第一步：在电脑上启动本地模型服务</u></b>\n用你常用的工具加载模型并启动服务，记下端口号。<b>关键是让服务监听 0.0.0.0（允许局域网访问）</b>，否则手机连不上。各工具开启方式：\n• <b>llama-server</b>：--host 0.0.0.0\n• <b>LM Studio</b>：设置里开启「局域网/远程访问」\n• <b>Ollama</b>：默认监听 0.0.0.0，无需设置\n• <b>其他</b>：查文档「允许远程/局域网访问」\n\n<b><u>第二步：查询电脑局域网 IP</u></b>\n运行 ipconfig，记下 IPv4 地址（如 192.168.1.100）。\n\n<b><u>第三步：手机验证连通</u></b>\n手机浏览器打开 http://电脑IP:端口，能打开即网络通畅。打不开按顺序排查：\n1. 手机和电脑是否同一局域网\n2. 服务是否监听 0.0.0.0\n3. 电脑防火墙是否放行该端口（只有连不上才处理）\n\n<b><u>第四步：在软件中配置</u></b>\n设置 → 翻译模型配置 → 添加自定义 API：Base URL 填 http://电脑IP:端口/v1，API Key 和模型名任意填，测试连接通过即可使用。\n\n<b><u>其他注意</u></b>\n• 电脑的代理不影响手机直连（局域网直连不走代理）\n• 用明文 http 地址时，需软件版本已放行明文流量</string>
+    <string name="faq_q13">想改译文的用词、标点或换行，该用「译文替换表」还是「前后处理脚本」？</string>
+    <string name="faq_a13">译文文字有两种改法，位置和生效方式不同。\n\n<b><u>一、漫画「译文替换表」</u></b>\n设置 → 个性化 → 漫画翻译结果设置 → 译文替换表\n• 一行一条：左边填要替换的原文，右边填替换成的内容\n• 右边留空 = 删掉这段文字；最多 50 条\n• 改完回到页面重新显示即可生效，<b>不用重新翻译</b>\n• 只影响显示，不改历史里存着的译文\n\n<b><u>二、游戏/视频「翻译前/后处理脚本」</u></b>\n设置 → 个性化 → 文本预处理与后处理\n• 先打开总开关，再分别设置两段脚本\n• 脚本是 JavaScript 的函数体，入参是字符串 s，必须用 return 交出结果，例如 return s.trim();\n• 点「预置模板」可一键填入常用脚本（不做处理 / 去换行合并空格 / 去所有空白 / 半角标点转全角）\n• 脚本报错、超时或忘记写 return，都会按原文返回，不会让翻译失败\n• 「原文处理」只影响送进翻译引擎的文字；「译文处理」的结果会写进历史，改完脚本后已翻过的画面仍是旧结果\n\n<b><u>怎么选</u></b>\n• 只是换几个词或标点 → 用替换表（简单、随时可改、不用重翻）\n• 要用正则、条件判断，或在翻译前整理原文（例如把 OCR 拆碎的换行合并）→ 用脚本\n• 脚本目前只作用于游戏/视频的文本翻译；漫画请用替换表</string>
     <string name="github_repo_title">GitHub仓库</string>
     <string name="github_repo_content">本项目使用LGPL-3.0协议开源，您可以随时访问GitHub仓库，欢迎给项目点一个"Star🌟"。</string>
     <string name="have_look">去看看</string>
@@ -691,9 +706,6 @@
     <string name="sr_fail_exception">引擎异常</string>
     <string name="sr_active_switched">已切换到 %1$s</string>
     <!-- 个性化设置 · 超分分类 -->
-    <string name="sr_settings_category">超分（AI 放大）</string>
-    <string name="sr_model_manage_title">超分模型管理</string>
-    <string name="sr_model_manage_summary">下载并选择超分模型</string>
     <string name="sr_model_missing_format">%1$s（模型未下载）</string>
     <string name="detector_section">检测器</string>
     <string name="detector_rtdetr_desc">块级+气泡检测，速度快，11MB</string>

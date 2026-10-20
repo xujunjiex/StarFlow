@@ -45,9 +45,10 @@ import com.moe.starflow.R
 import com.moe.starflow.data.TranslationCacheManager
 import com.moe.starflow.manga.config.TranslationTextRules
 import com.moe.starflow.manga.config.MangaTextSpacing
-import com.moe.starflow.sr.SrModelManager
 import com.moe.starflow.translate.screenshot.AccessibilityServiceManager
 import com.moe.starflow.translate.CustomLocale
+import com.moe.starflow.translate.TextTransformScripts
+import com.moe.starflow.translate.TextTransformer
 import com.moe.starflow.translate.widget.Dialogs
 import com.moe.starflow.translate.FloatingBallService
 import com.moe.starflow.translate.GameRecentResults
@@ -85,14 +86,15 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
 
     private enum class Section(val titleRes: Int, val categoryKeys: List<String>) {
         GAME(R.string.personalization_game_tab, listOf(
-            "personalization_game_result", "personalization_game_split", "personalization_game_auto"
+            "personalization_game_result", "personalization_game_split", "personalization_game_auto",
+            "personalization_text_transform"
         )),
         GENERAL(R.string.personalization_general_tab, listOf(
             "personalization_floating", "personalization_context",
             "personalization_notifications", "personalization_other"
         )),
         MANGA(R.string.personalization_manga_tab, listOf(
-            "personalization_manga_result", "personalization_sr"
+            "personalization_manga_result"
         ))
     }
 
@@ -261,20 +263,6 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
         findPreference<Preference>("manga_translation_replacements")?.let { updateReplacementSummary(it) }
         PpRegionSizeFilterPreferences.bind(preferenceScreen)
 
-        // 超分模型管理入口（2026-10）：直接落到模型管理页的「超分」Tab，
-        // 不让用户进去后再自己点一次 Tab（个性化里点「超分模型管理」的意图已经很明确）
-        findPreference<Preference>("sr_model_manage")?.let { p ->
-            p.setOnPreferenceClickListener {
-                startActivity(Intent(requireContext(), SettingPageActivity::class.java).apply {
-                    putExtra(SettingPageActivity.EXTRA_FRAGMENT_TYPE,
-                        SettingPageActivity.TYPE_FRAGMENT_MODEL_MANAGEMENT)
-                    putExtra(SettingPageActivity.EXTRA_MODEL_SHOW_SR, true)
-                })
-                true
-            }
-            updateSrModelSummary(p)
-        }
-
         // UI 同步字体：切换后需重启应用生效，弹窗提示
         findPreference<SwitchPreference>("ui_apply_custom_font")?.setOnPreferenceChangeListener { _, _ ->
             val dialog = android.app.AlertDialog.Builder(requireContext())
@@ -369,6 +357,23 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
                 true
             }
         }
+        // 文本预处理 / 后处理脚本（默认关闭；脚本用 JavaScript 写，入参为字符串 s）
+        // 作用范围：游戏/视频的文本翻译（FloatingBallService.translateByText）
+        findPreference<SwitchPreference>(TextTransformScripts.KEY_ENABLED)?.apply {
+            setOnPreferenceChangeListener { _, newValue ->
+                prefs.setBoolean(TextTransformScripts.KEY_ENABLED, newValue as Boolean)
+                true
+            }
+        }
+        setupTextTransformScript(
+            key = TextTransformScripts.KEY_PRE,
+            titleRes = R.string.text_transform_pre_title
+        )
+        setupTextTransformScript(
+            key = TextTransformScripts.KEY_POST,
+            titleRes = R.string.text_transform_post_title
+        )
+
         // 上下文长度（token 预算，档位 4K~128K，默认 32K）——原来是「轮数」，已整体替换
         findPreference<ListPreference>(ContextBudget.KEY_TOKEN_BUDGET)?.apply {
             setOnPreferenceChangeListener { _, newValue ->
@@ -826,24 +831,6 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
     }
 
     /**
-     * 超分模型摘要 = 当前选中的模型名。
-     *
-     * 三种状态都**显式赋值**（未选 / 选了但没下载 / 正常），不能只写"正常"那一支 ——
-     * 否则用户删掉模型后这里还显示着名字，以为它还能用。
-     * ⚠️ 与 `ModelManagementFragment` 共用 [SrModelManager.nameResOf]，不要各写一份模型名映射。
-     */
-    private fun updateSrModelSummary(pref: Preference) {
-        val sp = prefs.getSharedPreferences()
-        val key = SrModelManager.getActiveKey(sp)
-        pref.summary = when {
-            key == null -> getString(R.string.sr_no_model_selected)
-            !SrModelManager.isDownloaded(requireContext(), key) ->
-                getString(R.string.sr_model_missing_format, getString(SrModelManager.nameResOf(key)))
-            else -> getString(SrModelManager.nameResOf(key))
-        }
-    }
-
-    /**
      * 译文替换表摘要 = 当前规则条数。
      *
      * ⚠️ 必须在 `onResume` 里再刷一次：用户从二级面板返回时本页只是 resume（不重建），
@@ -861,8 +848,6 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
     override fun onResume() {
         super.onResume()
         findPreference<Preference>("manga_translation_replacements")?.let { updateReplacementSummary(it) }
-        // 超分模型摘要也要在返回时重刷：用户可能在模型管理页删掉/换了模型
-        findPreference<Preference>("sr_model_manage")?.let { updateSrModelSummary(it) }
         // 「多条显示」「隐藏结果浮窗」可能在别处被改（例如恢复默认），回来时按现值再同步一次
         syncResultSettingsAvailability()
     }
@@ -1039,6 +1024,87 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
                 input.copyTo(output)
             }
         } ?: throw IOException("open file error")
+    }
+
+    // ==================== 文本预处理 / 后处理脚本 ====================
+
+    /**
+     * 「翻译前 / 翻译后处理」脚本的入口。
+     *
+     * 脚本只存在 prefs 里，翻译侧由 `FloatingBallService` 现读并交给 `TextTransformer`
+     * 执行（后台线程、有超时、失败按原文返回）——设置页只负责编辑与保存前的语法预检。
+     */
+    private fun setupTextTransformScript(key: String, titleRes: Int) {
+        val pref = findPreference<Preference>(key) ?: return
+        updateTextTransformScriptSummary(pref, key)
+        pref.setOnPreferenceClickListener {
+            showTextTransformScriptDialog(pref, key, titleRes)
+            true
+        }
+    }
+
+    private fun updateTextTransformScriptSummary(pref: Preference, key: String) {
+        val script = TextTransformScripts.normalize(prefs.getString(key, TextTransformScripts.IDENTITY_SCRIPT))
+        pref.summary = if (TextTransformScripts.isIdentity(script)) {
+            getString(R.string.text_transform_script_no_change)
+        } else {
+            // 摘要只给一眼能认出来的预览；完整脚本在编辑框里
+            script.replace('\n', ' ').trim().take(60)
+        }
+    }
+
+    private fun showTextTransformScriptDialog(pref: Preference, key: String, titleRes: Int) {
+        val ctx = requireContext()
+        val customView = LayoutInflater.from(ctx).inflate(R.layout.dialog_text_script, null)
+        val editor = customView.findViewById<EditText>(R.id.et_script).apply {
+            setText(TextTransformScripts.normalize(prefs.getString(key, TextTransformScripts.IDENTITY_SCRIPT)))
+            setSelection(text.length)
+        }
+        customView.findViewById<TextView>(R.id.tv_script_hint).text =
+            getString(R.string.text_transform_script_hint)
+        customView.findViewById<android.widget.Button>(R.id.btn_script_preset).setOnClickListener {
+            showTextScriptPresetPicker(ctx, editor)
+        }
+
+        val dialog = AlertDialog.Builder(ctx)
+            .setTitle(titleRes)
+            .setView(customView)
+            .setPositiveButton(R.string.save, null)
+            .setNegativeButton(R.string.user_cancel, null)
+            .create()
+        dialog.show()
+        dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
+        // 保存前先做语法检查：不通过就**不关**弹窗，让用户直接改
+        // （setPositiveButton 的默认行为是先关窗再回调，所以这里自己接管点击）
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val script = TextTransformScripts.normalize(editor.text.toString())
+            val error = TextTransformer.validate(script)
+            if (error != null) {
+                UiUtils.showToast(ctx, getString(R.string.text_transform_script_invalid, error), isShort = false)
+                return@setOnClickListener
+            }
+            prefs.setString(key, script)
+            updateTextTransformScriptSummary(pref, key)
+            dialog.dismiss()
+        }
+    }
+
+    /** 预置模板：选中只替换编辑框内容，不直接落库（用户还能接着改）。 */
+    private fun showTextScriptPresetPicker(ctx: android.content.Context, editor: EditText) {
+        val names = TextTransformScripts.PRESET_NAME_RES
+            .map { getString(it) }
+            .toTypedArray()
+        val dialog = AlertDialog.Builder(ctx)
+            .setTitle(R.string.text_transform_preset_label)
+            .setItems(names) { _, which ->
+                val script = TextTransformScripts.PRESET_SCRIPTS.getOrNull(which) ?: return@setItems
+                editor.setText(script)
+                editor.setSelection(editor.text.length)
+            }
+            .setNegativeButton(R.string.user_cancel, null)
+            .create()
+        dialog.show()
+        dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
     }
 
     private fun isAnyTranslationServiceRunning(): Boolean {

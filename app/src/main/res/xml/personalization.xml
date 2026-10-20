@@ -170,6 +170,35 @@
     </PreferenceCategory>
 
     <PreferenceCategory
+        android:key="personalization_text_transform"
+        android:title="@string/text_transform_category"
+        app:iconSpaceReserved="false">
+
+        <!-- 用户自定义脚本：原文送进翻译引擎前、译文返回后各过一次。
+             默认关闭；脚本是 JavaScript 函数体（入参 s），预置模板即「直接 return s;」。
+             作用范围：仅游戏/视频的文本翻译（FloatingBallService.translateByText）。 -->
+        <SwitchPreference
+            android:key="text_transform_enabled"
+            app:iconSpaceReserved="false"
+            android:defaultValue="false"
+            android:title="@string/text_transform_enabled_title"
+            android:summary="@string/text_transform_enabled_summary"/>
+
+        <Preference
+            android:key="text_transform_pre"
+            app:iconSpaceReserved="false"
+            android:title="@string/text_transform_pre_title"
+            android:dependency="text_transform_enabled"/>
+
+        <Preference
+            android:key="text_transform_post"
+            app:iconSpaceReserved="false"
+            android:title="@string/text_transform_post_title"
+            android:dependency="text_transform_enabled"/>
+
+    </PreferenceCategory>
+
+    <PreferenceCategory
         android:key="personalization_manga_result"
         android:title="@string/manga_result_setting_title"
         app:iconSpaceReserved="false">
@@ -402,27 +431,6 @@
             android:title="@string/language_setting_title"
             android:entries="@array/language_entries"
             android:entryValues="@array/language_values" />
-
-    </PreferenceCategory>
-
-    <!-- ════════════════════════════════════════════════════════════
-         超分（SR）—— 2026-10
-
-         ⚠️ 这里**只有模型管理入口**，没有开关：
-         - 超分**只服务阅读器**（先原图 OCR → 再超分 → 译文画在超分底图上），开关在**阅读器调色面板**上。
-           按用户口径「截图/录屏链路不做超分」，所以个性化里不设总开关/游戏/漫画开关。
-         - Anime4K 的开关与档位同样在阅读器调色面板（它作用在阅读器的底图上）。
-         ════════════════════════════════════════════════════════════ -->
-    <PreferenceCategory
-        android:key="personalization_sr"
-        android:title="@string/sr_settings_category"
-        app:iconSpaceReserved="false">
-
-        <Preference
-            android:key="sr_model_manage"
-            android:title="@string/sr_model_manage_title"
-            android:summary="@string/sr_model_manage_summary"
-            app:iconSpaceReserved="false" />
 
     </PreferenceCategory>
 

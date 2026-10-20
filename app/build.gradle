@@ -224,6 +224,12 @@ dependencies {
     // 颜色选择
     implementation 'com.jaredrummler:colorpicker:1.1.0'
 
+    // 用户自定义「翻译前/后处理」脚本引擎（纯 Java 的 JavaScript 实现，无 native 库）。
+    // 为什么用它：Android 从 API 28 起不再内置 JS 引擎（Nashorn 已移除），WebView 那条路是
+    // 异步且必须回主线程，做不了「后台线程里同步处理一个字符串」；自写表达式求值器则要覆盖
+    // 字符串/正则/条件等语法，代码量远大于这一个依赖。
+    implementation 'org.mozilla:rhino:1.7.15'
+
     // ML Kit的OCR识别库
     // 中文识别
     implementation 'com.google.mlkit:text-recognition-chinese:16.0.1'

@@ -58,6 +58,7 @@ class FAQPage : Fragment() {
             CustomCard(getText(R.string.faq_q10), getText(R.string.faq_a10)),
             CustomCard(getText(R.string.faq_q11), getText(R.string.faq_a11)),
             CustomCard(getText(R.string.faq_q12), getText(R.string.faq_a12)),
+            CustomCard(getText(R.string.faq_q13), getText(R.string.faq_a13)),
             CustomCard(getText(R.string.faq_library_recovery_question), getText(R.string.faq_library_recovery_answer),
                 id = com.moe.starflow.library.BookRecoveryDialog.FAQ_CARD)
         )
