@@ -4,7 +4,7 @@ import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 
 /**
- * 阅读器颜色矫正（复刻 Kototoro/Koto 的 ReaderColorFilter）。
+ * 阅读器颜色矫正，反色使用与 Mihon 相同的 RGB 补色矩阵。
  *
  * 预设 + 自定义（亮度/对比度），最终生成 ColorMatrixColorFilter 应用在页码 ImageView 上。
  * 只影响屏幕显示，不修改原始图片文件。
@@ -53,10 +53,11 @@ data class ReaderColorFilter(
     companion object {
         private const val BOOK_BLUE_FACTOR = 0.92f
 
+        // Android ColorMatrix 的偏移量使用 0..255：RGB' = 255 - RGB，alpha 保持不变。
         private val invertMatrix = floatArrayOf(
-            -1f, 0f, 0f, 0f, 1f,
-            0f, -1f, 0f, 0f, 1f,
-            0f, 0f, -1f, 0f, 1f,
+            -1f, 0f, 0f, 0f, 255f,
+            0f, -1f, 0f, 0f, 255f,
+            0f, 0f, -1f, 0f, 255f,
             0f, 0f, 0f, 1f, 0f,
         )
 

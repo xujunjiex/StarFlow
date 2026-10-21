@@ -3,6 +3,7 @@ package com.moe.starflow.manga.render
 import android.graphics.Paint
 import android.graphics.Rect
 import com.moe.starflow.manga.config.TranslationTextRules
+import com.moe.starflow.manga.config.MangaTextSpacing
 import com.moe.starflow.manga.types.TextAlign
 import com.moe.starflow.manga.types.TextDirection
 import kotlin.math.floor
@@ -19,7 +20,7 @@ interface TextMeasurer {
     /** 竖排字框宽（= 字号）。 */
     fun glyphWidth(): Float
 
-    /** 竖排字框高（= 字号 × [LayoutEngine.VERTICAL_CHAR_RATIO]）。 */
+    /** 竖排字框高（= 字号，不含字间距）。 */
     fun glyphHeight(): Float
 }
 
@@ -36,7 +37,7 @@ class PaintTextMeasurer(
         paint.breakText(text, true, maxWidth, null)
 
     override fun glyphWidth(): Float = paint.textSize
-    override fun glyphHeight(): Float = paint.textSize * LayoutEngine.VERTICAL_CHAR_RATIO
+    override fun glyphHeight(): Float = paint.textSize
 }
 
 /**
@@ -62,7 +63,7 @@ data class TextLine(
 data class TextLayout(
     val fontSize: Float,
     val lines: List<TextLine>,
-    /** 主轴额外字距（横排=行内字距；竖排=列内字距）。 */
+    /** 字间距（横排=行内字距；竖排=列内字距）。 */
     val tracking: Float,
     /** 次轴步进（横排=行距；竖排=列距），含字形本身。 */
     val leading: Float,
@@ -88,15 +89,6 @@ data class TextLayout(
  */
 object LayoutEngine {
 
-    /**
-     * 竖排字符步距系数（列内上下相邻字步进）。**唯一来源**：
-     * OverlayRenderer 曾各写一份并注释「必须一致」，不一致即溢出。
-     */
-    const val VERTICAL_CHAR_RATIO = 1.1f
-
-    /** 横排换行行距系数（与竖排字距解耦）。 */
-    const val HORIZONTAL_LINE_RATIO = 1.2f
-
     /** 字号下限：装不下就继续缩，绝不截断（用户明确选择的取舍：宁可字小，不可丢字）。 */
     private const val MIN_FONT_SIZE = 1f
 
@@ -108,10 +100,10 @@ object LayoutEngine {
      */
     const val TRACKING_MIN_RATIO = 0f
     const val TRACKING_MAX_RATIO = 1f
-    const val TRACKING_DEFAULT_RATIO = 0f
+    const val TRACKING_DEFAULT_RATIO = MangaTextSpacing.DEFAULT_RATIO
     const val LEADING_MIN_RATIO = 0f
     const val LEADING_MAX_RATIO = 1f
-    const val LEADING_DEFAULT_RATIO = 0f
+    const val LEADING_DEFAULT_RATIO = MangaTextSpacing.DEFAULT_RATIO
 
     /**
      * 内容区最小内边距（dp，**绝对值**）。由调用方按设备密度换算成 px 传入 [plan]。
@@ -136,9 +128,10 @@ object LayoutEngine {
      *
      * @param measurer    度量实现（生产用 [PaintTextMeasurer]，测试注入假实现）
      * @param autoFit     true = 由内核二分选字号；false = 用 [requestedFontSize] 原样
+     * @param requestedFontSize 仅用于固定模式；自动模式不以 OCR 估计字号为上限
      * @param align       横排的行对齐方式（竖排不使用：竖排列块保持水平居中）
-     * @param trackingRatio 用户字间距（×字号，0 = 自然）。**参与字号预算**：调大 → 字号相应变小。
-     * @param leadingRatio  用户行间距（×字号，0 = 自然行距）。同样参与预算。
+     * @param trackingRatio 用户字间距（×字号，20% = 相邻字符之间留 0.2 个字号）。参与字号预算。
+     * @param leadingRatio 用户行／列间距（×字号，20% = 1.2 倍字号步距）。同样参与预算。
      * @param minPaddingPx 内容区最小内边距（**px 绝对值**，调用方按密度换算 `MIN_PADDING_DP`）。
      *                     四周统一生效：竖排保证左右留白，横排保证上下留白，文字不贴 overlay 边缘。
      */
@@ -154,11 +147,13 @@ object LayoutEngine {
         leadingRatio: Float = LEADING_DEFAULT_RATIO,
         minPaddingPx: Float = 0f
     ): TextLayout {
-        if (text.isEmpty() || region.width <= 0 || region.height <= 0 || requestedFontSize <= 0f) {
+        if (text.isEmpty() || region.width <= 0 || region.height <= 0 ||
+            (!autoFit && (!requestedFontSize.isFinite() || requestedFontSize <= 0f))
+        ) {
             return TextLayout(0f, emptyList(), 0f, 0f, 0f, 0f, 0f)
         }
         val font = if (autoFit) {
-            searchFitFontSize(measurer, text, region, direction, requestedFontSize, trackingRatio, leadingRatio, minPaddingPx)
+            searchFitFontSize(measurer, text, region, direction, trackingRatio, leadingRatio, minPaddingPx)
         } else {
             requestedFontSize
         }
@@ -189,18 +184,20 @@ object LayoutEngine {
         text: String,
         region: Box,
         direction: TextDirection,
-        maxFontSize: Float,
         trackingRatio: Float,
         leadingRatio: Float,
         minPaddingPx: Float
     ): Float {
-        // 字号上限不超过矩形本身能容纳的大小
+        // 上限只由最终内容区决定。OCR 合并结果可能携带最小成员字号，
+        // 用它封顶会让整段译文停在小字号，即使区域内还有大量空白。
+        val pad = resolvePadding(region, minPaddingPx)
+        val availW = region.width - 2 * pad
+        val availH = region.height - 2 * pad
         val rectLimit = when (direction) {
-            TextDirection.HORIZONTAL -> region.width / HORIZONTAL_LINE_RATIO
-            else -> region.height / VERTICAL_CHAR_RATIO
+            TextDirection.HORIZONTAL -> availH
+            else -> minOf(availW, availH)
         }
-        val hiInit = minOf(maxFontSize, rectLimit).coerceAtLeast(MIN_FONT_SIZE)
-        var hi = hiInit
+        var hi = rectLimit.coerceAtLeast(MIN_FONT_SIZE)
         var lo = MIN_FONT_SIZE
         if (!fits(measurer, text, region, direction, lo, trackingRatio, leadingRatio, minPaddingPx)) return lo
         var best = lo
@@ -301,19 +298,23 @@ object LayoutEngine {
         if (lines.isEmpty()) return TextLayout(font, emptyList(), 0f, 0f, 0f, 0f, 0f)
 
         val naturalWidths = lines.map { measurer.measure(it) }
-        val longestLen = lines.maxOf { it.length }
-        val totalWidth = (naturalWidths.maxOrNull() ?: 0f) + tracking * (longestLen - 1).coerceAtLeast(0)
+        // 同一行的字形宽度与字距一起度量，再取最大值。窄标点多的行可能字符更多，
+        // 将「最宽行」与另一行的「最多字符数」相加会凭空制造超宽，压垮自动字号。
+        val lineWidths = lines.mapIndexed { i, line ->
+            naturalWidths[i] + tracking * (line.length - 1).coerceAtLeast(0)
+        }
+        val totalWidth = lineWidths.maxOrNull() ?: 0f
 
-        // 行距：用户值叠加在自然行距之上（保持 1×字号的天然呼吸感；要更紧就调小 …但下限是自然值）
+        // 行步距只包含一个字框和用户设置的间距：20% = 1.2×字号，0% = 1×字号。
         val n = lines.size
-        val leading = font * (HORIZONTAL_LINE_RATIO + leadingRatio.coerceAtLeast(0f))
+        val leading = font * (1f + leadingRatio.coerceAtLeast(0f))
         val totalHeight = if (n <= 1) font else (n - 1) * leading + font
 
         // 余量居中（间距固定在预算内，余量一般很小；触底/触顶时给 0）
         val topPad = ((availH - totalHeight) / 2f).coerceAtLeast(0f)
 
         val out = lines.mapIndexed { i, line ->
-            val lineW = naturalWidths[i] + tracking * (line.length - 1).coerceAtLeast(0)
+            val lineW = lineWidths[i]
             val x = when (align) {
                 TextAlign.LEFT -> region.left + pad
                 TextAlign.CENTER -> region.centerX - lineW / 2f
@@ -347,9 +348,9 @@ object LayoutEngine {
         // 这里直接去掉换行；配合 TranslationTextRules.normalizeEllipsis 的「点串不跨行」双保险。
         val flow = text.replace("\r", "").replace("\n", "")
 
-        // 列内字距叠加在自然字步距上；列距叠加在自然列步距上。两者都参与字号二分预算。
-        val charStep = font * (VERTICAL_CHAR_RATIO + trackingRatio.coerceAtLeast(0f))
-        val colStep = font * (VERTICAL_CHAR_RATIO + leadingRatio.coerceAtLeast(0f))
+        // 字符／列步距 = 一个字框 + 用户设置的间距，没有额外的固定增量。
+        val charStep = font * (1f + trackingRatio.coerceAtLeast(0f))
+        val colStep = font * (1f + leadingRatio.coerceAtLeast(0f))
         val capacity = verticalCapacity(availH, font, charStep)
         if (capacity <= 0 || flow.isEmpty()) return TextLayout(font, emptyList(), 0f, 0f, 0f, 0f, 0f)
 
@@ -379,7 +380,7 @@ object LayoutEngine {
                 baseline = firstBaseline
             )
         }
-        return TextLayout(font, out, charStep - font * VERTICAL_CHAR_RATIO, colStep, charStep, totalWidth, colHeight)
+        return TextLayout(font, out, charStep - font, colStep, charStep, totalWidth, colHeight)
     }
 
     /**
@@ -453,8 +454,9 @@ object LayoutEngine {
             }
             var remaining = paragraph
             while (remaining.isNotEmpty()) {
-                var count = measurer.breakText(remaining, maxWidth)
-                if (count <= 0) break
+                // 放不下一个字时仍保留该字，让 fits() 按真实行宽拒绝当前字号。
+                // 直接 break 会丢掉后续正文，产生「缺字但装得下」的假布局。
+                var count = measurer.breakText(remaining, maxWidth).coerceAtLeast(1)
                 if (tracking > 0f) {
                     // 自然宽 ≤ maxWidth 只保证不含字距时放得下；加上 (k-1) 个字距后可能超出
                     while (count > 1 &&

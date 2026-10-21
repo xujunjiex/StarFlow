@@ -61,6 +61,11 @@ class SettingPageActivity : BaseActivity() {
 
         applySystemBarsPadding(binding.fragmentContainerView, true, true)
 
+        // FragmentManager 已恢复当前页面及二级页返回栈，保留标签和定位状态。
+        if (savedInstanceState != null &&
+            supportFragmentManager.findFragmentById(binding.fragmentContainerView.id) != null
+        ) return
+
         when(intent.getIntExtra(EXTRA_FRAGMENT_TYPE,0)){
             TYPE_FRAGMENT_TRANSLATE_MODE->supportFragmentManager.beginTransaction().replace(binding.fragmentContainerView.id,
                 TranslationMode()

@@ -7,6 +7,7 @@ import android.graphics.BitmapFactory
 import com.moe.starflow.utils.LogCollector
 import com.moe.starflow.utils.PerceptualHash
 import com.moe.starflow.manga.render.OverlayRenderer
+import com.moe.starflow.manga.config.MangaTextSpacing
 import com.moe.starflow.manga.types.TextDirection
 import com.moe.starflow.manga.types.TranslatedBubble
 import kotlinx.coroutines.Dispatchers
@@ -46,10 +47,10 @@ class TranslationCacheManager(private val context: Context) {
         const val KEY_MANGA_HORIZONTAL_ALIGN = "manga_horizontal_align"
 
         /** 用户字间距（整数百分比 0..100，滑块 progress 1:1；读取时 /100 得倍率）。 */
-        const val KEY_MANGA_TRACKING = "manga_tracking"
+        const val KEY_MANGA_TRACKING = MangaTextSpacing.KEY_TRACKING
 
         /** 用户行间距（整数百分比 0..100，同上）。 */
-        const val KEY_MANGA_LEADING = "manga_leading"
+        const val KEY_MANGA_LEADING = MangaTextSpacing.KEY_LEADING
         private const val SIMILARITY_THRESHOLD_MANGA = 0.95f  // 256-bit hash 相似度阈值（~13 bit 容差）
         private const val ENABLE_MANGA_SIMILARITY_FALLBACK = false
         private const val THUMBNAIL_SIZE = 200
@@ -89,8 +90,8 @@ class TranslationCacheManager(private val context: Context) {
         val textDirection: com.moe.starflow.manga.types.TextDirection = com.moe.starflow.manga.types.TextDirection.VERTICAL_RL,
         val showCacheMarker: Boolean = false,  // 缓存命中标记（⚡，默认关闭）
         val horizontalAlign: com.moe.starflow.manga.types.TextAlign = com.moe.starflow.manga.types.TextAlign.CENTER,
-        val trackingRatio: Float = 0f,         // 用户字间距（×字号）
-        val leadingRatio: Float = 0f,          // 用户行间距（×字号）
+        val trackingRatio: Float = MangaTextSpacing.DEFAULT_RATIO, // 字间距（×字号）
+        val leadingRatio: Float = MangaTextSpacing.DEFAULT_RATIO,  // 行／列间距（×字号）
         /** 渲染阶段重叠合并（见 [KEY_OVERLAP_MERGE]）。关闭 = 每个气泡各自绘制，允许白块相叠。 */
         val mergeOverlap: Boolean = true,
         /**
@@ -242,11 +243,10 @@ class TranslationCacheManager(private val context: Context) {
             else -> com.moe.starflow.manga.types.TextAlign.CENTER
         }
         // 存储是整数百分比（滑块 progress 1:1），读取时换算成 ×字号的倍率
-        val trackingRatio = prefs.getInt(KEY_MANGA_TRACKING, 0) / 100f
-        val leadingRatio = prefs.getInt(KEY_MANGA_LEADING, 0) / 100f
+        val spacing = MangaTextSpacing.read(prefs)
         return OverlayConfig(
             fontSize, autoFit, textColor, bgColor, textDirection,
-            showCacheMarker, horizontalAlign, trackingRatio, leadingRatio, mergeOverlap,
+            showCacheMarker, horizontalAlign, spacing.trackingRatio, spacing.leadingRatio, mergeOverlap,
             // 替换表现读（与 mergeOverlap 同口径）：改完规则重新渲染即生效，不必重翻
             replacementRules = com.moe.starflow.manga.config.TranslationTextRules.load(prefs)
         )

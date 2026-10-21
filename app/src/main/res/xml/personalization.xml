@@ -21,6 +21,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
     <PreferenceCategory
+        android:key="personalization_floating"
         android:title="@string/floating_ball"
         app:iconSpaceReserved="false">
 
@@ -73,6 +74,7 @@
     </PreferenceCategory>
 
     <PreferenceCategory
+        android:key="personalization_game_result"
         android:title="@string/translate_result_box_with_hint"
         app:iconSpaceReserved="false">
 
@@ -147,6 +149,7 @@
          两项必须配套 —— 只开「隐藏结果浮窗」而不开自动刷新，用户每翻一句都要回主窗口手点刷新；
          只开自动刷新则浮窗照样挡在游戏画面上。 -->
     <PreferenceCategory
+        android:key="personalization_game_split"
         android:title="@string/game_split_translate_category"
         app:iconSpaceReserved="false">
 
@@ -167,6 +170,7 @@
     </PreferenceCategory>
 
     <PreferenceCategory
+        android:key="personalization_manga_result"
         android:title="@string/manga_result_setting_title"
         app:iconSpaceReserved="false">
 
@@ -273,9 +277,23 @@
             android:title="@string/manga_replacement_title"
             android:summary="@string/manga_replacement_summary_empty" />
 
+        <SwitchPreference
+            android:key="Manga_PP_Size_Filter"
+            app:iconSpaceReserved="false"
+            android:defaultValue="false"
+            android:title="@string/pp_size_filter_title"
+            android:summary="@string/pp_size_filter_summary" />
+
+        <Preference
+            android:key="Manga_PP_Size_Filter_Thresholds"
+            android:dependency="Manga_PP_Size_Filter"
+            app:iconSpaceReserved="false"
+            android:title="@string/pp_size_filter_thresholds_title" />
+
     </PreferenceCategory>
 
     <PreferenceCategory
+        android:key="personalization_game_auto"
         android:title="@string/auto_translate"
         app:iconSpaceReserved="false">
 
@@ -305,6 +323,7 @@
     </PreferenceCategory>
 
     <PreferenceCategory
+        android:key="personalization_context"
         android:title="@string/game_context_title"
         app:iconSpaceReserved="false">
 
@@ -327,6 +346,7 @@
     </PreferenceCategory>
 
     <PreferenceCategory
+        android:key="personalization_notifications"
         android:title="@string/status_overlay_category"
         app:iconSpaceReserved="false">
 
@@ -358,6 +378,7 @@
     </PreferenceCategory>
 
     <PreferenceCategory
+        android:key="personalization_other"
         android:title="@string/other_setting"
         app:iconSpaceReserved="false">
 
@@ -393,6 +414,7 @@
          - Anime4K 的开关与档位同样在阅读器调色面板（它作用在阅读器的底图上）。
          ════════════════════════════════════════════════════════════ -->
     <PreferenceCategory
+        android:key="personalization_sr"
         android:title="@string/sr_settings_category"
         app:iconSpaceReserved="false">
 

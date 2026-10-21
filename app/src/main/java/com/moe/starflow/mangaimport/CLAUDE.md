@@ -25,6 +25,7 @@
 - **显隐上下 UI**（`chromeHidden` + `applyChromeVisibility`）：顶部返回/菜单/页码 + 底部进度条 + 翻译浮层组，**淡入淡出**（`CHROME_FADE_MS=160`，逐控件 alpha 动画，跟随系统动画时长缩放）。**状态一直保持**（无自动恢复计时，再点中间才恢复），只在本次会话内有效、不持久化。⚠️ 淡出**必须在动画结束后才置 GONE**：只把 alpha 打到 0 的控件**仍然可点**（会误触到看不见的返回/菜单按钮）；同理 `withEndAction` 要加 `v.alpha == 0f` 兜底（动画被打断时 end action 也会跑）。⚠️ 翻译浮层组的可见性另有 Webtoon/未译页约束 → 显示前先调 `refreshTranslationChrome()` 定到位，**只把 `visibility == VISIBLE` 的组一起淡入**（否则会把 Webtoon 下本该隐藏的组强行淡出来）；`refreshTranslationChrome()` 刷新时继续尊重 `chromeHidden`
 - **背景**（`reader_background`）：0默认 1浅 2深 3白 4黑 5自动（0/5 都跟随系统黑白，5 是显式「自动」项）；切背景时**面板/进度条/页面指示文字即时深浅联动**
 - **颜色矫正**（`ReaderColorFilter` ColorMatrix）：反色/灰度/书本开关 + 亮度/对比度滑块，调色面板顶部「**原图 vs 处理后**」对比预览实时刷新；持久化两滑块+三开关（`reader_color_*`）
+  - 反色按 `RGB' = 255 - RGB` 计算并保持 alpha；Android `ColorMatrix` 的偏移量使用 0–255。分页、Webtoon 和面板预览共用此滤镜，像素结果由 `ReaderColorFilterTest` 覆盖。
   - ⚠️ 三个开关**行内上下 padding 只有 2dp**（用户口径 2026-10-01 两次要求「间隔再小一点」：
     先 12dp→6dp、再 6dp→2dp，实际开关间距 40px→13px）。改大之前先确认是不是又要返工
   - ⚠️ **护眼（开关组最后一个）与亮度（滑杆组第一个）之间有一条 1dp 分割线**
@@ -67,6 +68,7 @@
 - ⚠️ **换翻页动画前必须复位残留 transform**：`MangaReaderActivity.resetPageTransforms()` + `ReaderAdapters.resetItemTransform`（onBind 时），否则旧动画的 alpha/缩放/旋转/折叠粘在回收页上 → 堆叠/黑屏。
 
 **阅读器内嵌翻译（`mangaimport/translate/`，feature/reader-translation）：**
+- PP-OCRv5/v6 与截屏翻译共用个性化的「PP 异常选区尺寸过滤」。普通、分批及章节识别经 `DetectionBridge` 在裁剪及分批前对整页检测框过滤，不在批次内重算阈值；已存 OCR／译文需重新识别才能应用设置，算法与参数见[漫画模块](../manga/CLAUDE.md)。
 - ⚠️ **在阅读器里跳「个性化设置」返回后必须 `recreate()`**：那一批参数（字号/颜色/字距行距/竖排方向/合并开关）是创建时读进缓存并被已渲染的译图固化的，就地刷新既漏项又容易只改一半。现场经 `onSaveInstanceState` 带过去（当前页 / 翻译模式 / 「这次是从设置返回」标记）。⚠️ 恢复模式的判据必须是 `restoredTranslateMode >= 0`（-1 = 不是从设置返回触发的重建）；写成 `!= MODE_MANUAL` 会把 -1 当模式塞进控制器 → **一进阅读器就自动开翻**（踩过，`ReaderMenuSheetTranslateTest` 有源码级守卫）
 - ⚠️ **阅读器面板（`ReaderMenuSheet`）新增任何控件必须做两件事**：① 接 `applyPanelTheme` —— 面板**不随全局主题**，按 `darkPanel`（跟阅读背景）翻转；「标签」进 `labelColor` 组、「值」进 `subColor` 组，**两组都要登记**（漏登记的控件在深色面板下保持布局默认深色字 → 压在同色背景上看不见）；② 字号与同面板邻居一致（说明行 12sp、正文行 14sp），**谨慎挂浅色背景 drawable**（如 `bg_preview_cell`，深色面板下就是一块白底）。文案一律双语（`values/` + `values-zh/`）。回归守卫：`ReaderMenuSheetTranslateTest`（面板底色 vs 文字色亮度差、与 OCR模型行字号相等）
 - **译文字号只有一个来源**：`utils/MangaFontSize.kt`（`PRESET_SIZES` 档位 / 自动 / 上下限都在它）。三个入口**都必须调它**：个性化设置页「字体大小」（**最初始的位置**）、悬浮窗菜单「字体大小」、阅读器翻译面板该行。直接写 `Manga_Font_Size`/`Manga_Auto_Font_Size` 的旧写法已收敛（游戏那套是独立的 `utils/CustomFontSize.kt`，两套**不要混用**——游戏是浮层 TextView 的 sp，漫画字号参与排版计算）。服务侧 `watchedKeys` 已含这两个键，改完实时生效

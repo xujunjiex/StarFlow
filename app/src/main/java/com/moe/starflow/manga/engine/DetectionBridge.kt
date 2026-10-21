@@ -864,7 +864,7 @@ object DetectionBridge {
             LogCollector.d(TAG, "detectAndCropPPOcrV5Lines: 开始检测")
 
             // det 检测全部文字行框
-            val boxes = PPOcrV5Engine.runDetForBoxes(context, bitmap)
+            val boxes = PPOcrV5Engine.runDetForBoxes(context, bitmap, PpRegionSizeFilter.read(context))
             if (boxes.isEmpty()) {
                 LogCollector.d(TAG, "detectAndCropPPOcrV5Lines: 未检测到文字区域")
                 return@withContext emptyList()
@@ -939,7 +939,7 @@ object DetectionBridge {
             LogCollector.d(TAG, "detectAndCropPPOcrV6Lines: 开始检测")
 
             // det 检测全部文字行框
-            val boxes = PPOcrV6Engine.runDetForBoxes(context, bitmap)
+            val boxes = PPOcrV6Engine.runDetForBoxes(context, bitmap, PpRegionSizeFilter.read(context))
             if (boxes.isEmpty()) {
                 LogCollector.d(TAG, "detectAndCropPPOcrV6Lines: 未检测到文字区域")
                 return@withContext emptyList()
@@ -1014,7 +1014,8 @@ object DetectionBridge {
             }
 
             val result = withContext(Dispatchers.IO + OcrExecution.context()) {
-                PPOcrV5Engine.runOCR(context, bitmap, recLang, useDet = true)
+                PPOcrV5Engine.runOCR(context, bitmap, recLang, useDet = true,
+                    mangaSizeFilter = PpRegionSizeFilter.read(context))
             }
 
             // 转换为 TextLine（识别后的文字行）
@@ -1136,7 +1137,8 @@ object DetectionBridge {
             LogCollector.d(TAG, "使用 PP-OCRv6 独立检测+识别, language=$language")
 
             val result = withContext(Dispatchers.IO + OcrExecution.context()) {
-                PPOcrV6Engine.runOCR(context, bitmap, useDet = true)
+                PPOcrV6Engine.runOCR(context, bitmap, useDet = true,
+                    mangaSizeFilter = PpRegionSizeFilter.read(context))
             }
 
             // 转换为 TextLine（识别后的文字行）

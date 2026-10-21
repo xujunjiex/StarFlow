@@ -27,7 +27,10 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
 import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
@@ -37,9 +40,11 @@ import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
 import androidx.preference.SwitchPreference
 import com.jaredrummler.android.colorpicker.ColorPreferenceCompat
+import com.google.android.material.tabs.TabLayout
 import com.moe.starflow.R
 import com.moe.starflow.data.TranslationCacheManager
 import com.moe.starflow.manga.config.TranslationTextRules
+import com.moe.starflow.manga.config.MangaTextSpacing
 import com.moe.starflow.sr.SrModelManager
 import com.moe.starflow.translate.screenshot.AccessibilityServiceManager
 import com.moe.starflow.translate.CustomLocale
@@ -66,6 +71,7 @@ import java.io.IOException
 class PersonalizationConfig : PreferenceFragmentCompat() {
 
     companion object {
+        private const val STATE_SECTION = "personalization_section"
         // 截图方式：0 = MediaProjection, 1 = AccessibilityService
         private const val SCREENSHOT_METHOD_KEY = "Screenshot_Method"
         private const val SCREENSHOT_METHOD_MEDIAPROJECTION = 0
@@ -77,11 +83,87 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
         }
     }
 
-    override fun onViewCreated(view: android.view.View, savedInstanceState: Bundle?) {
+    private enum class Section(val titleRes: Int, val categoryKeys: List<String>) {
+        GAME(R.string.personalization_game_tab, listOf(
+            "personalization_game_result", "personalization_game_split", "personalization_game_auto"
+        )),
+        GENERAL(R.string.personalization_general_tab, listOf(
+            "personalization_floating", "personalization_context",
+            "personalization_notifications", "personalization_other"
+        )),
+        MANGA(R.string.personalization_manga_tab, listOf(
+            "personalization_manga_result", "personalization_sr"
+        ))
+    }
+
+    private var selectedSection = Section.GENERAL
+    private var pendingPreferenceKey: String? = null
+
+    override fun onCreateView(
+        inflater: LayoutInflater,
+        container: ViewGroup?,
+        savedInstanceState: Bundle?
+    ): View {
+        val root = inflater.inflate(R.layout.fragment_personalization, container, false)
+        val content = root.findViewById<FrameLayout>(R.id.personalization_content)
+        content.addView(super.onCreateView(inflater, content, savedInstanceState))
+        return root
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        activity?.intent?.getStringExtra(SettingPageActivity.EXTRA_PREFERENCE_KEY)?.let { key ->
-            if (findPreference<Preference>(key) != null) listView.post { if (isAdded) scrollToPreference(key) }
+        val tabs = view.findViewById<TabLayout>(R.id.personalization_tabs)
+        Section.values().forEach { section ->
+            tabs.addTab(tabs.newTab().setText(section.titleRes), section == selectedSection)
         }
+        tabs.addOnTabSelectedListener(object : TabLayout.OnTabSelectedListener {
+            override fun onTabSelected(tab: TabLayout.Tab) {
+                selectedSection = Section.values()[tab.position]
+                updateSectionVisibility()
+                listView.scrollToPosition(0)
+            }
+            override fun onTabUnselected(tab: TabLayout.Tab) = Unit
+            override fun onTabReselected(tab: TabLayout.Tab) = Unit
+        })
+        pendingPreferenceKey?.let { key ->
+            listView.post { if (this.view === view) scrollToPreference(key) }
+            pendingPreferenceKey = null
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(STATE_SECTION, selectedSection.name)
+    }
+
+    private fun updateSectionVisibility() {
+        Section.values().forEach { section ->
+            section.categoryKeys.forEach { key ->
+                findPreference<Preference>(key)?.isVisible = section == selectedSection
+            }
+        }
+    }
+
+    private fun restoreSection(savedInstanceState: Bundle?) {
+        selectedSection = Section.values().firstOrNull {
+            it.name == savedInstanceState?.getString(STATE_SECTION)
+        } ?: Section.GENERAL
+        if (savedInstanceState == null) {
+            val key = activity?.intent?.getStringExtra(SettingPageActivity.EXTRA_PREFERENCE_KEY)
+            var target = key?.let { findPreference<Preference>(it) }
+            if (target != null) pendingPreferenceKey = key
+            // 按目标所属分类定位，保持所有按设置项键名跳转的入口可用。
+            while (target != null) {
+                val current = target
+                val section = Section.values().firstOrNull { current.key in it.categoryKeys }
+                if (section != null) {
+                    selectedSection = section
+                    break
+                }
+                target = current.parent
+            }
+        }
+        updateSectionVisibility()
     }
 
     private lateinit var prefs: CustomPreference
@@ -177,6 +259,7 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
 
         // 译文替换表（二级面板，见 TranslationReplacementFragment）：摘要显示规则条数
         findPreference<Preference>("manga_translation_replacements")?.let { updateReplacementSummary(it) }
+        PpRegionSizeFilterPreferences.bind(preferenceScreen)
 
         // 超分模型管理入口（2026-10）：直接落到模型管理页的「超分」Tab，
         // 不让用户进去后再自己点一次 Tab（个性化里点「超分模型管理」的意图已经很明确）
@@ -337,6 +420,7 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
         updateFontSummary()
         updateFontSizeSummary()
         setupLanguagePreference()
+        restoreSection(savedInstanceState)
     }
 
     /**
@@ -431,7 +515,7 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
 
     /** 间距值：整数百分比 0..100（100% = 一个字号）。 */
     private fun spacingPercent(key: String) =
-        prefs.getInt(key, 0).coerceIn(0, MAX_SPACING_PERCENT)
+        MangaTextSpacing.percent(prefs.getSharedPreferences(), key)
 
     private fun updateSpacingSummary(pref: Preference) {
         pref.summary = getString(

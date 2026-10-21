@@ -160,6 +160,9 @@
     <string name="translation_mode">翻译设置</string>
     <string name="api_configuration">翻译模型配置</string>
     <string name="personalization_setting">个性化设置</string>
+    <string name="personalization_game_tab">游戏/视频配置</string>
+    <string name="personalization_general_tab">通用配置</string>
+    <string name="personalization_manga_tab">漫画配置</string>
     <string name="article_page">壹日 · 壹篇</string>
     <string name="faq_title">常见问题</string>
     <string name="error_code_link">查看错误代码说明 →</string>
@@ -451,7 +454,7 @@
     <string name="faq_q6">漫画模式翻译结果缺失、翻译不理想、翻译速度慢？</string>
     <string name="faq_a6">可以尝试以下优化方法：\n\n1. <b><u>框选需要翻译的区域</u></b>：精确框选文字区域可以提高 OCR 识别精度，避免识别无关内容。\n\n2. <b><u>减少 UI 干扰</u></b>：避免框选空白区域、游戏 UI 按钮等非文字内容，减少不必要的识别可以提高速度。\n\n3. <b><u>选择合适的翻译模型</u></b>：带有 mini、lit、flash 标记的模型响应速度更快。</string>
     <string name="faq_q7">PP-OCRv 调试面板参数详解</string>
-    <string name="faq_a7">在漫画翻译调试模式中，可通过滑块/开关实时调整 PP-OCRv5/v6 引擎参数。修改立即生效并自动应用到正常翻译流程。面板中「⚙」按钮可展开/折叠参数面板，「📊」按钮可展开/折叠调试信息。\n\n下方参数为 v5/v6 共享（独立存储，默认值可能不同），仅 v6 独有的参数列在最末。\n\n<b><u>── 共享参数（PP-OCRv5 &amp; PP-OCRv6）──</u></b>\n\n<b>box_thresh — 检测框置信度阈值</b>\n默认 <b>0.3（v5）</b> / <b>0.5（v6）</b>，范围 0.01 ~ 0.7。从 mask 连通域提取外接矩形后计算平均得分，低于此值的框丢弃。\n- 漏框→降低\n- 噪声框→升高\n\n<b>unclip_ratio — 检测框膨胀系数</b>\n默认 1.6，范围 <b>1.0 ~ 3.0（v5）</b> / <b>1.6 ~ 2.0（v6）</b>。对保留的框做 Vatti clipping 膨胀，向外扩展边界避免裁剪时缺字。值越大框越宽松。\n- 字符截断→增大\n- 框过大→减小\n\n<b>text_score — 识别置信度阈值</b>\n默认 0.5，范围 0.1 ~ 0.9。CTC 解码后按文本行平均置信度过滤，低于此值丢弃。\n- 翻译缺失→降低\n- 乱码→升高\n\n<b>limit_side_len — 检测阶段边长限制</b>\n默认 <b>1200</b>，范围 64 ~ 2048（像素）。配合 limit_type 控制检测时的图像缩放。\n\n<b>limit_type — 边长限制策略</b>\n默认 <b>max</b>，选项 min / max。\nmax = 最长边超出时等比缩小（速度快，漫画/游戏框选推荐）；min = 最短边不足时等比放大（保留细节，细长框选可能慢）。\n\n<b>large_box_enabled — 大框过滤开关</b>\n默认 关闭。过滤宽/高/面积占比过大的检测框，避免背景被误检。\n- 大误检框→开启\n\n<b>large_box_ratio — 大框过滤比例</b>\n默认 60%，范围 30% ~ 80%。仅大框过滤开启时生效。\n\n<b>merge_gap — 行间合并距离门控</b>\n默认 1.5，范围 0.5 ~ 5.0。文字行合并为气泡时的距离阈值（×字号）。\n\n<b><u>── 仅 PP-OCRv6 ──</u></b>\n\n<b>thresh — 像素级二值化阈值</b>\n默认 0.3，范围 0.1 ~ 0.5。将 DBNet 输出概率图转为黑白 mask：超过此值的像素判为文字。\n- 漏框→降低\n- 噪声框→升高\n\n<b>max_candidates — 最大候选框数目</b>\n默认 1000，范围 50 ~ 2000。连通域分析阶段保留的最大候选框数，超出者直接丢弃。\n\n<b>use_dilation — 形态学膨胀</b>\n默认 开启。二值化后对 mask 做 3×3 十字核膨胀，使相邻文字区域合并。密集竖排漫画建议开启。\n\n<b>min_height — 图像最小高度阈值</b>\n默认 30，范围 10 ~ 200（像素）。图像高度低于此值时跳过文本检测，直接全图识别。\n\n<b>rec_batch_num — 批推理大小</b>\n默认 6，范围 1 ~ 12。一次 ONNX 推理同时处理的文字行数。</string>
+    <string name="faq_a7">在漫画翻译调试模式中，可通过滑块/开关实时调整 PP-OCRv5/v6 引擎参数。修改立即生效并自动应用到正常翻译流程。面板中「⚙」按钮可展开/折叠参数面板，「📊」按钮可展开/折叠调试信息。\n\n下方参数为 v5/v6 共享（独立存储，默认值可能不同），仅 v6 独有的参数列在最末。\n\n<b><u>── 共享参数（PP-OCRv5 &amp; PP-OCRv6）──</u></b>\n\n<b>box_thresh — 检测框置信度阈值</b>\n默认 <b>0.3（v5）</b> / <b>0.5（v6）</b>，范围 0.01 ~ 0.7。从 mask 连通域提取外接矩形后计算平均得分，低于此值的框丢弃。\n- 漏框→降低\n- 噪声框→升高\n\n<b>unclip_ratio — 检测框膨胀系数</b>\n默认 1.6，范围 <b>1.0 ~ 3.0（v5）</b> / <b>1.6 ~ 2.0（v6）</b>。对保留的框做 Vatti clipping 膨胀，向外扩展边界避免裁剪时缺字。值越大框越宽松。\n- 字符截断→增大\n- 框过大→减小\n\n<b>text_score — 识别置信度阈值</b>\n默认 0.5，范围 0.1 ~ 0.9。CTC 解码后按文本行平均置信度过滤，低于此值丢弃。\n- 翻译缺失→降低\n- 乱码→升高\n\n<b>limit_side_len — 检测阶段边长限制</b>\n默认 <b>1200</b>，范围 64 ~ 2048（像素）。配合 limit_type 控制检测时的图像缩放。\n\n<b>limit_type — 边长限制策略</b>\n默认 <b>max</b>，选项 min / max。\nmax = 最长边超出时等比缩小（速度快，漫画/游戏框选推荐）；min = 最短边不足时等比放大（保留细节，细长框选可能慢）。\n\n<b>large_box_enabled — 大框过滤开关</b>\n默认 关闭。过滤宽/高/面积占比过大的检测框，避免背景被误检。\n- 大误检框→开启\n\n<b>large_box_ratio — 大框过滤比例</b>\n默认 60%，范围 30% ~ 80%。仅大框过滤开启时生效。\n\n<b>merge_gap — 行间合并距离门控</b>\n默认 1.5，范围 0.5 ~ 5.0。文字行合并为气泡时的距离阈值（×字号）。\n\n<b><u>── 仅 PP-OCRv6 ──</u></b>\n\n<b>thresh — 像素级二值化阈值</b>\n默认 0.3，范围 0.1 ~ 0.5。将 DBNet 输出概率图转为黑白 mask：超过此值的像素判为文字。\n- 漏框→降低\n- 噪声框→升高\n\n<b>max_candidates — 最大候选框数目</b>\n默认 500，范围 50 ~ 2000。连通域分析阶段保留的最大候选框数，超出者直接丢弃。\n\n<b>use_dilation — 形态学膨胀</b>\n默认 开启。二值化后对 mask 做 3×3 十字核膨胀，使相邻文字区域合并。密集竖排漫画建议开启。\n\n<b>min_height — 图像最小高度阈值</b>\n默认 30，范围 10 ~ 200（像素）。图像高度低于此值时跳过文本检测，直接全图识别。\n\n<b>rec_batch_num — 批推理大小</b>\n默认 6，范围 1 ~ 12。一次 ONNX 推理同时处理的文字行数。</string>
     <string name="faq_q8">下载专用 OCR 识别模型有什么作用？</string>
     <string name="faq_a8">PP-OCRv5 的中文识别模型（rec_zh）是一个中日英混合通用模型，可以识别中文、日文和英文。在未下载专用模型时，英文识别默认使用这个通用模型。\n\n<b><u>下载专用模型后，系统会自动切换</u></b>，效果更好：\n\n• <b><u>英文模型（rec_en）</u></b>：专为英文优化，识别准确率更高，特别是大小写、数字、标点的识别更精确。\n• <b><u>韩文模型（rec_ko）</u></b>：韩文专用，未下载时韩文无法识别。\n• <b><u>俄文模型（rec_ru）</u></b>：俄文/西里尔文字专用，未下载时俄文无法识别。\n\n<b><u>如何下载</u></b>：进入 设置 → 模型管理 → PP-OCRv5 识别模型，点击下载即可。模型体积小（7~13MB），下载后立即生效，无需重启。\n\n<b><u>如何确认是否生效</u></b>：使用非默认语言（如英文）进行漫画翻译时，屏幕底部会弹出提示\"使用专用识别模型: rec_en\"，表示专用模型已生效。如果没有弹出提示，说明仍在使用通用中文模型。</string>
     <string name="faq_q9">模型下载失败，如何手动下载并放入正确的目录？</string>
@@ -604,10 +607,18 @@
     <string name="manga_horizontal_align_right">右对齐</string>
 
     <string name="manga_spacing_title">间距调整</string>
+    <string name="pp_size_filter_title">PP 异常选区尺寸过滤</string>
+    <string name="pp_size_filter_summary">依据当前整页文字尺寸，在合并前过滤异常小／大选区。仅适用于 PP-OCRv5/v6，截屏与导入漫画共用。已识别页面需重新识别；标题、小注释也可能被过滤。</string>
+    <string name="pp_size_filter_thresholds_title">尺寸过滤阈值</string>
+    <string name="pp_size_filter_thresholds_summary">小框容差 %1$.1f · 大框容差 %2$.1f</string>
+    <string name="pp_size_filter_thresholds_hint">容差越小，过滤越严格；越大，保留的尺寸范围越宽。两项默认均为 3.5，可分别调整。整页不足 5 个有效检测框时不做相对尺寸过滤。</string>
+    <string name="pp_size_filter_small_title">过小选区容差</string>
+    <string name="pp_size_filter_large_title">过大选区容差</string>
+    <string name="pp_size_filter_tolerance_value">%1$.1f</string>
     <string name="manga_tracking_title">字间距</string>
-    <string name="manga_leading_title">行间距</string>
+    <string name="manga_leading_title">行／列间距</string>
     <string name="manga_spacing_summary_value">字号的 %1$d%%</string>
-    <string name="manga_spacing_summary_both">字间距 %1$d%% · 行间距 %2$d%%</string>
+    <string name="manga_spacing_summary_both">字间距 %1$d%% · 行／列间距 %2$d%%</string>
     <string name="incremental_render_title">分批渲染</string>
     <string name="incremental_render_summary">气泡超过6个时分两批翻译，提前显示首批结果，但可能造成总翻译时长略微增加。支持 PP-OCRv5/PP-OCRv6 独立模式、RT-DETR-V2+MangaOcr 组合（分两批），以及 Hy-MT2 翻译模型（逐句流式）。</string>
     <string name="manga_keep_text_free_title">识别自由文字</string>

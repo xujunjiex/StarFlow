@@ -629,6 +629,7 @@ class MangaFloatingService : LifecycleService() {
 
 
     private fun loadConfig(): MangaModeConfig {
+        val spacing = MangaTextSpacing.read(prefs.getSharedPreferences())
         // det/ocr 统一从 Ocr_Engine_Group 读（旧 Manga_Det_Model/Manga_Rec_Model 仅作为一次迁移输入，见 OcrEngineManager）
         val group = OcrEngineManager.getOcrEngineGroup(prefs.getSharedPreferences())
         val detEngine = group.mangaDet
@@ -659,8 +660,8 @@ class MangaFloatingService : LifecycleService() {
                 "2" -> TextAlign.RIGHT
                 else -> TextAlign.CENTER
             },
-            trackingRatio = prefs.getInt(TranslationCacheManager.KEY_MANGA_TRACKING, 0) / 100f,
-            leadingRatio = prefs.getInt(TranslationCacheManager.KEY_MANGA_LEADING, 0) / 100f,
+            trackingRatio = spacing.trackingRatio,
+            leadingRatio = spacing.leadingRatio,
             // RT-DETR-V2 + manga-ocr 的渲染方向（两态，默认竖排右→左）：该路径不做横竖判断
             rtTextDirection = RtTextDirection.load(prefs.getSharedPreferences())
         )
@@ -2171,12 +2172,14 @@ class MangaFloatingService : LifecycleService() {
                     }
                     DetEngine.PP_OCR_V6 -> {
                         LogCollector.d(TAG, "PP-OCRv6 Debug Mode: 开始检测+识别")
+                        val sizeFilter = PpRegionSizeFilter.read(prefs.getSharedPreferences())
                         engineManager.initPPOcrV6IfNeeded()
                         val ocrResult = withContext(Dispatchers.IO) {
-                            PPOcrV6Engine.runOCR(this@MangaFloatingService, bitmap, useDet = true)
+                            PPOcrV6Engine.runOCR(this@MangaFloatingService, bitmap, useDet = true,
+                                mangaSizeFilter = sizeFilter)
                         }
                         val debugDet = withContext(Dispatchers.IO) {
-                            PPOcrV6Engine.runDetForDebug(this@MangaFloatingService, bitmap)
+                            PPOcrV6Engine.runDetForDebug(this@MangaFloatingService, bitmap, sizeFilter)
                         }
                         val recDisc = ocrResult.recDebug
                         val scoreDisc = recDisc?.discardedReasons?.count { it == "score" } ?: 0
@@ -2194,6 +2197,7 @@ class MangaFloatingService : LifecycleService() {
                     }
                     DetEngine.PP_OCR_V5 -> {
                         LogCollector.d(TAG, "PP-OCRv5 Debug Mode: 开始检测+识别")
+                        val sizeFilter = PpRegionSizeFilter.read(prefs.getSharedPreferences())
                         engineManager.initPPOcrV5IfNeeded()
                         val (recLang, hint) = PPOcrV5Engine.resolveRecLang(this@MangaFloatingService, config.sourceLang)
                         if (hint != null) {
@@ -2205,11 +2209,12 @@ class MangaFloatingService : LifecycleService() {
                         }
                         if (recLang != null) {
                             val ocrResult = withContext(Dispatchers.IO) {
-                                PPOcrV5Engine.runOCR(this@MangaFloatingService, bitmap, recLang, useDet = true)
+                                PPOcrV5Engine.runOCR(this@MangaFloatingService, bitmap, recLang, useDet = true,
+                                    mangaSizeFilter = sizeFilter)
                             }
                             // 调试检测：获取被丢弃的选区
                             val debugDet = withContext(Dispatchers.IO) {
-                                PPOcrV5Engine.runDetForDebug(this@MangaFloatingService, bitmap)
+                                PPOcrV5Engine.runDetForDebug(this@MangaFloatingService, bitmap, sizeFilter)
                             }
                             val recDisc = ocrResult.recDebug
                             val scoreDisc = recDisc?.discardedReasons?.count { it == "score" } ?: 0

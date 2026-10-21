@@ -73,6 +73,130 @@ class LayoutEngineTest {
         )
     }
 
+    @Test
+    fun autoFit_longParagraphUsesRegionInsteadOfSmallOcrSize() {
+        val region = Box(80f, 450f, 1120f, 1330f)
+        val text = "这是用于验证漫画长段落自动排版的普通文本。".repeat(25)
+        fun layout(ocrSize: Float) = LayoutEngine.plan(
+            measurer(), text, region, TextDirection.HORIZONTAL, ocrSize, true,
+            TextAlign.LEFT, minPaddingPx = PAD
+        )
+
+        val small = layout(16f)
+        val large = layout(40f)
+        assertEquals("相同区域与译文不应随 OCR 最小字号改变", large.fontSize, small.fontSize, 0.01f)
+        assertEquals("自动模式不依赖有效 OCR 字号", small.fontSize, layout(0f).fontSize, 0.01f)
+        assertTrue("长段落应利用高度放大字号", small.fontSize > 32f)
+        assertTrue("正文应占用大部分区域高度", small.totalHeight > region.height * 0.8f)
+        assertEquals(text, small.lines.joinToString("") { it.text })
+        assertNoOverflow(small, region)
+    }
+
+    @Test
+    fun autoFit_verticalAlsoGrowsBeyondOcrSize() {
+        val region = Box(0f, 0f, 240f, 400f)
+        val text = "普通测试文本".repeat(6)
+        for (direction in listOf(TextDirection.VERTICAL_RL, TextDirection.VERTICAL_LR)) {
+            val layout = LayoutEngine.plan(
+                measurer(), text, region, direction, 8f, true,
+                TextAlign.CENTER, minPaddingPx = PAD
+            )
+            assertTrue("竖排也按可用区域选字号", layout.fontSize > 30f)
+            assertEquals(text, layout.lines.joinToString("") { it.text })
+            assertNoOverflow(layout, region)
+        }
+    }
+
+    @Test
+    fun fixedFont_keepsRequestedSizeInLargeRegion() {
+        val layout = LayoutEngine.plan(
+            measurer(), "普通测试文本".repeat(6), Box(0f, 0f, 1040f, 880f),
+            TextDirection.HORIZONTAL, 16f, false, TextAlign.LEFT
+        )
+        assertEquals(16f, layout.fontSize, 0f)
+    }
+
+    @Test
+    fun spacingPercentDirectlyControlsHorizontalAndVerticalSteps() {
+        for (ratio in listOf(0f, 0.2f, 0.5f)) {
+            for (direction in TextDirection.entries) {
+                val text = if (direction == TextDirection.HORIZONTAL) "AB\nCD" else "一二三四"
+                val layout = LayoutEngine.plan(
+                    measurer(), text, Box(0f, 0f, 160f, 150f), direction,
+                    10f, false, TextAlign.LEFT, trackingRatio = ratio, leadingRatio = ratio
+                )
+                assertEquals("字间距必须等于设置比例", 10f * ratio, layout.tracking, 0.001f)
+                assertEquals("20% 必须是 1.2 倍步距，无隐藏间距", 10f * (1f + ratio), layout.leading, 0.001f)
+                if (direction != TextDirection.HORIZONTAL) {
+                    assertEquals(10f * (1f + ratio), layout.charStep, 0.001f)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun defaultSpacingIsTwentyPercentOnBothAxes() {
+        for (direction in TextDirection.entries) {
+            val layout = LayoutEngine.plan(
+                measurer(), "一二三四", Box(0f, 0f, 160f, 150f), direction,
+                10f, false, TextAlign.LEFT
+            )
+            assertEquals(2f, layout.tracking, 0.001f)
+            assertEquals(12f, layout.leading, 0.001f)
+        }
+    }
+
+    @Test
+    fun autoFit_mixedWidthParagraphsDoNotCombineWidthsFromDifferentLines() {
+        // 中文行的自然宽度更大，窄标点行的字符数更多；不能把两行各自的最大值相加。
+        val metrics = object : TextMeasurer {
+            override var fontSize = 16f
+            override fun measure(text: String) = text.sumOf { if (it == '.') 0.25 else 1.0 }.toFloat() * fontSize
+            override fun breakText(text: String, maxWidth: Float): Int {
+                var count = 0
+                while (count < text.length && measure(text.take(count + 1)) <= maxWidth) count++
+                return count
+            }
+            override fun glyphWidth() = fontSize
+            override fun glyphHeight() = fontSize
+        }
+        val region = Box(0f, 0f, 1040f, 880f)
+        val text = "这是普通测试正文".repeat(15) + "\n" + ".".repeat(300)
+        val layout = LayoutEngine.plan(
+            metrics, text, region, TextDirection.HORIZONTAL, 40f, true, TextAlign.LEFT,
+            trackingRatio = 0.1f, minPaddingPx = PAD
+        )
+
+        assertEquals(
+            "总宽度必须等于实际最宽行（字号=${layout.fontSize}，高度=${layout.totalHeight}）",
+            layout.lines.maxOf { it.width }, layout.totalWidth, 0.01f
+        )
+        assertTrue("10% 字距不能把有充足空间的长段落压成极小字号", layout.fontSize > 32f)
+        assertTrue("多行正文应使用区域高度", layout.totalHeight > region.height * 0.7f)
+        assertEquals(text.replace("\n", ""), layout.lines.joinToString("") { it.text })
+        assertNoOverflow(layout, region)
+    }
+
+    @Test
+    fun autoFit_cannotAcceptLayoutThatDropsWideCharacters() {
+        val metrics = object : TextMeasurer {
+            override var fontSize = 16f
+            override fun measure(text: String) = text.sumOf { if (it == 'W') 2.0 else 0.25 }.toFloat() * fontSize
+            override fun breakText(text: String, maxWidth: Float): Int {
+                var count = 0
+                while (count < text.length && measure(text.take(count + 1)) <= maxWidth) count++
+                return count
+            }
+            override fun glyphWidth() = fontSize
+            override fun glyphHeight() = fontSize
+        }
+        val region = Box(0f, 0f, 40f, 200f)
+        val text = "iiiiW"
+        val layout = LayoutEngine.plan(metrics, text, region, TextDirection.HORIZONTAL, 200f, true, TextAlign.LEFT)
+        assertEquals("大字号下单字放不进一行时不能漏掉余下正文", text, layout.lines.joinToString("") { it.text })
+        assertNoOverflow(layout, region)
+    }
+
     // ---------- ① 绝不溢出（固定矩阵） ----------
 
     @Test
@@ -181,7 +305,7 @@ class LayoutEngineTest {
         assertEquals("单行只有一行", 1, layout.lines.size)
         // 单行时行距无意义，取自然行距（= 实际选中的字号 × 系数，不是请求字号 —— 二分结果可能略小）
         assertEquals(
-            layout.fontSize * LayoutEngine.HORIZONTAL_LINE_RATIO, layout.leading, 0.01f
+            layout.fontSize, layout.leading, 0.01f
         )
     }
     /**
@@ -259,7 +383,7 @@ class LayoutEngineTest {
         assertEquals("关闭后列内字距为 0", 0f, off.tracking, 0.01f)
         assertEquals(
             "关闭后列距取自然值",
-            off.fontSize * LayoutEngine.VERTICAL_CHAR_RATIO, off.leading, 0.01f
+            off.fontSize, off.leading, 0.01f
         )
     }
 
@@ -463,7 +587,7 @@ class LayoutEngineTest {
             direction = TextDirection.HORIZONTAL, requestedFontSize = 40f,
             autoFit = true, align = TextAlign.CENTER, trackingRatio = TRK, leadingRatio = LEAD, minPaddingPx = PAD
         )
-        val naturalLeading = tall.fontSize * LayoutEngine.HORIZONTAL_LINE_RATIO
+        val naturalLeading = tall.fontSize
         assertTrue(
             "横排行距 ${tall.leading} 超过 自然行距+1×字号 ${naturalLeading + tall.fontSize}",
             tall.leading <= naturalLeading + tall.fontSize + 0.01f
@@ -482,7 +606,7 @@ class LayoutEngineTest {
             direction = TextDirection.VERTICAL_RL, requestedFontSize = 40f,
             autoFit = true, align = TextAlign.CENTER, trackingRatio = TRK, leadingRatio = LEAD, minPaddingPx = PAD
         )
-        val naturalColStep = vWide.fontSize * LayoutEngine.VERTICAL_CHAR_RATIO
+        val naturalColStep = vWide.fontSize
         assertTrue(
             "竖排列距 ${vWide.leading} 超过 自然列距+1×字号 ${naturalColStep + vWide.fontSize}",
             vWide.leading <= naturalColStep + vWide.fontSize + 0.01f
@@ -507,7 +631,7 @@ class LayoutEngineTest {
         // 字距 = 宽度余量 / 最长行的 gap 数；这里余量有限，只断言「确实被拉开」
         assertTrue("多行时字距也要生效（旧实现恒为 0）", layout.tracking > 0f)
         // 高度余量远超上限 → 行距应恰好顶到「自然行距 + 1×字号」这个上限，而不是无限拉伸
-        val naturalLeading = layout.fontSize * LayoutEngine.HORIZONTAL_LINE_RATIO
+        val naturalLeading = layout.fontSize
         assertEquals(
             "行距应顶到上限（自然行距 + 1×字号）",
             naturalLeading + layout.fontSize, layout.leading, 0.5f
@@ -529,7 +653,7 @@ class LayoutEngineTest {
         assertEquals("关闭后字距为 0", 0f, layout.tracking, 0.01f)
         assertEquals(
             "关闭后行距为自然值",
-            layout.fontSize * LayoutEngine.HORIZONTAL_LINE_RATIO, layout.leading, 0.01f
+            layout.fontSize, layout.leading, 0.01f
         )
     }
 
@@ -541,7 +665,7 @@ class LayoutEngineTest {
         for (layout in listOf(
             LayoutEngine.plan(measurer(), "", region, TextDirection.HORIZONTAL, 20f, true, TextAlign.CENTER),
             LayoutEngine.plan(measurer(), "AB", Box(0f, 0f, 0f, 0f), TextDirection.HORIZONTAL, 20f, true, TextAlign.CENTER),
-            LayoutEngine.plan(measurer(), "AB", region, TextDirection.HORIZONTAL, 0f, true, TextAlign.CENTER),
+            LayoutEngine.plan(measurer(), "AB", region, TextDirection.HORIZONTAL, 0f, false, TextAlign.CENTER),
         )) {
             assertTrue("退化输入应返回空排版", layout.isEmpty)
         }

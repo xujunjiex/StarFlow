@@ -141,6 +141,30 @@ class TextRegionMergerTest {
         assertEquals("不同字号不应合并", 2, groups.size)
     }
 
+    @Test
+    fun fontSizeRatioAtBoundary_stillMergesAdjacentLines() {
+        val groups = TextRegionMerger.merge(listOf(
+            hRegion("较大文字", 0, 0, 400, 60),
+            hRegion("较小文字", 0, 60, 400, 90)
+        ))
+        assertEquals("现有规则允许相差恰好 2 倍的紧邻文字", 1, groups.size)
+    }
+
+    @Test
+    fun intermediateFontSizeCannotBridgeIncompatibleMembers() {
+        val groups = TextRegionMerger.merge(listOf(
+            hRegion("大文字", 0, 0, 400, 80),
+            hRegion("中等文字", 0, 80, 400, 130),
+            hRegion("小文字", 0, 130, 400, 160)
+        ))
+        assertNotMerged(groups, "大文字", "小文字")
+        assertEquals("拆分不能丢失成员", 3, groups.sumOf { it.members.size })
+        for (group in groups) {
+            val sizes = group.members.map { it.quad.fontSize }
+            assertTrue("整组也必须遵循字号比限制", sizes.max() / sizes.min() <= 2f)
+        }
+    }
+
     /**
      * 场景 5：远距离分离（垂直间隙大）→ 不合并。
      */

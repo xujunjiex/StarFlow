@@ -120,16 +120,6 @@ object OverlayRenderer {
     private const val VERTICAL_SEPARATOR = "◇"
     private const val HORIZONTAL_SEPARATOR = "──"
 
-    /**
-     * 竖排字符步距系数。**单一来源已迁到 [LayoutEngine.VERTICAL_CHAR_RATIO]** ——
-     * 此前 OverlayRenderer 与 VerticalTextRenderer 各写一份并注释「必须一致」，
-     * 不一致即溢出（被 clipRect 静默裁掉）。这里保留别名只为合并块尺寸估算可读。
-     */
-    private const val VERTICAL_CHAR_RATIO = LayoutEngine.VERTICAL_CHAR_RATIO
-
-    /** 横排行距系数，单一来源同上。 */
-    private const val HORIZONTAL_LINE_RATIO = LayoutEngine.HORIZONTAL_LINE_RATIO
-
     /** 单气泡的绘制参数（Phase 1 产物） */
     private data class Param(
         val region: TranslatedBubble,
@@ -263,7 +253,7 @@ object OverlayRenderer {
             } else {
                 fontSize
             }
-            // 自动模式：drawRect 用原始气泡（覆盖原文区域），文字靠 fit 字号 + 列距填满气泡宽
+            // 自动模式：drawRect 用原始气泡；内核按最终区域选最大可容纳字号，不受 OCR 字号限制。
             // 非自动模式：drawRect 贴合文字（收缩居中/平衡扩展）
             val neededRect = if (autoFit) {
                 region.rect

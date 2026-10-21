@@ -28,8 +28,8 @@ data class MangaModeConfig(
     val detEngine: DetEngine = DetEngine.PP_OCR_V6,  // 检测引擎（默认 PP-OCRv6）
     val keepTextFree: Boolean = true,  // RT-DETR-V2: 是否保留 text_free 区域（自由文字/旁白/音效）
     val horizontalAlign: TextAlign = TextAlign.CENTER,  // 横排译文对齐（竖排不受影响）
-    val trackingRatio: Float = 0f,                      // 用户字间距（×字号）
-    val leadingRatio: Float = 0f,                       // 用户行间距（×字号）
+    val trackingRatio: Float = MangaTextSpacing.DEFAULT_RATIO, // 字间距（×字号）
+    val leadingRatio: Float = MangaTextSpacing.DEFAULT_RATIO,  // 行／列间距（×字号）
     /**
      * **RT-DETR-V2 + manga-ocr 的渲染方向**（两态：竖排右→左 / 横排），见 [RtTextDirection]。
      *

@@ -65,7 +65,7 @@ object PPOcrV6Engine {
     private const val DET_THRESH = 0.3f               // was 0.1f
     private const val DET_BOX_THRESH_DEFAULT = 0.5f   // must match PPOcrDefault.DET_BOX_THRESH_V6
     private const val DET_UNCLIP_RATIO_DEFAULT = 1.6  // must match PPOcrDefault.DET_UNCLIP_RATIO
-    private const val DET_MAX_CANDIDATES_DEFAULT = 1000  // must match PPOcrDefault.V6_MAX_CANDIDATES
+    private const val DET_MAX_CANDIDATES_DEFAULT = 500  // must match PPOcrDefault.V6_MAX_CANDIDATES
     private const val DET_MIN_SIZE = 3                 // same
 
     // cls removed — direction classification is no longer used
@@ -98,7 +98,7 @@ object PPOcrV6Engine {
     // 参考: https://rapidai.github.io/RapidOCRDocs/latest/install_usage/rapidocr/parameters/
     @Volatile private var useDilation = true           // Det.use_dilation
     @Volatile private var scoreMode = "fast"           // Det.score_mode: "fast" | "slow"
-    @Volatile private var maxCandidates = DET_MAX_CANDIDATES_DEFAULT  // Det.max_candidates (默认 1000)
+    @Volatile private var maxCandidates = DET_MAX_CANDIDATES_DEFAULT  // Det.max_candidates (默认 500)
     // 注：Global.max_side_len / Global.min_side_len 已删除——官方 RapidOCR 没有这两个参数，
     // 之前 PPOcrV6Engine 凭空捏造导致极薄横屏框选级联放大 → OOM 闪退
     @Volatile private var minHeight = 30               // Global.min_height (px)
@@ -557,12 +557,14 @@ object PPOcrV6Engine {
      * @param bitmap 输入图片
      * @param recLang 识别语言
      * @param useDet 是否使用检测（false 则全图识别）
+     * @param mangaSizeFilter 漫画整页尺寸过滤快照；未传入时不启用，游戏 OCR 保持原行为
      * @return OCR 结果
      */
     fun runOCR(
         context: Context,
         bitmap: Bitmap,
-        useDet: Boolean = true
+        useDet: Boolean = true,
+        mangaSizeFilter: PpRegionSizeFilter.Config? = null
     ): OcrResult = PpRecRecognizer.withMemoryGuard(context, TAG) {
         if (!isInitialized) throw IllegalStateException("PPOcrV6Engine 未初始化")
         if (bitmap.isRecycled) throw IllegalArgumentException("Bitmap 已回收")
@@ -588,7 +590,7 @@ object PPOcrV6Engine {
         // 1. Det
         val (boxes, detTime) = if (effectiveUseDet && detSession != null) {
             val dt = System.currentTimeMillis()
-            val det = runDet(bitmap)
+            val det = PpRegionSizeFilter.filterPage(runDet(bitmap), mangaSizeFilter, TAG)
             Pair(det, System.currentTimeMillis() - dt)
         } else {
             // 无检测：全图作为一个 box
@@ -834,10 +836,12 @@ object PPOcrV6Engine {
      * 公开检测方法：返回原始坐标系的 box 数组。
      * 用于增量渲染场景的 det 阶段。
      */
-    fun runDetForBoxes(context: Context, bitmap: Bitmap): List<FloatArray> = PpRecRecognizer.withMemoryGuard(context, TAG) {
+    fun runDetForBoxes(
+        context: Context, bitmap: Bitmap, mangaSizeFilter: PpRegionSizeFilter.Config? = null
+    ): List<FloatArray> = PpRecRecognizer.withMemoryGuard(context, TAG) {
         if (!isInitialized) throw IllegalStateException("PPOcrV6Engine 未初始化")
         refreshParams(context)
-        val boxes = runDet(bitmap)
+        val boxes = PpRegionSizeFilter.filterPage(runDet(bitmap), mangaSizeFilter, TAG)
         LogCollector.d(TAG, "runDetForBoxes: ${boxes.size} 个文字行")
         return boxes
     }
@@ -846,7 +850,9 @@ object PPOcrV6Engine {
      * 调试用检测：返回保留和被丢弃的选区。
      * 丢弃原因：score<box_thresh、尺寸过小、unclip过小
      */
-    fun runDetForDebug(context: Context, bitmap: Bitmap): DebugDetResult = PpRecRecognizer.withMemoryGuard(context, TAG) {
+    fun runDetForDebug(
+        context: Context, bitmap: Bitmap, mangaSizeFilter: PpRegionSizeFilter.Config? = null
+    ): DebugDetResult = PpRecRecognizer.withMemoryGuard(context, TAG) {
         if (!isInitialized) throw IllegalStateException("PPOcrV6Engine 未初始化")
         refreshParams(context)
 
@@ -885,7 +891,15 @@ object PPOcrV6Engine {
             val predW = outputShape[3].toInt()
             val pred = outputData
 
-            return postprocessDetDebug(pred, predH, predW, bitmap.height, bitmap.width)
+            val debug = postprocessDetDebug(pred, predH, predW, bitmap.height, bitmap.width)
+            val selection = PpRegionSizeFilter.selectPage(debug.keptBoxes, mangaSizeFilter, TAG)
+            return debug.copy(
+                keptBoxes = selection.keptIndices.map { debug.keptBoxes[it] },
+                keptScores = selection.keptIndices.map { debug.keptScores[it] },
+                discardedBoxes = debug.discardedBoxes + selection.discarded.map { debug.keptBoxes[it.index] },
+                discardedScores = debug.discardedScores + selection.discarded.map { debug.keptScores[it.index] },
+                discardedReasons = debug.discardedReasons + selection.discarded.map { selection.reasonText(it) }
+            )
         } finally {
             results.close()
         }

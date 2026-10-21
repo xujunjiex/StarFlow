@@ -80,7 +80,7 @@ object MangaDebugSliders {
     private val SCALE_BOX_V6 = LinearScale(0f, 0.01f, 100)            // 0~1，默认 0.5 → 50
     private val SCALE_BATCH = LinearScale(1f, 1f, 11)                 // 1~12，默认 6 → 5
     private val SCALE_MIN_HEIGHT = LinearScale(10f, 1f, 190)          // 10~200，默认 30 → 20
-    private val SCALE_MAX_CANDIDATES = LinearScale(50f, 1f, 1950)     // 50~2000，默认 1000 → 950
+    private val SCALE_MAX_CANDIDATES = LinearScale(50f, 1f, 1950)     // 50~2000，默认 500 → 450
 
     /**
      * 刻度登记表 —— **测试缝**。

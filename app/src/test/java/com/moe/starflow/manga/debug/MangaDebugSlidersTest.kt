@@ -151,8 +151,8 @@ class MangaDebugSlidersTest {
     fun v6InitialProgressMatchesDefaultMapping() {
         // thresh(0.1+50*0.004=0.3) · box(0+50*0.01=0.5) · unclip=1.6 · text=0.5
         // batch(1+5*1=6) · limit_side(64+142*8=1200) · min_height(10+20*1=30)
-        // max_candidates(50+950*1=1000) · gap=1.5 · ratio=0.6
-        assertEquals(listOf(50, 50, 30, 50, 5, 142, 20, 950, 20, 60), progresses(v6Panel()))
+        // max_candidates(50+450*1=500) · gap=1.5 · ratio=0.6
+        assertEquals(listOf(50, 50, 30, 50, 5, 142, 20, 450, 20, 60), progresses(v6Panel()))
     }
 
     // ── 2b. 标签序列（锁住布局形态与刻度换算）──
@@ -189,7 +189,7 @@ class MangaDebugSlidersTest {
                 "text_score\n0.50", "rec_batch_num\n6",
                 "limit_side_len\n1200",
                 "limit_type", "min", "max",
-                "min_height\n30", "max_candidates\n1000",
+                "min_height\n30", "max_candidates\n500",
                 "use_dilation",
                 "── App ──",
                 // v6 的 merge_gap 是横排内联：初始不显示值，拖动后才变成 "merge_gap 1.5"

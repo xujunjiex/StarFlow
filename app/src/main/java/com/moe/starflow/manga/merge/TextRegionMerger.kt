@@ -394,10 +394,23 @@ object TextRegionMerger {
         // 从前往后找断点，把序列切成连续段
         val result = mutableListOf<Set<Int>>()
         var segStart = 0
+        var segMinFont = regions[sorted[0]].quad.fontSize
+        var segMaxFont = segMinFont
         for (i in 0 until gaps.size) {
-            if (breakAt[i]) {
+            val nextFont = regions[sorted[i + 1]].quad.fontSize
+            val nextMin = min(segMinFont, nextFont)
+            val nextMax = max(segMaxFont, nextFont)
+            // 成对兼容不具传递性：80↔50、50↔30 都能连边，但 80↔30 已超 2 倍。
+            // 每个连续段也须遵循同一字号比，不能靠中间字号把不兼容成员串进整组。
+            val incompatibleSize = nextMin <= 0f || nextMax / nextMin > FONT_SIZE_RATIO_AA
+            if (breakAt[i] || incompatibleSize) {
                 result.add(sorted.subList(segStart, i + 1).toSet())
                 segStart = i + 1
+                segMinFont = nextFont
+                segMaxFont = nextFont
+            } else {
+                segMinFont = nextMin
+                segMaxFont = nextMax
             }
         }
         result.add(sorted.subList(segStart, sorted.size).toSet())

@@ -90,7 +90,7 @@ object PPOcrDefault {
     /** Det.score_mode：v6 独有 */
     const val V6_SCORE_MODE = "fast"
     /** Det.max_candidates：v6 独有 */
-    const val V6_MAX_CANDIDATES = 1000
+    const val V6_MAX_CANDIDATES = 500
     /** Global.min_height：v6 独有 */
     const val V6_MIN_HEIGHT = 30
     /** Global.width_height_ratio：v6 独有 */
