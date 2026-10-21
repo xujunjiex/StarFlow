@@ -39,23 +39,30 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ProgressBar
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.Lifecycle
 import com.moe.starflow.R
 import com.moe.starflow.databinding.FragmentAboutMeBinding
 import com.moe.starflow.download.ModelDownloadManager
 import com.moe.starflow.translate.FloatingBallService
 import com.moe.starflow.manga.MangaFloatingService
 import com.moe.starflow.utils.LogCollector
+import com.moe.starflow.utils.LogExporter
+import com.moe.starflow.utils.AppNotice
 import com.moe.starflow.utils.ServiceUtils
 import com.moe.starflow.utils.UiUtils
 import com.moe.starflow.utils.UpdateChecker
 import com.moe.starflow.utils.UpdateResult
 import com.moe.starflow.me.settings.SettingPageActivity
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 
 class AboutMe : Fragment() {
@@ -168,24 +175,25 @@ class AboutMe : Fragment() {
     }
 
     private fun showLogViewerDialog() {
-        val logEntries = LogCollector.getAllLogs()
-        val logs = LogCollector.getFormattedLogs()
+        val ctx = requireContext()
+        val owner = viewLifecycleOwner
         val dialogView = LayoutInflater.from(requireContext()).inflate(R.layout.dialog_log_viewer, null)
         val logContent = dialogView.findViewById<TextView>(R.id.log_content)
         val logCount = dialogView.findViewById<TextView>(R.id.log_count)
+        val actionResult = dialogView.findViewById<TextView>(R.id.log_action_result)
+        val scroll = dialogView.findViewById<ScrollView>(R.id.log_scroll)
+        scroll.layoutParams.height = minOf(
+            (resources.displayMetrics.heightPixels * 0.4f).toInt(),
+            (400 * resources.displayMetrics.density).toInt())
 
-        // 统一日志检测：starflow.log 包含全部日志（Java + native + 崩溃 backtrace）
-        val crashHint = buildCrashHint(LogCollector.crashLogFile)
-        logCount.text = crashHint.ifEmpty {
-            getString(R.string.log_count_format, logEntries.size)
+        fun refreshLogs() {
+            val entries = LogCollector.getAllLogs()
+            logCount.text = buildCrashHint(LogCollector.crashLogFile).ifEmpty {
+                getString(R.string.log_count_format, entries.size)
+            }
+            logContent.text = if (entries.isEmpty()) getString(R.string.log_empty) else buildLogSpannable(entries)
         }
-
-        if (logs.isEmpty()) {
-            logContent.text = getString(R.string.log_empty)
-        } else {
-            val spannable = buildLogSpannable(logEntries)
-            logContent.text = spannable
-        }
+        refreshLogs()
 
         val dialog = AlertDialog.Builder(requireContext())
             .setTitle(R.string.log_viewer_title)
@@ -195,30 +203,54 @@ class AboutMe : Fragment() {
 
         dialogView.findViewById<View>(R.id.btn_copy).setOnClickListener {
             val clipboard = requireContext().getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            clipboard.setPrimaryClip(ClipData.newPlainText("app_logs", logs))
-            UiUtils.showToast(requireContext(), getString(R.string.log_copied), isShort = false)
+            clipboard.setPrimaryClip(ClipData.newPlainText("app_logs", LogCollector.getFormattedLogs()))
+            AppNotice.show(ctx, getString(R.string.log_copied))
         }
 
         dialogView.findViewById<View>(R.id.btn_clear).setOnClickListener {
             LogCollector.clear()
-            logContent.text = getString(R.string.log_empty)
-            logCount.text = getString(R.string.log_count_format, 0)
+            refreshLogs()
+            actionResult.visibility = View.GONE
         }
 
-        dialogView.findViewById<View>(R.id.btn_export).setOnClickListener {
-            exportLogsToFile(logs)
+        dialogView.findViewById<View>(R.id.btn_export).setOnClickListener { button ->
+            button.isEnabled = false
+            owner.lifecycleScope.launch {
+                try {
+                    val exported = withContext(Dispatchers.IO) { LogExporter.export(ctx.applicationContext) }
+                    if (dialog.isShowing && owner.lifecycle.currentState != Lifecycle.State.DESTROYED) {
+                        actionResult.text = getString(R.string.log_exported, exported.location)
+                        actionResult.setTextColor(ContextCompat.getColor(ctx, R.color.text_secondary))
+                        actionResult.visibility = View.VISIBLE
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    if (dialog.isShowing && owner.lifecycle.currentState != Lifecycle.State.DESTROYED) {
+                        actionResult.text = getString(R.string.log_export_failed_details)
+                        actionResult.setTextColor(ContextCompat.getColor(ctx, android.R.color.holo_red_dark))
+                        actionResult.visibility = View.VISIBLE
+                    }
+                } finally {
+                    button.isEnabled = true
+                    if (dialog.isShowing && owner.lifecycle.currentState != Lifecycle.State.DESTROYED) {
+                        refreshLogs()
+                        scroll.post { scroll.fullScroll(View.FOCUS_DOWN) }
+                    }
+                }
+            }
         }
 
         dialog.show()
     }
 
     /**
-     * 构建日志提示。有统一日志文件（starflow.log）时显示路径 + 大小，
+     * 构建日志提示。有统一日志文件（starflow.log）时显示文件名 + 大小，
      * 引导用户导出日志反馈给开发者。无文件返回空串（不打扰）。
      */
     private fun buildCrashHint(file: java.io.File?): String {
         val appLog = file?.takeIf { it.exists() && it.length() > 0 } ?: return ""
-        return "⚠️ 日志文件：${appLog.absolutePath} (${appLog.length() / 1024}KB)\n\n"
+        return getString(R.string.log_file_info, appLog.name, appLog.length() / 1024)
     }
 
     /**
@@ -250,27 +282,6 @@ class AboutMe : Fragment() {
         }
 
         return spannable
-    }
-
-    private fun exportLogsToFile(logs: String) {
-        try {
-            val dir = java.io.File(requireContext().getExternalFilesDir(null), "logs")
-            if (!dir.exists()) dir.mkdirs()
-            val timestamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault())
-                .format(java.util.Date())
-            val file = java.io.File(dir, "moe_log_$timestamp.txt")
-
-            // 统一日志文件内容（Java + native + 崩溃 backtrace 都在这里，单一来源）
-            val unifiedLog = LogCollector.crashLogFile
-            val content = when {
-                unifiedLog?.exists() == true && unifiedLog.length() > 0 -> unifiedLog.readText()
-                else -> logs
-            }
-            file.writeText(content)
-            UiUtils.showToast(requireContext(), getString(R.string.log_exported, file.absolutePath), isShort = false)
-        } catch (e: Exception) {
-            UiUtils.showToast(requireContext(), getString(R.string.log_export_failed, e.message ?: "未知错误"), isShort = false)
-        }
     }
 
     private fun checkForUpdate() {

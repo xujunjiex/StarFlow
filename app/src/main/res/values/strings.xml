@@ -713,6 +713,8 @@
     <string name="log_export">Export</string>
     <string name="log_exported">Logs exported to: %s</string>
     <string name="log_export_failed">Export failed: %s</string>
+    <string name="log_export_failed_details">Export failed. Full error details are in the log below; select or copy them to share.</string>
+    <string name="log_file_info">Log file: %1$s (%2$d KB)</string>
     <!-- 内置 API -->
     <string name="builtin_providers_title">Built-in APIs</string>
     <string name="reset_to_default">Reset to Default</string>

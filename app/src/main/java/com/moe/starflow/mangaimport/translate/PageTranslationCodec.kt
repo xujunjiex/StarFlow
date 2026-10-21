@@ -7,7 +7,7 @@ import com.moe.starflow.manga.types.TranslatedBubble
 /** 阅读器翻译记录字段 ↔ 气泡列表 的纯串行化/反串行化。 */
 object PageTranslationCodec {
 
-    /** "[N] 原文\n[2] …"（与 app 历史条目同格式，TranslationCacheUtils 可解析）。 */
+    /** 供展示和检索的编号原文，区域映射以 bubbleRects 中的完整载荷为准。 */
     fun sourceText(bubbles: List<TranslatedBubble>): String =
         numbered(bubbles) { it.originalText }
 
@@ -15,7 +15,7 @@ object PageTranslationCodec {
     fun translatedText(bubbles: List<TranslatedBubble>): String =
         numbered(bubbles) { it.translatedText }
 
-    /** renderOverlay 需要的气泡矩形 JSON（坐标在页面位图空间）。 */
+    /** 完整区域载荷 JSON：坐标在页面位图空间，文本保留换行和正文编号。 */
     fun bubbleRects(bubbles: List<TranslatedBubble>): String =
         TranslationCacheUtils.serializeBubbleRects(bubbles)
 
@@ -26,8 +26,8 @@ object PageTranslationCodec {
         bgColor: Int,
     ): List<TranslatedBubble>? {
         if (row.sourceText.isNullOrBlank() || row.translatedText.isNullOrBlank()) return null
-        val originals = TranslationCacheUtils.parseIndexedTextList(row.sourceText)
-        val translations = TranslationCacheUtils.parseIndexedTextList(row.translatedText)
+        val (originals, translations) = TranslationCacheUtils.readBubbleTexts(
+            row.sourceText, row.translatedText, row.bubbleRects)
         return TranslationCacheUtils.rebuildBubblesFromCache(
             originals, translations, row.bubbleRects, defaultFontSize, bgColor,
         )

@@ -9,6 +9,7 @@
 ## 缓存与历史
 
 `TranslationCacheManager` — 统一管理游戏/漫画翻译缓存
+- 漫画新记录的 `bubbleRects` JSON 同时保存每个区域的完整 `originalText` / `translatedText` 与几何信息。渲染、详情和复制统一通过 `TranslationCacheUtils.readBubbleTexts` / `rebuildBubblesFromCache` 读取；编号形式的 `sourceText` / `translatedText` 用于展示和检索，不能用正文编号或换行重建区域边界。仅 OCR 的显示回填文本必须在序列化时排除，不能存成译文。
 - 漫画截图命中：256-bit 扩展 pHash 完全相同后，再校验裁剪尺寸和位置；第二层相似度兜底保留实现但默认停用，避免相似版式页面误命中
 - 游戏模式：仅精确匹配（相似度匹配会误判相似背景）
 - Room 数据库 `translation_history.db`，当前 version 24，`fallbackToDestructiveMigration`

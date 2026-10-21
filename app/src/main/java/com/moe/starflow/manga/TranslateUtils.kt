@@ -173,6 +173,7 @@ object TranslateUtils {
         onPartialBubbles: (List<TranslatedBubble>) -> Unit = {},
         isCancelled: (() -> Boolean)? = null
     ): List<TranslatedBubble> = withContext(Dispatchers.IO) {
+        if (isCancelled?.invoke() == true) throw TranslationCancelledException()
         LogCollector.d(TAG, "translateBubblesBatch: ${bubbles.size} bubbles, forceContext=$forceContext")
 
         // 构建带编号的文本
@@ -197,18 +198,22 @@ object TranslateUtils {
             prefs
         )
 
-        var lastRenderedCount = 0
+        var lastRenderedBubbles = emptyList<TranslatedBubble>()
+        var lastPartialRenderNs = 0L
         val response = TranslationAwaiter.await(
             translator, numberedText, sourceLang, targetLang,
             onPhase = onPhase,
             onPartial = { partialText ->
-                val partialBubbles = parseNumberedTranslationsPartial(partialText).mapNotNull { (number, translated) ->
+                val partialBubbles = parseNumberedTranslationsPartial(partialText, bubbles.size).mapNotNull { (number, translated) ->
                     val (bubble, originalText) = bubbles.getOrNull(number - 1) ?: return@mapNotNull null
                     TranslatedBubble(bubble.rect, originalText, translated, Color.TRANSPARENT,
                         bubble.fontSize, bubble.direction, bubble.angle, bubble.centerX, bubble.centerY)
                 }
-                if (partialBubbles.size > lastRenderedCount) {
-                    lastRenderedCount = partialBubbles.size
+                val now = System.nanoTime()
+                if (partialBubbles.isNotEmpty() && partialBubbles != lastRenderedBubbles &&
+                    (partialBubbles.size > lastRenderedBubbles.size || now - lastPartialRenderNs >= 250_000_000L)) {
+                    lastRenderedBubbles = partialBubbles
+                    lastPartialRenderNs = now
                     onPartialBubbles(partialBubbles)
                 }
             },
@@ -225,6 +230,19 @@ object TranslateUtils {
 
         // 按编号解析结果（支持 JSON 格式和编号格式）
         val result = resultText.trim()
+        if (!result.startsWith("{") && hasAmbiguousNumbering(result, bubbles.size)) {
+            // 重复编号可能是一个区域的段落列表，不能靠取前 N 段猜位置。
+            // 逐区域重试沿用原翻译器/提示词，单区域响应整体归回该区域；不递归重试单区域。
+            LogCollector.w(TAG, "Batch numbering is ambiguous: regions=${bubbles.size}; retrying each region separately")
+            val recovered = mutableListOf<TranslatedBubble>()
+            for (bubble in bubbles) {
+                recovered += translateBubblesBatch(
+                    translator, listOf(bubble), sourceLang, targetLang, prefs, contextHistory,
+                    forceContext, onPhase, { partial -> onPartialBubbles(recovered.toList() + partial) }, isCancelled)
+                onPartialBubbles(recovered.toList())
+            }
+            return@withContext recovered
+        }
         val translations = if (result.startsWith("{")) {
             parseJsonTranslations(result, bubbles.size)
         } else {
@@ -360,7 +378,7 @@ object TranslateUtils {
      * `[1] .` / `.` / `.` 三行时，这条译文就真的是 `".\n.\n."`（用户看到的「每个点占一行」）。
      *
      * 三条分支，按可靠性从高到低：
-     * 1. **编号齐全**（模型连 `[1]` 一起复述）→ 按位置取。
+     * 1. **编号齐全**（模型连 `[1]` 一起复述）→ 按编号取，不能按出现位置截断。
      * 2. **编号从 `[2]` 起**（续写 prefill `"[1] "` 被服务端吞掉，content 里没有 `[1]`，
      *    火山 standard / DeepSeek prefix / 千问 partial 都是这个形态）→ **第一个标记之前的正文
      *    就是第 1 条**，按**编号**对位重建。⚠️ 绝不能在这里退化成「按行拆」：只要正文里有以
@@ -369,15 +387,13 @@ object TranslateUtils {
      * 3. **一个标记都没有**（模型没按格式答）→ 才按行拆，且只用 [LINE_MARKER_PREFIX] 剥真编号。
      */
     fun parseNumberedTranslations(text: String, expectedCount: Int): List<String> {
+        if (expectedCount <= 0) return emptyList()
         val normalized = TranslationTextRules.normalizeEllipsis(text)
+        // 单个区域内的换行和编号都是正文；仅剥去批量请求自身的第一个 [1] 前缀。
+        if (expectedCount == 1) return listOf(singleRegionTranslation(normalized))
         val matches = NUMBERED_TRANSLATION_REGEX.findAll(normalized).toList()
 
-        // 分支 1：编号齐全 → 直接按位置取
-        if (matches.size >= expectedCount) {
-            return matches.take(expectedCount).map { it.groupValues[2].trim() }
-        }
-
-        // 分支 2：有标记但不满条数（典型：prefill 吃掉了 [1]）→ 按编号对位
+        // 有标记 → 按编号对位（包括 prefill 吃掉了 [1] 的情况）。
         val firstMarker = matches.firstOrNull()
         if (firstMarker != null) {
             val byNumber = HashMap<Int, String>(expectedCount)
@@ -426,19 +442,46 @@ object TranslateUtils {
      * 解析带编号翻译结果中「已完整」的条目（仅流式显示用）。
      * 一条目后跟有下一个 [N] 才视为完整；最后一条可能仍在生成中，跳过不渲染。
      * 返回 (编号, 文本) 对，调用方按编号匹配气泡，可跳过越界/幻觉编号，防止错位与崩溃。
+     * 已知只有一个区域时直接返回当前完整正文，由调用方限频刷新，不等待下一个编号。
      *
      * 同 [parseNumberedTranslations]：先归一化点串，避免流式过程中闪出「每行一个点」。
      */
-    fun parseNumberedTranslationsPartial(text: String): List<Pair<Int, String>> {
+    fun parseNumberedTranslationsPartial(text: String, expectedCount: Int = Int.MAX_VALUE): List<Pair<Int, String>> {
         val normalized = TranslationTextRules.normalizeEllipsis(text)
+        if (expectedCount == 1) {
+            val content = singleRegionTranslation(normalized)
+            return if (content.isBlank()) emptyList() else listOf(1 to content)
+        }
         val results = mutableListOf<Pair<Int, String>>()
         val matches = NUMBERED_TRANSLATION_REGEX.findAll(normalized).toList()
+        val numbers = matches.map { it.groupValues[1].toIntOrNull() }
+        if (numbers.any { it == null || it !in 1..expectedCount } || numbers.distinct().size != numbers.size) {
+            return emptyList()
+        }
         for (idx in 0 until matches.size - 1) {
             val number = matches[idx].groupValues[1].toIntOrNull()
             val content = matches[idx].groupValues[2].trim()
             if (number != null) results.add(number to content)
         }
         return results
+    }
+
+    private fun singleRegionTranslation(text: String): String =
+        text.trim().replaceFirst(Regex("""^\[1][ \t]*"""), "").trim()
+
+    /** 多区域结果必须有唯一且完整的编号；允许服务端续写前缀吞掉第一个 [1]。 */
+    private fun hasAmbiguousNumbering(text: String, expectedCount: Int): Boolean {
+        if (expectedCount <= 1) return false
+        val matches = NUMBERED_TRANSLATION_REGEX.findAll(text).toList()
+        val numbers = matches.map { it.groupValues[1].toIntOrNull() }
+        if (numbers.any { it == null || it !in 1..expectedCount } || numbers.distinct().size != numbers.size) return true
+        val prefix = matches.firstOrNull()?.let { text.substring(0, it.range.first).trim() }.orEmpty()
+        val found = numbers.filterNotNull().toMutableSet()
+        if (prefix.isNotEmpty()) {
+            if (1 in found) return true
+            found.add(1)
+        }
+        return found != (1..expectedCount).toSet()
     }
 
     // ========== 文字处理 ==========

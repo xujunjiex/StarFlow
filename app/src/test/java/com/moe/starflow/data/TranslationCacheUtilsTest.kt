@@ -78,6 +78,55 @@ class TranslationCacheUtilsTest {
         assertEquals(-7.5f, entries[0].angle, 0.01f)
         assertEquals(55f, entries[0].centerX, 0.01f)
         assertEquals(115f, entries[0].centerY, 0.01f)
+        assertEquals("こんにちは", entries[0].originalText)
+        assertEquals("你好", entries[0].translatedText)
+    }
+
+    @Test
+    fun cacheRoundTrip_keepsAllParagraphsAndBodyNumbersInOneRegion() {
+        val source = "original first\noriginal second"
+        val translation = "[1] 第一段\n\n[1] 第二段\n第三段含引用 [2] 和 emoji 😀"
+        val bubble = TranslatedBubble(Rect(10, 20, 500, 900), source, translation, 0)
+        val json = TranslationCacheUtils.serializeBubbleRects(listOf(bubble))
+        val (originals, translations) = TranslationCacheUtils.readBubbleTexts(
+            "[1] $source", "[1] $translation", json)
+        assertEquals(listOf(source), originals)
+        assertEquals(listOf(translation), translations)
+        val restored = TranslationCacheUtils.rebuildBubblesFromCache(originals, translations, json, 16f, 0)
+        assertEquals(1, restored.size)
+        assertEquals(bubble.rect, restored.single().rect)
+        assertEquals(source, restored.single().originalText)
+        assertEquals(translation, restored.single().translatedText)
+        assertTrue(restored.single().fromCache)
+        assertFalse(restored.single().isInMemoryCache)
+    }
+
+    @Test
+    fun cacheRoundTrip_keepsTextAttachedToItsOwnRectAcrossMultipleRegions() {
+        val expected = listOf(
+            TranslatedBubble(Rect(0, 0, 100, 300), "A\n[2] part of A", "A译文\n[2] 仍属A", 0),
+            TranslatedBubble(Rect(150, 0, 250, 300), "B", "B译文\n续段", 0)
+        )
+        val json = TranslationCacheUtils.serializeBubbleRects(expected)
+        val (originals, translations) = TranslationCacheUtils.readBubbleTexts(null, null, json)
+        assertEquals(expected.map { it.originalText }, originals)
+        assertEquals(expected.map { it.translatedText }, translations)
+        val restored = TranslationCacheUtils.rebuildBubblesFromCache(emptyList(), emptyList(), json, 16f, 0)
+        assertEquals(expected.map { it.rect }, restored.map { it.rect })
+        assertEquals(expected.map { it.originalText }, restored.map { it.originalText })
+        assertEquals(expected.map { it.translatedText }, restored.map { it.translatedText })
+    }
+
+    @Test
+    fun ocrOnlyPayload_doesNotPersistDisplayTextAsATranslation() {
+        val bubble = TranslatedBubble(Rect(0, 0, 100, 300), "source", "source", 0)
+        val json = TranslationCacheUtils.serializeBubbleRects(listOf(bubble), includeTranslations = false)
+        val (originals, translations) = TranslationCacheUtils.readBubbleTexts("[1] source", null, json)
+        assertEquals(listOf("source"), originals)
+        assertEquals(listOf(""), translations)
+        val restored = TranslationCacheUtils.rebuildBubblesFromCache(originals, translations, json, 16f, 0)
+        assertEquals("source", restored.single().originalText)
+        assertEquals("", restored.single().translatedText)
     }
 
     @Test

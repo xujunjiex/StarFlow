@@ -72,6 +72,8 @@
 
 **翻译流程：** 截图 → 检测 → OCR → 气泡合并（按需）→ 翻译（每气泡并行）→ 覆盖渲染
 
+单区域编号响应保留全部段落与正文编号，仅移除请求自身的首个 `[1]` 前缀。多区域响应按编号映射；重复、缺失或越界编号会触发逐区域重试，沿用原提示词，不能直接取前 N 段。流式单区域按正文变化限频刷新。缓存文本与矩形的存储约束见[数据与缓存模块](../data/CLAUDE.md)。
+
 **竖排方向（可配置，`Manga_Text_Direction`）：**
 - 个性化页「漫画翻译结果设置」→ 竖排方向：`0`=VERTICAL_RL（列从右到左，默认，传统日漫）/ `1`=VERTICAL_LR（列从左到右）
 - `MangaModeConfig.textDirection` 从 prefs 读；扩展属性 `verticalTextDirection` 统一竖排方向判断（`MangaModeConfig.kt`）

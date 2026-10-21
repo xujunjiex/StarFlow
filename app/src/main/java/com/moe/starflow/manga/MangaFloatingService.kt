@@ -2312,8 +2312,10 @@ class MangaFloatingService : LifecycleService() {
                     lastCachedPHash = currentPHash
                     lastCacheBubbleRects = cached.bubbleRects
                     // 解析缓存的原文/译文列表供复制模式使用
-                    cachedOriginalTextList = TranslationCacheUtils.parseIndexedTextList(cached.originalText)
-                    cachedTranslatedTextList = TranslationCacheUtils.parseIndexedTextList(cached.translatedText)
+                    val (originals, translations) = TranslationCacheUtils.readBubbleTexts(
+                        cached.originalText, cached.translatedText, cached.bubbleRects)
+                    cachedOriginalTextList = originals
+                    cachedTranslatedTextList = translations
                     // 从缓存数据重建 TranslatedBubble 列表（供原文模式 overlay 渲染）
                     currentShowBubbles = TranslationCacheUtils.rebuildBubblesFromCache(
                         cachedOriginalTextList, cachedTranslatedTextList, lastCacheBubbleRects, config.fontSize, config.bgColor)
@@ -2728,7 +2730,7 @@ class MangaFloatingService : LifecycleService() {
                     cropRight = entryCropRight,
                     cropBottom = entryCropBottom,
                     bubbleRects = if (newBubbles.isNotEmpty()) {
-                        TranslationCacheUtils.serializeBubbleRects(newBubbles)
+                        TranslationCacheUtils.serializeBubbleRects(newBubbles, includeTranslations = !ocrOnly)
                     } else null,
                     processingState = if (TranslationExecutionMode.isOcrOnly(this@MangaFloatingService))
                         com.moe.starflow.data.HistoryEntity.PROCESS_OCR

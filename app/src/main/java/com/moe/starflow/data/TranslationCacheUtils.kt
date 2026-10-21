@@ -67,7 +67,9 @@ object TranslationCacheUtils {
                     rect, fs, dir,
                     obj.optDouble("angle", 0.0).toFloat(),
                     obj.optDouble("cx", rect.exactCenterX().toDouble()).toFloat(),
-                    obj.optDouble("cy", rect.exactCenterY().toDouble()).toFloat()
+                    obj.optDouble("cy", rect.exactCenterY().toDouble()).toFloat(),
+                    if (obj.has("originalText")) obj.getString("originalText") else null,
+                    if (obj.has("translatedText")) obj.getString("translatedText") else null
                 ))
             }
             result
@@ -90,8 +92,21 @@ object TranslationCacheUtils {
         }
     }
 
-    /** 将 TranslatedBubble 列表序列化为 JSON（与 parseBubbleEntriesJson 配对） */
-    fun serializeBubbleRects(bubbles: List<TranslatedBubble>): String {
+    /** 新记录的文本与矩形一同保存；编号文本供展示和检索，不再作为区域分隔协议。 */
+    fun readBubbleTexts(
+        sourceText: String?,
+        translatedText: String?,
+        bubbleRectsJson: String?
+    ): Pair<List<String>, List<String>> {
+        val entries = parseBubbleEntriesJson(bubbleRectsJson, 16f)
+        if (entries.isNotEmpty() && entries.all { it.originalText != null && it.translatedText != null }) {
+            return entries.map { it.originalText.orEmpty() } to entries.map { it.translatedText.orEmpty() }
+        }
+        return parseIndexedTextList(sourceText) to parseIndexedTextList(translatedText)
+    }
+
+    /** 保存完整区域载荷；仅 OCR 的显示回填文本不能作为译文持久化。 */
+    fun serializeBubbleRects(bubbles: List<TranslatedBubble>, includeTranslations: Boolean = true): String {
         val jsonArray = org.json.JSONArray()
         for (b in bubbles) {
             val obj = org.json.JSONObject()
@@ -104,12 +119,14 @@ object TranslationCacheUtils {
             obj.put("angle", b.angle.toDouble())
             obj.put("cx", b.centerX.takeIf { it >= 0f }?.toDouble() ?: b.rect.exactCenterX().toDouble())
             obj.put("cy", b.centerY.takeIf { it >= 0f }?.toDouble() ?: b.rect.exactCenterY().toDouble())
+            obj.put("originalText", b.originalText)
+            obj.put("translatedText", if (includeTranslations) b.translatedText else "")
             jsonArray.put(obj)
         }
         return jsonArray.toString()
     }
 
-    /** 从缓存的 rect JSON + 文本列表重建 TranslatedBubble */
+    /** 优先从结构化载荷重建；仅保留既有无正文 JSON 的读取回退。 */
     fun rebuildBubblesFromCache(
         originals: List<String>,
         translations: List<String>,
@@ -118,12 +135,12 @@ object TranslationCacheUtils {
         bgColor: Int
     ): List<TranslatedBubble> {
         val entries = parseBubbleEntriesJson(bubbleRectsJson, defaultFontSize)
-        if (entries.isEmpty() || originals.isEmpty()) return emptyList()
+        if (entries.isEmpty() || (originals.isEmpty() && entries.all { it.originalText == null })) return emptyList()
         return entries.mapIndexed { idx, entry ->
             TranslatedBubble(
                 rect = entry.rect,
-                originalText = originals.getOrElse(idx) { "" },
-                translatedText = translations.getOrElse(idx) { "" },
+                originalText = entry.originalText ?: originals.getOrElse(idx) { "" },
+                translatedText = entry.translatedText ?: translations.getOrElse(idx) { "" },
                 backgroundColor = bgColor,
                 fontSize = entry.fontSize,
                 direction = entry.direction,
@@ -143,5 +160,7 @@ data class BubbleJsonEntry(
     val direction: TextDirection,
     val angle: Float = 0f,
     val centerX: Float = rect.exactCenterX(),
-    val centerY: Float = rect.exactCenterY()
+    val centerY: Float = rect.exactCenterY(),
+    val originalText: String? = null,
+    val translatedText: String? = null
 )

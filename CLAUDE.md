@@ -165,7 +165,7 @@ StarFlow 是 Kotlin Android 应用，界面使用 Android Views 和 ViewBinding�
   统一走 else 防低版本 NoSuchFieldError）**；
   `LlamaCppTranslation.setupCrashDir()` 幂等调用 `nativeSetLogFile`（fd 已开则跳过，单测 JVM
   无 .so 时静默跳过）
-- 用户获取：关于页 → 查看日志 → 导出，导出文件即 `starflow.log` 内容（最近 300 行）
+- 用户获取：关于页 → 查看日志 → 导出。`LogExporter` 在后台把点击时的 `starflow.log` 快照写入下载目录的 `StarFlow/`；文件不可读时记录原因并改用当前内存日志。创建、写入或发布失败均通过 `LogCollector` 保存完整异常、阶段和目标位置，并清理未完成的导出；日志窗口即时刷新错误，复制读取最新内容。
 - **崩溃日志测试（开发者选项页底部「崩溃日志测试」）**：测 Java 崩溃（后台线程抛异常 →
   `UncaughtException` 落盘 + 系统 FATAL）；测 Native 崩溃（`LlamaCppNative.nativeTriggerNativeCrash`
   触发 SIGSEGV → crash_handler 写崩溃块 + 恢复 libc handler re-raise → 系统 tombstone + 崩溃对话框）。

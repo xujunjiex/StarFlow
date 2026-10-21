@@ -702,7 +702,7 @@
 
 ### 译文与底图分层
 
-- **分层存储是既有约定**（见 `data/CLAUDE.md`）：`originalImagePath` + `bubbleRects` + `sourceText/translatedText` 是唯一事实来源，渲染后的 `imagePath` 已停止写入（仅旧行回退）。**因此「改设置/改规则即时生效、不必重翻」在架构上是被这条保证的** —— 文案里也别写成"渲染图缓存"。
+- **分层存储是既有约定**（见[数据与缓存模块](../data/CLAUDE.md)）：底图与区域载荷分离；新记录的 `bubbleRects` 含完整原文、译文和几何信息，是区域映射的事实来源，`sourceText/translatedText` 的编号形式仅供展示。渲染后的 `imagePath` 已停止写入（仅旧行回退），改设置或替换规则只需重新渲染。
 - **`TranslationTextRules`（`manga/config/`）有两件事**，别混：
   1. `normalizeEllipsis` —— **硬保证、无开关**：删掉「两侧都是点」的换行。根因是模型把一条编号译文写成多行，而 `NUMBERED_TRANSLATION_REGEX` 的 `[\s\S]*?` **跨行捕获** → 译文真的是 `".\n.\n."`（横排三行各一点；竖排 `\n` 还占一个字符格）。调用点：`parseNumberedTranslations` / `…Partial`（解析）+ `TranslateUtils.translateBubbles` 出口（顺序路径兜底）+ `OverlayRenderer`（覆盖修复前入库的旧数据）。**幂等，可重复调**。
   2. 用户**译文替换表** —— **在渲染时套用**（`OverlayRenderer.renderOverlay(..., replacementRules)` 里 `process()`），**不是**翻译时。⚠️ 别挪回 `translateBubbles`：既逼用户重翻，非幂等规则（`a`→`aa`）还会被套两次。规则只作用于**译文**，切「原文」态不套（否则用户看到的"原文"被改过）。

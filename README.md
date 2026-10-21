@@ -94,6 +94,8 @@ StarFlow 是开源 Android 翻译与阅读应用，支持游戏／视频截图�
 - **游戏历史**：查看游戏／视频截图识别的原文与译文，支持复制、紧凑显示和 TXT 导出。
 - **漫画历史**：查看漫画截图的原图与翻译结果，支持翻页浏览、重新翻译和导出。
 
+关于页 → 查看日志 → 导出，可将当前日志保存到下载目录下的 `StarFlow/`。导出失败时，完整原因会显示在日志中，可长按选择或使用复制按钮获取。
+
 <p align="center">
   <img src="images/history_page.gif" width="240" alt="翻译历史演示">
   <img src="images/history_retranslate.gif" width="240" alt="历史记录重新翻译演示">

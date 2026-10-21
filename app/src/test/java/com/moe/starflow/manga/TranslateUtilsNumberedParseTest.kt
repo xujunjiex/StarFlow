@@ -1,10 +1,19 @@
 package com.moe.starflow.manga
 
+import android.graphics.Rect
+import com.moe.starflow.manga.types.BubbleRegion
+import com.moe.starflow.manga.types.TranslatedBubble
+import com.moe.starflow.translate.TranslationResult
+import com.moe.starflow.translate.TranslationTextAPI
+import com.moe.starflow.utils.CustomPreference
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.RuntimeEnvironment
 
 /**
  * 编号译文解析里的省略号归一化。
@@ -25,6 +34,69 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class TranslateUtilsNumberedParseTest {
+
+    @Test
+    fun singleRegion_keepsMultilineBodyAndRepeatedParagraphNumbers() {
+        assertEquals(listOf("第一段\n第二段\n[1] 第三段\n[2] 第四段"),
+            TranslateUtils.parseNumberedTranslations("[1] 第一段\n第二段\n[1] 第三段\n[2] 第四段", 1))
+        assertEquals(listOf("第一段\n第二段"), TranslateUtils.parseNumberedTranslations("第一段\n第二段", 1))
+        assertEquals(listOf(1 to "第一段\n[1] 第二段"),
+            TranslateUtils.parseNumberedTranslationsPartial("[1] 第一段\n[1] 第二段", 1))
+    }
+
+    @Test
+    fun completeButReorderedNumbers_areMappedById() {
+        assertEquals(listOf("甲", "乙"), TranslateUtils.parseNumberedTranslations("[2] 乙\n[1] 甲", 2))
+    }
+
+    @Test
+    fun ambiguousBatch_retriesRegionsWithoutLosingParagraphsOrChangingRectangles() = runBlocking {
+        val translator = CustomNumberedTranslator()
+        val input = listOf(
+            BubbleRegion(Rect(0, 0, 100, 300), listOf("source-A"), 16f),
+            BubbleRegion(Rect(150, 0, 250, 300), listOf("source-B"), 16f))
+        val partials = mutableListOf<List<TranslatedBubble>>()
+        val result = TranslateUtils.translateBubbles(translator, input, "en", "zh",
+            CustomPreference.getInstance(RuntimeEnvironment.getApplication()), onPartialBubbles = { partials.add(it) })
+        assertEquals(listOf("[1] source-A\n[2] source-B", "[1] source-A", "[1] source-B"), translator.requests)
+        assertEquals(input.map { it.rect }, result.map { it.rect })
+        assertEquals(listOf("source-A", "source-B"), result.map { it.originalText })
+        assertEquals(listOf("A第一段\n[1] A第二段", "B第一段\n[1] B第二段"), result.map { it.translatedText })
+        assertTrue(partials.any { it.size == 2 && it[1].translatedText.contains("B第二段") })
+    }
+
+    @Test
+    fun cancelledAmbiguousBatch_doesNotIssueRecoveryRequests() = runBlocking {
+        var cancelled = false
+        val translator = CustomNumberedTranslator { cancelled = true }
+        try {
+            TranslateUtils.translateBubbles(translator, listOf(
+                BubbleRegion(Rect(0, 0, 100, 300), listOf("source-A"), 16f),
+                BubbleRegion(Rect(150, 0, 250, 300), listOf("source-B"), 16f)), "en", "zh",
+                CustomPreference.getInstance(RuntimeEnvironment.getApplication()), isCancelled = { cancelled })
+            org.junit.Assert.fail("Expected cancellation before retry")
+        } catch (_: TranslationCancelledException) {
+            assertEquals(1, translator.requests.size)
+        }
+    }
+
+    private class CustomNumberedTranslator(val onBatch: () -> Unit = {}) : TranslationTextAPI {
+        val requests = mutableListOf<String>()
+        override fun getTranslation(text: String, sourceLanguage: String, targetLanguage: String,
+            callback: (TranslationResult) -> Unit) {
+            requests.add(text)
+            val output = if (text.contains("[2]")) {
+                onBatch()
+                "[1] wrong-A\n[1] wrong-B"
+            } else {
+                val name = if (text.contains("source-A")) "A" else "B"
+                "[1] ${name}第一段\n[1] ${name}第二段"
+            }
+            callback(TranslationResult.Success(output))
+        }
+        override fun cancelTranslation() = Unit
+        override fun release() = Unit
+    }
 
     @Test
     fun numberedParse_joinsEllipsisSplitAcrossLines() {

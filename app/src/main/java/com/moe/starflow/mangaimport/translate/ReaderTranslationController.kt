@@ -1951,7 +1951,7 @@ class ReaderTranslationController(
         val entries = TranslationCacheUtils.parseBubbleEntriesJson(
             row.bubbleRects, appPrefs.getFloat("Manga_Font_Size", 16f)
         )
-        val texts = TranslationCacheUtils.parseIndexedTextList(source)
+        val (texts, _) = TranslationCacheUtils.readBubbleTexts(source, row.translatedText, row.bubbleRects)
         if (entries.isEmpty() || texts.isEmpty()) return null
         val bitmap = loadFull(page) ?: return null
         val bubbles = entries.mapIndexed { index, entry ->
@@ -2478,7 +2478,8 @@ class ReaderTranslationController(
 
     private fun hasOcrPayload(row: ImportedPageTranslation): Boolean =
         !row.bubbleRects.isNullOrBlank() &&
-            TranslationCacheUtils.parseIndexedTextList(row.sourceText).any { it.isNotBlank() }
+            TranslationCacheUtils.readBubbleTexts(row.sourceText, row.translatedText, row.bubbleRects)
+                .first.any { it.isNotBlank() }
 
     /** 该段页号里**未成功**（未翻译 + 失败 + 翻译中）的页数。 */
     fun pendingCount(from: Int, to: Int): Int =

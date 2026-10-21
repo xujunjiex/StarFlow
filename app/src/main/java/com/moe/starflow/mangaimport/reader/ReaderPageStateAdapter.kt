@@ -609,7 +609,8 @@ class ReaderPageStateAdapter(
 
     private fun hasOcrPayload(row: ImportedPageTranslation): Boolean =
         !row.bubbleRects.isNullOrBlank() &&
-            TranslationCacheUtils.parseIndexedTextList(row.sourceText).any { it.isNotBlank() }
+            TranslationCacheUtils.readBubbleTexts(row.sourceText, row.translatedText, row.bubbleRects)
+                .first.any { it.isNotBlank() }
 
     /** 像屏幕翻译历史那样：元数据（翻译器/语言/时间）+ 逐条 原文(淡)+译文(主)。拖拽选择复制，无复制按钮。 */
     private fun fillDetail(
@@ -632,8 +633,8 @@ class ReaderPageStateAdapter(
             setTextColor(subColor)
         }
 
-        val originals = TranslationCacheUtils.parseIndexedTextList(row.sourceText)
-        val translations = TranslationCacheUtils.parseIndexedTextList(row.translatedText)
+        val (originals, translations) = TranslationCacheUtils.readBubbleTexts(
+            row.sourceText, row.translatedText, row.bubbleRects)
         val sb = SpannableStringBuilder()
         for (i in originals.indices) {
             sb.append("[${i + 1}] ")

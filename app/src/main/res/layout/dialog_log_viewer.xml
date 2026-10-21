@@ -22,7 +22,18 @@
         android:textColor="@color/text_secondary"
         android:layout_marginBottom="8dp"/>
 
+    <TextView
+        android:id="@+id/log_action_result"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"
+        android:textColor="@color/text_secondary"
+        android:textSize="13sp"
+        android:textIsSelectable="true"
+        android:visibility="gone"/>
+
     <ScrollView
+        android:id="@+id/log_scroll"
         android:layout_width="match_parent"
         android:layout_height="400dp"
         android:background="@drawable/log_content_bg"

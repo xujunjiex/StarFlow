@@ -654,47 +654,22 @@ class MangaViewerActivity : AppCompatActivity() {
     }
 
     private fun buildDetailList(entry: HistoryEntry): List<TranslationDetailItem> {
-        val items = mutableListOf<TranslationDetailItem>()
-
         val ocrText = entry.sourceText
         val aiText = entry.translatedText
-
-        when {
-            !ocrText.isNullOrEmpty() && !aiText.isNullOrEmpty() -> {
-                // 解析编号格式的译文
-                val ocrLines = parseNumberedText(ocrText)
-                val aiLines = parseNumberedText(aiText)
-
-                val maxCount = maxOf(ocrLines.size, aiLines.size)
-                for (i in 0 until maxCount) {
-                    items.add(
-                        TranslationDetailItem(
-                            index = i + 1,
-                            ocrText = ocrLines.getOrNull(i) ?: "",
-                            translatedText = aiLines.getOrNull(i) ?: ""
-                        )
-                    )
-                }
-            }
-            !aiText.isNullOrEmpty() -> {
-                items.add(TranslationDetailItem(index = 1, ocrText = "", translatedText = aiText))
-            }
-            !ocrText.isNullOrEmpty() -> {
-                items.add(TranslationDetailItem(index = 1, ocrText = ocrText, translatedText = ""))
-            }
-            else -> {
-                items.add(TranslationDetailItem(index = 1, ocrText = getString(R.string.no_translation_data), translatedText = ""))
+        val (originals, translations) = TranslationCacheUtils.readBubbleTexts(
+            ocrText, aiText, entry.bubbleRects)
+        val count = maxOf(originals.size, translations.size)
+        if (count > 0) {
+            return List(count) { index ->
+                TranslationDetailItem(index = index + 1,
+                    ocrText = originals.getOrElse(index) { "" },
+                    translatedText = translations.getOrElse(index) { "" })
             }
         }
-
-        return items
-    }
-
-    private fun parseNumberedText(text: String): List<String> {
-        // 解析 [1] text 格式
-        val regex = Regex("""\[(\d+)]\s*""")
-        val parts = regex.split(text).filter { it.isNotBlank() }
-        return parts.map { it.trim() }
+        return listOf(TranslationDetailItem(index = 1,
+            ocrText = ocrText.orEmpty().ifEmpty {
+                if (aiText.isNullOrEmpty()) getString(R.string.no_translation_data) else ""
+            }, translatedText = aiText.orEmpty()))
     }
 
     @Suppress("DEPRECATION")

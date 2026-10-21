@@ -133,8 +133,8 @@ class TranslationCacheManager(private val context: Context) {
         LogCollector.d(TAG, "renderOverlay: decoded fullBitmap=${fullBitmap.width}x${fullBitmap.height}")
 
         // 2. 解析气泡数据
-        val originals = TranslationCacheUtils.parseIndexedTextList(history.sourceText)
-        val translations = TranslationCacheUtils.parseIndexedTextList(history.translatedText)
+        val (originals, translations) = TranslationCacheUtils.readBubbleTexts(
+            history.sourceText, history.translatedText, history.bubbleRects)
         val bubbles = TranslationCacheUtils.rebuildBubblesFromCache(originals, translations, history.bubbleRects, config.fontSize, config.bgColor)
 
         // 自定义字体（游戏/漫画共用 Custom_Result_Font），无则默认字体
