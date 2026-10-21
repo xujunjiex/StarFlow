@@ -16,6 +16,7 @@
 - **外部目录访问诊断**：`File.listFiles() == null` 时报告 `File.canRead()`、应用 UID、目录 UID/GID 与权限模式。`getExternalFilesDir()` 无需存储权限；若 MTP/ADB 创建的子目录归 `shell` 所有且没有应用遍历权限，应用无法读取其子项，不能把它误报成 SAF 授权失败。
 - **导入目标创建**：目录和单文件导入共用 `FileAccessDiagnostics.ensureDirectory()`，保留底层创建异常，区分可读与可写；不能用重建书库记录替代权限修复。普通失败使用红色可复制详情和存储位置入口，批量失败全部汇总且保留未确认的弹窗内容。
 - 封面缩略图写入选定书库 `.starflow/books/<UUID>/cover/`；SAF 新文件先在内部持久目录暂存，验证并提交后释放副本。
+- 无内嵌封面的小说使用书名占位图，完整书名自适应字号、多行居中绘制。
 - 小说插图与封面放入 `.starflow/books/<UUID>/`；删除由 `LibraryDeletion` 持久化意图后执行，失败保留占位，不按数字 id 推断来源归属。
 - 扫描结果通过 `NovelStore.mergeScanned()` 在存储锁内合并，只新增 id 和规范路径均未收录的条目，保留并发导入及最新书架编辑。
 - SAF `DISPLAY_NAME` / `SIZE` 只用于文件名与进度展示，不作为可读性判据。查询失败由 `SafDocumentMetadata` 记录 provider authority、URI 和列/异常细节，合并投影不受支持时分别查询；树 URI 的目录名查询先转换为具体 document URI。内容流打开、读取、app 目标写入分别报告阶段与根异常。

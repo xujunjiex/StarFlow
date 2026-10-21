@@ -6,6 +6,9 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextPaint
 import android.net.Uri
 import android.provider.DocumentsContract
 import com.moe.starflow.mangaimport.data.ArchivedMangaReader
@@ -761,25 +764,48 @@ object NovelImporter {
         null
     }
 
-    /**
-     * 没有内嵌封面时用**书名首字**生成占位封面。
-     *
-     * 不做的话书架上一片灰底，几十本书认不出哪本是哪本 —— 而书名首字足够区分绝大多数情况。
-     */
+    /** 没有内嵌封面时，将完整书名自动换行并居中绘制到占位封面。 */
     fun placeholderCover(context: Context, id: Long, title: String): String {
         val bmp = Bitmap.createBitmap(COVER_SIZE, COVER_SIZE, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
         canvas.drawColor(PLACEHOLDER_BG)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+
+        val text = title.trim().replace(Regex("\\s+"), " ").ifEmpty { "?" }
+        val textArea = (COVER_SIZE * 0.78f).toInt()
+        var minSize = 8f
+        var maxSize = COVER_SIZE * 0.20f
+        var layout = createPlaceholderTitleLayout(text, minSize, textArea)
+        repeat(12) {
+            val size = (minSize + maxSize) / 2f
+            val candidate = createPlaceholderTitleLayout(text, size, textArea)
+            if (candidate.height <= textArea) {
+                minSize = size
+                layout = candidate
+            } else {
+                maxSize = size
+            }
+        }
+
+        val inset = (COVER_SIZE - textArea) / 2f
+        canvas.save()
+        canvas.translate(inset, (COVER_SIZE - layout.height) / 2f)
+        layout.draw(canvas)
+        canvas.restore()
+        return saveCover(context, bmp, id)
+    }
+
+    private fun createPlaceholderTitleLayout(text: String, textSize: Float, width: Int): StaticLayout {
+        val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE
-            textSize = COVER_SIZE * 0.42f
-            textAlign = Paint.Align.CENTER
+            this.textSize = textSize
             isFakeBoldText = true
         }
-        val ch = title.trim().take(1).ifEmpty { "?" }
-        val fm = paint.fontMetrics
-        canvas.drawText(ch, COVER_SIZE / 2f, COVER_SIZE / 2f - (fm.ascent + fm.descent) / 2f, paint)
-        return saveCover(context, bmp, id)
+        return StaticLayout.Builder.obtain(text, 0, text.length, paint, width)
+            .setAlignment(Layout.Alignment.ALIGN_CENTER)
+            .setIncludePad(false)
+            .setBreakStrategy(Layout.BREAK_STRATEGY_HIGH_QUALITY)
+            .setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
+            .build()
     }
 
     /** 用外部图片（用户自选）替换某部小说封面，返回新封面绝对路径。 */
