@@ -29,6 +29,7 @@ class NovelSafDirectoryImportTest {
     private data class Document(val id: String, val name: String, val mime: String, val parent: String?)
 
     private class TreeProvider(private val documents: List<Document>) : ContentProvider() {
+        var childQueries = 0
         override fun onCreate() = true
         override fun getType(uri: Uri) = documents.singleOrNull { it.id == DocumentsContract.getDocumentId(uri) }?.mime
         override fun insert(uri: Uri, values: ContentValues?): Uri? = null
@@ -38,6 +39,7 @@ class NovelSafDirectoryImportTest {
         override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor {
             val columns = projection!!.map { it }.toTypedArray()
             val id = DocumentsContract.getDocumentId(uri)
+            if (uri.lastPathSegment == "children") childQueries++
             val rows = if (uri.lastPathSegment == "children") documents.filter { it.parent == id }
                 else documents.filter { it.id == id }
             return MatrixCursor(columns).apply {
@@ -57,9 +59,11 @@ class NovelSafDirectoryImportTest {
     }
 
     @Before
-    fun setUp() {
+    fun setUp() = runBlocking {
+        com.moe.starflow.library.LibrarySessions.prepare(context)
         NovelStore.save(context, emptyList())
         NovelStorageDir.root(context).deleteRecursively()
+        Unit
     }
 
     @Test
@@ -132,9 +136,15 @@ class NovelSafDirectoryImportTest {
             "<p>Text</p><img src='2000.png'/>".byteInputStream())
         val png = LibraryScanFixtures.png()
         images.forEach { resolver.registerInputStream(DocumentsContract.buildDocumentUriUsingTree(tree, it.id), png.inputStream()) }
-        val book = NovelImporter.importDirectory(context, tree, 2)
+        val progress = mutableListOf<com.moe.starflow.mangaimport.data.ImportProgress>()
+        val book = NovelImporter.importDirectory(context, tree, 2) { progress += it }
         assertEquals(2001, File(book.localRoot).listFiles()!!.count { it.extension == "png" })
         assertArrayEquals(png, File(book.localRoot, "2000.png").readBytes())
+        val copies = progress.filter { it.phase == com.moe.starflow.mangaimport.data.ImportPhase.COPYING }
+        assertEquals(2002, copies.last().copiedFiles)
+        assertTrue(copies.size < 2002)
+        assertEquals(File(book.localRoot).walkTopDown().filter { it.isFile }.sumOf { it.length() }, book.sizeBytes)
+        println("DIRECTORY_STRESS files=2002 copyProgressUpdates=${copies.size}")
     }
 
     @Test
@@ -181,5 +191,42 @@ class NovelSafDirectoryImportTest {
 
         assertEquals("Safe body", File(book.localRoot, "outside.txt").readText())
         assertFalse(File(NovelStorageDir.root(context), "outside.txt").exists())
+    }
+
+    @Test fun cyclicMangaAndNovelProvidersFailAfterOneVisitPerDirectory() = runBlocking {
+        for (kind in listOf("manga", "novel")) {
+            val documents = listOf(
+                Document("root", "Book", DocumentsContract.Document.MIME_TYPE_DIR, "child"),
+                Document("child", "Cycle", DocumentsContract.Document.MIME_TYPE_DIR, "root"),
+            )
+            val authority = "cycle-$kind"
+            val provider = TreeProvider(documents)
+            ShadowContentResolver.registerProviderInternal(authority, provider)
+            val tree = DocumentsContract.buildTreeDocumentUri(authority, "root")
+            val error = runCatching {
+                if (kind == "manga") com.moe.starflow.mangaimport.data.MangaImporter.importDirectory(context, tree, 90)
+                else NovelImporter.importDirectory(context, tree, 90)
+            }.exceptionOrNull()
+            assertNotNull(error)
+            assertEquals(2, provider.childQueries)
+        }
+    }
+
+    @Test fun hundredMangaChapterFoldersAreEnumeratedOnceAndKeepNaturalOrder() = runBlocking {
+        val documents = listOf(Document("root", "Manga", DocumentsContract.Document.MIME_TYPE_DIR, null)) +
+            (0 until 100).flatMap { i -> listOf(
+                Document("chapter-$i", "ch-$i", DocumentsContract.Document.MIME_TYPE_DIR, "root"),
+                Document("page-$i", "page.png", "image/png", "chapter-$i"),
+            ) }
+        val provider = TreeProvider(documents)
+        ShadowContentResolver.registerProviderInternal("hundred-chapters", provider)
+        val tree = DocumentsContract.buildTreeDocumentUri("hundred-chapters", "root")
+        val png = LibraryScanFixtures.png()
+        repeat(100) { i -> Shadows.shadowOf(context.contentResolver).registerInputStream(
+            DocumentsContract.buildDocumentUriUsingTree(tree, "page-$i"), png.inputStream()) }
+        val manga = com.moe.starflow.mangaimport.data.MangaImporter.importDirectory(context, tree, 91)
+        assertEquals(101, provider.childQueries)
+        assertEquals(100, manga.pageCount)
+        assertEquals((0 until 100).map { "ch-$it" }, manga.chapters.map { it.title })
     }
 }

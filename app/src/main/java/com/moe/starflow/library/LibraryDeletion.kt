@@ -6,7 +6,6 @@ import com.moe.starflow.novel.translate.NovelTranslationHub
 import com.moe.starflow.sr.SrProcessor
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONObject
 import org.json.JSONArray
@@ -19,7 +18,6 @@ data class LibraryDeleteState(val location: String = "", val kind: String = "",
 /** Deleting remains a durable catalog state until every destructive step succeeds. */
 object LibraryDeletion {
     val state = MutableStateFlow(LibraryDeleteState())
-    private val lock = Mutex()
     private var consumed = ""
 
     fun isDeleting(location: String, kind: String, uuid: String): Boolean = state.value.let {
@@ -37,7 +35,7 @@ object LibraryDeletion {
         val pinned = LibrarySessions.pin(context)
         val session = LibrarySessions.current(pinned)
         LibrarySessions.launch(pinned) {
-            lock.withLock {
+            LibraryWork.sourceMutations.withLock {
                 val run = UUID.randomUUID().toString()
                 state.value = LibraryDeleteState(session.locationId, kind, true, runId = run)
                 val failures = mutableListOf<String>()
@@ -189,6 +187,15 @@ object LibraryDeletion {
         }
         if (overlap != null) return overlap
         val sourceUri = session.storage.uri(path)
+        val files = session.storage as? FileLibraryStorage
+        if (files != null) {
+            // File URIs are determined by their path. Reject different locators before doing
+            // filesystem IO: probing every peer for every validation makes a batch quadratic.
+            return others.firstOrNull {
+                android.net.Uri.fromFile(java.io.File(files.root, safeLibraryPath(it.source))) == sourceUri &&
+                    files.exists(it.source)
+            }
+        }
         return others.firstOrNull { session.storage.exists(it.source) && session.storage.uri(it.source) == sourceUri }
     }
 }

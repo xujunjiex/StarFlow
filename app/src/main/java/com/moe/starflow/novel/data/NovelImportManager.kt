@@ -20,7 +20,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withPermit
+import com.moe.starflow.library.LibraryWork
+import com.moe.starflow.library.LibraryImportWriteException
 import java.io.File
 import java.util.zip.ZipException
 import kotlin.coroutines.coroutineContext
@@ -77,35 +81,38 @@ object NovelImportManager {
     fun importDirectory(context: Context, treeUri: Uri) {
         val app = com.moe.starflow.library.LibrarySessions.pin(context)
         com.moe.starflow.library.LibrarySessions.launch(app, scope) {
-            try { com.moe.starflow.library.LibrarySessions.prepareImport(app, "novel") }
-            catch (e: CancellationException) { throw e }
-            catch (e: Exception) { emit(NovelImportEvent.Failed("书库存储", if (e is com.moe.starflow.library.LibraryImportWriteException)
-                NovelImportFailureReason.DESTINATION_WRITE_FAILED else NovelImportFailureReason.UNKNOWN, failureDetail(e))); return@launch }
-            val id = reserveId(app)
+            val id = reserveTaskId(app) ?: return@launch
             // 占位标题只用 URI 本地回退；真实名称在 NovelImporter 中查询一次并记录诊断。
             val title = SafDocumentMetadata.fallbackName(treeUri) ?: "folder_$id"
-            registerTask(id, title, ImportPhase.SCANNING, coroutineContext[Job])
+            registerTask(id, title, ImportPhase.QUEUED, coroutineContext[Job])
+            var bookId: Long? = null
             try {
-                com.moe.starflow.library.LibrarySessions.prepare(app)
-                com.moe.starflow.library.LibrarySessions.current(app).beginImport("novel", id)
-                val novel = NovelImporter.importDirectory(app, treeUri, id) { p -> updateProgress(id, p) }
-                ensureActive()
-                NovelStore.add(app, novel)
-                val savedSession = com.moe.starflow.library.LibrarySessions.current(app)
-                savedSession.flush()
-                savedSession.database.catalog().book("novel", id)?.let { savedSession.releaseBookCopies(it.uuid, it.source) }
-                LogCollector.i(TAG, "文件夹导入完成: ${novel.title} (${novel.chapterCount} 章)")
-                if (novel.chapterCount == 0) emit(NovelImportEvent.NoChapters(novel.title))
+                LibraryWork.imports.withPermit {
+                    com.moe.starflow.library.LibrarySessions.prepareImport(app, "novel")
+                    val targetId = reservePreparedId(app, id)
+                    bookId = targetId
+                    updateProgress(id, ImportProgress(ImportPhase.SCANNING))
+                    com.moe.starflow.library.LibrarySessions.current(app).beginImport("novel", targetId)
+                    val novel = NovelImporter.importDirectory(app, treeUri, targetId) { p -> updateProgress(id, p) }
+                    ensureActive()
+                    NovelStore.add(app, novel)
+                    val savedSession = com.moe.starflow.library.LibrarySessions.current(app)
+                    savedSession.flush()
+                    savedSession.database.catalog().book("novel", targetId)?.let { savedSession.releaseBookCopies(it.uuid, it.source) }
+                    LogCollector.i(TAG, "文件夹导入完成: ${novel.title} (${novel.chapterCount} 章)")
+                    if (novel.chapterCount == 0) emit(NovelImportEvent.NoChapters(novel.title))
+                }
             } catch (e: CancellationException) {
-                cleanup(app, id)
+                bookId?.let { cleanup(app, it) }
                 throw e
             } catch (e: Exception) {
-                cleanup(app, id)
+                bookId?.let { cleanup(app, it) }
                 LogCollector.e(TAG, "文件夹导入失败: $treeUri", e)
-                emit(NovelImportEvent.Failed(title, classify(e), failureDetail(e)))
+                emit(NovelImportEvent.Failed(title, if (e is LibraryImportWriteException) NovelImportFailureReason.DESTINATION_WRITE_FAILED else classify(e), failureDetail(e)))
             } finally {
                 unregisterTask(id)
                 releaseId(id)
+                bookId?.takeIf { it != id }?.let(::releaseId)
             }
         }
     }
@@ -124,48 +131,49 @@ object NovelImportManager {
     /** 取走并清空待弹窗事件（没被取走的事件会留着等下次）。 */
     @Synchronized
     fun drainEvents(): List<NovelImportEvent> {
-        val pending = _events.value
-        if (pending.isNotEmpty()) _events.value = emptyList()
-        return pending
+        return _events.getAndUpdate { emptyList() }
     }
 
     // ===== 内部 =====
 
     private fun launchFileTask(app: Context, uri: Uri) {
         com.moe.starflow.library.LibrarySessions.launch(app, scope) {
-            try { com.moe.starflow.library.LibrarySessions.prepareImport(app, "novel") }
-            catch (e: CancellationException) { throw e }
-            catch (e: Exception) { emit(NovelImportEvent.Failed("书库存储", if (e is com.moe.starflow.library.LibraryImportWriteException)
-                NovelImportFailureReason.DESTINATION_WRITE_FAILED else NovelImportFailureReason.UNKNOWN, failureDetail(e))); return@launch }
-            val id = reserveId(app)
+            val id = reserveTaskId(app) ?: return@launch
             // 占位标题使用 URI 本地回退，避免重复触发一次会被吞掉的 provider 元数据查询。
             val name = SafDocumentMetadata.fallbackName(uri).orEmpty()
             val title = name.substringBeforeLast('.', name).ifBlank { "book_$id" }
-            registerTask(id, title, ImportPhase.COPYING, coroutineContext[Job])
+            registerTask(id, title, ImportPhase.QUEUED, coroutineContext[Job])
+            var bookId: Long? = null
             try {
-                com.moe.starflow.library.LibrarySessions.prepare(app)
-                com.moe.starflow.library.LibrarySessions.current(app).beginImport("novel", id)
-                val novel = NovelImporter.importFile(app, uri, id) { p -> updateProgress(id, p) }
-                ensureActive()
-                NovelStore.add(app, novel)
-                val savedSession = com.moe.starflow.library.LibrarySessions.current(app)
-                savedSession.flush()
-                savedSession.database.catalog().book("novel", id)?.let { savedSession.releaseBookCopies(it.uuid, it.source) }
-                LogCollector.i(TAG, "导入完成: ${novel.title} (${novel.chapterCount} 章)")
-                if (novel.chapterCount == 0) emit(NovelImportEvent.NoChapters(novel.title))
+                LibraryWork.imports.withPermit {
+                    com.moe.starflow.library.LibrarySessions.prepareImport(app, "novel")
+                    val targetId = reservePreparedId(app, id)
+                    bookId = targetId
+                    updateProgress(id, ImportProgress(ImportPhase.COPYING))
+                    com.moe.starflow.library.LibrarySessions.current(app).beginImport("novel", targetId)
+                    val novel = NovelImporter.importFile(app, uri, targetId) { p -> updateProgress(id, p) }
+                    ensureActive()
+                    NovelStore.add(app, novel)
+                    val savedSession = com.moe.starflow.library.LibrarySessions.current(app)
+                    savedSession.flush()
+                    savedSession.database.catalog().book("novel", targetId)?.let { savedSession.releaseBookCopies(it.uuid, it.source) }
+                    LogCollector.i(TAG, "导入完成: ${novel.title} (${novel.chapterCount} 章)")
+                    if (novel.chapterCount == 0) emit(NovelImportEvent.NoChapters(novel.title))
+                }
             } catch (e: CancellationException) {
-                cleanup(app, id)
+                bookId?.let { cleanup(app, it) }
                 throw e
             } catch (e: NovelWrongFormatException) {
-                cleanup(app, id)
+                bookId?.let { cleanup(app, it) }
                 emit(NovelImportEvent.WrongFormat(title, e.isManga))
             } catch (e: Exception) {
-                cleanup(app, id)
+                bookId?.let { cleanup(app, it) }
                 LogCollector.e(TAG, "导入失败: $uri", e)
-                emit(NovelImportEvent.Failed(title, classify(e), failureDetail(e)))
+                emit(NovelImportEvent.Failed(title, if (e is LibraryImportWriteException) NovelImportFailureReason.DESTINATION_WRITE_FAILED else classify(e), failureDetail(e)))
             } finally {
                 unregisterTask(id)
                 releaseId(id)
+                bookId?.takeIf { it != id }?.let(::releaseId)
             }
         }
     }
@@ -207,13 +215,29 @@ object NovelImportManager {
         return id
     }
 
+    private fun reserveTaskId(context: Context): Long? = try { reserveId(context) }
+    catch (e: CancellationException) { throw e }
+    catch (e: Exception) {
+        LogCollector.e(TAG, "无法为导入任务分配书目编号", e)
+        emit(NovelImportEvent.Failed("书库存储", NovelImportFailureReason.UNKNOWN, failureDetail(e)))
+        null
+    }
+
+    /** Queue/cancel identity stays stable even if migration claimed its proposed book id. */
+    @Synchronized
+    private fun reservePreparedId(context: Context, taskId: Long): Long {
+        val catalog = com.moe.starflow.library.LibrarySessions.current(context).database.catalog()
+        return if (catalog.book("novel", taskId) == null && catalog.meta("uuid:novel:$taskId") == null) taskId
+        else reserveId(context)
+    }
+
     @Synchronized
     internal fun reserveScanId(context: Context, preferredId: Long?): Long? {
         if (preferredId != null && preferredId in reservedIds) return null
-        val storedIds = NovelStore.load(context).mapTo(mutableSetOf()) { it.id }
-        val id = preferredId?.takeIf { it > 0 && it !in storedIds && it !in reservedIds } ?: run {
+        val catalog = com.moe.starflow.library.LibrarySessions.current(context).database.catalog()
+        val id = preferredId?.takeIf { it > 0 && it !in reservedIds && catalog.book("novel", it) == null } ?: run {
             var candidate = NovelImporter.nextId(context)
-            while (candidate in reservedIds || candidate in storedIds) candidate++
+            while (candidate in reservedIds) candidate++
             candidate
         }
         reservedIds += id
@@ -272,8 +296,12 @@ object NovelImportManager {
     /** 删掉本次导入的半成品目录与封面（取消/失败时；成功路径不会调）。 */
     private fun cleanup(context: Context, id: Long) {
         if (com.moe.starflow.library.LibrarySessions.current(context).database.catalog().book("novel", id) != null) return
-        NovelImporter.deleteBookFiles(context, id)
-        if (!NovelStorageDir.bookDir(context, id).exists()) com.moe.starflow.library.LibrarySessions.current(context).abandonImport("novel", id)
+        try {
+            NovelImporter.deleteBookFiles(context, id)
+            if (!NovelStorageDir.bookDir(context, id).exists()) com.moe.starflow.library.LibrarySessions.current(context).abandonImport("novel", id)
+        } catch (e: Exception) {
+            LogCollector.w(TAG, "清理小说导入半成品失败 id=$id", e)
+        }
     }
 
     /**

@@ -104,4 +104,47 @@ class NovelChapterPreparationTest {
             scope.cancel()
         }
     }
+
+    @Test
+    fun cancellingMiddleChapterKeepsLaterPreparationBehindFirstChapter() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val calls = java.util.concurrent.CopyOnWriteArrayList<Int>()
+        val host = host(scope) { chapter ->
+            calls += chapter
+            if (chapter == 0) { started.complete(Unit); release.await() }
+            emptyList()
+        }
+        try {
+            host.startChapter(0, "One", retranslateAll = true)
+            withTimeout(4_000) { started.await() }
+            host.startChapter(1, "Two", retranslateAll = true)
+            host.startChapter(2, "Three", retranslateAll = true)
+            host.cancel(1)
+            assertNull(withTimeoutOrNull(300) { while (2 !in calls) delay(10); true })
+            assertEquals(listOf(0), calls.toList())
+            release.complete(Unit)
+            awaitCondition { !host.isRunning() }
+            assertEquals(listOf(0, 2), calls.toList())
+        } finally {
+            release.complete(Unit)
+            host.shutdownAndJoin()
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun shutdownReleasesCollectorsWithoutCancellingTheApplicationScope() = runBlocking {
+        val applicationJob = SupervisorJob()
+        val scope = CoroutineScope(applicationJob + Dispatchers.Default)
+        val host = host(scope) { emptyList() }
+        try {
+            val collectors = applicationJob.children.toList()
+            assertTrue(collectors.isNotEmpty())
+            host.shutdownAndJoin()
+            assertTrue(collectors.all { it.isCompleted })
+            assertTrue(applicationJob.isActive)
+        } finally { scope.cancel() }
+    }
 }

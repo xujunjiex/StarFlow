@@ -272,6 +272,7 @@ class MangaGridAdapter(
     /** 占位的进度文案：优先百分比，其次阶段名。 */
     private fun importStatusText(ctx: Context, item: ImportedManga): String =
         when (item.importPhase) {
+            ImportPhase.QUEUED -> ctx.getString(R.string.import_task_queued)
             ImportPhase.SCANNING -> ctx.getString(R.string.import_task_scanning)
             ImportPhase.COPYING, null -> if (item.importPercent in 0..100) {
                 ctx.getString(R.string.import_task_copying_percent, item.importPercent)

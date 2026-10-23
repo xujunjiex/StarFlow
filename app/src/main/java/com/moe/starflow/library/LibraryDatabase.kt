@@ -17,6 +17,7 @@ data class LibraryMeta(@PrimaryKey val name: String, val value: String)
 @Dao
 interface LibraryCatalogDao {
     @Query("SELECT * FROM library_book WHERE kind = :kind ORDER BY id") fun books(kind: String): List<LibraryBook>
+    @Query("SELECT COALESCE(MAX(id), 0) FROM library_book WHERE kind = :kind") fun maxId(kind: String): Long
     @Query("SELECT * FROM library_book WHERE kind = :kind AND id = :id") fun book(kind: String, id: Long): LibraryBook?
     @Query("SELECT * FROM library_book WHERE uuid = :uuid LIMIT 1") fun byUuid(uuid: String): LibraryBook?
     @Insert(onConflict = OnConflictStrategy.REPLACE) fun put(book: LibraryBook)
@@ -27,6 +28,8 @@ interface LibraryCatalogDao {
     @Insert fun enqueue(write: LibraryWrite): Long
     @Query("DELETE FROM library_outbox WHERE sequence = :sequence") fun acknowledge(sequence: Long)
     @Query("SELECT value FROM library_meta WHERE name = :name") fun meta(name: String): String?
+    @Query("SELECT EXISTS(SELECT 1 FROM library_meta WHERE name LIKE 'importing:' || :kind || ':%' AND value = :source)")
+    fun hasImportSource(kind: String, source: String): Boolean
     @Insert(onConflict = OnConflictStrategy.REPLACE) fun meta(value: LibraryMeta)
     @Query("SELECT * FROM library_meta") fun allMeta(): List<LibraryMeta>
     @Query("DELETE FROM library_book") fun clearBooks()

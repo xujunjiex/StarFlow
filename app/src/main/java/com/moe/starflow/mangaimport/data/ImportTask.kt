@@ -26,7 +26,7 @@ data class ImportProgress(
 }
 
 /** 导入阶段：先枚举/数文件（扫描），再逐个复制。 */
-enum class ImportPhase { SCANNING, COPYING }
+enum class ImportPhase { QUEUED, SCANNING, COPYING }
 
 /**
  * 导入内容的类型：属于哪个书架。
@@ -42,6 +42,7 @@ enum class ImportFormat { MANGA, NOVEL }
  * 由书架上方状态栏显示进度；任务不加入书目列表。
  */
 data class ImportTask(
+    /** 稳定的进度与取消编号；书库恢复后，正式书目编号可能另行分配。 */
     val id: Long,
     val title: String,
     val isArchive: Boolean,

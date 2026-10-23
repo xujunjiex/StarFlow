@@ -6,7 +6,6 @@ import com.moe.starflow.novel.data.*
 import com.moe.starflow.novel.model.NovelFormat
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.zip.ZipFile
 import kotlin.coroutines.coroutineContext
@@ -16,7 +15,6 @@ data class LibraryScanState(val location: String = "", val kind: String = "", va
     val runId: String = java.util.UUID.randomUUID().toString(), val needsRecovery: Boolean = false)
 
 object LibraryScanner {
-    private val mutex = Mutex()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     val state = MutableStateFlow(LibraryScanState())
     private val reports = ArrayDeque<LibraryScanState>()
@@ -49,7 +47,7 @@ object LibraryScanner {
             scan(pinned, kind)
         }.invokeOnCompletion { synchronized(this) { requests.remove(key) } }
     }
-    suspend fun scan(context: Context, kind: String): LibraryScanState = mutex.withLock {
+    suspend fun scan(context: Context, kind: String): LibraryScanState = LibraryWork.sourceMutations.withLock {
         withContext(Dispatchers.IO) {
             val pinned = LibrarySessions.pin(context)
             val session = LibrarySessions.current(pinned)
@@ -106,7 +104,7 @@ object LibraryScanner {
                     var stage = "读取来源"
                     var emptyDirectory = false
                     try {
-                        if (node.directory) source.mkdirs()
+                        if (node.directory && session.storage !is FileLibraryStorage) source.mkdirs()
                         localLease = LibrarySources.acquire(source)
                         if (!node.directory) LibrarySources.file(source)
                         val hintedUuid = source.name.takeIf { LibraryCodec.UUID_PATTERN.matches(it) }
@@ -151,6 +149,10 @@ object LibraryScanner {
                             failures += "${session.storage.displayPath}/${node.path}：[$stage] ${e.javaClass.simpleName}：${e.message}"
                     } finally {
                         localLease?.close()
+                        try { session.discardUncommittedArtifacts(kind, id) }
+                        catch (e: Exception) {
+                            failures += "${node.path}：[清理未提交产物] ${e.message}"
+                        }
                         if (kind == "manga") ImportManager.releaseScanIds(listOf(id)) else NovelImportManager.releaseScanIds(listOf(id))
                         state.value = state.value.copy(done = repairs.size + index + 1, added = added, failures = failures.toList())
                     }
@@ -243,9 +245,10 @@ object LibraryScanner {
             }
             return false
         }
-        val active = if (kind == "manga") ImportManager.activeIdsForScanner() else NovelImportManager.activeIdsForScanner()
-        val importing = active.map { "$root/${session.uuid(kind, it)}" }.toSet() +
-            session.database.catalog().allMeta().filter { it.name.startsWith("importing:$kind:") && it.value.isNotEmpty() }.map { it.value }
+        // beginImport persists this path before creating the copy. Queued numeric ids own no
+        // source yet; assigning them UUIDs here would bypass the import write-access preflight.
+        val importing = session.database.catalog().allMeta()
+            .filter { it.name.startsWith("importing:$kind:") && it.value.isNotEmpty() }.mapTo(hashSetOf()) { it.value }
         fun supported(node: LibraryNode): Boolean {
             if (node.directory) return true
             val ext = node.path.substringAfterLast('.').lowercase()

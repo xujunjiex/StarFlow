@@ -329,11 +329,37 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
     }
 
     internal fun beginImport(kind: String, id: Long) {
+        check(catalog.book(kind, id) == null) { "导入编号已被现有作品占用，已停止写入来源" }
         val uuid = uuid(kind, id)
         catalog.meta(LibraryMeta("importing:$kind:$id", "${kind}_import/$uuid"))
     }
     internal fun abandonImport(kind: String, id: Long) {
+        discardUncommittedArtifacts(kind, id)
         catalog.meta(LibraryMeta("importing:$kind:$id", ""))
+    }
+    internal fun discardUncommittedArtifacts(kind: String, id: Long) = synchronized(ioLock) {
+        require(kind == "manga" || kind == "novel")
+        if (catalog.book(kind, id) != null) return@synchronized
+        val uuid = catalog.meta("uuid:$kind:$id") ?: return@synchronized
+        if (!LibraryCodec.UUID_PATTERN.matches(uuid) || catalog.byUuid(uuid) != null)
+            throw IOException("未提交作品的 UUID 归属异常，已保留导入清理意图")
+        if (catalog.pending().any { it.body.contains(uuid) })
+            throw IOException("作品仍有待保存文件，已保留导入清理意图")
+        val path = ".starflow/books/$uuid"
+        // A scanner may adopt a UUID from an existing source identity. Its historical
+        // artifacts predate this inspection and cannot be discarded when recognition fails.
+        if (storage.exists("$path/source.json")) return@synchronized
+        storage.delete(path)
+        if (storage !is FileLibraryStorage) {
+            val staged = local(path)
+            if (staged.exists() && !staged.deleteRecursively()) throw IOException("导入产物暂存清理失败")
+        }
+        val retained = recordArchive(path)
+        if (retained.exists() && !retained.deleteRecursively()) throw IOException("导入来源索引归档清理失败")
+        val prefix = if (kind == "manga") "${id}_" else "novel_${id}_"
+        local(".starflow/staging/covers").listFiles()?.filter { it.isFile && it.name.startsWith(prefix) }?.forEach {
+            if (!it.delete()) throw IOException("导入封面暂存清理失败")
+        }
     }
     private fun recoverInterruptedImports() {
         catalog.allMeta().filter { it.name.startsWith("importing:") && it.value.isNotEmpty() }.forEach { item ->
@@ -415,9 +441,17 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
     }
     fun nextId(kind: String): Long = synchronized(this) {
         val next = maxOf(catalog.meta("next:$kind")?.toLongOrNull() ?: 0,
-            catalog.books(kind).maxOfOrNull { it.id } ?: 0) + 1
+            catalog.maxId(kind)) + 1
         catalog.meta(LibraryMeta("next:$kind", next.toString()))
         next
+    }
+    internal fun nextAddedAt(kind: String): Long = synchronized(this) {
+        require(kind == "manga" || kind == "novel")
+        val name = "addedAt:$kind"
+        // Seed once from existing rows; subsequent allocations also include in-flight imports.
+        val previous = catalog.meta(name)?.toLongOrNull()
+            ?: (catalog.books(kind).maxOfOrNull { JSONObject(it.body).optLong("addedAt") } ?: 0L)
+        maxOf(System.currentTimeMillis(), previous + 1).also { catalog.meta(LibraryMeta(name, it.toString())) }
     }
     fun assertWritable(key: String) {
         check(!readOnly) { "书库记录不可写：${saveState.value.error}" }

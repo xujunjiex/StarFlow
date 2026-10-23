@@ -134,12 +134,14 @@
 - 来源扫描限于当前 `manga_import/`；进入、恢复、切回漫画页签、切换书库与下拉均重新扫描，也可手动启动。扫描先枚举，再逐本提交；失效来源保留占位，按相对路径复用身份，已收录作品不重新解码封面或解析页序。
 - **外部目录权限诊断**：`File.listFiles() == null` 时记录 `canRead()`、应用 UID、目录 UID/GID 与权限模式。`getExternalFilesDir()` 无需存储权限；若 MTP/ADB 创建的子目录归 `shell` 所有且没有应用遍历权限，应用无法读取其子项，不能把它误报成 SAF 授权失败。
 - 手动漫画扫描排除包含 `META-INF/container.xml` 的 EPUB 小说包，即使扩展名被改为 ZIP。扫描结果通过 `ImportedMangaStore.mergeScanned()` 在存储锁内合并，只新增 id 和规范路径均未收录的条目，保留并发导入及最新书架编辑。
-- ⚠️ **并发导入了 → 清单写入必须同步**：`importArchives` 每个 uri 一个并发任务，而 `ImportedMangaStore.add/remove/update` 是 `load→改→save` 三步。**全部方法已 `@Synchronized`**；去掉同步 = 两个任务同毫秒收尾互相覆盖 → **整条导入静默消失**（占位卡片没了、书架也没条目）。守卫：`ImportedMangaStoreConcurrencyTest`（8 线程 × 20 次 add，必须有 160 条）。
+- 文件与目录导入和小说共用两个执行槽位，覆盖复制、封面解析与提交；排队任务可取消，不创建来源副本。`ImportedMangaStore` 的修改仍在同一同步锁内，避免并发提交覆盖书目。
+- ZIP、RAR/7z、图片文件及自选封面共用 `library/ImportCoverDecoder` 先读尺寸再采样解码；目录扫描也按封面尺寸读取首图，PDF 首图使用采样渲染。原图和缩略图在成功与异常路径均释放。
 - ⚠️ **`ImportManager` 的 scope 挂了 `CoroutineExceptionHandler`**：`launch` 里未捕获异常会走线程默认处理器 = **整个应用崩**；SAF 查询异常由 `SafDocumentMetadata` 记录并降级，不应被误报成内容流读取失败。
 - 运行时处理身份使用目录身份、漫画类型和 UUID；`addedAt` 只保留导入时间，不能作为新书库的处理键。
 - 删除翻译记录使用 `(mangaId, mangaKey)`，并由书库删除意图阻止迟到写入；全部删除完成后才移除条目。
-- 取消或复制失败清理本次 UUID 来源及暂存封面；已入库但写回失败的副本保留供重试。
+- 取消或失败清理本次 UUID 来源、未提交索引、私有索引归档和暂存封面；扫描失败只清理新生成的未提交产物，已有发布身份的 UUID 保留。已入库但写回失败的副本保留供重试。
 - ⚠️ **SAF 扫描阶段也要可取消**（`collectImageDocs` 是 `suspend` + 每层 `ensureActive()`）：`SafDocumentTreeReader` 每层发一次 DocumentsProvider 子项查询，万级条目扫描几十秒，不检查取消 = 点了 ✕ 像没反应。不要改回逐 child 访问 `DocumentFile.name/isDirectory`，那会增加每项 IPC 并把 provider 元数据错误吞成空结果。
+- 漫画目录枚举使用显式栈保持深度优先顺序，每个 document ID 仅访问一次；循环或重复目录报错，不无限递归。仅 UUID 名称需要检查对应导入意图，使用定向查询，不逐目录加载全部书库元数据。
 - ⚠️ **导入结果弹窗要能扛住旋转**：MainActivity 没有 `configChanges`，Fragment 会重建，而事件已被 `drainEvents()` 取走 → 队列进 `onSaveInstanceState`，且 `onDestroyView` 把「正在展示的那条」放回队首（否则「空文件夹 / 导入失败」提示**永久丢失**）。
 - ⚠️ **取消竞态文案**：`ImportManager.cancel()` 返回 false（任务恰好跑完）时提示「已经导入完成了」，不能报「已取消」。
 - 入口只有两个：**导入文件（zip/cbz，可多选）** 与 **导入文件夹（整个夹 = 一部）**。第三个「导入多个漫画文件夹」是假的（同一个 `OpenDocumentTree`，SAF 不给多选目录），已删；文件夹模式**不认夹里的压缩包**，子目录递归且按「先目录名、再夹内页名」自然排序。

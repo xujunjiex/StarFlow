@@ -54,10 +54,8 @@ object MangaImporter {
     fun nextId(context: Context): Long = com.moe.starflow.library.LibrarySessions.current(context).nextId("manga")
 
     /** Import timestamp; processing identity uses the library UUID reference. */
-    private fun freshAddedAt(context: Context): Long {
-        val maxExisting = ImportedMangaStore.load(context).maxOfOrNull { it.addedAt } ?: 0L
-        return maxOf(System.currentTimeMillis(), maxExisting + 1L)
-    }
+    private fun freshAddedAt(context: Context): Long =
+        com.moe.starflow.library.LibrarySessions.current(context).nextAddedAt("manga")
 
     private fun coverDir(context: Context): File =
         StorageDirStore.coversDir(context)
@@ -101,7 +99,8 @@ object MangaImporter {
         val session = com.moe.starflow.library.LibrarySessions.current(context)
         val indexPath = index.store(session, session.uuid("manga", id))
         val cover = coverPathOverride ?: com.moe.starflow.mangaimport.reader.ReaderPageSource(false, dir.path, sourceIndex = index).let { source ->
-            try { source.loadFull(0)?.let { bitmap ->
+            try { (if (index.pages.firstOrNull()?.kind == "PDF") source.loadWebtoon(0, COVER_WIDTH)
+                else decodeCover { source.openEntry(0) })?.let { bitmap ->
                 try { val coverFile = File(coverDir(context), "${id}_${System.nanoTime()}.jpg")
                     coverFile.parentFile!!.mkdirs()
                     val thumb = android.graphics.Bitmap.createScaledBitmap(bitmap, COVER_WIDTH.coerceAtMost(bitmap.width),
@@ -127,8 +126,8 @@ object MangaImporter {
         LibraryArchiveReader.acquire(source).use { lease ->
             val reader = lease.reader
             val split = MangaChapterSplitter.split(reader.entries.filter(ArchivedMangaReader::isImageFile))
-            val cover = coverPathOverride ?: split.keys.firstOrNull()?.let {
-                reader.openEntry(it).use { input -> android.graphics.BitmapFactory.decodeStream(input) }
+            val cover = coverPathOverride ?: split.keys.firstOrNull()?.let { entry ->
+                decodeCover { reader.openEntry(entry) }
             }?.let { bitmap -> try { extractThumbnail(context, bitmap, id) } finally { bitmap.recycle() } }
             val metadata = reader.entries.filter(ComicMetadataParser::isMetadataEntry).mapNotNull { name ->
                 runCatching { reader.openEntry(name, ComicMetadataParser.MAX_METADATA_BYTES.toLong()).use {
@@ -480,12 +479,12 @@ object MangaImporter {
     // ===== 复制工具 =====
 
     /**
-     * 递归枚举 SAF 子项查询结果里的图片，收集**相对路径**（ch1/001.jpg）。
+     * 按深度优先枚举 SAF 子项，收集**相对路径**（ch1/001.jpg）；显式栈避免深目录撑爆调用栈。
      *
      * ⚠️ 收的是相对路径而不是文件名：分章节目录里 ch1/001.jpg 与 ch2/001.jpg 同名，只记 basename
      * 会让 File(destDir, it) 指不到文件 → 封面永远是灰底占位，排序也会把两章的同名页混在一起。
      *
-     * ⚠️ 递归里每层 `ensureActive()`：DocumentsProvider 子项查询是逐层 IPC，大文件夹（上万条目）
+     * ⚠️ 每层和每项检查取消：DocumentsProvider 子项查询是逐层 IPC，大文件夹（上万条目）
      * 的扫描本身就要几十秒 —— 不检查取消的话用户点了 ✕ 仍要等扫描跑完，看起来像"取消没反应"。
      */
     private suspend fun collectImageDocs(
@@ -497,9 +496,20 @@ object MangaImporter {
         metadata: MutableList<Pair<Uri, String>>,
     ) {
         try {
-            val children = SafDocumentTreeReader.listChildren(context, treeUri, documentId, TAG)
-            children.forEachIndexed { index, child ->
+            data class Frame(val prefix: String, val children: Iterator<IndexedValue<SafDocumentTreeReader.Child>>)
+            val seen = hashSetOf<String>()
+            fun frame(id: String, relative: String): Frame {
+                if (!seen.add(id)) throw IOException("提供器目录循环或重复，无法完整导入：$relative")
+                return Frame(relative, SafDocumentTreeReader.listChildren(context, treeUri, id, TAG).withIndex().iterator())
+            }
+            val stack = ArrayDeque<Frame>()
+            stack.addLast(frame(documentId, prefix))
+            val catalog = com.moe.starflow.library.LibrarySessions.current(context).database.catalog()
+            while (stack.isNotEmpty()) {
                 coroutineContext.ensureActive()
+                val current = stack.last()
+                if (!current.children.hasNext()) { stack.removeLast(); continue }
+                val (index, child) = current.children.next()
                 val providerName = child.displayName ?: throw IOException("提供器未返回来源名称：${child.uri}")
                 val imageExtension = imageExtension(child.mimeType)
                 val isImage = ArchivedMangaReader.isImageFile(providerName) ||
@@ -507,19 +517,19 @@ object MangaImporter {
                 val isDirectory = child.isDirectory ||
                     (child.mimeType == null && !isImage && providerName.substringAfterLast('.', "").isEmpty())
                 if (isDirectory) {
-                    if (com.moe.starflow.library.LibrarySessions.current(context).database.catalog().allMeta()
-                        .any { it.name.startsWith("importing:manga:") && it.value.substringAfterLast('/') == providerName })
+                    if (com.moe.starflow.library.LibraryCodec.UUID_PATTERN.matches(providerName) &&
+                        catalog.hasImportSource("manga", "manga_import/$providerName"))
                         throw IOException("导入来源包含本次目标目录，已停止递归复制：$providerName")
                     val dirName = safeSegment(providerName) ?: "folder_${index + 1}"
-                    collectImageDocs(context, treeUri, child.documentId, "$prefix$dirName/", out, metadata)
+                    stack.addLast(frame(child.documentId, "${current.prefix}$dirName/"))
                 } else if (isImage || MangaSourceIndex.supported(providerName)) {
                     val suggestedName = if (ArchivedMangaReader.isImageFile(providerName) || MangaSourceIndex.supported(providerName)) providerName
                     else "image_${(index + 1).toString().padStart(5, '0')}.$imageExtension"
-                    val name = safeSegment(suggestedName) ?: return@forEachIndexed
-                    out.add(child.uri to "$prefix$name")
+                    val name = safeSegment(suggestedName) ?: continue
+                    out.add(child.uri to "${current.prefix}$name")
                 } else if (ComicMetadataParser.isMetadataEntry(providerName)) {
-                    val name = safeSegment(providerName) ?: return@forEachIndexed
-                    metadata.add(child.uri to "$prefix$name")
+                    val name = safeSegment(providerName) ?: continue
+                    metadata.add(child.uri to "${current.prefix}$name")
                 }
             }
         } catch (e: CancellationException) {
@@ -810,25 +820,26 @@ object MangaImporter {
         val first = pages.firstOrNull() ?: return null
         return ZipFile(archive).use { zip ->
             val entry = zip.getEntry(first) ?: return null
-            zip.getInputStream(entry).use { input ->
-                val bmp = BitmapFactory.decodeStream(input) ?: return null
-                extractThumbnail(context, bmp, id)
-            }
+            val bmp = decodeCover { zip.getInputStream(entry) } ?: return null
+            try { extractThumbnail(context, bmp, id) } finally { bmp.recycle() }
         }
     }
 
     /** 目录封面：从本地图片文件解码后落盘缩略图。 */
     private fun extractThumbnailFromFile(context: Context, src: File, id: Long): String? {
-        val bmp = BitmapFactory.decodeFile(src.absolutePath) ?: return null
-        return extractThumbnail(context, bmp, id)
+        val bmp = decodeCover { src.inputStream() } ?: return null
+        return try { extractThumbnail(context, bmp, id) } finally { bmp.recycle() }
     }
 
     /** 用外部图片（用户自选）替换某部漫画封面，返回新封面绝对路径（同一 id 旧封面被清理）。 */
     fun replaceCover(context: Context, mangaId: Long, imageUri: Uri): String? {
-        val bmp = context.contentResolver.openInputStream(imageUri)?.use { BitmapFactory.decodeStream(it) }
-            ?: return null
-        return extractThumbnail(context, bmp, mangaId)
+        val bmp = decodeCover { context.contentResolver.openInputStream(imageUri) } ?: return null
+        return try { extractThumbnail(context, bmp, mangaId) } finally { bmp.recycle() }
     }
+
+    /** Two bounded reads avoid allocating a full-resolution page just to write a 300px cover. */
+    private fun decodeCover(open: () -> InputStream?): Bitmap? =
+        com.moe.starflow.library.ImportCoverDecoder.decode(COVER_WIDTH * 2, open)
 
     private fun extractThumbnail(context: Context, bmp: Bitmap, id: Long): String? {
         val dir = coverDir(context).apply { mkdirs() }
@@ -844,7 +855,7 @@ object MangaImporter {
             BitmapFactory.decodeFile(out.path, bounds)
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw IOException("封面写入不完整：${out.path}")
         } catch (e: Exception) { out.delete(); throw e }
-        if (scaled !== bmp) scaled.recycle()
+        finally { if (scaled !== bmp) scaled.recycle() }
         return out.absolutePath
     }
 }

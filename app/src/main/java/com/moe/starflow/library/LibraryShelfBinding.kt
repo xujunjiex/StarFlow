@@ -90,7 +90,7 @@ object LibraryShelfBinding {
                     val scanning = scan.running && scan.kind == kind && scan.location == location
                     val deleting = current.deletion.running && current.deletion.kind == kind && current.deletion.location == location
                     val tasks = current.imports
-                    val task = tasks.firstOrNull()
+                    val task = tasks.firstOrNull { it.progress.phase != ImportPhase.QUEUED } ?: tasks.firstOrNull()
                     val importScanning = task?.progress?.phase == ImportPhase.SCANNING
                     val message = when {
                         saved.error != null -> fragment.getString(R.string.library_unsaved) + "：" + saved.error
@@ -143,6 +143,7 @@ object LibraryShelfBinding {
 
     private fun taskLabel(fragment: Fragment, task: ImportTask): String {
         val progress = when {
+            task.progress.phase == ImportPhase.QUEUED -> fragment.getString(R.string.import_task_queued)
             task.progress.phase == ImportPhase.SCANNING -> fragment.getString(R.string.import_task_scanning)
             task.percent >= 0 -> fragment.getString(R.string.import_task_copying_percent, task.percent)
             else -> fragment.getString(R.string.import_task_copying)

@@ -69,6 +69,7 @@
     <string name="select_all">Select all</string>
     <string name="import_pages_count">%1$d pages</string>
     <!-- 导入进度（占位卡片：图片位显示进度） -->
+    <string name="import_task_queued">Waiting to import…</string>
     <string name="import_task_scanning">Scanning files…</string>
     <string name="import_task_copying">Copying…</string>
     <string name="import_task_copying_percent">Copying %1$d%%</string>

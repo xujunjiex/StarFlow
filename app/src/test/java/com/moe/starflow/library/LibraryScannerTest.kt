@@ -26,7 +26,7 @@ class LibraryScannerTest {
         app.getSharedPreferences("library_locations", 0).edit().clear().putString("defaultPath", root.path).commit()
     }
 
-    @Test fun repeatedScanDiscoversNewArchivesInsideAnAlreadyIndexedGroup() = runBlocking {
+    @Test fun repeatedScanAddsPagesInsideAnIndexedGroupWithoutDuplicatingTheBook() = runBlocking {
         LibrarySessions.prepare(app)
         val first = File(root, "manga_import/Group/one.cbz")
         LibraryScanFixtures.zip(first, "001.png" to LibraryScanFixtures.png(),
@@ -38,12 +38,15 @@ class LibraryScannerTest {
         assertEquals(0, LibraryScanner.scan(app, "manga").added)
         ImportedMangaStore.patch(app, manga) { it.copy(description = "My edited summary") }
         LibraryScanFixtures.zip(File(first.parentFile, "two.cbz"), "001.png" to LibraryScanFixtures.png())
-        assertEquals(1, LibraryScanner.scan(app, "manga").added)
-        assertEquals("My edited summary", ImportedMangaStore.load(app).single { it.id == manga.id }.description)
+        assertEquals(0, LibraryScanner.scan(app, "manga").added)
+        val updated = ImportedMangaStore.load(app).single()
+        assertEquals(manga.bookUuid, updated.bookUuid)
+        assertEquals(2, updated.pageCount)
+        assertEquals("My edited summary", updated.description)
         first.delete()
         LibraryScanner.scan(app, "manga")
-        assertFalse(LibrarySessions.current(app).sourcePresence["manga_import/Group/one.cbz"]!!)
-        assertEquals(2, ImportedMangaStore.load(app).size)
+        assertTrue(LibrarySessions.current(app).sourcePresence["manga_import/Group"]!!)
+        assertEquals(1, ImportedMangaStore.load(app).single().missingPages)
     }
 
     @Test fun repairsOldEmptyDescriptionsOnceAndKeepsIdentityAndReadProgress() = runBlocking {

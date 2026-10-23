@@ -154,4 +154,18 @@ class LibraryDeletionTest {
         assertFalse(failed.deleting)
         assertNotNull(failed.deletionError)
     }
+
+    @Test fun equivalentFileLocatorsStillBlockDeletionWithoutLexicalPathOverlap() {
+        val backend = FileLibraryStorage(temp.newFolder("library"))
+        withSession(backend) { session ->
+            backend.mkdir("manga_import/Group")
+            backend.writeNew("manga_import/Group/book.cbz").use { it.write(1) }
+            val alias = book("manga_import/Group//book.cbz")
+            session.putBook("manga", 2, JSONObject(alias.body))
+            assertThrows(IOException::class.java) {
+                LibraryDeletion.validateSource(session, book("manga_import/Group/book.cbz"))
+            }
+            assertTrue(backend.exists("manga_import/Group/book.cbz"))
+        }
+    }
 }

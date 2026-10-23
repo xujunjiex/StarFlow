@@ -82,18 +82,9 @@ object NovelImporter {
 
     fun nextId(context: Context): Long = com.moe.starflow.library.LibrarySessions.current(context).nextId("novel")
 
-    /**
-     * 条目时间戳。**同时是译文身份指纹**（[ImportedNovel.translationKey]），必须单调递增：
-     * 书籍 id = 清单最大 id + 1，删书后立刻重导就会拿到同一个 id —— 若时间戳也相同，
-     * 新书会被判定成「同一本书」，旧译文会映射到新书上。
-     *
-     * 所以取 `max(now, 清单里最大 addedAt + 1)`：同一毫秒内连删带导也保证单调递增，
-     * 代价只是一次清单读取（导入本来就要读）。
-     */
-    private fun freshAddedAt(context: Context): Long {
-        val maxExisting = NovelStore.load(context).maxOfOrNull { it.addedAt } ?: 0L
-        return maxOf(System.currentTimeMillis(), maxExisting + 1L)
-    }
+    /** Stable shelf ordering; runtime processing identity is the library UUID. */
+    private fun freshAddedAt(context: Context): Long =
+        com.moe.starflow.library.LibrarySessions.current(context).nextAddedAt("novel")
 
     /**
      * 导入单个文件。
@@ -263,15 +254,22 @@ object NovelImporter {
 
             onProgress(ImportProgress(ImportPhase.COPYING, 0, total))
             var done = 0
+            var lastReport = System.nanoTime()
+            fun reportCopyProgress() {
+                val now = System.nanoTime()
+                if (done == total || now - lastReport >= REPORT_INTERVAL_MS * 1_000_000) {
+                    lastReport = now
+                    onProgress(ImportProgress(ImportPhase.COPYING, done, total))
+                }
+            }
             for ((relativePath, doc) in textDocs) {
                 coroutineContext.ensureActive()
                 val target = resolveInsideTree(destDir, relativePath)
                     ?: throw IOException("小说章节路径不安全：$relativePath")
                 copyRequired(context, doc.uri, target, relativePath)
                 done++
-                onProgress(ImportProgress(ImportPhase.COPYING, done, total))
+                reportCopyProgress()
             }
-            var copiedBytes = 0L
             for ((rel, sourceUri) in imageDocs) {
                 coroutineContext.ensureActive()
 
@@ -280,9 +278,8 @@ object NovelImporter {
                     throw IOException("小说插图路径不安全：$rel")
                 }
                 copyRequired(context, sourceUri, target, rel)
-                copiedBytes += target.length()
                 done++
-                onProgress(ImportProgress(ImportPhase.COPYING, done, total))
+                reportCopyProgress()
             }
             coroutineContext.ensureActive()
 
@@ -377,13 +374,17 @@ object NovelImporter {
         rootId: String,
     ): List<TreeEntry> {
         val out = ArrayList<TreeEntry>()
+        val seen = hashSetOf<String>()
+        val catalog = com.moe.starflow.library.LibrarySessions.current(context).database.catalog()
         suspend fun walk(parentDocumentId: String, prefix: String, depth: Int) {
+            coroutineContext.ensureActive()
+            if (!seen.add(parentDocumentId)) throw IOException("提供器目录循环或重复，无法完整导入：$prefix")
             if (depth > MAX_DIR_DEPTH) throw IOException("小说目录层级超过支持范围，未完整导入")
             for (child in queryChildren(context, treeUri, parentDocumentId)) {
                 coroutineContext.ensureActive()
                 val name = safName(child)
-                if (child.isDirectory && com.moe.starflow.library.LibrarySessions.current(context).database.catalog().allMeta()
-                    .any { it.name.startsWith("importing:novel:") && it.value.substringAfterLast('/') == name })
+                if (child.isDirectory && com.moe.starflow.library.LibraryCodec.UUID_PATTERN.matches(name) &&
+                    catalog.hasImportSource("novel", "novel_import/$name"))
                     throw IOException("导入来源包含本次目标目录，已停止递归复制：$name")
                 val rel = treeRelativePath(prefix, name) ?: throw IOException("来源名称无法可靠定位：${child.uri}")
                 if (child.isDirectory) {
@@ -759,7 +760,8 @@ object NovelImporter {
     // ===== 封面 =====
 
     private fun decodeCover(context: Context, bytes: ByteArray, id: Long): String? = try {
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.let { saveCover(context, it, id) }
+        com.moe.starflow.library.ImportCoverDecoder.decode(COVER_SIZE * 2) { bytes.inputStream() }
+            ?.let { saveCover(context, it, id) }
     } catch (e: Exception) {
         null
     }
@@ -810,18 +812,21 @@ object NovelImporter {
 
     /** 用外部图片（用户自选）替换某部小说封面，返回新封面绝对路径。 */
     fun replaceCover(context: Context, novelId: Long, imageUri: Uri): String? {
-        val bmp = context.contentResolver.openInputStream(imageUri)?.use { BitmapFactory.decodeStream(it) }
-            ?: return null
+        val bmp = com.moe.starflow.library.ImportCoverDecoder.decode(COVER_SIZE * 2) {
+            context.contentResolver.openInputStream(imageUri)
+        } ?: return null
         return runCatching { saveCover(context, bmp, novelId) }.getOrNull()
     }
 
     private fun saveCover(context: Context, bmp: Bitmap, id: Long): String {
-        val dir = NovelStorageDir.coversDir(context).apply { mkdirs() }
-        // 唯一命名 `novel_<id>_<ts>.jpg`：避免 Glide 按路径缓存导致重导后仍显示旧封面
-        val out = File(dir, "novel_${id}_${java.util.UUID.randomUUID()}.jpg")
-        val scaled = if (bmp.width == COVER_SIZE && bmp.height == COVER_SIZE) bmp
-        else Bitmap.createScaledBitmap(bmp, COVER_SIZE, COVER_SIZE, true)
+        var scaled = bmp
+        var output: File? = null
         try {
+            val dir = NovelStorageDir.coversDir(context).apply { mkdirs() }
+            val out = File(dir, "novel_${id}_${java.util.UUID.randomUUID()}.jpg")
+            output = out
+            if (bmp.width != COVER_SIZE || bmp.height != COVER_SIZE)
+                scaled = Bitmap.createScaledBitmap(bmp, COVER_SIZE, COVER_SIZE, true)
             FileOutputStream(out).use { stream ->
                 if (!scaled.compress(Bitmap.CompressFormat.JPEG, 85, stream)) throw IOException("封面压缩失败：${out.path}")
                 stream.fd.sync()
@@ -829,12 +834,12 @@ object NovelImporter {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(out.path, bounds)
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw IOException("封面写入不完整：${out.path}")
-        } catch (e: Exception) { out.delete(); throw e }
-        if (scaled !== bmp) {
-            scaled.recycle()
+            return out.absolutePath
+        } catch (e: Exception) { output?.delete(); throw e }
+        finally {
+            if (scaled !== bmp) scaled.recycle()
             bmp.recycle()
         }
-        return out.absolutePath
     }
 
     /** ⚠️ 只清 `novel_` 前缀的 —— 同 id 的漫画封面（无前缀）不能误删。 */
