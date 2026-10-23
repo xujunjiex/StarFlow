@@ -1313,13 +1313,8 @@ class ReaderTranslationController(
      */
     fun onReaderClosed() {
         autoSrJobs.values.forEach { it.cancel() }
-        SrProcessor.cancelManga(manga.id,mangaKey)
         cancelEverything()
-        // ⚠️ **超分本章必须停下来**（与章节翻译刻意不同）：章节翻译有前台服务 + 通知栏，
-        //    关掉阅读器用户仍能看进度、能暂停取消；超分本章**没有通知栏入口**，而它的
-        //    「正在超分第 N 页…」是**系统级浮层窗口** —— 跟着跑到后台就会把芯片贴到别的应用上，
-        //    且 `unbindUi()` 刚把 onSrProgress 清成空 lambda，那些芯片再也没人收（永久残留）。
-        cancelSrChapterJob()
+        // 章节翻译和超分均由应用级宿主持有；关闭阅读器只解除 UI，通知栏继续提供控制。
         translateMode.value = MODE_MANUAL
         setPageModeBusy(false)
         version.value += 1
@@ -1329,8 +1324,9 @@ class ReaderTranslationController(
     /** 彻底停掉（连章节批量任务一起）—— 换书 / 控制器被回收时用。 */
     suspend fun shutdownAndJoin() {
         closed = true
-        val running = listOfNotNull(queueJob, manualJob, partialJob, webtoonPrewarmJob, srChapterJobTask) + autoSrJobs.values.toList()
+        val running = listOfNotNull(queueJob, manualJob, partialJob, webtoonPrewarmJob) + autoSrJobs.values.toList()
         running.forEach { it.cancel() }
+        srChapterQueue.cancelAllAndJoin()
         chapterRunner.shutdownAndJoin()
         shutdownAll()
         running.forEach { it.join() }
@@ -1594,13 +1590,7 @@ class ReaderTranslationController(
 
     // ========== 超分本章（与「翻译本章」互斥的第二个批量任务） ==========
 
-    /**
-     * 一次「超分本章」任务的进度（纯内存，任务结束即 null）。
-     *
-     * ⚠️ 与 [ChapterJob] **刻意不复用同一个类型**：那个带 `ChapterJobState`（暂停/继续/等待），
-     * 而超分没有"排队等待"可言 —— `SrProcessor` 内部对同一页去重、对外全局串行，
-     * 一页一页跑完就结束。套上去只会让面板多出一堆永远不出现的状态分支。
-     */
+    /** 超分章节的内存进度；等待章可取消，正在停止的章保留到原生任务退出。 */
     data class SrChapterJob(
         val chapterIndex: Int,
         /** 已结算（成功或失败）的页数。 */
@@ -1609,103 +1599,76 @@ class ReaderTranslationController(
         /** 刚处理完的页码 +1（0 = 还没开始）。 */
         val page: Int,
         val stopping: Boolean = false,
+        val queued: Boolean = false,
+        val currentPage: Int? = null,
     )
 
     private val _srChapterJob = MutableStateFlow<SrChapterJob?>(null)
-
-    /** 正在跑的超分本章任务（null = 没有）。面板据此切换按钮文案与进度。 */
     val srChapterJob: StateFlow<SrChapterJob?> get() = _srChapterJob
+    private val _srChapterJobs = MutableStateFlow<List<SrChapterJob>>(emptyList())
+    /** 当前章及按提交顺序排列的等待章，面板据此展示各章状态。 */
+    val srChapterJobs: StateFlow<List<SrChapterJob>> get() = _srChapterJobs
 
-    private var srChapterJobTask: Job? = null
+    private val srChapterQueue = SrChapterQueue<SrRequest>(
+        scope = CoroutineScope(scope.coroutineContext + Dispatchers.IO),
+        prepare = { request ->
+            // 到章节真正执行时才加载模型；排队不抢当前章的原生锁。
+            val pick = SrProcessor.preflight(context, request)
+            if (pick.engine == null) {
+                val message = SrOutcome.fail(pick.reason ?: SrFailReason.ENGINE_INIT_FAILED, pick.detail).message(context)
+                withContext(Dispatchers.Main) { if (uiAttached) onSrNotice(message, true) }
+                throw IllegalStateException(message)
+            } else true
+        },
+        processPage = { page, request ->
+            // 一页一张图，只有轮到本章才解码；请求参数保持提交时的快照。
+            val expectedGeneration = captureSrStoreGeneration(page)
+            val decodeStarted = System.currentTimeMillis()
+            val src = loadSrSource(page, request, decodeStarted, expectedGeneration)
+            if (src != null) {
+                try {
+                    runSr(page, src, request, (System.currentTimeMillis() - decodeStarted).coerceAtLeast(0L), expectedGeneration)
+                } finally {
+                    if (!src.isRecycled) src.recycle()
+                }
+            }
+        },
+        onFailure = { chapterIndex, page, error ->
+            LogCollector.e(TAG, "章节超分异常 chapter=$chapterIndex page=$page", error)
+            if (page == null) {
+                val job = com.moe.starflow.translate.batch.ActiveChapterJob(
+                    kind = com.moe.starflow.translate.batch.TranslationJobKind.MANGA,
+                    operation = com.moe.starflow.translate.batch.ChapterJobOperation.UPSCALE,
+                    bookId = manga.id, bookTitle = manga.title, chapterIndex = chapterIndex,
+                    chapterLabel = runCatching { chapterLabel(chapterIndex) }.getOrDefault("")
+                        .ifBlank { context.getString(R.string.manga_chapter_label, chapterIndex + 1) },
+                    startPage = runCatching { chapterStartPage(chapterIndex) }.getOrDefault(0),
+                    total = 0, done = 0, state = ChapterJobState.DONE,
+                    libraryLocationId = manga.libraryLocationId, bookUuid = manga.bookUuid,
+                )
+                com.moe.starflow.translate.batch.ChapterTaskNotificationAccess.reportFailure(
+                    context, job, error.message ?: error.javaClass.simpleName,
+                )
+            }
+        },
+        onChanged = { jobs ->
+            val snapshot = jobs.map { SrChapterJob(it.chapterIndex, it.done, it.total, it.page, it.stopping, it.queued, it.currentPage) }
+            _srChapterJob.value = snapshot.firstOrNull { !it.queued }
+            _srChapterJobs.value = snapshot
+            srVersion.value += 1
+        },
+    )
 
-    /**
-     * 超分本章的任务**代次**：每次启动 / 取消各 +1，循环里比对，不等就立刻退出。
-     *
-     * ⚠️ 为什么需要它：取消是**异步**的（协程要在恢复点才停），而 [cancelSrChapterJob] 会立刻把
-     * `_srChapterJob` 置 null → 用户马上重点一次「超分本章」时**上一轮那个协程可能还在跑**。
-     * 两个协程同时对同一页调 `runSr` 时，`SrProcessor.inFlight` 会把后到的判成 `BUSY`，
-     * 面板上就凭空多出一条「超分失败」。代次让旧循环在下一轮开头立刻收手
-     * （在途那一页打不断，但不会再往下走）。
-     *
-     * 主线程写（点击）、IO 协程读 → `@Volatile`。
-     */
-    @Volatile
-    private var srChapterGeneration = 0
-
-    /**
-     * **超分本章**：从 [pages] 里逐页跑一次超分（[runSr]），产物落盘 + 写记录。
-     *
-     * ## 为什么不用 `ChapterJobRunner`
-     * 那个 runner 的价值是「准备阶段串行 + 翻译阶段并发 N」。而超分**本身就是全局串行**的
-     * （`SrProcessor` + `OcrLock`），套上来只会多一层永远并不起作用的调度，还要造一个假的
-     * 两阶段接口。这里一个 for 循环就是全部真相。
-     *
-     * ## 互斥（用户口径 2026-10）
-     * 「不能出现两边都开启批量翻译某章和超分某章」—— 翻译在跑时这里直接 return，
-     * **由宿主给出提示**（`reader_sr_blocked_by_translate`）；反过来 [startChapterJob] 也一样。
-     * 两边都不静默。
-     *
-     * ## 取消
-     * 取消后在下一个原生分块边界退出，未提交产物不采用；原生退出前继续持锁。
-     * ⚠️ **离开阅读器必须调 [cancelSrChapterJob]**（见 [onReaderClosed]）：超分本章没有通知栏入口，
-     * 而它的进行中提示是**系统级浮层**，跟着跑到后台会把芯片贴到别的应用上且无人能消。
-     */
+    /** 同书多章 FIFO；与翻译互斥，章节及章内页面均串行处理。 */
     @Synchronized
-    fun startSrChapterJob(chapterIndex: Int, pages: List<Int>, request: SrRequest = SrRequest.capture(context,appPrefs)) {
-        val targets = pages.filter { it >= 0 }
-        if (targets.isEmpty()) return
-        if (_srChapterJob.value != null) return
-        if (srBatchBlockedByTranslate()) return     // 互斥：宿主已经给过提示
-        _srChapterJob.value = SrChapterJob(chapterIndex, done = 0, total = targets.size, page = 0)
-        val gen = ++srChapterGeneration
-        lateinit var task: Job
-        task = scope.launch(Dispatchers.IO,start=CoroutineStart.LAZY) {
-            var done = 0
-            for (p in targets) {
-                // 代次对不上 = 已经被取消过（可能又开了一轮）→ 立刻收手，别和新的那轮抢同一页
-                if (!isActive || gen != srChapterGeneration) break
-                // ⚠️ 一页一张全尺寸位图：**逐页取、逐页还**，绝不整章装进内存
-                //    （2x 一页就 40MB，整章必 OOM）。
-                val expectedGeneration=captureSrStoreGeneration(p)
-                val decodeStarted=System.currentTimeMillis()
-                val src = loadSrSource(p,request,decodeStarted,expectedGeneration)
-                if (src != null) {
-                    try {
-                        runSr(p, src,request,(System.currentTimeMillis()-decodeStarted).coerceAtLeast(0L),expectedGeneration)
-                    } finally {
-                        if (!src.isRecycled) src.recycle()
-                    }
-                }
-                done++
-                _srChapterJob.value = SrChapterJob(chapterIndex, done, targets.size, p + 1)
-            }
-        }
-        srChapterJobTask=task
-        task.invokeOnCompletion {
-            synchronized(this@ReaderTranslationController) {
-                if(srChapterJobTask===task) {
-                    srChapterJobTask=null
-                    _srChapterJob.value=null
-                }
-                srVersion.value+=1
-            }
-        }
-        task.start()
+    fun startSrChapterJob(chapterIndex: Int, pages: List<Int>, request: SrRequest = SrRequest.capture(context, appPrefs)): Boolean {
+        if (closed || srBatchBlockedByTranslate()) return false
+        return srChapterQueue.submit(chapterIndex, pages, request)
     }
 
-    /** 取消「超分本章」（丢还没跑的页，**已超好的产物保留** —— 与取消章节翻译同一口径）。 */
-    @Synchronized
-    fun cancelSrChapterJob() {
-        val task=srChapterJobTask
-        if(task==null) {
-            _srChapterJob.value=null
-            return
-        }
-        srChapterGeneration++
-        _srChapterJob.value=_srChapterJob.value?.copy(stopping=true)
-        task.cancel()
-        // Keep the job visible and prevent restart until the native tile actually exits.
-        srVersion.value+=1
+    /** 指定章取消该章；省略章号取消整条队列。已完成产物保留，原生退出前保持占用。 */
+    fun cancelSrChapterJob(chapterIndex: Int? = null) {
+        srChapterQueue.cancel(chapterIndex)
     }
 
     // ── 互斥判据（宿主在点击入口处调，负责给出提示） ──
@@ -1838,6 +1801,13 @@ class ReaderTranslationController(
     /** 身份指纹（= `manga.addedAt`）：宿主用它判断"同一个 id 是否已经换了一本书"。 */
     fun translationKeyOf(): String = mangaKey
     val mangaTitle: String get() = manga.title
+
+    /** 目录来自自持来源，不依赖已销毁 Activity；通知点击直接返回章节起始页。 */
+    fun chapterStartPage(chapterIndex: Int): Int = ownSource.chapters.getOrNull(chapterIndex)?.startPage ?: 0
+
+    fun chapterLabel(chapterIndex: Int): String = ownSource.chapters.getOrNull(chapterIndex)?.let {
+        com.moe.starflow.mangaimport.data.mangaChapterLabel(context, it)
+    }.orEmpty()
 
     fun isChapterBatchRunning(): Boolean = chapterRunner.isBusy()
 

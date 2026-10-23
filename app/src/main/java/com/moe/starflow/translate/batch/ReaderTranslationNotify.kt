@@ -62,8 +62,9 @@ object ReaderTranslationNotify {
             .setContentText(line)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
-            .setSilent(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .setContentIntent(openReaderIntent(context, novelId, chapterIndex))
         if (total > 0) builder.setProgress(total, done.coerceIn(0, total), false)
         runCatching { nm.notify(NOTIFICATION_ID, builder.build()) }

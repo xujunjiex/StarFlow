@@ -563,7 +563,7 @@
   （`maxHeight` 不是 View 的属性，写在 ScrollView 上静默失效），别再照它推算面板高度。
 - ⚠️ 筛选键**独立**（`srFilterKey`）：超分那边选「失败」不该影响翻译那边的列表。
 - ⚠️ 宿主推送是**唯一出口**：`pushToAdapter()` 必须**同时**喂两个适配器，`ChapterPanelState`
-  新增 `srRecords` / `srJob` 也必须加进 `refreshChapterState` 的字段清单 ——
+  新增 `srRecords` / `srJobs` 也必须加进 `refreshChapterState` 的字段清单 ——
   漏一处的表现是"那处 UI 永远停在打开那一刻"（这个坑本文件上面记过很多次）。
 - 超分记录的真值与写入在 `ReaderTranslationController`（表 `imported_page_sr`，DB v19）。
   详见 `sr/CLAUDE.md` 的「超分记录系统」一节。
@@ -582,11 +582,14 @@
 默认 prefs），正好把这个 bug 掩盖掉。同一个坑 `anime4kPreviewFor` 的注释里早就写着。
 **给 SR/Anime4K 的任何一个 API 传 prefs 之前，先确认它是哪一份。**
 
-**「超分本章」任务**：`startSrChapterJob(chapterIndex, pages)` —— 逐页 `runSr` + 回收原图，
-进度进 `srChapterJob`（StateFlow），宿主 collect 它来推面板。
-⚠️ **不走 `ChapterJobRunner`**（超分本身全局串行，套 runner 只有负担）；
-⚠️ **离开阅读器必须 `cancelSrChapterJob()`**：它没有通知栏入口，而进行中提示是**系统级浮层**，
-跑到后台会把芯片贴到别的应用上且无人能收（`unbindUi` 已把回调清空）。
+**「超分本章」任务**：`startSrChapterJob(chapterIndex, pages, request)` 提交到 `SrChapterQueue`，同书章节按提交顺序排队，章内逐页 `runSr` + 回收原图。排队时只保存页号及冻结的 `SrRequest`，不解码图片、不加载模型；轮到章节后先做模型预检，失败跳过本章。
+- `srChapterJobs`（StateFlow）包含当前及等待章节，宿主通过 `ChapterPanelState.srJobs` 推送面板；`srChapterJob` 保留当前章，用于忙碌及停止状态。等待章显示“等待”，主按钮取消该章；正在停止时禁用主按钮，直到原生退出。
+- `cancelSrChapterJob(chapterIndex)` 取消指定章，不影响其他章；无参数取消当前章并清空等待队列。取消当前章后必须等实际协程及原生收尾完成才交接，已完成产物保留。
+- 超分全局串行，不使用翻译的两阶段 `ChapterJobRunner`；与翻译和页面模式的互斥不变。
+- `ReaderTranslationHub` 同时汇总章节翻译和超分，只有 UI 已解绑且两类任务均结束才回收控制器。超分使用 `ChapterJobOperation.UPSCALE`，与翻译的通知 ID、PendingIntent 和取消动作隔离；通知点击返回该章起始页，超分只提供取消。
+- 锁屏、切后台和退出阅读器均保留章节超分队列；`onReaderClosed` 只取消页面模式和自动超分，不能调用 `SrProcessor.cancelManga` 误伤章节任务。`unbindUi` 切回自持来源，后台进度由系统通知栏展示，不创建应用浮层。删除书籍时 `shutdownAndJoin` 等待队列退出后再移除来源。CPU 保活见[共享任务指南](../translate/CLAUDE.md)。
+- 章节翻译／超分提交及继续时通过共享 `ChapterTaskNotificationAccess` 补充通知授权与锁屏、电池设置引导。锁屏通知展示进度；系统用户设置不可由应用覆盖。从设置返回后刷新服务快照，避免权限已恢复但进度未变时仍没有章通知。
+- 超分模型预检失败必须记录原因并发独立失败通知；不能仅依赖阅读器提示回调。失败通知不随进度服务退出被清除，点击仍返回对应章节。
 
 **互斥**（都要抢 `OcrLock`，同时开就是互相拖死）：
 

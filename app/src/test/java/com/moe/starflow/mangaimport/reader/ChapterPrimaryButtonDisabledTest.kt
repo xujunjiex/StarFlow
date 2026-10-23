@@ -1,6 +1,7 @@
 package com.moe.starflow.mangaimport.reader
 
 import android.content.Context
+import android.view.View
 import android.widget.FrameLayout
 import android.widget.TextView
 import com.moe.starflow.R
@@ -55,7 +56,7 @@ class ChapterPrimaryButtonDisabledTest {
             onJump = {}, onSelectChapter = {}, onChapterPrimary = {},
             onChapterSecondary = {}, onDeletePage = {},
         )
-        adapter.submit(chapters, records, selectedChapter = 0, job = job)
+        adapter.submit(chapters, records, selectedChapter = 0, jobs = listOfNotNull(job))
         val holder = adapter.onCreateViewHolder(FrameLayout(ctx), 0)
         adapter.onBindViewHolder(holder, 0)
         return holder.itemView.findViewById(R.id.btn_chapter_primary)
@@ -110,6 +111,40 @@ class ChapterPrimaryButtonDisabledTest {
         val job = ReaderTranslationController.SrChapterJob(chapterIndex = 0, done = 2, total = 2, page = 2)
         val btn = bindSrPrimary(listOf(srSuccess(0), srSuccess(1)), job = job)
         assertTrue("整章已超分但同时有任务在跑（取消入口）→ 不能置灰", btn.isEnabled)
+    }
+
+    @Test
+    fun srQueueShowsRunningAndWaitingChapters_andCancelTargetsSelectedChapter() {
+        var cancelledChapter: Int? = null
+        val adapter = ReaderSrStateAdapter(
+            chapterLabelOf = { it.title },
+            onJump = {}, onSelectChapter = {},
+            onChapterPrimary = { cancelledChapter = it },
+            onChapterSecondary = {}, onDeletePage = {},
+        )
+        val jobs = listOf(
+            ReaderTranslationController.SrChapterJob(0, done = 1, total = 2, page = 1),
+            ReaderTranslationController.SrChapterJob(1, done = 0, total = 3, page = 0, queued = true),
+        )
+        adapter.submit(chapters, emptyList(), selectedChapter = 0, jobs = jobs)
+        val current = adapter.onCreateViewHolder(FrameLayout(ctx), 0)
+        adapter.onBindViewHolder(current, 0)
+        assertEquals(ctx.getString(R.string.reader_sr_chapter_running, 1, 2), current.itemView.findViewById<TextView>(R.id.tv_chapter_badge).text.toString())
+        val waiting = adapter.onCreateViewHolder(FrameLayout(ctx), 0)
+        adapter.onBindViewHolder(waiting, 1)
+        assertEquals(ctx.getString(R.string.reader_translate_state_waiting), waiting.itemView.findViewById<TextView>(R.id.tv_chapter_badge).text.toString())
+        waiting.itemView.findViewById<TextView>(R.id.btn_chapter_primary).apply {
+            assertTrue(isEnabled)
+            assertEquals(ctx.getString(R.string.cancel), text.toString())
+            performClick()
+        }
+        assertEquals(1, cancelledChapter)
+        assertEquals(View.GONE, waiting.itemView.findViewById<View>(R.id.btn_chapter_secondary).visibility)
+
+        adapter.submit(chapters, emptyList(), selectedChapter = 0, jobs = listOf(jobs.first().copy(stopping = true), jobs.last()))
+        adapter.onBindViewHolder(current, 0)
+        assertEquals(ctx.getString(R.string.reader_sr_stopping), current.itemView.findViewById<TextView>(R.id.tv_chapter_badge).text.toString())
+        assertFalse(current.itemView.findViewById<TextView>(R.id.btn_chapter_primary).isEnabled)
     }
 
     // ========== 翻译面板 ==========

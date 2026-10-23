@@ -379,6 +379,12 @@
         android:title="@string/status_overlay_category"
         app:iconSpaceReserved="false">
 
+        <Preference
+            android:key="chapter_task_lockscreen_settings"
+            app:iconSpaceReserved="false"
+            android:title="@string/chapter_task_settings_title"
+            android:summary="@string/chapter_task_settings_summary"/>
+
         <SwitchPreference
             android:key="status_overlay_enabled"
             app:iconSpaceReserved="false"

@@ -203,8 +203,8 @@ class ChapterPanelState(
      * 一页可以"翻了没超"或"超了没翻"，两条流水线的状态机完全不同。
      */
     val srRecords: List<ImportedPageSr> = emptyList(),
-    /** 正在跑的「超分本章」任务（null = 没有）—— 章卡片的按钮与进度靠它。 */
-    val srJob: ReaderTranslationController.SrChapterJob? = null,
+    /** 当前及排队中的超分章节，章卡片的按钮与进度靠它。 */
+    val srJobs: List<ReaderTranslationController.SrChapterJob> = emptyList(),
 )
 
 
@@ -305,7 +305,7 @@ class ReaderMenuSheet(
     }
 
     private var currentSrRecords: List<ImportedPageSr> = emptyList()
-    private var currentSrJob: ReaderTranslationController.SrChapterJob? = null
+    private var currentSrJobs: List<ReaderTranslationController.SrChapterJob> = emptyList()
 
     /** 超分记录列表的筛选键（与翻译那条**各自独立**，互不影响）。 */
     private var srFilterKey = 0
@@ -1346,7 +1346,7 @@ class ReaderMenuSheet(
             chapters = chapters,
             records = currentSrRecords,
             selectedChapter = selectedChapter,
-            job = currentSrJob,
+            jobs = currentSrJobs,
         )
     }
 
@@ -1408,7 +1408,7 @@ class ReaderMenuSheet(
         translatingPages = st.translatingPages
         ocrOnly = st.ocrOnly
         currentSrRecords = st.srRecords
-        currentSrJob = st.srJob
+        currentSrJobs = st.srJobs
         if (view != null) pushToAdapter()
     }
 

@@ -8,6 +8,9 @@ import java.util.concurrent.CopyOnWriteArrayList
 /** 后台批量翻译任务属于哪个阅读器（通知点击要回到对应界面）。 */
 enum class TranslationJobKind { MANGA, NOVEL }
 
+/** 阅读器身份与任务类型分离，超分通知仍返回同一个漫画阅读器。 */
+enum class ChapterJobOperation { TRANSLATE, UPSCALE }
+
 /** 一章后台翻译任务的状态。 */
 enum class ChapterJobState {
     /** 已提交、等待调度。 */
@@ -45,7 +48,18 @@ data class ActiveChapterJob(
     val stageText: String? = null,
     val libraryLocationId: String = "",
     val bookUuid: String = "",
+    val operation: ChapterJobOperation = ChapterJobOperation.TRANSLATE,
+    val stopping: Boolean = false,
+    /** 暂停或取消后仍在收尾的请求，也需要保持 CPU 运行到资源释放。 */
+    val hasInFlight: Boolean = false,
 ) {
+    val isActive: Boolean
+        get() = state == ChapterJobState.RUNNING || state == ChapterJobState.PAUSED ||
+            state == ChapterJobState.QUEUED || hasInFlight
+
+    val needsCpu: Boolean
+        get() = state == ChapterJobState.RUNNING || state == ChapterJobState.QUEUED || hasInFlight
+
     /**
      * 通知 id 的稳定来源（同一本书同一章恒等）。
      *
@@ -61,15 +75,12 @@ data class ActiveChapterJob(
     val notificationId: Int
         get() {
             if (bookUuid.isNotEmpty()) {
-                val scoped = "$runtimeKey:${kind.name}:$chapterIndex".hashCode().toLong() and 0x7fffffffL
+                val scoped = "$runtimeKey:${kind.name}:$chapterIndex:${operation.name}".hashCode().toLong() and 0x7fffffffL
                 return (10_000 + scoped % (Int.MAX_VALUE - 20_000)).toInt()
             }
-            // ⚠️ 不能用"乘以同一个基数再相加"的线性公式：bookId 每 +1 等于 chapterIndex +31，
-            // 于是 book1/ch31 与 book2/ch0 必然同 id（审查实测撞了）。这里用**互质权重 + 显式区间**
-            // 构造：bookId 权重 10_000 > chapterIndex 的上限 → 在 bookId < 100_000、chapterIndex < 10_000
-            // 这个真实取值域内是**单射**；再统一挪到 10000 以上，避开汇总通知 9998 与系统常用小 id。
+            // 兼容没有 UUID 的旧快照：按书、章、阅读器和任务类型分配，再避开汇总通知区。
             val base = bookId.coerceIn(0L, 99_999L) * 10_000L + chapterIndex.coerceIn(0, 9_999)
-            return (10_000L + base * 2L + kind.ordinal).toInt()
+            return (10_000L + (base * 4L + kind.ordinal * 2L + operation.ordinal) % (Int.MAX_VALUE - 20_000)).toInt()
         }
 }
 
@@ -117,13 +128,11 @@ object TranslationJobRegistry {
     }
 
     /** 任务状态变了 → 重新聚合（宿主在 collect 到自己的 flow 变化时调用）。 */
+    @Synchronized
     fun notifyChanged() {
         val snapshot = sources.flatMap { runCatching { it.snapshot() }.getOrDefault(emptyList()) }
         _activeJobs.value = snapshot
-        _hasActiveJobs.value = snapshot.any {
-            it.state == ChapterJobState.RUNNING || it.state == ChapterJobState.PAUSED ||
-                it.state == ChapterJobState.QUEUED
-        }
+        _hasActiveJobs.value = snapshot.any { it.isActive }
     }
 
     /** 转发通知栏动作给对应宿主。 */

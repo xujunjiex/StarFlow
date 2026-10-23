@@ -53,6 +53,7 @@ import com.moe.starflow.translate.batch.ChapterJobState
 import com.moe.starflow.translate.batch.ChapterTaskStage
 import com.moe.starflow.translate.batch.InFlightTask
 import com.moe.starflow.translate.batch.TranslationJobService
+import com.moe.starflow.translate.batch.TranslationJobRegistry
 import com.moe.starflow.mangaimport.translate.ReaderTranslationController
 import com.moe.starflow.mangaimport.translate.TranslateClick
 import com.moe.starflow.me.settings.SettingPageActivity
@@ -81,6 +82,7 @@ import java.util.zip.ZipOutputStream
  * 右下角单个翻页按钮 + 右上角菜单键。横屏与竖屏同为单页（双页显示已移除）。
  */
 class MangaReaderActivity : AppCompatActivity() {
+    private val chapterNotificationAccess = com.moe.starflow.translate.batch.ChapterTaskNotificationAccess(this) { isDarkBackground() }
 
     companion object {
         /** 面板推送最小间隔：状态每页要变 4 次（QUEUED/OCR/TRANSLATE/结算），不节流会持续重排整表。 */
@@ -321,7 +323,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 // 超分提示（失败原因 / 其它）统一走 app 状态浮层。⚠️ 必须在主线程调：
                 // 控制器可能从 IO 协程发过来（它内部只在自动超分那条路径 `withContext(Main)`）。
                 c.onSrNotice = { text, isError ->
-                    runOnUiThread { if (!isFinishing) showSrNotice(text, isError) }
+                    runOnUiThread { if (!isFinishing && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) showSrNotice(text, isError) }
                 }
                 // 超分「进行中」的开合（控制器保证 true/false 成对，含失败与取消）。同一约定：
                 // 回调已经在主线程，`runOnUiThread` 只是防御性兜底。
@@ -408,6 +410,7 @@ class MangaReaderActivity : AppCompatActivity() {
         refreshTranslationChrome()
         (supportFragmentManager.findFragmentByTag(ReaderMenuSheet.TAG) as? ReaderMenuSheet)?.notifySrChanged()
         translationController?.resumeFromBackground()
+        if (TranslationJobService.hasActiveJobs()) TranslationJobService.start(applicationContext)
 
     }
 
@@ -1396,7 +1399,7 @@ class MangaReaderActivity : AppCompatActivity() {
             translatingPages = c?.translatingPages() ?: emptySet(),
             // 超分那一路（记录列表切到「超分」页签时显示）
             srRecords = c?.srRecords() ?: emptyList(),
-            srJob = c?.srChapterJob?.value,
+            srJobs = c?.srChapterJobs?.value.orEmpty(),
         )
     }
 
@@ -1406,6 +1409,7 @@ class MangaReaderActivity : AppCompatActivity() {
         // ⚠️ 监听器式而不是单个回调：hub（通知栏）也要收这个事件，单个 var 会被后设的覆盖
         val finished: (Int, Int, Int, Boolean) -> Unit = { _, ok, total, cancelled ->
             runOnUiThread {
+                if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return@runOnUiThread
                 TranslationStatusOverlay.getInstance(this@MangaReaderActivity).dismiss()
                 // 整章翻完是「结果」，走统一出口（浮层不可用时退 Toast），不能静默
                 if (!cancelled) {
@@ -1427,7 +1431,7 @@ class MangaReaderActivity : AppCompatActivity() {
         // ⚠️ 必须有：面板是「打开那一刻的快照」，宿主不推它就永远停在开始那一下 ——
         //    用户会看到"点了超分本章，面板一动不动"。一页一次（每页几秒），不会掉帧。
         lifecycleScope.launch {
-            controller.srChapterJob.collect { pushPanelNow() }
+            controller.srChapterJobs.collect { pushPanelNow() }
         }
         // 超分**记录**的变化（手动超分单页 / 面板里删除 / 清空本章）也要推面板 ——
         // 只跟 srChapterJob 的话，手动超一页后面板上的那一行不会出现，要重开面板才看得到。
@@ -1442,7 +1446,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 .collect { (jobs, inFlight) ->
                     val running = jobs.filter { it.state == ChapterJobState.RUNNING }
                     refreshProgressTranslation()
-                    if (running.isEmpty()) return@collect
+                    if (running.isEmpty() || !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) return@collect
                     val done = running.sumOf { it.done }
                     val total = running.sumOf { it.total }
                     if (!statusOverlayEnabled()) return@collect
@@ -1518,6 +1522,7 @@ class MangaReaderActivity : AppCompatActivity() {
             ChapterJobState.PAUSED -> {
                 controller.resumeChapterJob(chapterIndex)
                 TranslationJobService.start(applicationContext)
+                chapterNotificationAccess.ensureForTask()
                 refreshProgressTranslation()
                 return
             }
@@ -1587,8 +1592,8 @@ class MangaReaderActivity : AppCompatActivity() {
      */
     private fun onSrChapterPrimaryClicked(chapterIndex: Int) {
         val controller = translationController ?: return
-        if (controller.srChapterJob.value?.chapterIndex == chapterIndex) {
-            controller.cancelSrChapterJob()
+        if (controller.srChapterJobs.value.any { it.chapterIndex == chapterIndex }) {
+            controller.cancelSrChapterJob(chapterIndex)
             pushPanelNow()
             notifyUser(getString(R.string.reader_sr_chapter_cancelled))
             return
@@ -1607,18 +1612,19 @@ class MangaReaderActivity : AppCompatActivity() {
         val all=(chapter.startPage..chapter.endPage).toList()
         val request=com.moe.starflow.sr.SrRequest.capture(this,PreferenceManager.getDefaultSharedPreferences(this))
         lifecycleScope.launch {
-            val pick=com.moe.starflow.sr.SrProcessor.preflight(this@MangaReaderActivity,request)
-            if(pick.engine==null) {
-                notifyUser(com.moe.starflow.sr.SrOutcome.fail(pick.reason ?: com.moe.starflow.sr.SrFailReason.ENGINE_INIT_FAILED,pick.detail).message(this@MangaReaderActivity),AppNotice.Style.ERROR)
-                return@launch
-            }
             val counts=withContext(Dispatchers.IO){controller.srChapterAvailability(all,request)}
             fun start(redo: Boolean) {
-                if(controller.srBatchBlockedByTranslate() || controller.srChapterJob.value!=null)return
+                if(controller.srBatchBlockedByTranslate())return
                 val targets=if(redo)all else all.filter {it !in controller.srPages()}
                 if(targets.isEmpty()){notifyUser(getString(R.string.reader_sr_chapter_nothing));return}
-                controller.startSrChapterJob(chapterIndex,targets,request)
-                notifyUser(getString(R.string.reader_sr_chapter_started));pushPanelNow()
+                if (controller.startSrChapterJob(chapterIndex, targets, request)) {
+                    TranslationJobRegistry.notifyChanged()
+                    TranslationJobService.start(applicationContext)
+                    chapterNotificationAccess.ensureForTask()
+                    val queued = controller.srChapterJobs.value.firstOrNull { it.chapterIndex == chapterIndex }?.queued == true
+                    notifyUser(getString(if (queued) R.string.reader_sr_chapter_queued else R.string.reader_sr_chapter_started))
+                }
+                pushPanelNow()
             }
             if(counts.second>0 || counts.third>0) {
                 androidx.appcompat.app.AlertDialog.Builder(ReaderDialogs.context(this@MangaReaderActivity, isDarkBackground()))
@@ -1730,6 +1736,7 @@ class MangaReaderActivity : AppCompatActivity() {
         )
         // 任务在应用级后台跑：把前台服务拉起来（通知栏进度 + 暂停/取消按钮）
         TranslationJobService.start(applicationContext)
+        chapterNotificationAccess.ensureForTask()
         refreshProgressTranslation()
     }
 
@@ -1904,6 +1911,7 @@ class MangaReaderActivity : AppCompatActivity() {
      */
     private fun showSrRunning(page: Int, running: Boolean, toastIfUnavailable: Boolean = false) {
         clearSrRunningChip(page)   // 同页重复进入（重试 / 重翻）先收掉上一条，避免叠成两条
+        if (!lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) return
         if (running) {
             srRunningChipByPage[page] = AppNotice.showRunning(
                 this,

@@ -258,14 +258,14 @@ class ChapterJobRunner<T>(
      * 提交（或替换）某一章的任务。[pages] 是要翻的页（调用方已按状态筛过）。
      * 同一章重复提交 = 重新排队（旧队列丢掉）。
      */
-    fun submit(chapterIndex: Int, pages: List<Int>, label: String = "", startPage: Int = 0) {
+    fun submit(chapterIndex: Int, pages: List<Int>, label: String = "", startPage: Int = 0, initiallyPaused: Boolean = false) {
         if (pages.isEmpty()) return
         synchronized(lock) {
             runtimes.removeAll { it.chapterIndex == chapterIndex }
             runtimes += Runtime(
                 chapterIndex = chapterIndex,
                 queue = ArrayDeque(pages),
-                state = ChapterJobState.QUEUED,
+                state = if (initiallyPaused) ChapterJobState.PAUSED else ChapterJobState.QUEUED,
                 total = pages.size,
                 done = 0,
                 ok = 0,

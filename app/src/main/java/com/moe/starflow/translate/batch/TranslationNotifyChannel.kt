@@ -32,15 +32,9 @@ object TranslationNotifyChannel {
     /** 旧通道 id（只用来删；LOW 重要度改不回来，只能换 id）。 */
     private const val LEGACY_ID = "chapter_translation"
 
-    private var ensured = false
-
-    /** 幂等：建通道（HIGH 之外的一切都建议只在启动时做一次，这里带内存标记防重复调用）。 */
+    /** 幂等重建；系统保留用户设置，不以进程缓存掩盖缺失的通道。 */
     fun ensure(context: Context) {
-        if (ensured) return
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            ensured = true
-            return
-        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
         val channel = NotificationChannel(
             ID,
@@ -49,10 +43,12 @@ object TranslationNotifyChannel {
             NotificationManager.IMPORTANCE_DEFAULT,
         )
         channel.setShowBadge(false)
+        channel.lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
+        channel.setSound(null, null)
+        channel.enableVibration(false)
         runCatching { nm.createNotificationChannel(channel) }
             .onFailure { LogCollector.w(TAG, "创建翻译通知通道失败: ${it.message}") }
         // 旧通道（LOW）删掉：同一个功能挂两个通道只会让人以为通知坏了
         runCatching { nm.deleteNotificationChannel(LEGACY_ID) }
-        ensured = true
     }
 }

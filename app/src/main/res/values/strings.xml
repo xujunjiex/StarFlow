@@ -1187,6 +1187,7 @@
     <string name="reader_sr_page_deleted">Upscaled result deleted</string>
     <string name="reader_sr_chapter_nothing">No page in this chapter needs upscaling.</string>
     <string name="reader_sr_chapter_started">Upscaling this chapter…</string>
+    <string name="reader_sr_chapter_queued">Chapter added to the upscaling queue</string>
     <string name="reader_sr_chapter_cancelled">Chapter upscaling cancelled</string>
     <string name="reader_sr_chapter_cleared">Chapter upscaling cleared</string>
     <string name="reader_sr_need_model">Select and download a super-resolution model first.</string>
@@ -1327,12 +1328,24 @@
 
     <!-- 章节批量翻译：通知栏（每章一条，可暂停/继续/取消） -->
     <string name="chapter_translate_notify_title">%1$s · %2$s</string>
+    <string name="chapter_sr_notify_title">Upscaling · %1$s · %2$s</string>
+    <string name="chapter_sr_notify_summary_title">Chapter upscaling</string>
+    <string name="chapter_sr_notify_summary">%1$d chapter(s) upscaling in background</string>
+    <string name="chapter_tasks_notify_summary_title">Chapter tasks</string>
+    <string name="chapter_tasks_notify_summary">%1$d chapter task(s) in background</string>
     <string name="chapter_translate_notify_progress">Translating %1$d/%2$d pages</string>
     <string name="chapter_translate_notify_paused">Paused · %1$d/%2$d pages</string>
     <string name="chapter_translate_notify_summary_title">Chapter translation</string>
     <string name="chapter_translate_notify_summary">%1$d chapter(s) translating in background</string>
     <!-- 通知通道名（所有翻译进度通知共用；改通道 id 时它会重新出现在系统设置里） -->
     <string name="translate_notify_channel_name">Translation progress</string>
+    <string name="chapter_task_preparing">Preparing chapter…</string>
+    <string name="chapter_task_failed">Task failed: %1$s</string>
+    <string name="chapter_task_settings_title">Background tasks and lock screen</string>
+    <string name="chapter_task_settings_summary">Notification visibility and battery settings for chapter translation and upscaling</string>
+    <string name="chapter_task_settings_message">Chapter translation and upscaling can continue with the screen locked. Allow app notifications and enable lock screen notifications and their contents in system settings. Some phones also hide silent notifications.\n\nFor long tasks, allow background activity and remove battery restrictions for StarFlow. The names of these options vary by phone. System power saving, network restrictions and force stopping the app can interrupt tasks.\n\nYou can return here from Settings → Personalization → General.</string>
+    <string name="chapter_task_notification_settings">Notification settings</string>
+    <string name="chapter_task_battery_settings">Battery settings</string>
     <!-- 阅读器前台队列（手动/自动/增量）的通知第二行：%1$s 是"第 X/Y 页"那类进度 -->
     <string name="novel_translate_notify_line">%1$s · %2$d batch(es) translated</string>
     <!-- 仅 OCR 执行模式：通知栏也必须是 OCR 口径（那时一页都没在翻译） -->

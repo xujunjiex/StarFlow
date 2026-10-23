@@ -81,7 +81,7 @@ class ReaderSrStateAdapter(
 
     private var chapters: List<MangaChapter> = emptyList()
     private var records: List<ImportedPageSr> = emptyList()
-    private var job: ReaderTranslationController.SrChapterJob? = null
+    private var jobs: Map<Int, ReaderTranslationController.SrChapterJob> = emptyMap()
     private var selectedChapter = 0
     private var filter = FILTER_ALL
     private val expanded = mutableSetOf<Int>()
@@ -107,13 +107,13 @@ class ReaderSrStateAdapter(
         chapters: List<MangaChapter>,
         records: List<ImportedPageSr>,
         selectedChapter: Int,
-        job: ReaderTranslationController.SrChapterJob? = null,
+        jobs: List<ReaderTranslationController.SrChapterJob> = emptyList(),
     ) {
         val chaptersChanged = this.chapters != chapters
         this.chapters = chapters
         this.records = records
         this.selectedChapter = selectedChapter
-        this.job = job
+        this.jobs = jobs.associateBy { it.chapterIndex }
         if (chaptersChanged) expanded += selectedChapter
         rebuild()
     }
@@ -170,7 +170,7 @@ class ReaderSrStateAdapter(
                 pageCount = chapter.pageCount,
                 expanded = index in expanded,
                 selected = index == selectedChapter,
-                job = job?.takeIf { it.chapterIndex == index },
+                job = jobs[index],
             )
         }
     }
@@ -205,6 +205,8 @@ class ReaderSrStateAdapter(
         val allDone = row.pageCount > 0 && row.success >= row.pageCount
         item.findViewById<TextView>(R.id.tv_chapter_badge).apply {
             text = when {
+                row.job?.queued == true -> ctx.getString(R.string.reader_translate_state_waiting)
+                row.job?.stopping == true -> ctx.getString(R.string.reader_sr_stopping)
                 running -> ctx.getString(R.string.reader_sr_chapter_running, row.job!!.done, row.job.total)
                 allDone -> ctx.getString(R.string.reader_sr_chapter_done)
                 else -> ctx.getString(R.string.reader_sr_badge, row.success, row.pageCount)

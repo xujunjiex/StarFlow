@@ -4,6 +4,7 @@ import android.content.Context
 import com.moe.starflow.mangaimport.data.ImportedManga
 import com.moe.starflow.translate.batch.ActiveChapterJob
 import com.moe.starflow.translate.batch.ChapterJobSource
+import com.moe.starflow.translate.batch.ChapterJobOperation
 import com.moe.starflow.translate.batch.ChapterJobState
 import com.moe.starflow.translate.batch.JobAction
 import com.moe.starflow.translate.batch.TranslationJobKind
@@ -14,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.combine
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -73,13 +75,13 @@ object ReaderTranslationHub : ChapterJobSource {
         // 任务状态变化 → 重新聚合给通知栏（控制器是唯一真值，这里只做汇总）；
         // 全部任务收尾且阅读器没开着 → 顺手回收控制器
         collectors[manga.translationKey] = scope.launch {
-            controller.chapterJobs.collect {
+            combine(controller.chapterJobs, controller.chapterInFlight, controller.srChapterJobs) { _, _, _ -> Unit }.collect {
                 TranslationJobRegistry.notifyChanged()
                 // ⚠️ `collect` 会**立刻收到一次当前值**，而那一刻阅读器还在 `bind()` 之前
                 //（`uiAttached` 仍 false）→ 不加 `everAttached` 判断就会把刚建好的控制器当场回收，
                 // Activity 手上留个已 shutdown 的实例、下次进来又新建（日志里的"创建→回收→再创建"）。
                 if (!controller.everAttached) return@collect
-                if (!controller.uiAttached && !controller.isChapterBatchRunning()) releaseIfIdle(manga.id, manga.translationKey)
+                if (!controller.uiAttached) releaseIfIdle(manga.id, manga.translationKey)
             }
         }
         LogCollector.i(TAG, "创建阅读器翻译控制器 mangaId=${manga.id} title=${manga.title}")
@@ -106,7 +108,7 @@ object ReaderTranslationHub : ChapterJobSource {
     fun releaseIfIdle(mangaId: Long, mangaKey: String? = null) {
         val mapKey = mangaKey ?: controllers.values.firstOrNull { it.mangaId == mangaId }?.translationKeyOf() ?: return
         val c = controllers[mapKey] ?: return
-        if (c.uiAttached || c.isChapterBatchRunning()) return
+        if (c.uiAttached || c.isChapterBatchRunning() || c.srChapterJobs.value.isNotEmpty()) return
         controllers.remove(mapKey)
         collectors.remove(mapKey)?.cancel()
         c.shutdownAll()
@@ -139,6 +141,25 @@ object ReaderTranslationHub : ChapterJobSource {
                 done = job.done,
                 state = job.state,
                 startPage = job.startPage,
+                hasInFlight = c.chapterInFlight.value.any { it.chapterIndex == job.chapterIndex },
+                stopping = job.state == ChapterJobState.CANCELLED,
+            )
+        } + c.srChapterJobs.value.map { job ->
+            ActiveChapterJob(
+                kind = TranslationJobKind.MANGA,
+                operation = ChapterJobOperation.UPSCALE,
+                libraryLocationId = c.translationKeyOf().substringBefore(':', ""),
+                bookUuid = c.translationKeyOf().substringAfterLast(':', ""),
+                bookId = c.mangaId,
+                bookTitle = c.mangaTitle,
+                chapterIndex = job.chapterIndex,
+                chapterLabel = c.chapterLabel(job.chapterIndex),
+                total = job.total,
+                done = job.done,
+                state = if (job.queued) ChapterJobState.QUEUED else ChapterJobState.RUNNING,
+                stopping = job.stopping,
+                startPage = c.chapterStartPage(job.chapterIndex),
+                stageText = job.currentPage?.let { "P${it + 1}" },
             )
         }
     }
@@ -146,6 +167,12 @@ object ReaderTranslationHub : ChapterJobSource {
     override fun onAction(action: JobAction, job: ActiveChapterJob): Boolean {
         if (job.kind != TranslationJobKind.MANGA) return false
         val c = controllers[job.runtimeKey] ?: return false
+        if (job.operation == ChapterJobOperation.UPSCALE) {
+            if (action != JobAction.CANCEL) return false
+            c.cancelSrChapterJob(job.chapterIndex)
+            releaseIfIdle(job.bookId, job.runtimeKey)
+            return true
+        }
         when (action) {
             JobAction.PAUSE -> c.pauseChapterJob(job.chapterIndex)
             JobAction.RESUME -> c.resumeChapterJob(job.chapterIndex)

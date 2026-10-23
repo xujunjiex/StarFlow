@@ -16,6 +16,7 @@ import com.moe.starflow.translate.batch.ChapterJob
 import com.moe.starflow.translate.batch.ChapterJobRunner
 import com.moe.starflow.translate.batch.ChapterJobSource
 import com.moe.starflow.translate.batch.ChapterJobState
+import com.moe.starflow.translate.batch.ChapterJobOperation
 import com.moe.starflow.translate.batch.JobAction
 import com.moe.starflow.translate.batch.TranslationJobKind
 import com.moe.starflow.translate.batch.TranslationJobRegistry
@@ -26,7 +27,15 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.joinAll
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
 import translationapi.TranslatorFactory
 import java.util.concurrent.ConcurrentHashMap
@@ -72,6 +81,7 @@ class NovelChapterJobHost(
     context: Context,
     val book: ImportedNovel,
     private val scope: CoroutineScope,
+    private val loadParagraphs: (suspend (Int) -> List<NovelParagraph>)? = null,
 ) : ChapterJobSource {
 
     private companion object {
@@ -94,6 +104,9 @@ class NovelChapterJobHost(
     private val units = HashMap<Int, NovelWaitingBatch>()
     private val chapterUnits = HashMap<Int, List<Int>>()
     private val nextUnit = AtomicInteger(0)
+    private val preparationJobs = linkedMapOf<Int, Job>()
+    private val _chapterPreparation = MutableStateFlow<List<ChapterJob>>(emptyList())
+    val chapterPreparation: StateFlow<List<ChapterJob>> = _chapterPreparation
 
     // ===== UI 挂载（没有 UI 时照样后台翻） =====
 
@@ -235,14 +248,19 @@ class NovelChapterJobHost(
     )
 
     /** 每章一个任务（含暂停/取消状态）——面板据此切按钮文案与「等待」行。 */
-    val chapterJobs: StateFlow<List<ChapterJob>> = runner.jobs
+    private val chapterStateScope = CoroutineScope(scope.coroutineContext + SupervisorJob(scope.coroutineContext[Job]))
+    val chapterJobs: StateFlow<List<ChapterJob>> = combine(runner.jobs, chapterPreparation) { jobs, preparing ->
+        preparing + jobs.filterNot { job -> preparing.any { it.chapterIndex == job.chapterIndex } }
+    }.stateIn(chapterStateScope, SharingStarted.Eagerly, emptyList())
+    val chapterInFlight = runner.inFlightTasks
 
     /** 排队中（还没开始翻）的单元号。 */
     val waitingPages: StateFlow<Set<Int>> = runner.waitingPages
 
-    fun jobOf(chapterIndex: Int): ChapterJob? = runner.jobOf(chapterIndex)
+    fun jobOf(chapterIndex: Int): ChapterJob? = chapterPreparation.value.firstOrNull { it.chapterIndex == chapterIndex }
+        ?: runner.jobOf(chapterIndex)
 
-    fun isRunning(): Boolean = runner.isBusy()
+    fun isRunning(): Boolean = chapterPreparation.value.isNotEmpty() || runner.isBusy()
 
     /** 身份指纹（= `book.addedAt`）：宿主用它判断"同一个 id 是否已经换了一本书"。 */
     fun translationKeyOf(): String = book.translationKey
@@ -295,77 +313,120 @@ class NovelChapterJobHost(
         onEmpty: (() -> Unit)? = null,
     ) {
         val b = book
-        scope.launch {
-            val paragraphs = runCatching { repository.paragraphsOf(b, chapterIndex) }
-                .getOrDefault(emptyList())
-            // 「同时翻译图片」开着时，插图段也算一个可翻单位（一张图 = 一个段 = 一次 OCR + 一次请求）
-            val includeImages = NovelPanelStyle.translateImages(readerPrefs)
-            val paras = paragraphs
-                .filter { it.isTranslatable() || (includeImages && it.type == NovelParagraphType.IMAGE) }
-                .map { it.index }
-            val imageParas = if (includeImages) {
-                paragraphs.filter { it.type == NovelParagraphType.IMAGE }.map { it.index }.toSet()
-            } else {
-                emptySet()
-            }
-            val done = if (retranslateAll) {
-                emptySet()
-            } else {
-                runCatching { translator().loadTranslations(b, chapterIndex) }
-                    .getOrDefault(emptyMap()).keys +
-                    // ⚠️ **反向去重**（用户口径 2026-10-03）：原先只有"队列躲章任务"这一向，
-                    // 章任务排批时看不见前台队列正在翻的段 → 同一段被两边各发一次请求（白烧额度）。
-                    runCatching { queueInFlightParas(chapterIndex) }.getOrDefault(emptySet())
-            }
-            val plan = NovelBatchPlanner.planBatches(
-                chapterParaIndexes = paras,
-                translated = done,
-                batchSize = NovelPanelStyle.batchSize(readerPrefs),
-                // ⚠️ **插图不拆批**（用户口径 2026-10-04：「图片算段落的一段！每批 3 段，
-                // 哪怕三张都是图片，也要先后翻译三张图片」）：批按每批段数切，
-                // 批内的插图由 `NovelChapterTranslator` 串行 OCR（它自己拿 OCR 锁）
-            )
-            if (plan.isEmpty()) {
-                LogCollector.i(TAG, "第 $chapterIndex 章没有待翻的段落")
-                runCatching { onEmpty?.invoke() }
-                notifyUiChanged()
-                return@launch
-            }
-            // 用户明确要求翻 → 新一轮任务，超长确认重新允许弹窗
-            oversize.reset()
-            val ids = ArrayList<Int>(plan.size)
-            synchronized(unitLock) {
-                // 同一章重新提交：旧单元作废（unitId 自增，不会与新的撞）
-                chapterUnits.remove(chapterIndex)?.forEach { units.remove(it) }
-                plan.forEachIndexed { ordinal, batch ->
-                    val id = nextUnit.incrementAndGet()
-                    // 批里**全是插图**时面板行标「一张插图」；混着文本就照旧报段号区间
-                    units[id] = NovelWaitingBatch(
-                        chapterIndex, ordinal, batch,
-                        isImageUnit = batch.isNotEmpty() && batch.all { it in imageParas },
-                    )
-                    ids += id
+        val task = synchronized(unitLock) {
+            if (preparationJobs.containsKey(chapterIndex) || runner.jobOf(chapterIndex)?.isActive == true) return
+            val predecessors = preparationJobs.values.toList()
+            val task = scope.launch(start = CoroutineStart.LAZY) {
+                // A cancelled middle chapter must not release this chapter ahead of earlier reads.
+                predecessors.joinAll()
+                val paragraphs = runCatching { loadParagraphs?.invoke(chapterIndex) ?: repository.paragraphsOf(b, chapterIndex) }
+                    .getOrDefault(emptyList())
+                ensureActive()
+                // 「同时翻译图片」开着时，插图段也算一个可翻单位（一张图 = 一个段 = 一次 OCR + 一次请求）
+                val includeImages = NovelPanelStyle.translateImages(readerPrefs)
+                val paras = paragraphs
+                    .filter { it.isTranslatable() || (includeImages && it.type == NovelParagraphType.IMAGE) }
+                    .map { it.index }
+                val imageParas = if (includeImages) {
+                    paragraphs.filter { it.type == NovelParagraphType.IMAGE }.map { it.index }.toSet()
+                } else {
+                    emptySet()
                 }
-                chapterUnits[chapterIndex] = ids
+                val done = if (retranslateAll) {
+                    emptySet()
+                } else {
+                    runCatching { translator().loadTranslations(b, chapterIndex) }
+                        .getOrDefault(emptyMap()).keys +
+                        // ⚠️ **反向去重**（用户口径 2026-10-03）：原先只有"队列躲章任务"这一向，
+                        // 章任务排批时看不见前台队列正在翻的段 → 同一段被两边各发一次请求（白烧额度）。
+                        runCatching { queueInFlightParas(chapterIndex) }.getOrDefault(emptySet())
+                }
+                ensureActive()
+                val plan = NovelBatchPlanner.planBatches(
+                    chapterParaIndexes = paras,
+                    translated = done,
+                    batchSize = NovelPanelStyle.batchSize(readerPrefs),
+                    // ⚠️ **插图不拆批**（用户口径 2026-10-04：「图片算段落的一段！每批 3 段，
+                    // 哪怕三张都是图片，也要先后翻译三张图片」）：批按每批段数切，
+                    // 批内的插图由 `NovelChapterTranslator` 串行 OCR（它自己拿 OCR 锁）
+                )
+                if (plan.isEmpty()) {
+                    LogCollector.i(TAG, "第 $chapterIndex 章没有待翻的段落")
+                    runCatching { onEmpty?.invoke() }
+                    notifyUiChanged()
+                    return@launch
+                }
+                // 用户明确要求翻 → 新一轮任务，超长确认重新允许弹窗
+                oversize.reset()
+                val ids = ArrayList<Int>(plan.size)
+                synchronized(unitLock) {
+                    ensureActive()
+                    // 同一章重新提交：旧单元作废（unitId 自增，不会与新的撞）
+                    chapterUnits.remove(chapterIndex)?.forEach { units.remove(it) }
+                    plan.forEachIndexed { ordinal, batch ->
+                        val id = nextUnit.incrementAndGet()
+                        // 批里**全是插图**时面板行标「一张插图」；混着文本就照旧报段号区间
+                        units[id] = NovelWaitingBatch(
+                            chapterIndex, ordinal, batch,
+                            isImageUnit = batch.isNotEmpty() && batch.all { it in imageParas },
+                        )
+                        ids += id
+                    }
+                    chapterUnits[chapterIndex] = ids
+                    // 读取、分批期间也属于活动任务；交接给 runner 时继承用户的暂停状态。
+                    val paused = chapterPreparation.value.firstOrNull { it.chapterIndex == chapterIndex }?.state == ChapterJobState.PAUSED
+                    runner.submit(chapterIndex, ids, label, startPage = 0, initiallyPaused = paused)
+                    _chapterPreparation.value = chapterPreparation.value.filterNot { it.chapterIndex == chapterIndex }
+                }
+                LogCollector.i(TAG, "章任务提交 ch=$chapterIndex 共 ${ids.size} 批（每批 ${NovelPanelStyle.batchSize(readerPrefs)} 段）")
             }
-            LogCollector.i(TAG, "章任务提交 ch=$chapterIndex 共 ${ids.size} 批（每批 ${NovelPanelStyle.batchSize(readerPrefs)} 段）")
-            runner.submit(chapterIndex, ids, label, startPage = 0)
+            preparationJobs[chapterIndex] = task
+            _chapterPreparation.value += ChapterJob(chapterIndex, total = 0, done = 0, state = ChapterJobState.QUEUED, label = label)
+            task.invokeOnCompletion {
+                synchronized(unitLock) {
+                    preparationJobs.remove(chapterIndex)
+                    _chapterPreparation.value = chapterPreparation.value.filterNot { it.chapterIndex == chapterIndex }
+                }
+            }
+            task
         }
+        task.start()
     }
 
-    fun pause(chapterIndex: Int) = runner.pause(chapterIndex)
+    fun pause(chapterIndex: Int) = synchronized(unitLock) {
+        _chapterPreparation.value = chapterPreparation.value.map {
+            if (it.chapterIndex == chapterIndex && it.state == ChapterJobState.QUEUED) it.copy(state = ChapterJobState.PAUSED) else it
+        }
+        runner.pause(chapterIndex)
+    }
 
-    fun resume(chapterIndex: Int) = runner.resume(chapterIndex)
+    fun resume(chapterIndex: Int) = synchronized(unitLock) {
+        _chapterPreparation.value = chapterPreparation.value.map {
+            if (it.chapterIndex == chapterIndex && it.state == ChapterJobState.PAUSED) it.copy(state = ChapterJobState.QUEUED) else it
+        }
+        runner.resume(chapterIndex)
+    }
 
-    fun cancel(chapterIndex: Int) = runner.cancel(chapterIndex)
+    fun cancel(chapterIndex: Int) = synchronized(unitLock) {
+        _chapterPreparation.value = chapterPreparation.value.map {
+            if (it.chapterIndex == chapterIndex) it.copy(state = ChapterJobState.CANCELLED) else it
+        }
+        preparationJobs[chapterIndex]?.cancel()
+        runner.cancel(chapterIndex)
+    }
 
     suspend fun shutdownAndJoin() {
+        val preparing = synchronized(unitLock) { preparationJobs.values.toList().also { jobs -> jobs.forEach { it.cancel() } } }
+        preparing.forEach { it.join() }
         runner.shutdownAndJoin()
         shutdownAll()
+        chapterStateScope.coroutineContext[Job]?.join()
     }
 
     /** 停掉这本书的全部章节任务（换书 / 退出且不留任务）。 */
     fun shutdownAll() {
+        chapterStateScope.cancel()
+        synchronized(unitLock) { preparationJobs.values.toList().forEach { it.cancel() } }
         runner.shutdown()
         synchronized(unitLock) {
             units.clear()
@@ -529,22 +590,27 @@ class NovelChapterJobHost(
 
     // ===== ChapterJobSource（由 NovelTranslationHub 聚合）=====
 
-    fun snapshotOfBook(): List<ActiveChapterJob> = runner.jobs.value.map { job ->
-        ActiveChapterJob(
-            kind = TranslationJobKind.NOVEL,
-            bookId = book.id,
-            libraryLocationId = book.libraryLocationId,
-            bookUuid = book.bookUuid,
-            bookTitle = book.title,
-            chapterIndex = job.chapterIndex,
-            chapterLabel = job.label,
-            total = job.total,
-            done = job.done,
-            state = job.state,
-            startPage = 0,
-            // 这一章正在逐张 OCR 插图 → 通知栏报「正在识别插图 i/N…」（阅读器关掉时也看得到）
-            stageText = imageStageTextOf(job.chapterIndex),
-        )
+    fun snapshotOfBook(): List<ActiveChapterJob> = synchronized(unitLock) {
+        val preparing = chapterPreparation.value
+        (preparing + runner.jobs.value.filterNot { job -> preparing.any { it.chapterIndex == job.chapterIndex } }).map { job ->
+            ActiveChapterJob(
+                kind = TranslationJobKind.NOVEL,
+                bookId = book.id,
+                libraryLocationId = book.libraryLocationId,
+                bookUuid = book.bookUuid,
+                bookTitle = book.title,
+                chapterIndex = job.chapterIndex,
+                chapterLabel = job.label,
+                total = job.total,
+                done = job.done,
+                state = job.state,
+                startPage = 0,
+                // 这一章正在逐张 OCR 插图 → 通知栏报「正在识别插图 i/N…」（阅读器关掉时也看得到）
+                stageText = if (job in preparing) app.getString(com.moe.starflow.R.string.chapter_task_preparing) else imageStageTextOf(job.chapterIndex),
+                hasInFlight = job in preparing || runner.inFlightTasks.value.any { it.chapterIndex == job.chapterIndex },
+                stopping = job.state == ChapterJobState.CANCELLED,
+            )
+        }
     }
 
     /**
@@ -573,12 +639,12 @@ class NovelChapterJobHost(
     override fun snapshot(): List<ActiveChapterJob> = snapshotOfBook()
 
     override fun onAction(action: JobAction, job: ActiveChapterJob): Boolean {
-        if (job.kind != TranslationJobKind.NOVEL || job.bookId != book.id) return false
-        val known = runner.jobOf(job.chapterIndex) ?: return false
+        if (job.kind != TranslationJobKind.NOVEL || job.bookId != book.id || job.operation != ChapterJobOperation.TRANSLATE) return false
+        val known = jobOf(job.chapterIndex) ?: return false
         when (action) {
-            JobAction.PAUSE -> runner.pause(job.chapterIndex)
-            JobAction.RESUME -> runner.resume(job.chapterIndex)
-            JobAction.CANCEL -> runner.cancel(job.chapterIndex)
+            JobAction.PAUSE -> pause(job.chapterIndex)
+            JobAction.RESUME -> resume(job.chapterIndex)
+            JobAction.CANCEL -> cancel(job.chapterIndex)
         }
         LogCollector.d(TAG, "通知动作 $action ch=${job.chapterIndex}（任务 ${known.state}）")
         return true
@@ -631,7 +697,7 @@ object NovelTranslationHub : ChapterJobSource {
         val host = NovelChapterJobHost(com.moe.starflow.library.LibrarySessions.forLocation(context, book.libraryLocationId).context(), book, scope)
         hosts[book.translationKey] = host
         collectors[book.translationKey] = scope.launch {
-            host.chapterJobs.collect {
+            combine(host.chapterJobs, host.chapterInFlight, host.chapterPreparation) { _, _, _ -> Unit }.collect {
                 TranslationJobRegistry.notifyChanged()
                 if (!host.everAttached) return@collect
                 if (!host.uiAttached && !host.isRunning()) releaseIfIdle(book.id, book.translationKey)

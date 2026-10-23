@@ -99,6 +99,9 @@ import kotlin.math.roundToInt
  * - **翻译**：`translations` 是本章译文，到达后重新分页（译文比原文长，必须重排）
  */
 class NovelReaderActivity : AppCompatActivity() {
+    private val chapterNotificationAccess = com.moe.starflow.translate.batch.ChapterTaskNotificationAccess(this) {
+        NovelPanelStyle.isDarkBackground(bgMode, prefs)
+    }
 
     companion object {
         private const val TAG = "NovelReader"
@@ -568,6 +571,7 @@ class NovelReaderActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        if (TranslationJobService.hasActiveJobs()) TranslationJobService.start(applicationContext)
         if (!::repository.isInitialized) return
         onReaderStarted()
     }
@@ -3084,6 +3088,7 @@ class NovelReaderActivity : AppCompatActivity() {
             ChapterJobState.PAUSED -> {
                 host.resume(index)
                 TranslationJobService.start(applicationContext)
+                chapterNotificationAccess.ensureForTask()
                 pushPanelState()
                 return
             }
@@ -3106,6 +3111,7 @@ class NovelReaderActivity : AppCompatActivity() {
         )
         // 任务在应用级后台跑：拉起前台服务（通知栏进度 + 暂停/继续/取消按钮）
         TranslationJobService.start(applicationContext)
+        chapterNotificationAccess.ensureForTask()
         pushPanelState()
     }
 
@@ -3156,6 +3162,11 @@ class NovelReaderActivity : AppCompatActivity() {
      */
     private fun refreshChapterJobChips() {
         val overlay = TranslationStatusOverlay.getInstance(this)
+        if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+            chapterJobChips.values.forEach { overlay.removeRunning(it) }
+            chapterJobChips.clear()
+            return
+        }
         val jobs = chapterHost?.chapterJobs?.value.orEmpty().filter { it.isActive }
         val alive = mutableSetOf<Int>()
         jobs.forEach { job ->
@@ -3234,6 +3245,7 @@ class NovelReaderActivity : AppCompatActivity() {
     private suspend fun confirmOversizeOnUi(estimate: Int, threshold: Int): Boolean {
         if (isFinishing || isDestroyed) return true
         return withContext(Dispatchers.Main) {
+            if (!lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return@withContext true
             // ⚠️ **弹窗必须带超时**（用户口径 2026-10-03）：预警是"提示"不是硬闸门 ——
             // 用户一直不点（或弹窗被系统挡在后面）时，原来那一批会**无限期挂着**：
             // 状态一直显示「翻译中」、并发槽位不放、后面的批也排不上（仅次于引擎根因的卡点）。
@@ -3250,6 +3262,11 @@ class NovelReaderActivity : AppCompatActivity() {
                         waiting?.takeIf { it.isActive }?.resume(go)
                     }
                 }
+                // 已显示的预警也必须在锁屏/离开时放行，不能只检查弹窗创建之前的生命周期。
+                val backgroundObserver = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                    if (event == Lifecycle.Event.ON_STOP || event == Lifecycle.Event.ON_DESTROY) answer(true)
+                }
+                lifecycle.addObserver(backgroundObserver)
                 val timer = launch {
                     delay(timeoutMs)
                     if (!answered) {
@@ -3264,7 +3281,7 @@ class NovelReaderActivity : AppCompatActivity() {
                 try {
                     suspendCancellableCoroutine { cont ->
                         waiting = cont
-                        if (isFinishing || isDestroyed) {
+                        if (answered || isFinishing || isDestroyed || !lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
                             cont.resume(true)
                             return@suspendCancellableCoroutine
                         }
@@ -3291,6 +3308,8 @@ class NovelReaderActivity : AppCompatActivity() {
                     }
                 } finally {
                     timer.cancel()
+                    lifecycle.removeObserver(backgroundObserver)
+                    dlg?.dismiss()
                 }
             }
         }

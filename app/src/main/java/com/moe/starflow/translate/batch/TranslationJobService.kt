@@ -17,6 +17,7 @@ import com.moe.starflow.utils.LogCollector
 import com.moe.starflow.utils.TranslationExecutionMode
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 
 /**
  * 批量翻译的**前台服务**：在通知栏给每一章一条进度通知（可暂停/继续/取消）。
@@ -43,12 +44,13 @@ class TranslationJobService : LifecycleService() {
         const val EXTRA_KIND = "job_kind"
         const val EXTRA_BOOK_ID = "book_id"
         const val EXTRA_CHAPTER_INDEX = "chapter_index"
+        const val EXTRA_OPERATION = "chapter_operation"
 
         /**
          * ⚠️ **2026-10-03 换了 id**：原 `chapter_translation` 建的时候是 `IMPORTANCE_LOW` ——
          * Android 的**通道重要性一旦创建就不能由 App 改**（用户说了算），而 LOW 在 MIUI 上
          * 既不亮状态栏图标、也容易被当成"不重要通知"折叠掉，用户报「看不到通知系统的通知」。
-         * 新 id 建 `IMPORTANCE_DEFAULT`（亮图标、仍在通知栏，但 `setSilent` 不响不震）。
+         * 新 id 建 `IMPORTANCE_DEFAULT`；新通道默认无声无震，已有通道保留用户设置。
          * 通道的**创建入口收敛在 [TranslationNotifyChannel.ensure]**（阅读器队列那条通知也走它，
          * 因为它不经过前台服务、否则用户只用自动/增量时通道根本没人建 → 通知被静默丢掉）。
          */
@@ -75,26 +77,60 @@ class TranslationJobService : LifecycleService() {
 
         /** 当前有没有活动任务（宿主用来决定要不要拉起服务）。 */
         fun hasActiveJobs(): Boolean = TranslationJobRegistry.hasActiveJobs.value
+
+        /** 点通知 → 打开对应阅读器（漫画带该章第一页，阅读器自己会落到那一章）。 */
+        internal fun openReaderIntent(context: Context, job: ActiveChapterJob): PendingIntent {
+            val intent = when (job.kind) {
+                TranslationJobKind.MANGA -> Intent(context, MangaReaderActivity::class.java).apply {
+                    putExtra(MangaReaderActivity.EXTRA_MANGA_ID, job.bookId)
+                    putExtra(MangaReaderActivity.EXTRA_START_PAGE, job.startPage)
+                }
+                TranslationJobKind.NOVEL -> Intent(context, NovelReaderActivity::class.java).apply {
+                    putExtra(NovelReaderActivity.EXTRA_NOVEL_ID, job.bookId)
+                    putExtra(NovelReaderActivity.EXTRA_CHAPTER_INDEX, job.chapterIndex)
+                }
+            }
+            intent.putExtra("library_location", job.libraryLocationId)
+            intent.putExtra("library_book_uuid", job.bookUuid)
+            intent.data = android.net.Uri.parse("starflow://library/${job.libraryLocationId}/${job.bookUuid}/${job.chapterIndex}/${job.operation.name}")
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            return PendingIntent.getActivity(
+                context, job.notificationId, intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        }
+
     }
 
     private var isForegroundStarted = false
     private val shown = mutableSetOf<Int>()
+    private lateinit var cpuWakeLock: ChapterTaskWakeLock
+    private var timedOut = false
 
     override fun onCreate() {
         super.onCreate()
+        cpuWakeLock = ChapterTaskWakeLock(this)
         ensureChannel()
         if (isForegroundStarted) return
         isForegroundStarted = true
         try {
-            startForeground(NOTIFICATION_ID_SERVICE, buildSummaryNotification(1))
+            startForeground(NOTIFICATION_ID_SERVICE, buildSummaryNotification(emptyList()))
         } catch (e: Exception) {
             LogCollector.e(TAG, "startForeground 失败", e)
+        }
+        lifecycleScope.launch {
+            while (isActive && !timedOut) {
+                cpuWakeLock.update(TranslationJobRegistry.activeJobs.value)
+                delay(60_000L)
+            }
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
         intent?.action?.let { handleAction(it, intent) }
+        // 从系统设置授予通知权限后，任务进度可能暂时没有变化；也要立即补发当前快照。
+        if (observing && !timedOut) postActiveJobs(TranslationJobRegistry.activeJobs.value.filter { it.isActive })
         observeJobs()
         return START_NOT_STICKY
     }
@@ -105,9 +141,12 @@ class TranslationJobService : LifecycleService() {
         val kind = runCatching { TranslationJobKind.valueOf(kindName) }.getOrNull() ?: return
         val bookId = intent.getLongExtra(EXTRA_BOOK_ID, -1L)
         val chapterIndex = intent.getIntExtra(EXTRA_CHAPTER_INDEX, -1)
+        val operation = intent.getStringExtra(EXTRA_OPERATION)?.let {
+            runCatching { ChapterJobOperation.valueOf(it) }.getOrNull()
+        } ?: ChapterJobOperation.TRANSLATE
         if (bookId < 0 || chapterIndex < 0) return
         val job = TranslationJobRegistry.activeJobs.value
-             .firstOrNull { it.kind == kind && it.bookId == bookId && it.chapterIndex == chapterIndex &&
+             .firstOrNull { it.kind == kind && it.operation == operation && it.bookId == bookId && it.chapterIndex == chapterIndex &&
                 it.libraryLocationId == intent.getStringExtra("library_location").orEmpty() &&
                 it.bookUuid == intent.getStringExtra("library_book_uuid").orEmpty() }
             ?: return
@@ -140,13 +179,12 @@ class TranslationJobService : LifecycleService() {
         runCatching { TranslationJobRegistry.notifyChanged() }
         lifecycleScope.launch {
             TranslationJobRegistry.activeJobs.collect { jobs ->
+                if (timedOut) return@collect
+                cpuWakeLock.update(jobs)
                 // ⚠️ 只给**还在跑**的章发通知：`jobs` 里会长期保留 DONE/CANCELLED 的章
                 // （面板要靠它显示「已完成 x/y」），照单全发的话完成的章会**永远挂着一条
                 // 「正在翻译 20/20 页」的通知**，而且服务因为 jobs 非空永不停 —— 用户看得到的脏状态。
-                val active = jobs.filter {
-                    it.state == ChapterJobState.RUNNING || it.state == ChapterJobState.QUEUED ||
-                        it.state == ChapterJobState.PAUSED
-                }
+                val active = jobs.filter { it.isActive }
                 if (active.isEmpty()) {
                     // ⚠️ **没见过活动任务就别自杀**：上面那个竞态只剩这一层兜底 —— 给宿主一点时间
                     // 把状态推上来（grace 期内再来一次活动快照就照常发通知）。
@@ -163,27 +201,28 @@ class TranslationJobService : LifecycleService() {
                     return@collect
                 }
                 sawActiveJob = true
-                active.forEach { job -> notify(job) }
-                // 已经不在活动列表里的通知要撤掉（跑完/取消的章）
-                val alive = active.map { it.notificationId }.toSet()
-                (shown - alive).forEach { id ->
-                    runCatching { NotificationManagerCompat.from(this@TranslationJobService).cancel(id) }
-                    shown -= id
-                }
-                runCatching {
-                    if (canPostNotifications()) {
-                        NotificationManagerCompat.from(this@TranslationJobService)
-                            .notify(
-                                NOTIFICATION_ID_SERVICE,
-                                buildSummaryNotification(
-                                    active.size,
-                                    ocrOnly = active.isNotEmpty() &&
-                                        active.all { it.kind == TranslationJobKind.MANGA } &&
-                                        TranslationExecutionMode.isOcrOnly(this@TranslationJobService),
-                                )
-                            )
-                    }
-                }
+                postActiveJobs(active)
+            }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun postActiveJobs(active: List<ActiveChapterJob>) {
+        if (active.isEmpty()) return
+        active.forEach { job -> notify(job) }
+        // 已经不在活动列表里的通知要撤掉（跑完/取消的章）
+        val alive = active.map { it.notificationId }.toSet()
+        (shown - alive).forEach { id ->
+            runCatching { NotificationManagerCompat.from(this@TranslationJobService).cancel(id) }
+            shown -= id
+        }
+        runCatching {
+            if (canPostNotifications()) {
+                NotificationManagerCompat.from(this@TranslationJobService)
+                    .notify(
+                        NOTIFICATION_ID_SERVICE,
+                        buildSummaryNotification(active)
+                    )
             }
         }
     }
@@ -192,39 +231,33 @@ class TranslationJobService : LifecycleService() {
     private fun notify(job: ActiveChapterJob) {
         if (!canPostNotifications()) return
         val label = job.chapterLabel.ifBlank { getString(R.string.manga_chapter_label, job.chapterIndex + 1) }
-        val title = getString(R.string.chapter_translate_notify_title, job.bookTitle, label)
+        val title = getString(
+            if (job.operation == ChapterJobOperation.UPSCALE) R.string.chapter_sr_notify_title
+            else R.string.chapter_translate_notify_title,
+            job.bookTitle, label,
+        )
         // ⚠️ 到这里的章**一定是活动章**（调用方的 `active` 已滤掉 DONE/CANCELLED），
         // 所以不再有 CANCELLED 分支 —— 那是不可达代码（审查发现 `chapter_translate_notify_cancelled`
         // 因此是两个语言里的死资源）。
-        val text = when {
-            // ⚠️ **暂停优先**：暂停在插图 OCR 中间时，"正在识别插图 2/3…"会骗人（其实已经不再推进）
-            job.state == ChapterJobState.PAUSED ->
-                getString(R.string.chapter_translate_notify_paused, job.done, job.total)
-            job.state == ChapterJobState.QUEUED -> getString(R.string.reader_translate_state_waiting)
-            // 更细的一行状态（小说插图：「正在识别插图 2/3…」）—— 要能盖过"第 x/y"与"仅 OCR"，
-            // 否则阅读器关掉后用户看到的是进度不动（见 ActiveChapterJob.stageText）
-            !job.stageText.isNullOrBlank() -> job.stageText
-            // ⚠️ 仅 OCR 模式下一页都没在翻译 → 通知栏也必须报「正在OCR」（用户口径 2026-10：
-            //    只 OCR 模式的提示系统要对所有涉及 OCR 的功能生效）
-            job.kind == TranslationJobKind.MANGA && TranslationExecutionMode.isOcrOnly(this) ->
-                getString(R.string.chapter_translate_notify_progress_ocr, job.done, job.total)
-            else -> getString(R.string.chapter_translate_notify_progress, job.done, job.total)
-        }
+        val text = progressText(job)
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_reader_translate)
             .setContentTitle(title)
             .setContentText(text)
             .setOngoing(job.state == ChapterJobState.RUNNING || job.state == ChapterJobState.QUEUED)
             .setOnlyAlertOnce(true)
-            .setSilent(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
-            .setProgress(job.total.coerceAtLeast(1), job.done, false)
-            .setContentIntent(openReaderIntent(job))
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setProgress(job.total.coerceAtLeast(1), job.done, job.total <= 0)
+            .setContentIntent(openReaderIntent(this, job))
             .addAction(
                 0, getString(R.string.cancel),
                 actionIntent(JobAction.CANCEL, job, job.notificationId + 1)
             )
-        if (job.state == ChapterJobState.PAUSED) {
+        if (job.operation == ChapterJobOperation.UPSCALE || job.stopping) {
+            // 超分只提供取消；停止中的任务保留进度，直到原生清理完成。
+        } else if (job.state == ChapterJobState.PAUSED) {
             builder.addAction(
                 0, getString(R.string.reader_translate_chapter_resume),
                 actionIntent(JobAction.RESUME, job, job.notificationId + 2)
@@ -245,6 +278,25 @@ class TranslationJobService : LifecycleService() {
         }
     }
 
+    private fun progressText(job: ActiveChapterJob): String = when {
+        job.stopping -> getString(R.string.reader_sr_stopping)
+        // ⚠️ **暂停优先**：暂停在插图 OCR 中间时，"正在识别插图 2/3…"会骗人（其实已经不再推进）
+        job.state == ChapterJobState.PAUSED ->
+            getString(R.string.chapter_translate_notify_paused, job.done, job.total)
+        job.state == ChapterJobState.QUEUED -> job.stageText ?: getString(R.string.reader_translate_state_waiting)
+        job.operation == ChapterJobOperation.UPSCALE ->
+            getString(R.string.reader_sr_chapter_running, job.done, job.total) +
+                job.stageText?.let { " · $it" }.orEmpty()
+        // 更细的一行状态（小说插图：「正在识别插图 2/3…」）—— 要能盖过"第 x/y"与"仅 OCR"，
+        // 否则阅读器关掉后用户看到的是进度不动（见 ActiveChapterJob.stageText）
+        !job.stageText.isNullOrBlank() -> job.stageText
+        // ⚠️ 仅 OCR 模式下一页都没在翻译 → 通知栏也必须报「正在OCR」（用户口径 2026-10：
+        //    只 OCR 模式的提示系统要对所有涉及 OCR 的功能生效）
+        job.kind == TranslationJobKind.MANGA && TranslationExecutionMode.isOcrOnly(this) ->
+            getString(R.string.chapter_translate_notify_progress_ocr, job.done, job.total)
+        else -> getString(R.string.chapter_translate_notify_progress, job.done, job.total)
+    }
+
     private fun actionIntent(action: JobAction, job: ActiveChapterJob, requestCode: Int): PendingIntent {
         val name = when (action) {
             JobAction.PAUSE -> ACTION_PAUSE
@@ -255,7 +307,8 @@ class TranslationJobService : LifecycleService() {
             this.action = name
             putExtra("library_location", job.libraryLocationId)
             putExtra("library_book_uuid", job.bookUuid)
-            data = android.net.Uri.parse("starflow://library/${job.libraryLocationId}/${job.bookUuid}/${job.chapterIndex}/$name")
+            data = android.net.Uri.parse("starflow://library/${job.libraryLocationId}/${job.bookUuid}/${job.chapterIndex}/${job.operation.name}/$name")
+            putExtra(EXTRA_OPERATION, job.operation.name)
             putExtra(EXTRA_KIND, job.kind.name)
             putExtra(EXTRA_BOOK_ID, job.bookId)
             putExtra(EXTRA_CHAPTER_INDEX, job.chapterIndex)
@@ -266,57 +319,56 @@ class TranslationJobService : LifecycleService() {
         )
     }
 
-    /** 点通知 → 打开对应阅读器（漫画带该章第一页，阅读器自己会落到那一章）。 */
-    private fun openReaderIntent(job: ActiveChapterJob): PendingIntent {
-        val intent = when (job.kind) {
-            TranslationJobKind.MANGA -> Intent(this, MangaReaderActivity::class.java).apply {
-                putExtra(MangaReaderActivity.EXTRA_MANGA_ID, job.bookId)
-                putExtra(MangaReaderActivity.EXTRA_START_PAGE, job.startPage)
-            }
-            TranslationJobKind.NOVEL -> Intent(this, NovelReaderActivity::class.java).apply {
-                putExtra(NovelReaderActivity.EXTRA_NOVEL_ID, job.bookId)
-                putExtra(NovelReaderActivity.EXTRA_CHAPTER_INDEX, job.chapterIndex)
-            }
-        }
-        intent.putExtra("library_location", job.libraryLocationId)
-        intent.putExtra("library_book_uuid", job.bookUuid)
-        intent.data = android.net.Uri.parse("starflow://library/${job.libraryLocationId}/${job.bookUuid}/${job.chapterIndex}")
-        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        return PendingIntent.getActivity(
-            this, job.notificationId, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-    }
 
-    private fun buildSummaryNotification(running: Int, ocrOnly: Boolean = false) =
-        NotificationCompat.Builder(this, CHANNEL_ID)
+    private fun buildSummaryNotification(jobs: List<ActiveChapterJob>): android.app.Notification {
+        val upscaleOnly = jobs.isNotEmpty() && jobs.all { it.operation == ChapterJobOperation.UPSCALE }
+        val translateOnly = jobs.isNotEmpty() && jobs.all { it.operation == ChapterJobOperation.TRANSLATE }
+        val ocrOnly = translateOnly && jobs.all { it.kind == TranslationJobKind.MANGA } && TranslationExecutionMode.isOcrOnly(this)
+        val title = when {
+            upscaleOnly -> R.string.chapter_sr_notify_summary_title
+            ocrOnly -> R.string.chapter_translate_notify_summary_title_ocr
+            translateOnly -> R.string.chapter_translate_notify_summary_title
+            else -> R.string.chapter_tasks_notify_summary_title
+        }
+        val text = when {
+            upscaleOnly -> R.string.chapter_sr_notify_summary
+            ocrOnly -> R.string.chapter_translate_notify_summary_ocr
+            translateOnly -> R.string.chapter_translate_notify_summary
+            else -> R.string.chapter_tasks_notify_summary
+        }
+        val current = jobs.firstOrNull { it.needsCpu } ?: jobs.firstOrNull()
+        val progress = current?.let {
+            val label = it.chapterLabel.ifBlank { getString(R.string.manga_chapter_label, it.chapterIndex + 1) }
+            "${it.bookTitle} · $label · ${progressText(it)}"
+        }
+        return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_reader_translate)
-            .setContentTitle(
-                getString(
-                    if (ocrOnly) R.string.chapter_translate_notify_summary_title_ocr
-                    else R.string.chapter_translate_notify_summary_title
-                )
-            )
-            .setContentText(
-                getString(
-                    if (ocrOnly) R.string.chapter_translate_notify_summary_ocr
-                    else R.string.chapter_translate_notify_summary,
-                    running,
-                )
-            )
+            .setContentTitle(getString(title))
+            .setContentText(progress ?: getString(text, jobs.size))
             .setOngoing(true)
-            .setSilent(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOnlyAlertOnce(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .apply {
+                current?.let {
+                    setContentIntent(openReaderIntent(this@TranslationJobService, it))
+                    setProgress(it.total.coerceAtLeast(1), it.done, it.total <= 0)
+                }
+            }
             .build()
+    }
 
     /**
      * 有没有通知权限（Android 13+ 需要用户授权）。
      *
      * ⚠️ 必须先查再发：没有权限时 `notify()` 在部分 ROM 上直接抛 `SecurityException`（我们虽然在
      * `runCatching` 里兜住了，但每次都白构造一遍通知、还会刷日志）。`MainActivity` 启动时已经申请过
-     * 这个权限，用户拒绝的话这里静默跳过 —— **任务照跑**，只是没有通知栏进度。
+     * 这个权限；阅读器任务入口会补充申请并提供系统设置入口。未获授权时任务仍可运行。
      */
     private fun canPostNotifications(): Boolean {
+        if (!ChapterTaskNotificationAccess.notificationsEnabled(this)) return false
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true
         return ContextCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS) ==
             android.content.pm.PackageManager.PERMISSION_GRANTED
@@ -335,8 +387,22 @@ class TranslationJobService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        cpuWakeLock.release()
         // ⚠️ 任务本体在各宿主里，服务停掉**不代表任务停止**（用户要求除非清后台否则继续翻）
         LogCollector.d(TAG, "批量翻译前台服务已停止（任务仍在后台跑）")
         super.onDestroy()
+    }
+
+    /** Android 15 的 dataSync 时限到达后必须及时退出服务，避免系统将进程判为 ANR。 */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        timedOut = true
+        LogCollector.w(TAG, "章节任务达到系统前台服务时限，停止当前任务")
+        TranslationJobRegistry.activeJobs.value.filter { it.isActive }.forEach {
+            TranslationJobRegistry.dispatch(JobAction.CANCEL, it)
+        }
+        cpuWakeLock.release()
+        clearAll()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 }

@@ -111,5 +111,78 @@ class TranslationJobRegistryTest {
         val manga = job(ChapterJobState.RUNNING, chapter = 5, book = 9L)
         val novel = manga.copy(kind = TranslationJobKind.NOVEL)
         assertNotEquals(manga.notificationId, novel.notificationId)
+        assertNotEquals(manga.notificationId, manga.copy(operation = ChapterJobOperation.UPSCALE).notificationId)
+        val scoped = manga.copy(libraryLocationId = "location", bookUuid = "00000000-0000-0000-0000-000000000001")
+        assertNotEquals(scoped.notificationId, scoped.copy(operation = ChapterJobOperation.UPSCALE).notificationId)
+        assertEquals(scoped.runtimeKey, scoped.copy(operation = ChapterJobOperation.UPSCALE).runtimeKey)
+    }
+
+    @Test
+    fun pausedOrCancelledInFlightWorkStaysActiveUntilCleanupFinishes() {
+        val src = Src("cleanup", listOf(job(ChapterJobState.CANCELLED).copy(hasInFlight = true)))
+        TranslationJobRegistry.register(src)
+        try {
+            assertTrue(TranslationJobRegistry.hasActiveJobs.value)
+            assertTrue(src.jobs.single().needsCpu)
+            src.jobs = listOf(job(ChapterJobState.PAUSED))
+            TranslationJobRegistry.notifyChanged()
+            assertTrue(TranslationJobRegistry.hasActiveJobs.value)
+            assertFalse(src.jobs.single().needsCpu)
+            src.jobs = emptyList()
+            TranslationJobRegistry.notifyChanged()
+            assertFalse(TranslationJobRegistry.hasActiveJobs.value)
+        } finally {
+            TranslationJobRegistry.unregister(src.key)
+        }
+    }
+
+    @Test
+    fun concurrentRefreshCannotPublishAnOlderEmptySnapshotAfterAnActiveTask() {
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val secondStarted = java.util.concurrent.CountDownLatch(1)
+        val secondFinished = java.util.concurrent.CountDownLatch(1)
+        val blockOnce = java.util.concurrent.atomic.AtomicBoolean(false)
+        val task = job(ChapterJobState.RUNNING)
+        val src = object : ChapterJobSource {
+            override val key = "concurrent-refresh"
+            @Volatile var jobs = emptyList<ActiveChapterJob>()
+            override fun snapshot(): List<ActiveChapterJob> {
+                val captured = jobs
+                if (blockOnce.compareAndSet(true, false)) {
+                    entered.countDown()
+                    check(release.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                }
+                return captured
+            }
+            override fun onAction(action: JobAction, job: ActiveChapterJob) = false
+        }
+        TranslationJobRegistry.register(src)
+        val first = Thread { TranslationJobRegistry.notifyChanged() }
+        val second = Thread {
+            secondStarted.countDown()
+            try { TranslationJobRegistry.notifyChanged() } finally { secondFinished.countDown() }
+        }
+        try {
+            blockOnce.set(true)
+            first.start()
+            assertTrue(entered.await(3, java.util.concurrent.TimeUnit.SECONDS))
+            src.jobs = listOf(task)
+            second.start()
+            assertTrue(secondStarted.await(3, java.util.concurrent.TimeUnit.SECONDS))
+            secondFinished.await(200, java.util.concurrent.TimeUnit.MILLISECONDS)
+            release.countDown()
+            first.join(3_000)
+            second.join(3_000)
+            assertFalse(first.isAlive)
+            assertFalse(second.isAlive)
+            assertEquals(listOf(task), TranslationJobRegistry.activeJobs.value)
+            assertTrue(TranslationJobRegistry.hasActiveJobs.value)
+        } finally {
+            release.countDown()
+            first.join(3_000)
+            second.join(3_000)
+            TranslationJobRegistry.unregister(src.key)
+        }
     }
 }
