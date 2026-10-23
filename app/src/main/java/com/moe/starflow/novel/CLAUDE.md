@@ -428,7 +428,7 @@ MOBI/AZW、FB2、PDF、RAR/7z 小说包当前没有对应解析器，不应在�
 
 **共享基础设施在 `translate/batch/`（漫画共用，改它之前看 `translate/CLAUDE.md`）**：
 `ChapterJobRunner`（准备阶段串行 + 翻译阶段并发 N + 按章暂停/取消/等待）、`TranslationJobRegistry`
-（通知栏唯一数据源）、`TranslationJobService`（前台服务，**每章一条通知**）。小说侧的宿主是
+（通知栏唯一数据源）、`TranslationJobService`（前台服务，**单章一条、多章总进度与当前章两条通知**）。小说侧的宿主是
 `NovelChapterJobHost` + `object NovelTranslationHub`（仿 `ReaderTranslationHub`：应用级 scope、
 按 `novelId` 缓存、实现 `ChapterJobSource` 并 `register`、**无 UI 且无任务时回收**并取消收集协程）。
 
@@ -535,10 +535,10 @@ MOBI/AZW、FB2、PDF、RAR/7z 小说包当前没有对应解析器，不应在�
 | 用户说的 | 实际指 | 实现 |
 |---|---|---|
 | 「**app 的通知系统**」 | 应用内的**状态浮层**（`TranslationStatusOverlay` 的芯片） | **等页面稳定那一拍 → 「等待页面稳定…」**（队列阶段 `WAITING_STABLE`，此刻还没发请求、也没有黄底）；自动/增量翻译中 → `showImmediate`「正在翻译 · 第 X/Y 页」；**整章 → `showRunning`「整章翻译中 · 第 N 章 x/y 批」**（`NovelReaderActivity.refreshChapterJobChips`，与别的提示并存、可按句柄移除） |
-| 「通知」（系统通知栏） | Android 通知（**要下拉状态栏**才看得到） | 整章 = `TranslationJobService` 每章一条（id 10000+）；阅读器队列 = `ReaderTranslationNotify`（id 9997）。通道 `translation_progress`（DEFAULT 重要度） |
+| 「通知」（系统通知栏） | Android 通知（**要下拉状态栏**才看得到） | 整章 = `TranslationJobService` 单章一条、多章两条（id 9998/9996）；阅读器队列 = `ReaderTranslationNotify`（id 9997）。通道 `translation_progress`（DEFAULT 重要度） |
 
 **通知栏（用户口径 2026-10-03：翻译过程的提示**必须进通知系统**，不只是面板徽章）**：
-- **整章任务**：`TranslationJobService` 每章一条（注册表驱动），通道走
+- **整章任务**：`TranslationJobService` 单章一条、多章只显示总进度与当前章（注册表驱动），通道走
   **`TranslationNotifyChannel.ensure`**（唯一入口，`translation_progress` + **`IMPORTANCE_DEFAULT`**）
   ⚠️ 旧的 `chapter_translation` 建成 `IMPORTANCE_LOW`，而通道重要度**创建后 App 改不了** →
   MIUI 上不亮状态栏图标、还容易被折叠成"不重要通知"，用户报的「整章翻译没看到通知」就是它。

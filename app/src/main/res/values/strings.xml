@@ -1339,14 +1339,10 @@
     <string name="chapter_translate_notify_summary_title">Chapter translation</string>
     <string name="chapter_translate_notify_summary">%1$d chapter(s) translating in background</string>
     <!-- 通知通道名（所有翻译进度通知共用；改通道 id 时它会重新出现在系统设置里） -->
-    <string name="translate_notify_channel_name">Translation progress</string>
+    <string name="translate_notify_channel_name">Task progress</string>
     <string name="chapter_task_preparing">Preparing chapter…</string>
     <string name="chapter_task_failed">Task failed: %1$s</string>
-    <string name="chapter_task_settings_title">Background tasks and lock screen</string>
-    <string name="chapter_task_settings_summary">Notification visibility and battery settings for chapter translation and upscaling</string>
-    <string name="chapter_task_settings_message">Chapter translation and upscaling can continue with the screen locked. Allow app notifications and enable lock screen notifications and their contents in system settings. Some phones also hide silent notifications.\n\nFor long tasks, allow background activity and remove battery restrictions for StarFlow. The names of these options vary by phone. System power saving, network restrictions and force stopping the app can interrupt tasks.\n\nYou can return here from Settings → Personalization → General.</string>
     <string name="chapter_task_notification_settings">Notification settings</string>
-    <string name="chapter_task_battery_settings">Battery settings</string>
     <!-- 阅读器前台队列（手动/自动/增量）的通知第二行：%1$s 是"第 X/Y 页"那类进度 -->
     <string name="novel_translate_notify_line">%1$s · %2$d batch(es) translated</string>
     <!-- 仅 OCR 执行模式：通知栏也必须是 OCR 口径（那时一页都没在翻译） -->
@@ -2087,4 +2083,8 @@
     <string name="reader_download_prefer_sr_hint">Use saved upscaled images where available; keep originals for other pages. Both exports use the upscaled image for the original and translation.</string>
     <string name="reader_download_prefer_sr_pdf_hint">Use saved upscaled images where available; keep originals for other pages. Both original and translated pages use the upscaled image. PDFs are regenerated as image pages.</string>
     <string name="screenshot_geometry_changed">Screen layout changed or result alignment could not be verified. Translation was cancelled; capture again.</string>
+    <string name="chapter_queue_notify_title">Chapter queue progress</string>
+    <string name="chapter_queue_notify_progress">%1$d/%2$d chapter tasks finished</string>
+    <string name="task_notifications_disabled_title">Enable notifications</string>
+    <string name="task_notifications_disabled_message">System notifications are disabled, so task progress cannot be displayed. Allow StarFlow notifications in system settings. Lock screen visibility follows the system notification settings for this app.</string>
 </resources>

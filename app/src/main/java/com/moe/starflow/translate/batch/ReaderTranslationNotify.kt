@@ -15,7 +15,7 @@ import com.moe.starflow.utils.LogCollector
  *
  * 用户口径 2026-10-03：「整章翻译没有看到通知系统的通知 —— 这个不仅要显示在卡片徽章上，
  * **其他模式的翻译过程相关提示也必须显示在通知系统中**」。
- * 整章任务本来就有通知（`TranslationJobService` 每章一条，走 [TranslationJobRegistry]）；
+ * 整章任务本来就有通知（`TranslationJobService` 单章一条、多章最多两条，走 [TranslationJobRegistry]）；
  * 缺的是**阅读器自己这条队列**（自动/增量/手动翻一批）—— 这里给它一条。
  *
  * ⚠️ 与整章任务的区别（别合并成一套）：

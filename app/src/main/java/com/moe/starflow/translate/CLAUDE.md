@@ -267,12 +267,12 @@ FloatingBallService 和 MangaFloatingService 在 MediaProjection 模式下自动
 | `ChapterJobRunner.kt` | **纯协程调度器**（不依赖 Android，可纯 JVM 单测）：`ocr(page)` 阶段串行、`translate(page, prep)` 阶段并发 N、按章 `pause/resume/cancel`、`jobs`/`waitingPages` flow。调用方给「页号或批号」当唯一标识即可 |
 | `TranslationJobs.kt` | `ChapterJobState` / `ActiveChapterJob`（通知栏用快照）/ `ChapterJobSource`（谁的快照）/ `TranslationJobRegistry`（**通知栏与前台服务的唯一数据源**） |
 | `ChapterTaskWakeLock.kt` | 共享前台服务的 CPU 唤醒锁：运行、等待及在途清理时持有；仅暂停且无在途项时释放。10 分钟租约、每 5 分钟续租，服务每分钟检查，任务结束和服务销毁时释放，不点亮屏幕 |
-| `TranslationJobService.kt` | 前台服务（`dataSync`）：**每章一条通知**（进度 / 暂停 / 继续 / 取消，点通知回到对应阅读器）。⚠️ **任务状态不在服务里**，它只镜像 `TranslationJobRegistry.activeJobs`；registry 空了就 `stopSelf`。`notify()` 里记了「章通知 id/章/状态/进度」的日志 —— 排查"没看到通知"时一眼分清"没发出去"还是"发了被折叠" |
+| `TranslationJobService.kt` | `dataSync` 前台服务；单章复用服务通知，多章只增加当前章节通知。`ChapterNotificationQueue` 保留本轮已结束章节，汇总进度按每章完成比例计算，章节出队后分母不缩小；当前章操作与点击目标随执行章切换。无活动任务时退出 |
 | `TranslationNotifyChannel.kt` | **通知通道的唯一创建入口**（`translation_progress` + **`IMPORTANCE_DEFAULT`**）：旧通道 `chapter_translation` 建成 `LOW`，而通道重要度**创建后 App 改不了** → MIUI 上不亮状态栏图标、容易被折叠，用户报的「整章翻译看不到通知」就是它；换 id 时顺手 `deleteNotificationChannel(旧 id)`。⚠️ **两条通知路径都必须调 `ensure`**：Android 8+ 往**不存在**的通道发通知是**静默丢弃**，而阅读器队列那条不算前台服务 —— 只用自动/增量、从没点过「翻译本章」的用户，通道根本没人建 |
 | `ReaderTranslationNotify.kt` | **阅读器前台队列**（手动一批 / 自动 / 增量）的进度通知（固定 id 9997，共用上面的通道）。⚠️ 不进 registry、不要前台服务：那个队列活在阅读器 `lifecycleScope` 里、离开阅读器就停，没有后台保活需求。只在真的在翻时挂着（DRAINED/IDLE 立刻收）。守卫 `ReaderTranslationNotifyTest`（id 不撞 + 通道重要度 + **两条路径都 ensure** + 接线） |
 
 **约定（改之前必读，漫画侧踩过的坑都在这）**
-- 章节进度和服务通知使用 `VISIBILITY_PUBLIC`、`CATEGORY_PROGRESS`，服务通知立即显示并携带当前章节进度。通道创建幂等，新通道默认无声无震，保留既有用户设置；不能用进程布尔缓存掩盖通道已缺失。系统通知、锁屏内容与省电权限由用户控制，`ChapterTaskNotificationAccess` 在任务入口申请通知权限并提供公开设置入口；个性化通用页保留同一入口，不能依赖品牌私有设置组件。恢复权限后即使进度未变，也补发当前快照。
+- 章节和下载进度复用已有 `translation_progress` 通道（显示名“任务进度”），不另设应用内锁屏入口。新通道默认无声无震，保留既有用户设置；缺少通知权限时才申请或提示系统设置。普通进度不附加常驻标志，服务通知由系统管理前台服务标志；通知及公开版本均提供进度，锁屏显示仍遵循系统应用通知设置。恢复权限后即使进度未变，也补发当前快照。
 - `TranslationJobRegistry.notifyChanged` 必须串行聚合，防止较早读取的空快照晚于新任务写回，误停前台服务和 CPU 唤醒锁。
 - `TranslationJobService` 同时镜像漫画／小说章节翻译与漫画章节超分。`ActiveChapterJob.operation` 区分任务类型，通知 ID 和 PendingIntent 的 data 必须包含该类型，超分取消不能误取消同章翻译；超分仅提供取消动作。
 - 任务执行与原生收尾需要保持 CPU 运行。`hasInFlight` 让暂停／取消后尚未退出的请求继续计入活动与唤醒判据；注册表必须跟随在途 flow 更新。锁屏或退出阅读器仅解绑 UI，不停止章节任务；后台不能创建浮层或等待新的超长确认弹窗。Android 15 的前台服务超时回调取消任务并释放通知、唤醒锁与服务，不能任其触发系统 ANR。系统省电和网络限制仍可能影响长时间后台工作。

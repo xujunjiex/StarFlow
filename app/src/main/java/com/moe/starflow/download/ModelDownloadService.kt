@@ -1,11 +1,8 @@
 package com.moe.starflow.download
 import com.moe.starflow.translate.widget.*
 
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
@@ -14,9 +11,18 @@ import com.moe.starflow.R
 import com.moe.starflow.sr.SrModelManager
 import com.moe.starflow.utils.LogCollector
 import com.moe.starflow.utils.UiUtils
+import com.moe.starflow.translate.batch.ChapterTaskWakeLock
+import com.moe.starflow.translate.batch.TranslationNotifyChannel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -28,68 +34,67 @@ class ModelDownloadService : LifecycleService() {
     private val activeJobs = ConcurrentHashMap<ModelKey, Job>()
     private val lifecycleMutex = Mutex()
     private val repo by lazy { ModelDownloadRepository.getInstance(applicationContext) }
+    private lateinit var cpuWakeLock: ChapterTaskWakeLock
+    private var pendingCommands = 0
+    private var timedOut = false
 
     override fun onCreate() {
         super.onCreate()
         ensureNotificationChannel()
+        cpuWakeLock = ChapterTaskWakeLock(this, "StarFlow:ModelDownloads")
+        lifecycleScope.launch {
+            while (isActive && !timedOut) {
+                cpuWakeLock.update(activeJobs.isNotEmpty() || pendingCommands > 0)
+                delay(60_000L)
+            }
+        }
     }
 
     private var isForegroundStarted = false
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         super.onStartCommand(intent, flags, startId)
-        startForegroundIfNeeded(intent)
+        startForegroundIfNeeded()
 
-        val action = intent?.action ?: return START_NOT_STICKY
+        val action = intent?.action ?: run { checkStopSelf(); return START_NOT_STICKY }
         val modelKey = intent.getStringExtra(EXTRA_MODEL_KEY)
-            ?.let { ModelKey.valueOf(it) } ?: return START_NOT_STICKY
-
-        when (action) {
-            ACTION_START_DOWNLOAD -> {
-                lifecycleScope.launch {
-                    if (repo.enqueueDownload(modelKey)) {
-                        startDownload(modelKey = modelKey, isResume = false)
-                    } else {
-                        LogCollector.d(TAG, "$modelKey 已在队列中，等待当前下载完成后自动启动")
+            ?.let { runCatching { ModelKey.valueOf(it) }.getOrNull() } ?: run { checkStopSelf(); return START_NOT_STICKY }
+        pendingCommands++
+        cpuWakeLock.update(true)
+        lifecycleScope.launch {
+            try {
+                when (action) {
+                    ACTION_START_DOWNLOAD, ACTION_RESUME_DOWNLOAD -> lifecycleMutex.withLock {
+                        if (repo.enqueueDownload(modelKey)) {
+                            startDownload(modelKey = modelKey, isResume = action == ACTION_RESUME_DOWNLOAD)
+                        } else {
+                            LogCollector.d(TAG, "$modelKey 已在队列中，等待当前下载完成后自动启动")
+                        }
                     }
+                    ACTION_PAUSE_DOWNLOAD -> pauseDownload(modelKey)
+                    ACTION_CANCEL_DOWNLOAD -> cancelDownload(modelKey)
                 }
+            } finally {
+                pendingCommands--
+                checkStopSelf()
             }
-            ACTION_RESUME_DOWNLOAD -> {
-                lifecycleScope.launch {
-                    if (repo.enqueueDownload(modelKey)) {
-                        startDownload(modelKey = modelKey, isResume = true)
-                    } else {
-                        LogCollector.d(TAG, "$modelKey 已在队列中，等待当前下载完成后自动启动")
-                    }
-                }
-            }
-            ACTION_PAUSE_DOWNLOAD -> lifecycleScope.launch { pauseDownload(modelKey) }
-            ACTION_CANCEL_DOWNLOAD -> lifecycleScope.launch { cancelDownload(modelKey) }
         }
         return START_NOT_STICKY
     }
 
     private fun startDownload(modelKey: ModelKey, isResume: Boolean) {
-        activeJobs.computeIfAbsent(modelKey) {
-            lifecycleScope.launch(Dispatchers.IO) {
-                val modelInfo = repo.getModelInfo(modelKey)
-                val firstFileName = modelInfo?.files?.firstOrNull()?.fileName ?: ""
-                val fileCount = modelInfo?.files?.size ?: 1
-                repo.markRunning(
-                    modelKey = modelKey,
-                    currentFileIndex = 0,
-                    currentFileCount = fileCount,
-                    currentFileName = firstFileName
-                )
-                updateNotification(modelKey, repo.getState(modelKey))
-                downloadModelInternal(modelKey, isResume)
-            }
+        if (timedOut || activeJobs.containsKey(modelKey)) return
+        val job = lifecycleScope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
+            downloadModelInternal(modelKey, isResume)
         }
+        activeJobs[modelKey] = job
+        cpuWakeLock.update(true)
+        job.start()
     }
 
     private suspend fun pauseDownload(modelKey: ModelKey) {
         lifecycleMutex.withLock {
-            activeJobs.remove(modelKey)?.cancel()
+            activeJobs[modelKey]?.cancelAndJoin()
             repo.markPaused(modelKey)
             updateNotification(modelKey, repo.getState(modelKey))
             checkStopSelf()
@@ -98,18 +103,29 @@ class ModelDownloadService : LifecycleService() {
 
     private suspend fun cancelDownload(modelKey: ModelKey) {
         lifecycleMutex.withLock {
-            activeJobs.remove(modelKey)?.cancel()
+            activeJobs[modelKey]?.cancelAndJoin()
             repo.cancelDownload(modelKey)
             clearNotification(modelKey)
+            startNextQueued()
             checkStopSelf()
         }
     }
 
     private fun checkStopSelf() {
-        if (activeJobs.isEmpty()) stopSelf()
+        val active = !timedOut && (activeJobs.isNotEmpty() || pendingCommands > 0)
+        cpuWakeLock.update(active)
+        if (!active) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            androidx.core.app.NotificationManagerCompat.from(this).cancel(NOTIFICATION_ID_SERVICE)
+            stopSelf()
+        }
     }
 
-    private fun startForegroundIfNeeded(intent: Intent?) {
+    private fun startNextQueued() {
+        if (!timedOut) repo.dequeueNext()?.let { startDownload(it, isResume = true) }
+    }
+
+    private fun startForegroundIfNeeded() {
         if (isForegroundStarted) return
         isForegroundStarted = true
         try {
@@ -117,8 +133,11 @@ class ModelDownloadService : LifecycleService() {
                 .setSmallIcon(R.drawable.ic_download)
                 .setContentTitle(getString(R.string.dl_notify_title))
                 .setContentText(getString(R.string.dl_notify_preparing))
-                .setOngoing(true)
-                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+                .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+                .setProgress(0, 0, true)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                 .build()
             startForeground(NOTIFICATION_ID_SERVICE, placeholder)
         } catch (e: Exception) {
@@ -127,17 +146,10 @@ class ModelDownloadService : LifecycleService() {
     }
 
     private fun ensureNotificationChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                getString(R.string.dl_notify_title),
-                NotificationManager.IMPORTANCE_LOW
-            )
-            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
-        }
+        TranslationNotifyChannel.ensure(this)
     }
 
-    private fun updateNotification(modelKey: ModelKey, state: DownloadState) {
+    private fun buildModelNotification(modelKey: ModelKey, state: DownloadState): android.app.Notification {
 
         val (title, text) = when (state) {
             is DownloadState.Running -> {
@@ -176,14 +188,31 @@ class ModelDownloadService : LifecycleService() {
             .setSmallIcon(R.drawable.ic_download)
             .setContentTitle(title)
             .setContentText(text)
-            .setOngoing(state !is DownloadState.Done)
+            .setOngoing(false)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setOnlyAlertOnce(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+        val bytes = when (state) {
+            is DownloadState.Running -> state.bytesDownloaded to state.totalBytes
+            is DownloadState.Paused -> state.bytesDownloaded to state.totalBytes
+            is DownloadState.Partial -> state.bytesDownloaded to state.totalBytes
+            else -> null
+        }
+        bytes?.let { (done, total) -> builder.setProgress(1_000, if (total > 0) (done.toDouble() / total * 1_000).toInt().coerceIn(0, 1_000) else 0, total <= 0) }
+        return builder.setPublicVersion(builder.build()).build()
+    }
 
+    private fun updateNotification(modelKey: ModelKey, state: DownloadState) {
         try {
             androidx.core.app.NotificationManagerCompat.from(this).run {
-                notify(NOTIFICATION_ID_BASE + modelKey.stableId, builder.build())
-                notify(NOTIFICATION_ID_SERVICE, buildAggregateNotification())
+                if (state is DownloadState.Running) {
+                    cancel(NOTIFICATION_ID_BASE + modelKey.stableId)
+                    notify(NOTIFICATION_ID_SERVICE, buildModelNotification(modelKey, state))
+                } else if (state is DownloadState.Paused || state is DownloadState.Partial) {
+                    notify(NOTIFICATION_ID_BASE + modelKey.stableId, buildModelNotification(modelKey, state))
+                }
             }
         } catch (e: SecurityException) {
             LogCollector.w(TAG, "通知权限缺失，无法更新通知: ${e.message}")
@@ -191,19 +220,16 @@ class ModelDownloadService : LifecycleService() {
     }
 
     private fun buildAggregateNotification(): android.app.Notification {
-        val runningCount = activeJobs.size
         val firstRunning = activeJobs.keys.firstOrNull()
-        val text = if (firstRunning != null) {
-            getString(R.string.dl_multiple, firstRunning.displayName(), runningCount)
-        } else {
-            getString(R.string.dl_notify_title)
-        }
+        if (firstRunning != null) return buildModelNotification(firstRunning, repo.getState(firstRunning))
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_download)
             .setContentTitle(getString(R.string.dl_notify_title))
-            .setContentText(text)
-            .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setContentText(getString(R.string.dl_notify_preparing))
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()
     }
 
@@ -276,24 +302,28 @@ class ModelDownloadService : LifecycleService() {
                 downloadMultiFile(modelKey, modelInfo.files)
             }
         } catch (e: CancellationException) {
-            // propagate（用户主动取消不算失败，不给提示）
+            // 服务销毁或系统超时也必须退出 Running，保留 .part 后可再次继续。
+            // 用户的暂停/取消随后分别覆盖为 Paused/Idle，不显示失败提示。
+            withContext(NonCancellable) { repo.markPartial(modelKey) }
+            throw e
         } catch (e: Throwable) {
             // ⚠️ 兜底：编排层任何未预期异常也要让用户看见，不能只进日志
             failed = true
             reportDownloadFailure(modelKey, reasonOf(e))
         } finally {
-            activeJobs.remove(modelKey)
+            val owner = currentCoroutineContext()[Job]
             // ⚠️ **失败时保留通知**：`reportDownloadFailure` 刚把失败通知 post 出去，这里再无条件
             //    `clearNotification` 会在几微秒后把它抹掉（同一个 notification id）——
             //    「③ 通知栏同步」这条渠道等于空操作，用户切到别的 app / 熄屏就只剩一条错过的
             //    Toast。而这正是「下载失败一律给提示、杜绝静默失败」那次要消灭的场景。
-            if (!failed) clearNotification(modelKey)
-            val next = repo.dequeueNext()
-            if (next != null) {
-                LogCollector.d(TAG, "启动队列中的下一个下载: $next")
-                startDownload(modelKey = next, isResume = true)
+            withContext(NonCancellable + Dispatchers.Main) {
+                // 资源清理结束才交接，旧请求不能移除重新开始的同模型任务。
+                if (activeJobs.remove(modelKey, owner)) {
+                    if (!failed) clearNotification(modelKey)
+                    if (owner?.isCancelled != true) startNextQueued()
+                    checkStopSelf()
+                }
             }
-            checkStopSelf()
         }
     }
 
@@ -342,6 +372,7 @@ class ModelDownloadService : LifecycleService() {
             .setContentText(reason)
             .setStyle(NotificationCompat.BigTextStyle().bigText(reason))
             .setOngoing(false)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
         try {
@@ -589,6 +620,20 @@ class ModelDownloadService : LifecycleService() {
         //    这里曾把 SR_W2X_UP7_PHOTO_M1 写了两遍、看着像少一档
     }
 
+    override fun onDestroy() {
+        cpuWakeLock.release()
+        super.onDestroy()
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        timedOut = true
+        LogCollector.w(TAG, "下载达到系统前台服务时限，保留已下载部分供继续")
+        activeJobs.values.forEach { it.cancel() }
+        cpuWakeLock.release()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
     companion object {
         private const val TAG = "ModelDownloadService"
         const val ACTION_START_DOWNLOAD = "com.moe.starflow.action.START_DOWNLOAD"
@@ -598,7 +643,7 @@ class ModelDownloadService : LifecycleService() {
         const val EXTRA_MODEL_KEY = "model_key"
         const val NOTIFICATION_ID_SERVICE = 9999
         const val NOTIFICATION_ID_BASE = 1000
-        const val CHANNEL_ID = "model_download"
+        const val CHANNEL_ID = TranslationNotifyChannel.ID
 
         fun startDownload(context: Context, modelKey: ModelKey, isResume: Boolean) {
             val intent = Intent(context, ModelDownloadService::class.java).apply {

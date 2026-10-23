@@ -6,14 +6,19 @@ import android.os.SystemClock
 import com.moe.starflow.utils.LogCollector
 
 /** 只保持 CPU 运行，屏幕可以关闭；租约超时兜底，服务定期续租并随任务状态释放。 */
-internal class ChapterTaskWakeLock(context: Context) {
+internal class ChapterTaskWakeLock(context: Context, tag: String = "StarFlow:ChapterTasks") {
     private val lock = context.getSystemService(PowerManager::class.java)
-        .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "StarFlow:ChapterTasks")
+        .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, tag)
         .apply { setReferenceCounted(false) }
     private var renewAt = 0L
 
     fun update(jobs: List<ActiveChapterJob>) {
-        if (jobs.none { it.needsCpu }) {
+        update(jobs.any { it.needsCpu })
+    }
+
+    @Synchronized
+    fun update(needsCpu: Boolean) {
+        if (!needsCpu) {
             release()
             return
         }
@@ -28,6 +33,7 @@ internal class ChapterTaskWakeLock(context: Context) {
         }
     }
 
+    @Synchronized
     fun release() {
         if (lock.isHeld) lock.release()
         renewAt = 0L

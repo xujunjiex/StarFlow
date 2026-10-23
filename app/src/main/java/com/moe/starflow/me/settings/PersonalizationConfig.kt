@@ -193,12 +193,6 @@ class PersonalizationConfig : PreferenceFragmentCompat() {
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
         prefs = CustomPreference.getInstance(requireContext())
         setPreferencesFromResource(R.xml.personalization, rootKey)
-        findPreference<Preference>("chapter_task_lockscreen_settings")?.setOnPreferenceClickListener {
-            com.moe.starflow.translate.batch.ChapterTaskNotificationAccess.showSettings(
-                requireActivity(), resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES,
-            )
-            true
-        }
 
         ballIconGame = findPreference<PreferenceWithPreview>("Icon_Game")!!
         ballIconComic = findPreference<PreferenceWithPreview>("Icon_Comic")!!

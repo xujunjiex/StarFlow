@@ -16,7 +16,7 @@ import androidx.lifecycle.Lifecycle
 import com.moe.starflow.R
 import com.moe.starflow.utils.ReaderDialogs
 
-/** 在用户启动章节任务时申请通知权限；锁屏与省电设置使用系统公开入口。 */
+/** 只在系统通知被关闭时请求授权或提供系统入口，不额外弹锁屏引导。 */
 class ChapterTaskNotificationAccess(
     private val activity: ComponentActivity,
     private val dark: () -> Boolean,
@@ -24,7 +24,6 @@ class ChapterTaskNotificationAccess(
     private val permission = activity.registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) {
             TranslationJobService.start(activity)
-            showIntroductionIfNeeded()
         } else showSettings(activity, dark())
     }
 
@@ -34,14 +33,7 @@ class ChapterTaskNotificationAccess(
             permission.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else if (!notificationsEnabled(activity)) {
             showSettings(activity, dark())
-        } else showIntroductionIfNeeded()
-    }
-
-    private fun showIntroductionIfNeeded() {
-        val prefs = activity.getSharedPreferences("chapter_task_notifications", Context.MODE_PRIVATE)
-        if (prefs.getBoolean("lockscreen_help_seen", false)) return
-        prefs.edit().putBoolean("lockscreen_help_seen", true).apply()
-        showSettings(activity, dark())
+        }
     }
 
     companion object {
@@ -80,13 +72,10 @@ class ChapterTaskNotificationAccess(
         fun showSettings(activity: ComponentActivity, dark: Boolean) {
             if (!activity.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) || activity.isFinishing) return
             ReaderDialogs.show(activity, dark) {
-                setTitle(R.string.chapter_task_settings_title)
-                setMessage(R.string.chapter_task_settings_message)
+                setTitle(R.string.task_notifications_disabled_title)
+                setMessage(R.string.task_notifications_disabled_message)
                 setPositiveButton(R.string.chapter_task_notification_settings) { _, _ ->
                     openSettings(activity, notificationSettingsIntent(activity))
-                }
-                setNeutralButton(R.string.chapter_task_battery_settings) { _, _ ->
-                    openSettings(activity, Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
                 }
                 setNegativeButton(android.R.string.ok, null)
             }

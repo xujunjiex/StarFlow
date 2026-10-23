@@ -1276,14 +1276,10 @@
     <string name="chapter_translate_notify_summary_title">章节翻译</string>
     <string name="chapter_translate_notify_summary">%1$d 个章节正在后台翻译</string>
     <!-- 通知通道名（所有翻译进度通知共用；改通道 id 时它会重新出现在系统设置里） -->
-    <string name="translate_notify_channel_name">翻译进度</string>
+    <string name="translate_notify_channel_name">任务进度</string>
     <string name="chapter_task_preparing">正在准备章节…</string>
     <string name="chapter_task_failed">任务失败：%1$s</string>
-    <string name="chapter_task_settings_title">后台任务与锁屏显示</string>
-    <string name="chapter_task_settings_summary">设置章节翻译、超分的通知显示与后台电池限制</string>
-    <string name="chapter_task_settings_message">翻译本章和超分本章可在锁屏后继续。请在系统设置中允许应用通知，并开启锁屏通知及内容显示；部分手机还需允许显示静默通知。\n\n长时间任务建议允许星译后台运行，并取消电池限制。各品牌的选项名称可能不同；系统省电、网络限制或强制停止应用仍可能中断任务。\n\n以后可从「设置 → 个性化 → 通用」重新打开此入口。</string>
     <string name="chapter_task_notification_settings">通知设置</string>
-    <string name="chapter_task_battery_settings">电池设置</string>
     <!-- 阅读器前台队列（手动/自动/增量）的通知第二行：%1$s 是"第 X/Y 页"那类进度 -->
     <string name="novel_translate_notify_line">%1$s · 已翻 %2$d 批</string>
     <!-- 仅 OCR 执行模式：通知栏也必须是 OCR 口径（那时一页都没在翻译） -->
@@ -2085,4 +2081,8 @@
     <string name="reader_download_prefer_sr_hint">有超分结果的页面使用超分图，未超分的保留原图；双语导出的原文与译文都使用超分底图。</string>
     <string name="reader_download_prefer_sr_pdf_hint">有超分结果的页面使用超分图，未超分的保留原图；双语的原文与译文都使用超分底图。PDF 将按页重新生成图片 PDF。</string>
     <string name="screenshot_geometry_changed">屏幕布局已变化或结果位置校验未通过，已取消本次翻译，请重新截图。</string>
+    <string name="chapter_queue_notify_title">章节总任务进度</string>
+    <string name="chapter_queue_notify_progress">已结束 %1$d/%2$d 个章节任务</string>
+    <string name="task_notifications_disabled_title">开启通知</string>
+    <string name="task_notifications_disabled_message">系统通知已关闭，无法显示任务进度。请在系统设置中允许星译通知；锁屏显示沿用系统的应用锁屏通知设置。</string>
 </resources>

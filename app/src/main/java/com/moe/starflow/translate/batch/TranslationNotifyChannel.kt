@@ -9,7 +9,7 @@ import com.moe.starflow.utils.LogCollector
 
 /**
  * **翻译进度通知通道**的唯一创建入口（整章任务的 `TranslationJobService` 与阅读器队列的
- * [ReaderTranslationNotify] 共用同一条）。
+ * [ReaderTranslationNotify] 及模型下载共用同一条）。
  *
  * ⚠️ **必须两边都调 [ensure]**：Android 8+ 往一个**不存在的通道**发通知是**静默丢弃**
  * （logcat 里只有一句 `No Channel found for pkg=...`）。阅读器队列那条通知**不经过前台服务**，
@@ -50,5 +50,7 @@ object TranslationNotifyChannel {
             .onFailure { LogCollector.w(TAG, "创建翻译通知通道失败: ${it.message}") }
         // 旧通道（LOW）删掉：同一个功能挂两个通道只会让人以为通知坏了
         runCatching { nm.deleteNotificationChannel(LEGACY_ID) }
+        // 下载与章节处理复用已有通道，不新增需要用户分别配置的通知类别。
+        runCatching { nm.deleteNotificationChannel("model_download") }
     }
 }

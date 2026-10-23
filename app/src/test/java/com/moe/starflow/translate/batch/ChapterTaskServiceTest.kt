@@ -84,8 +84,9 @@ class ChapterTaskServiceTest {
         val upscale = job(ChapterJobOperation.UPSCALE).copy(stageText = "P14")
         start(listOf(upscale))
         assertEquals(TranslationJobService.NOTIFICATION_ID_SERVICE, shadowOf(service).lastForegroundNotificationId)
-        val notification = notifications.getNotification(upscale.notificationId)
+        val notification = notifications.getNotification(TranslationJobService.NOTIFICATION_ID_SERVICE)
         assertNotNull(notification)
+        assertEquals(1, notifications.allNotifications.size)
         assertEquals(app.getString(R.string.chapter_sr_notify_title, "Book", "Chapter 3"), notification.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
         assertEquals(1, notification.actions.size)
         assertEquals(app.getString(R.string.cancel), notification.actions.single().title.toString())
@@ -94,28 +95,50 @@ class ChapterTaskServiceTest {
         assertEquals(MangaReaderActivity::class.java.name, open.component!!.className)
         assertEquals(12, open.getIntExtra(MangaReaderActivity.EXTRA_START_PAGE, -1))
         publish(listOf(upscale.copy(done = 2)))
-        assertEquals(2, notifications.getNotification(upscale.notificationId).extras.getInt(Notification.EXTRA_PROGRESS))
+        assertEquals(2, notifications.getNotification(TranslationJobService.NOTIFICATION_ID_SERVICE).extras.getInt(Notification.EXTRA_PROGRESS))
         val cancel = shadowOf(notification.actions.single().actionIntent).savedIntent
         service.onStartCommand(cancel, 0, 2)
         shadowOf(Looper.getMainLooper()).idle()
         assertEquals(listOf(JobAction.CANCEL to ChapterJobOperation.UPSCALE), source.actions)
-        assertNull(notifications.getNotification(upscale.notificationId))
+        assertNull(notifications.getNotification(TranslationJobService.NOTIFICATION_ID_SERVICE))
     }
 
     @Test
-    fun translationAndUpscalingNotificationsAndPendingIntentsStayIndependent() {
+    fun currentChapterActionsFollowHandoffAndDoNotCancelOtherOperations() {
         val translate = job()
-        val upscale = job(ChapterJobOperation.UPSCALE)
+        val upscale = job(ChapterJobOperation.UPSCALE).copy(state = ChapterJobState.QUEUED)
         start(listOf(translate, upscale))
-        val translationNotification = notifications.getNotification(translate.notificationId)
-        val srNotification = notifications.getNotification(upscale.notificationId)
+        assertEquals(2, notifications.allNotifications.size)
+        val translationNotification = notifications.getNotification(TranslationJobService.NOTIFICATION_ID_CURRENT)
         assertEquals(2, translationNotification.actions.size)
+        assertEquals(0, translationNotification.flags and Notification.FLAG_ONGOING_EVENT)
+        assertEquals(translationNotification.extras.getInt(Notification.EXTRA_PROGRESS), translationNotification.publicVersion.extras.getInt(Notification.EXTRA_PROGRESS))
+        publish(listOf(translate.copy(state = ChapterJobState.DONE), upscale.copy(state = ChapterJobState.RUNNING)))
+        val srNotification = notifications.getNotification(TranslationJobService.NOTIFICATION_ID_CURRENT)
         assertEquals(1, srNotification.actions.size)
         assertNotEquals(translationNotification.contentIntent, srNotification.contentIntent)
         service.onStartCommand(shadowOf(srNotification.actions.single().actionIntent).savedIntent, 0, 2)
         shadowOf(Looper.getMainLooper()).idle()
-        assertEquals(listOf(translate), source.jobs)
-        assertNotNull(notifications.getNotification(translate.notificationId))
+        assertEquals(listOf(JobAction.CANCEL to ChapterJobOperation.UPSCALE), source.actions)
+        assertEquals(listOf(translate.copy(state = ChapterJobState.DONE)), source.jobs)
+    }
+
+    @Test
+    fun multipleQueuedChaptersOnlyShowTotalAndCurrent_andTotalAdvancesAcrossHandoff() {
+        val first = job().copy(done = 1, total = 2)
+        val second = job().copy(chapterIndex = 3, state = ChapterJobState.QUEUED, done = 0, total = 4)
+        val third = job().copy(chapterIndex = 4, state = ChapterJobState.QUEUED, done = 0, total = 4)
+        start(listOf(first, second, third))
+        assertEquals(2, notifications.allNotifications.size)
+        assertEquals(500, notifications.getNotification(TranslationJobService.NOTIFICATION_ID_SERVICE).extras.getInt(Notification.EXTRA_PROGRESS))
+        assertEquals(3_000, notifications.getNotification(TranslationJobService.NOTIFICATION_ID_SERVICE).extras.getInt(Notification.EXTRA_PROGRESS_MAX))
+        publish(listOf(first.copy(state = ChapterJobState.DONE, done = 2), second.copy(state = ChapterJobState.RUNNING, done = 1), third))
+        assertEquals(2, notifications.allNotifications.size)
+        assertEquals(1_250, notifications.getNotification(TranslationJobService.NOTIFICATION_ID_SERVICE).extras.getInt(Notification.EXTRA_PROGRESS))
+        assertEquals(1, notifications.getNotification(TranslationJobService.NOTIFICATION_ID_CURRENT).extras.getInt(Notification.EXTRA_PROGRESS))
+        publish(listOf(third.copy(state = ChapterJobState.RUNNING, done = 1)))
+        assertEquals(2, notifications.allNotifications.size)
+        assertEquals(2_250, notifications.getNotification(TranslationJobService.NOTIFICATION_ID_SERVICE).extras.getInt(Notification.EXTRA_PROGRESS))
     }
 
     @Test
@@ -143,7 +166,7 @@ class ChapterTaskServiceTest {
         shadowOf(app).denyPermissions(Manifest.permission.POST_NOTIFICATIONS)
         val upscale = job(ChapterJobOperation.UPSCALE)
         start(listOf(upscale))
-        assertNull(notifications.getNotification(upscale.notificationId))
+        assertNull(notifications.getNotification(TranslationJobService.NOTIFICATION_ID_CURRENT))
         val wakeLock = ShadowPowerManager.getLatestWakeLock()
         assertTrue(wakeLock.isHeld)
         controller!!.destroy()
@@ -175,12 +198,16 @@ class ChapterTaskServiceTest {
     }
 
     @Test
-    fun lockedTranslationAndUpscalingExposeProgressInBothChapterAndForegroundNotifications() {
+    fun lockedSingleChapterExposesItsPublicProgressWithoutDuplicateRows() {
         shadowOf(app.getSystemService(PowerManager::class.java)).setIsInteractive(false)
         for (operation in ChapterJobOperation.values()) {
             val task = job(operation)
-            if (controller == null) start(listOf(task)) else publish(listOf(task))
-            for (id in listOf(task.notificationId, TranslationJobService.NOTIFICATION_ID_SERVICE)) {
+            if (controller != null) {
+                controller!!.destroy()
+                controller = null
+            }
+            start(listOf(task))
+            for (id in listOf(TranslationJobService.NOTIFICATION_ID_SERVICE)) {
                 val notification = notifications.getNotification(id)
                 assertEquals(Notification.VISIBILITY_PUBLIC, notification.visibility)
                 assertEquals(Notification.CATEGORY_PROGRESS, notification.category)
@@ -197,11 +224,11 @@ class ChapterTaskServiceTest {
         shadowOf(app).denyPermissions(Manifest.permission.POST_NOTIFICATIONS)
         val task = job()
         start(listOf(task))
-        assertNull(notifications.getNotification(task.notificationId))
+        assertNull(notifications.getNotification(TranslationJobService.NOTIFICATION_ID_CURRENT))
         shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
         service.onStartCommand(Intent(app, TranslationJobService::class.java), 0, 2)
         shadowOf(Looper.getMainLooper()).idle()
-        assertNotNull(notifications.getNotification(task.notificationId))
+        assertNotNull(notifications.getNotification(TranslationJobService.NOTIFICATION_ID_SERVICE))
     }
 
     @Test
@@ -234,7 +261,7 @@ class ChapterTaskServiceTest {
     fun android10ShowsPublicProgressWithoutRuntimeNotificationPermission() {
         val task = job()
         start(listOf(task))
-        assertEquals(Notification.VISIBILITY_PUBLIC, notifications.getNotification(task.notificationId).visibility)
+        assertEquals(Notification.VISIBILITY_PUBLIC, notifications.getNotification(TranslationJobService.NOTIFICATION_ID_SERVICE).visibility)
         assertTrue(ShadowPowerManager.getLatestWakeLock().isHeld)
     }
 
@@ -254,7 +281,7 @@ class ChapterTaskServiceTest {
             shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(4))
             assertFalse(shadowOf(service).isStoppedBySelf)
             val preparing = host.snapshot().single()
-            assertTrue(notifications.getNotification(preparing.notificationId).extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE))
+            assertTrue(notifications.getNotification(TranslationJobService.NOTIFICATION_ID_SERVICE).extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE))
             assertTrue(ShadowPowerManager.getLatestWakeLock().isHeld)
             release.complete(Unit)
             kotlinx.coroutines.withTimeout(4_000) {
@@ -278,7 +305,7 @@ class ChapterTaskServiceTest {
         start(listOf(task))
         ChapterTaskNotificationAccess.reportFailure(app, task, "Model file is missing")
         publish(emptyList())
-        assertNull(notifications.getNotification(task.notificationId))
+        assertNull(notifications.getNotification(TranslationJobService.NOTIFICATION_ID_SERVICE))
         val failure = notifications.allNotifications.single {
             it.extras.getCharSequence(Notification.EXTRA_TEXT).toString().contains("Model file is missing")
         }
@@ -287,5 +314,16 @@ class ChapterTaskServiceTest {
         assertNotNull(failure.contentIntent)
         assertTrue(shadowOf(service).isStoppedBySelf)
         assertFalse(ShadowPowerManager.getLatestWakeLock().isHeld)
+    }
+
+    @Test
+    fun grantedNotificationPermissionDoesNotOpenAnExtraLockscreenSetupFlow() {
+        val activity = Robolectric.buildActivity(androidx.activity.ComponentActivity::class.java).create()
+        val access = ChapterTaskNotificationAccess(activity.get()) { false }
+        activity.start().resume()
+        access.ensureForTask()
+        assertNull(shadowOf(activity.get()).nextStartedActivity)
+        assertNull(org.robolectric.shadows.ShadowDialog.getLatestDialog())
+        activity.pause().stop().destroy()
     }
 }

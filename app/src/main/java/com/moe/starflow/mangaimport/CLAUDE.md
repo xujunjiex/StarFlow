@@ -372,7 +372,7 @@
 |---|---|---|
 | `ChapterJobRunner<T>` | `translate/batch/`（**跨模块共用**，漫画/小说都用） | 纯协程调度：**OCR 串行 + 翻译并发 N + 按章暂停/取消/等待**。不依赖 Android，可纯 JVM 单测（`ChapterJobRunnerTest`） |
 | `TranslationJobs.kt` | `translate/batch/` | `ChapterJobState`/`ChapterJob`(`label`,`startPage`)/`ActiveChapterJob`/`ChapterJobSource`/`TranslationJobRegistry`（通知栏与前台服务的唯一数据源） |
-| `TranslationJobService` | `translate/batch/` | 前台服务（`dataSync`）：**每章一条通知**（进度/暂停/继续/取消，点通知回到对应阅读器）。任务状态**不在这里**，只镜像 registry；registry 空了就 `stopSelf` |
+| `TranslationJobService` | `translate/batch/` | 前台服务（`dataSync`）：**单章一条、多章最多两条通知**（总进度及当前章；当前章可暂停/继续/取消，点击返回阅读器）。任务状态**不在这里**，只镜像 registry；registry 空了就 `stopSelf` |
 | `ReaderTranslationHub` | `mangaimport/translate/` | 漫画的**应用级宿主**：按 mangaId 缓存 `ReaderTranslationController`（应用级 scope）、实现 `ChapterJobSource`、无 UI 且无任务时 `releaseIfIdle` 回收 |
 | `ReaderTranslationController` | 同上 | 控制器：两阶段单页翻译（见下）+ 章任务 API（`startChapterJob/pause/resume/cancel`）+ `chapterJobs`/`waitingPages` flow |
 
@@ -590,7 +590,7 @@
 - 超分全局串行，不使用翻译的两阶段 `ChapterJobRunner`；与翻译和页面模式的互斥不变。
 - `ReaderTranslationHub` 同时汇总章节翻译和超分，只有 UI 已解绑且两类任务均结束才回收控制器。超分使用 `ChapterJobOperation.UPSCALE`，与翻译的通知 ID、PendingIntent 和取消动作隔离；通知点击返回该章起始页，超分只提供取消。
 - 锁屏、切后台和退出阅读器均保留章节超分队列；`onReaderClosed` 只取消页面模式和自动超分，不能调用 `SrProcessor.cancelManga` 误伤章节任务。`unbindUi` 切回自持来源，后台进度由系统通知栏展示，不创建应用浮层。删除书籍时 `shutdownAndJoin` 等待队列退出后再移除来源。CPU 保活见[共享任务指南](../translate/CLAUDE.md)。
-- 章节翻译／超分提交及继续时通过共享 `ChapterTaskNotificationAccess` 补充通知授权与锁屏、电池设置引导。锁屏通知展示进度；系统用户设置不可由应用覆盖。从设置返回后刷新服务快照，避免权限已恢复但进度未变时仍没有章通知。
+- 章节翻译／超分提交及继续时只补充系统通知授权；不增加锁屏专用类别或应用内设置入口。单章一条进度，多章只显示总进度与当前章，当前章操作和点击目标随交接更新。锁屏沿用系统对应用通知的设置；从系统设置返回后刷新当前快照。
 - 超分模型预检失败必须记录原因并发独立失败通知；不能仅依赖阅读器提示回调。失败通知不随进度服务退出被清除，点击仍返回对应章节。
 
 **互斥**（都要抢 `OcrLock`，同时开就是互相拖死）：

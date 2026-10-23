@@ -20,15 +20,15 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 
 /**
- * 批量翻译的**前台服务**：在通知栏给每一章一条进度通知（可暂停/继续/取消）。
+ * 章节任务的前台服务：单章一条；多章只显示总进度与当前章节进度。
  *
  * 用户口径：
  * - 「翻译本章要能后台进行…除非直接清除后台，否则会继续翻译」→ 任务本体在各自的宿主里
  *   （漫画 `ReaderTranslationHub` / 小说 `NovelTranslationHub`，都是应用级 scope），
  *   本服务只负责**前台保活 + 通知栏**：不带前台服务的话系统随时可能回收进程，任务会中途消失
  * - 「通知栏的进度条上面也能暂停」→ 通知动作 [JobAction]
- * - 「每章一张通知」→ 一章一条（id 由 [ActiveChapterJob.notificationId] 稳定派生），
- *   点通知回到那本书的对应阅读器（漫画带该章第一页）
+ * - 服务通知承载单章或总进度；排队章不各发一条通知。
+ *   当前章节通知的动作、点击目标随实际执行章切换。
  *
  * ⚠️ **任务状态不在这里**：这里只镜像 [TranslationJobRegistry.activeJobs]。
  * 服务被杀 → 任务照跑（直到进程死）；任务跑完 → registry 里没有活动项 → 服务自己 `stopSelf`。
@@ -57,6 +57,7 @@ class TranslationJobService : LifecycleService() {
         const val CHANNEL_ID = TranslationNotifyChannel.ID
 
         const val NOTIFICATION_ID_SERVICE = 9998
+        const val NOTIFICATION_ID_CURRENT = 9996
 
         /**
          * 「任务开始时先把服务拉起来、registry 还没来得及重算」的宽限期。
@@ -103,7 +104,8 @@ class TranslationJobService : LifecycleService() {
     }
 
     private var isForegroundStarted = false
-    private val shown = mutableSetOf<Int>()
+    private val notificationQueue = ChapterNotificationQueue()
+    private var lastNotificationLayout: String? = null
     private lateinit var cpuWakeLock: ChapterTaskWakeLock
     private var timedOut = false
 
@@ -114,7 +116,8 @@ class TranslationJobService : LifecycleService() {
         if (isForegroundStarted) return
         isForegroundStarted = true
         try {
-            startForeground(NOTIFICATION_ID_SERVICE, buildSummaryNotification(emptyList()))
+            val initial = notificationQueue.update(TranslationJobRegistry.activeJobs.value)
+            startForeground(NOTIFICATION_ID_SERVICE, buildServiceNotification(initial))
         } catch (e: Exception) {
             LogCollector.e(TAG, "startForeground 失败", e)
         }
@@ -165,7 +168,7 @@ class TranslationJobService : LifecycleService() {
     /** 是否**见过**活动任务。用于避开"服务先于 submit 被拉起 → 见到空快照就自杀"的竞态。 */
     private var sawActiveJob = false
 
-    /** 镜像 registry 的任务快照 → 每章一条通知；没有活动任务了就停服务。 */
+    /** 镜像任务快照；单章一条，多章总进度加当前章，没有活动任务时退出。 */
     // 通知权限已在 `canPostNotifications()` 里查过（lint 不会跟进 helper，所以显式声明已处理）
     @SuppressLint("MissingPermission")
     private fun observeJobs() {
@@ -209,27 +212,28 @@ class TranslationJobService : LifecycleService() {
     @SuppressLint("MissingPermission")
     private fun postActiveJobs(active: List<ActiveChapterJob>) {
         if (active.isEmpty()) return
-        active.forEach { job -> notify(job) }
-        // 已经不在活动列表里的通知要撤掉（跑完/取消的章）
-        val alive = active.map { it.notificationId }.toSet()
-        (shown - alive).forEach { id ->
-            runCatching { NotificationManagerCompat.from(this@TranslationJobService).cancel(id) }
-            shown -= id
-        }
+        val snapshot = notificationQueue.update(active)
         runCatching {
             if (canPostNotifications()) {
-                NotificationManagerCompat.from(this@TranslationJobService)
-                    .notify(
-                        NOTIFICATION_ID_SERVICE,
-                        buildSummaryNotification(active)
-                    )
+                val manager = NotificationManagerCompat.from(this)
+                manager.notify(NOTIFICATION_ID_SERVICE, buildServiceNotification(snapshot))
+                if (snapshot.multiple && snapshot.current != null) {
+                    manager.notify(NOTIFICATION_ID_CURRENT, buildChapterNotification(snapshot.current))
+                } else manager.cancel(NOTIFICATION_ID_CURRENT)
+                val layout = "${snapshot.multiple}:${snapshot.count}:${snapshot.current?.notificationId}"
+                if (layout != lastNotificationLayout) {
+                    lastNotificationLayout = layout
+                    LogCollector.i(TAG, "任务进度通知：条数=${if (snapshot.multiple) 2 else 1}，章节数=${snapshot.count}，当前章=${snapshot.current?.chapterIndex}")
+                }
+                // 升级后清理旧版按章发送的通知，保留独立的失败通知与阅读器页面通知。
+                getSystemService(android.app.NotificationManager::class.java).activeNotifications
+                    .filter { it.tag == null && it.notification.channelId == CHANNEL_ID && it.id >= 10_000 }
+                    .forEach { manager.cancel(it.id) }
             }
-        }
+        }.onFailure { LogCollector.w(TAG, "更新章节进度通知失败", it) }
     }
 
-    @SuppressLint("MissingPermission")
-    private fun notify(job: ActiveChapterJob) {
-        if (!canPostNotifications()) return
+    private fun buildChapterNotification(job: ActiveChapterJob): android.app.Notification {
         val label = job.chapterLabel.ifBlank { getString(R.string.manga_chapter_label, job.chapterIndex + 1) }
         val title = getString(
             if (job.operation == ChapterJobOperation.UPSCALE) R.string.chapter_sr_notify_title
@@ -244,11 +248,12 @@ class TranslationJobService : LifecycleService() {
             .setSmallIcon(R.drawable.ic_reader_translate)
             .setContentTitle(title)
             .setContentText(text)
-            .setOngoing(job.state == ChapterJobState.RUNNING || job.state == ChapterJobState.QUEUED)
+            .setOngoing(false)
             .setOnlyAlertOnce(true)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .setProgress(job.total.coerceAtLeast(1), job.done, job.total <= 0)
             .setContentIntent(openReaderIntent(this, job))
             .addAction(
@@ -268,14 +273,7 @@ class TranslationJobService : LifecycleService() {
                 actionIntent(JobAction.PAUSE, job, job.notificationId + 2)
             )
         }
-        try {
-            NotificationManagerCompat.from(this).notify(job.notificationId, builder.build())
-            shown += job.notificationId
-            // ⚠️ 打日志：用户报「看不到通知」时，这一行能立刻区分"没发出去"和"发了但被折叠"
-            LogCollector.d(TAG, "章通知 id=${job.notificationId} ch=${job.chapterIndex} ${job.state} ${job.done}/${job.total}")
-        } catch (e: SecurityException) {
-            LogCollector.w(TAG, "通知权限缺失，无法显示翻译进度: ${e.message}")
-        }
+        return builder.setPublicVersion(builder.build()).build()
     }
 
     private fun progressText(job: ActiveChapterJob): String = when {
@@ -320,44 +318,22 @@ class TranslationJobService : LifecycleService() {
     }
 
 
-    private fun buildSummaryNotification(jobs: List<ActiveChapterJob>): android.app.Notification {
-        val upscaleOnly = jobs.isNotEmpty() && jobs.all { it.operation == ChapterJobOperation.UPSCALE }
-        val translateOnly = jobs.isNotEmpty() && jobs.all { it.operation == ChapterJobOperation.TRANSLATE }
-        val ocrOnly = translateOnly && jobs.all { it.kind == TranslationJobKind.MANGA } && TranslationExecutionMode.isOcrOnly(this)
-        val title = when {
-            upscaleOnly -> R.string.chapter_sr_notify_summary_title
-            ocrOnly -> R.string.chapter_translate_notify_summary_title_ocr
-            translateOnly -> R.string.chapter_translate_notify_summary_title
-            else -> R.string.chapter_tasks_notify_summary_title
-        }
-        val text = when {
-            upscaleOnly -> R.string.chapter_sr_notify_summary
-            ocrOnly -> R.string.chapter_translate_notify_summary_ocr
-            translateOnly -> R.string.chapter_translate_notify_summary
-            else -> R.string.chapter_tasks_notify_summary
-        }
-        val current = jobs.firstOrNull { it.needsCpu } ?: jobs.firstOrNull()
-        val progress = current?.let {
-            val label = it.chapterLabel.ifBlank { getString(R.string.manga_chapter_label, it.chapterIndex + 1) }
-            "${it.bookTitle} · $label · ${progressText(it)}"
-        }
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+    private fun buildServiceNotification(snapshot: ChapterNotificationQueue.Snapshot): android.app.Notification {
+        val current = snapshot.current
+        if (!snapshot.multiple && current != null) return buildChapterNotification(current)
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_reader_translate)
-            .setContentTitle(getString(title))
-            .setContentText(progress ?: getString(text, jobs.size))
-            .setOngoing(true)
+            .setContentTitle(getString(R.string.chapter_queue_notify_title))
+            .setContentText(if (current == null) getString(R.string.chapter_task_preparing) else getString(R.string.chapter_queue_notify_progress, snapshot.finished, snapshot.count))
+            .setOngoing(false)
             .setOnlyAlertOnce(true)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-            .apply {
-                current?.let {
-                    setContentIntent(openReaderIntent(this@TranslationJobService, it))
-                    setProgress(it.total.coerceAtLeast(1), it.done, it.total <= 0)
-                }
-            }
-            .build()
+            .setProgress(snapshot.maximum.coerceAtLeast(1), snapshot.progress, current == null)
+        current?.let { builder.setContentIntent(openReaderIntent(this, it)) }
+        return builder.setPublicVersion(builder.build()).build()
     }
 
     /**
@@ -376,8 +352,7 @@ class TranslationJobService : LifecycleService() {
 
     private fun clearAll() {
         val nm = NotificationManagerCompat.from(this)
-        shown.forEach { runCatching { nm.cancel(it) } }
-        shown.clear()
+        runCatching { nm.cancel(NOTIFICATION_ID_CURRENT) }
         runCatching { nm.cancel(NOTIFICATION_ID_SERVICE) }
     }
 
