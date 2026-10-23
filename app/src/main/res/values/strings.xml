@@ -2072,4 +2072,5 @@
     <string name="reader_download_prefer_sr">Prefer upscaled images</string>
     <string name="reader_download_prefer_sr_hint">Use saved upscaled images where available; keep originals for other pages. Both exports use the upscaled image for the original and translation.</string>
     <string name="reader_download_prefer_sr_pdf_hint">Use saved upscaled images where available; keep originals for other pages. Both original and translated pages use the upscaled image. PDFs are regenerated as image pages.</string>
+    <string name="screenshot_geometry_changed">Screen layout changed or result alignment could not be verified. Translation was cancelled; capture again.</string>
 </resources>

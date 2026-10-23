@@ -15,6 +15,43 @@ import android.view.WindowManager
  */
 object OverlayWindow {
 
+    /** 截图和 OCR 坐标是物理像素，不允许 BitmapDrawable 按设备密度隐式缩放。 */
+    fun setBitmapInPixels(view: android.widget.ImageView, bitmap: android.graphics.Bitmap) {
+        bitmap.density = android.graphics.Bitmap.DENSITY_NONE
+        view.scaleType = android.widget.ImageView.ScaleType.CENTER
+        view.setImageBitmap(bitmap)
+    }
+
+    private var displayContext: android.content.Context? = null
+
+    /** 不继承 Activity 的竖屏/分屏兼容配置；一个 display 共用一个窗口 Context。 */
+    @Synchronized
+    fun context(context: android.content.Context): android.content.Context {
+        displayContext?.let { return it }
+        val app = context.applicationContext
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return app
+        val dm = app.getSystemService(android.content.Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager
+        val display = dm.getDisplay(android.view.Display.DEFAULT_DISPLAY) ?: return app
+        return app.createDisplayContext(display)
+            .createWindowContext(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, null)
+            .also { displayContext = it }
+    }
+
+    /** 坐标映射窗口均以整块 display 为布局空间；框选窗口再指定自己的矩形。 */
+    fun fullDisplayParams(): WindowManager.LayoutParams = WindowManager.LayoutParams().apply {
+        type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        format = android.graphics.PixelFormat.RGBA_8888
+        flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+        width = WindowManager.LayoutParams.MATCH_PARENT
+        height = WindowManager.LayoutParams.MATCH_PARENT
+        // display 像素的 x 总是从左计数，不能随系统 RTL 把 START 解释成右边。
+        gravity = android.view.Gravity.TOP or android.view.Gravity.LEFT
+        applyFullDisplayCutout(this)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) setFitInsetsTypes(0)
+    }
+
     /**
      * 让窗口覆盖**整个 display**（含刘海区），使「窗口坐标」与「显示坐标」重合。
      *

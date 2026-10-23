@@ -103,7 +103,10 @@ object LanguageManager {
         @Suppress("DEPRECATION")
         context.resources.updateConfiguration(configuration, context.resources.displayMetrics)
 
-        return context.createConfigurationContext(configuration)
+        // ConfigurationContext 持续覆盖所有非空字段。不能把当前屏幕的快照当覆盖项，
+        // 否则转屏/分屏后 orientation、screenWidthDp、densityDpi 仍停在创建时。
+        val languageOnly = Configuration().apply { setLocale(locale) }
+        return context.createConfigurationContext(languageOnly)
     }
 
     /**

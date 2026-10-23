@@ -49,10 +49,12 @@ class Shooter(private val context: Context) {
     private var lastFrameHash: Long = 0L
     private var lastFrameChangeCheckTime: Long = 0L
 
-    private var mediaProjection: MediaProjection? = null
+    @Volatile private var mediaProjection: MediaProjection? = null
     private var imageReader: ImageReader? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var lastBitmap: Bitmap? = null
+    @Volatile private var bufferGeometry: DisplayGeometry? = null
+    private var lastBitmapGeometry: DisplayGeometry? = null
     private var listenerThread: HandlerThread? = null
     private var listenerHandler: Handler? = null
     private val bitmapLock = Any()  // 保护 lastBitmap 的并发访问
@@ -60,6 +62,9 @@ class Shooter(private val context: Context) {
     @Volatile private var imageAvailable = false
 
     private var initRotation = -1  // init 时的屏幕方向，用于检测旋转
+
+    /** API 34+ 由系统告知真正的投影尺寸；与 Service 窗口读数分离。 */
+    @Volatile private var capturedSize: Point? = null
 
     @Volatile var ready = false
         private set
@@ -80,8 +85,8 @@ class Shooter(private val context: Context) {
         try {
             val image = reader.acquireLatestImage()
             if (image != null) {
-                val newBitmap = convert(image)
-                image.close()
+                val geometry = bufferGeometry
+                val newBitmap = try { convert(image) } finally { image.close() }
                 if (newBitmap == null) {
                     LogCollector.w(TAG, "convert returned null, skipping frame")
                     imageAvailable = true  // 唤醒等待的 shot()，避免永久超时
@@ -112,8 +117,13 @@ class Shooter(private val context: Context) {
                 }
 
                 synchronized(bitmapLock) {
+                    if (reader !== imageReader || geometry == null || geometry != bufferGeometry) {
+                        newBitmap.recycle()
+                        return@OnImageAvailableListener
+                    }
                     lastBitmap?.recycle()
                     lastBitmap = newBitmap
+                    lastBitmapGeometry = geometry
                 }
                 imageAvailable = true
                 frameSeq++
@@ -136,18 +146,27 @@ class Shooter(private val context: Context) {
             mediaProjection = mgr.getMediaProjection(-1, captureIntent)
 
             // 注册回调，监听投影停止（用主线程 Handler 即可，回调很轻）
-            mediaProjection?.registerCallback(object : MediaProjection.Callback() {
+            val projection = mediaProjection
+            projection?.registerCallback(object : MediaProjection.Callback() {
                 override fun onStop() {
+                    if (mediaProjection !== projection) return
                     LogCollector.d(TAG, "MediaProjection stopped")
                     ready = false
+                }
+
+                override fun onCapturedContentResize(width: Int, height: Int) {
+                    if (mediaProjection !== projection || width <= 0 || height <= 0) return
+                    capturedSize = Point(width, height)
+                    LogCollector.d(TAG, "Captured content resize: ${width}x${height}")
                 }
             }, Handler(Looper.getMainLooper()))
 
             // 获取实际屏幕尺寸，一律走 DisplaySize（见其注释：Display API 在本机会被冻结）
-            val screenPoint = com.moe.starflow.utils.DisplaySize.size(context)
-            val screenWidth = screenPoint.x
-            val screenHeight = screenPoint.y
-            val dpi = context.resources.displayMetrics.densityDpi
+            val geometry = com.moe.starflow.utils.DisplaySize.geometry(context)
+            val screenWidth = geometry.width
+            val screenHeight = geometry.height
+            bufferGeometry = geometry
+            val dpi = geometry.densityDpi
 
             // 创建专用后台线程处理 ImageAvailable 回调
             // 不能用主线程 —— 主线程被 OCR/翻译阻塞时回调无法执行
@@ -171,8 +190,7 @@ class Shooter(private val context: Context) {
             )
 
             ready = true
-            // 方向按几何判（Display.rotation 在本机横屏下同样可能被冻结为 0）
-            initRotation = if (screenWidth > screenHeight) 1 else 0
+            initRotation = geometry.rotation
             lastFrameSeqChangeTime = System.currentTimeMillis()
             LogCollector.d(
                 TAG,
@@ -199,14 +217,16 @@ class Shooter(private val context: Context) {
      * 截图
      * @return Bitmap 的副本，调用方负责 recycle；null 表示失败
      */
-    suspend fun shot(): Bitmap? = withContext(Dispatchers.IO) {
+    suspend fun shot(): Bitmap? = captureFrame()?.bitmap
+
+    suspend fun captureFrame(): CapturedScreen? = withContext(Dispatchers.IO) {
         if (!ready) {
             LogCollector.w(TAG, "Not ready, returning null")
             return@withContext null
         }
 
         // 屏幕旋转后重建 buffer 使其与当前屏幕坐标系一致
-        ensureBufferOrientation()
+        if (!ensureBufferOrientation()) return@withContext null
 
         // 等待 imageAvailable（listener 在后台线程设置此标志）
         val startTime = System.currentTimeMillis()
@@ -220,9 +240,7 @@ class Shooter(private val context: Context) {
             // 即使此时 listener 早已产了新帧。该标志由 listener 下一次回调重新置 true。
             imageAvailable = false
             LogCollector.w(TAG, "shot TIMEOUT: no new frame in ${WAIT_IMAGE_TIMEOUT_MS}ms, lastFrameSeq=$frameSeq, ready=$ready")
-            return@withContext synchronized(bitmapLock) {
-                lastBitmap?.let { bmp -> bmp.copy(bmp.config ?: Bitmap.Config.ARGB_8888, false) }
-            }
+            return@withContext copyCurrentFrame()
         }
 
         // 额外延迟确保帧就绪
@@ -231,11 +249,8 @@ class Shooter(private val context: Context) {
         // listener 已经在后台线程完成了 acquire + convert，直接复制结果
         imageAvailable = false
         val currentSeq = frameSeq
-        return@withContext synchronized(bitmapLock) {
-            lastBitmap?.let { bmp ->
-                LogCollector.d(TAG, "shot OK: frameSeq=$currentSeq, size=${bmp.width}x${bmp.height}")
-                bmp.copy(bmp.config ?: Bitmap.Config.ARGB_8888, false)
-            }
+        copyCurrentFrame()?.also {
+            LogCollector.d(TAG, "shot OK: frameSeq=$currentSeq, size=${it.bitmap.width}x${it.bitmap.height} rotation=${it.display.rotation}")
         }
     }
 
@@ -248,10 +263,16 @@ class Shooter(private val context: Context) {
             LogCollector.w(TAG, "Not ready, returning null")
             return@withContext null
         }
-        ensureBufferOrientation()
-        return@withContext synchronized(bitmapLock) {
-            lastBitmap?.let { bmp -> bmp.copy(bmp.config ?: Bitmap.Config.ARGB_8888, false) }
-        }
+        if (!ensureBufferOrientation()) return@withContext null
+        copyCurrentFrame()?.bitmap
+    }
+
+    private fun copyCurrentFrame(): CapturedScreen? = synchronized(bitmapLock) {
+        val geometry = lastBitmapGeometry ?: return@synchronized null
+        val bitmap = lastBitmap ?: return@synchronized null
+        if (!ready || geometry != com.moe.starflow.utils.DisplaySize.geometry(context) ||
+            bitmap.width != geometry.width || bitmap.height != geometry.height) return@synchronized null
+        CapturedScreen(bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, false), geometry)
     }
 
     /**
@@ -263,23 +284,26 @@ class Shooter(private val context: Context) {
      * 不停 MediaProjection（避免 token 重用抛 SecurityException），
      * 只用 setSurface + resize 切换 buffer 方向。
      */
-    private fun ensureBufferOrientation() {
-        val reader = imageReader ?: return
-        val vd = virtualDisplay ?: return
-        val handler = listenerHandler ?: return
-        try {
+    @Synchronized
+    private fun ensureBufferOrientation(): Boolean {
+        val reader = imageReader ?: return false
+        val vd = virtualDisplay ?: return false
+        val handler = listenerHandler ?: return false
+        return try {
             // ⚠️ 必须走 DisplaySize：`wm.defaultDisplay.getRealSize()` 在本机会被冻结在
             // 进程初始化方向（用户实测：设备已横屏、config 已是横屏，它仍返回竖屏 1220x2712），
             // 于是 newW==reader.width 直接早退，VirtualDisplay 永远停在竖屏帧 ——
             // 框选按横屏算、截图按竖屏裁，两套坐标系，识别位置必然错。
-            val point = com.moe.starflow.utils.DisplaySize.size(context)
-            val newW = point.x
-            val newH = point.y
-            if (newW <= 0 || newH <= 0) return
-            if (newW == reader.width && newH == reader.height) return
+            val geometry = com.moe.starflow.utils.DisplaySize.geometry(context)
+            val newW = geometry.width
+            val newH = geometry.height
+            val content = capturedSize
+            if (content != null && (content.x != newW || content.y != newH)) return false
+            if (newW <= 0 || newH <= 0) return false
+            if (newW == reader.width && newH == reader.height && bufferGeometry == geometry) return true
 
-            val currentRotation = if (newW > newH) 1 else 0
-            val dpi = context.resources.displayMetrics.densityDpi
+            val currentRotation = geometry.rotation
+            val dpi = geometry.densityDpi
             LogCollector.d(TAG, "!!! ROTATION buffer resize: ${reader.width}x${reader.height} -> ${newW}x${newH}, initRotation=$initRotation, currentRotation=$currentRotation")
 
             reader.setOnImageAvailableListener(null, null)
@@ -289,25 +313,50 @@ class Shooter(private val context: Context) {
             val latch = java.util.concurrent.CountDownLatch(1)
             handler.post { latch.countDown() }
             try {
-                latch.await(500, java.util.concurrent.TimeUnit.MILLISECONDS)
-            } catch (_: InterruptedException) {}
+                if (!latch.await(500, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                    // 旧回调仍可能读 native buffer；本轮保留 reader，下轮截图重试。
+                    reader.setOnImageAvailableListener(imageListener, handler)
+                    LogCollector.w(TAG, "Buffer resize deferred: previous frame is still being read")
+                    return false
+                }
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                reader.setOnImageAvailableListener(imageListener, handler)
+                return false
+            }
 
             val newReader = ImageReader.newInstance(newW, newH, PixelFormat.RGBA_8888, IMAGE_BUFFER_COUNT)
-            newReader.setOnImageAvailableListener(imageListener, handler)
-            vd.setSurface(newReader.surface)
-            vd.resize(newW, newH, dpi)
+            try {
+                vd.setSurface(null)
+                vd.resize(newW, newH, dpi)
+                vd.setSurface(newReader.surface)
+            } catch (e: Exception) {
+                try {
+                    vd.resize(reader.width, reader.height, dpi)
+                    vd.setSurface(reader.surface)
+                } finally {
+                    newReader.close()
+                    reader.setOnImageAvailableListener(imageListener, handler)
+                }
+                throw e
+            }
             reader.close()
             imageReader = newReader
+            bufferGeometry = geometry
             imageAvailable = false
             synchronized(bitmapLock) {
                 lastBitmap?.recycle()
                 lastBitmap = null
+                lastBitmapGeometry = null
             }
             lastFrameHash = 0L
             lastFrameSeqChangeTime = System.currentTimeMillis()
             initRotation = currentRotation
+            newReader.setOnImageAvailableListener(imageListener, handler)
+            true
         } catch (e: Exception) {
             LogCollector.e(TAG, "ensureBufferOrientation failed", e)
+            false
         }
     }
 
@@ -385,17 +434,21 @@ class Shooter(private val context: Context) {
     /**
      * 释放资源
      */
+    @Synchronized
     fun release() {
         LogCollector.d(TAG, "Releasing")
         synchronized(bitmapLock) {
             lastBitmap?.recycle()
             lastBitmap = null
+            lastBitmapGeometry = null
         }
         lastFrameHash = 0L
         lastFrameSeqChangeTime = 0L
         lastFrameChangeCheckTime = 0L
         imageAvailable = false
         ready = false
+        capturedSize = null
+        bufferGeometry = null
 
         // 1. 先移除 listener，防止新回调入队
         imageReader?.setOnImageAvailableListener(null, null)

@@ -48,35 +48,18 @@ class MediaProjectionProvider(private val context: Context) : ScreenshotProvider
         return isInitialized
     }
 
-    override suspend fun takeScreenshot(cropRect: RectF?, offset: Point): Bitmap? {
-        if (!ensureInitialized()) {
-            LogCollector.w(TAG, "Not initialized, cannot take screenshot")
+    override suspend fun takeScreenshot(cropRect: RectF?, offset: Point, requestId: Long): Bitmap? {
+        val crop = cropRect?.let { RectF(it) }
+        val frame = captureFrame() ?: return null
+        val data = ScreenshotManager.createData(frame, crop, Point(offset), requestId)
+        if (data.mapping == null) {
+            data.recycle()
             return null
         }
-
-        LogCollector.d(TAG, "Taking screenshot, cropRect=$cropRect")
-        val fullBitmap = shooter.shot() ?: run {
-            LogCollector.w(TAG, "Shooter returned null bitmap")
-            return null
-        }
-        LogCollector.d(TAG, "Full screenshot: ${fullBitmap.width}x${fullBitmap.height}")
-
-        // ⚠️ 裁不出有效区域时 cropBitmap 返回 null（不再退化成返回 fullBitmap 本身）。
-        // 全屏图仍要发出去 —— 宁可按全屏翻译，也不要发出一个「看似裁剪过、实为原图」的对象
-        // 让下游的 full/cropped 前提失效。
-        return if (cropRect != null) {
-            val cropped = ScreenshotManager.cropBitmap(fullBitmap, cropRect, offset)
-            if (cropped != null) {
-                LogCollector.d(TAG, "Cropped screenshot: ${cropped.width}x${cropped.height}")
-                cropped
-            } else {
-                LogCollector.w(TAG, "裁剪区域无效，改为返回全屏图")
-                fullBitmap
-            }
-        } else {
-            fullBitmap
-        }
+        return data.croppedBitmap?.also { data.fullBitmap.recycle() } ?: data.fullBitmap
     }
+
+    suspend fun captureFrame(): CapturedScreen? = if (ensureInitialized()) shooter.captureFrame() else null
 
     override fun release() {
         shooter.release()

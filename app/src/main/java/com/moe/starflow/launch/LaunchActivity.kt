@@ -19,9 +19,7 @@ package com.moe.starflow.launch
 import com.moe.starflow.translate.widget.*
 
 import android.content.Intent
-import android.content.pm.ActivityInfo
 import android.os.Bundle
-import android.util.Log
 import android.widget.ImageView
 import android.widget.Toast
 import androidx.lifecycle.lifecycleScope
@@ -31,6 +29,8 @@ import com.moe.starflow.R
 import com.moe.starflow.utils.AppPathManager
 import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.UtilTools
+import com.moe.starflow.utils.LogCollector
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -45,12 +45,11 @@ class LaunchActivity : BaseActivity() {
     private val activityScope = lifecycleScope
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        com.moe.starflow.utils.StartupOrientation.apply(this)
         super.onCreate(savedInstanceState)
 
         prefs = CustomPreference.getInstance(this)
 
-        // 锁定竖屏
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT)
         // 初始化路径管理类
         AppPathManager.init(this)
         // 初始化工具类
@@ -80,8 +79,11 @@ class LaunchActivity : BaseActivity() {
                 }
 
                 finish()
+            } catch (e: CancellationException) {
+                // 转屏重建会取消旧 Activity 的延迟跳转，由新实例接管启动。
+                throw e
             } catch (e: Exception) {
-                Log.e("LaunchActivity", "Initialization failed", e)
+                LogCollector.e("LaunchActivity", "Initialization failed", e)
                 Toast.makeText(
                     this@LaunchActivity,
                     getString(R.string.init_error, e),

@@ -243,43 +243,15 @@ PP-OCRv5 检测框可能倾斜（QuadBox 4 顶点非正交），全链路处理�
 - ⚠️ **ML Kit 的 cornerPoints 顺序与文档不符**：按 TL,TR,BR,BL 固定下标取边，竖排方块（高197宽28）的 pt0→pt1 恰是长边 → 被当"宽"误判横排（排查时日志 `detectBubbles: block='...' bbox=...h71 w24 → vertical=false` 里的全是要判竖排的列）。必须用顺序无关算法。
 - 所有 ML Kit 路径统一走它（勿再各写一份 AABB 宽高比）：`BubbleDetector.detectBubbles`(两个重载) / `DetectionBridge.ocrToBubbleRegions` / `MangaSpatialGrouping.textBlocksToBubbleRegions` / `MangaFloatingService` inline block→BubbleRegion。
 
-**屏幕尺寸获取（`DisplaySize.size()`，唯一入口）：**
-- 两个服务的 `getScreenSize()` 都只是它的薄封装。**不要再直接调 Display API。**
-- ⚠️ Service 进程的 Display 取值可能被**冻结在进程初始化方向**。2K 机（物理屏 1220x2712）实测：
-  设备已横屏 2712x1220，而 `cfg.orientation` / `dm` / `mode` / `rotation` / `getRealMetrics` /
-  `getRealSize` / `currentWindowMetrics` **七项全部返回竖屏 1220x2712**。
-- ⚠️ **分机型核实，不要预设**：另一台 1080x2400 机上 `getRealSize` 横屏下**正确**（见 memory
-  `android-frozen-display-service`）。判定前先 `adb shell wm size` + `dumpsys input`
-  （看 `Viewport INTERNAL` 的 `orientation` / `deviceSize`）拿到不分歧的真值。
-- ⚠️ **窗口读数也不等于屏幕**：`MATCH_PARENT` 的 overlay 窗口会被系统缩小以避开手势条/导航栏
-  （实测竖屏 1080x2356 vs 屏幕 1080x2400），原点却仍是 0。
+### 截图几何与结果对齐
 
-### OCR 结果的取值规则
+`DisplaySize.geometry()` 提供默认显示屏的宽高、真实旋转角度和密度；Android 11+ 不使用 Activity 兼容窗口或历史框选窗口的尺寸。`DisplayGeometryMonitor` 检测完整几何变化，包括宽高不变的 180° 翻转。
 
-`resolve()` 的完整规则（纯函数，`DisplaySizeResolveTest` 11 条锁死）：
+每帧携带不可变 `ScreenshotMapping` 和请求编号；旧请求、旧几何及越界裁剪直接作废。普通结果、缓存回显、原文／译文切换和复制气泡均以这份映射定位，不读取翻译结束时的 `cropRect`。裁剪图与结果窗口必须使用相同整数边界，复制只平移该帧坐标，不再缩放。
 
-```
-窗口读数不比朝向新（含无窗口读数）⇒ 只信 Display 读数 + 已知朝向配对
-窗口读数更新                     ⇒ 它的宽高关系就是当前朝向，像素逐轴与 Display 取大
-```
+截图结果按物理像素 1:1 显示。`AlignedResultGuard` 在绘制前核对完整显示几何、实际窗口尺寸和原点，不匹配则取消任务并撤下浮层。缓存中的旧 OCR 位置还要求源像素和裁剪边界完全一致，否则重新检测；文本译文缓存仍可命中。
 
-**为什么用时刻而不是优先级**（本病区反复返工的根因）：这份状态有两个写入方
-（`onConfigurationChanged` / `CropView.onSizeChanged`），新鲜度不同，**谁对取决于谁更晚写**。
-早期实现让其中之一无条件压过另一个，于是同一类 bug 换面貌反复出现：
-
-| 规则 | 失效场景 | 后果 |
-|---|---|---|
-| 窗口优先 | 框选确认后 CropView 移除 → 窗口读数冻结 | 横屏框选→转竖屏，帧仍建横屏 → **译文位置全错** |
-| 朝向优先 | 配置回调漏掉（多窗口/freeform 下会被抑制） | 陈旧朝向把新鲜窗口读数对调 → **框选后必被清** |
-
-⇒ `reportOrientation` / `reportLaidOutSize` 各记 `SystemClock.elapsedRealtime()` 时间戳，
-判断从「策略」变成「事实」。**不要再引入任何优先级仲裁。**
-
-**overlay 窗口定位：**
-- **框选窗 / 结果浮层 / 缓存浮层**：`MATCH_PARENT` + `FLAG_LAYOUT_IN_SCREEN` +
-  `FLAG_LAYOUT_NO_LIMITS` + 挖孔模式（见下节），**不要用 `getScreenSize()` 的像素值钉死**
-- 配合 `FIT_XY`
-- 全屏模式窗口 `x=0,y=0` 即覆盖整屏；框选模式窗口尺寸 = crop 宽高，位置 = `crop.left/top`
+结果切换后台渲染持有独立原图副本，关闭或转屏后不再回填。测试：`ScreenshotGeometryTest`、`AlignedResultGuardTest`、`ShooterGeometryTest`。
 
 **受限区域截图：**
 - 系统 `takeScreenshot()` API 对受限区域（DRM/安全应用、相册/银行/支付）返回 `onSuccess` + 全黑 bitmap 或无文字图片

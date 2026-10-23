@@ -6,25 +6,9 @@ import android.os.Build
 import android.view.WindowManager
 
 /**
- * 屏幕几何取值的**唯一入口**。
- *
- * ## 为什么不能直接用 Display API
- *
- * `<service>` 没有 Activity 的 window，进程里的 `Display` 系列取值会被冻结在
- * **进程初始化时的方向**（用户实测：设备已横屏后，`getRealSize` 仍返回竖屏
- * 1220x2712，而同一时刻 `onConfigurationChanged` 收到的 config 已经是横屏）。
- * 拿冻结值去建 VirtualDisplay / 定框选窗口尺寸，就是两套坐标系 → 框选位置与识别
- * 位置错位。`dumpsys display` 里 `mBaseDisplayInfo` 与 `mOverrideDisplayInfo` 互相
- * 矛盾（base 竖屏 rotation 0 / override 横屏 rotation 1），也印证了这一点。
- *
- * ## 唯一可信来源：已布局窗口的几何
- *
- * 窗口尺寸是 WMS 在**当前**配置下真布局出来的，进程冻不掉它。overlay 窗口用
- * MATCH_PARENT 时拿到的就是当前显示几何。由 `CropView.onSizeChanged` 上报
- * （[reportLaidOutSize]），此处缓存供截图管线等无窗口方使用。
- *
- * 尚未上报时退回 Display API 的值（首帧 / 窗口未建立），并记 [isReliable] = false，
- * 调用方据此知道自己拿到的是「可能被冻结」的猜测值。
+ * 显示几何的唯一入口。Android 11+ 从独立 display 窗口上下文读取完整屏幕；
+ * Android 10 保留窗口几何与配置方向的带时刻兼容解析。
+ * 截图和上屏使用 [geometry] 的完整快照，不能只用横屏/竖屏布尔值识别旋转。
  */
 object DisplaySize {
 
@@ -56,7 +40,7 @@ object DisplaySize {
     /**
      * 由 `onConfigurationChanged` 上报**当前朝向**。
      *
-     * ⚠️ 这是转屏后进程里**唯一新鲜**的方向信号：`newConfig.orientation` 随配置变更更新
+     * Android 10 兼容解析使用的方向信号：`newConfig.orientation` 随配置变更更新
      * （`resources.configuration` 那个是冻结值），而 `Display` 系列与「已布局窗口」
      * （框选窗移除后不再上报）都停在旧方向。
      *
@@ -114,11 +98,27 @@ object DisplaySize {
      */
     fun size(ctx: Context): Point {
         val legacy = legacySize(ctx)
+        // 独立 display 窗口已能提供整屏几何，不再让已移除框选窗的旧读数覆盖它。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            isReliable = legacy.x > 0 && legacy.y > 0
+            return legacy
+        }
         val laid = laidOut
         val r = resolve(laid.x, laid.y, laidAt, legacy.x, legacy.y, orientation, orientationAt)
         // 结果与 Display 读数一致时才可信（不一致说明窗口被系统缩小、由 max 补齐过）
         isReliable = (r[0] == legacy.x && r[1] == legacy.y)
         return Point(r[0], r[1])
+    }
+
+    fun geometry(ctx: Context): com.moe.starflow.translate.screenshot.DisplayGeometry {
+        val physicalContext = com.moe.starflow.translate.screenshot.OverlayWindow.context(ctx)
+        val wm = physicalContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        val dimensions = size(ctx)
+        @Suppress("DEPRECATION")
+        val rotation = wm.defaultDisplay.rotation
+        return com.moe.starflow.translate.screenshot.DisplayGeometry(
+            dimensions.x, dimensions.y, rotation, physicalContext.resources.displayMetrics.densityDpi
+        )
     }
 
     /**
@@ -188,10 +188,13 @@ object DisplaySize {
         val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as? WindowManager
             ?: return Point(0, 0)
 
-        // 优先 currentWindowMetrics：走 Binder 到 WMS，比 defaultDisplay 更可能反映当前状态
+        // 使用独立的 display 窗口上下文，避开 Activity 的方向/小窗兼容配置。
+        // 截图覆盖整块 display，因此不能用当前应用窗口（分屏/小窗）的 bounds。
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             try {
-                val b = wm.currentWindowMetrics.bounds
+                val displayContext = com.moe.starflow.translate.screenshot.OverlayWindow.context(ctx)
+                val displayWm = displayContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                val b = displayWm.maximumWindowMetrics.bounds
                 if (b.width() > 0 && b.height() > 0) return Point(b.width(), b.height())
             } catch (_: Throwable) {
                 // 某些 ROM 在 Service context 上会抛，退回 getRealSize

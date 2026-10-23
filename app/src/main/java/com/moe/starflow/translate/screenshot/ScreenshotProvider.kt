@@ -31,7 +31,7 @@ interface ScreenshotProvider {
      * @param offset 裁剪偏移
      * @return Bitmap 或 null（失败时）
      */
-    suspend fun takeScreenshot(cropRect: RectF?, offset: Point): Bitmap?
+    suspend fun takeScreenshot(cropRect: RectF?, offset: Point, requestId: Long = 0): Bitmap?
 
     /**
      * 释放资源

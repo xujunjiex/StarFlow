@@ -111,6 +111,9 @@ StarFlow 是 Kotlin Android 应用，界面使用 Android Views 和 ViewBinding�
 
 ### 跨模块执行与状态
 
+- `LanguageManager` 创建语言 Context 时只能覆盖 locale；不能把完整 `Configuration` 快照传给 `createConfigurationContext`，否则方向、窗口尺寸和密度会被持续覆盖，转屏与分屏无法更新。
+- 启动页、首次引导和主页共用 `StartupOrientation`：手机保留竖屏，最小宽度 600dp 及以上跟随系统方向。启动页重建取消延迟跳转属于正常生命周期，不显示初始化错误。
+
 - `translate/batch/` 是漫画和小说阅读器共用的章节任务调度器；具体 UI 与数据持久化由各模块宿主负责。
 - `OcrLock` 串行保护原生 OCR 与超分引擎。`TranslationBusyRegistry` 和 `TranslationJobRegistry` 管理不同生命周期的任务，修改前查阅对应模块说明。
 - `TranslationExecutionMode` 控制本地 OCR/文本翻译流程的翻译或仅 OCR 模式；图片直传翻译不走这条路径。切换模式不能与正在运行的 OCR/翻译任务竞争。
@@ -192,169 +195,34 @@ tag:OCRBridge | tag:DetectionBridge | tag:BubbleDetector | tag:MangaFloatingServ
 > 本节已下沉到模块分册：`app/src/main/java/com/moe/starflow/translate/CLAUDE.md`
 > 动那一块之前先读它；跨模块的约定仍以本文件为准。
 
-## 框选 / overlay 坐标系（硬约束，改动前必读）
+## 框选与结果浮层坐标
 
-**核心原则：坐标系错位一律让两套坐标「重合」，绝不用 offset 去补。**
+截图、OCR 与漫画结果使用物理像素。不能用补偿偏移或拉伸图片来掩盖不同坐标空间。
 
-补 offset 等于把「两个坐标系相差多少」硬编码进调用点 —— 差值随设备与朝向变化，
-补错方向就换个符号再试，表现为「偏右 → 偏左」来回横跳，每轮都像新 bug。
-实际反复踩的坑就是这么来的：**根子从来不是补偿量算错，是坐标系没统一。**
+### 显示几何与截图
 
-### ⚠️ 改这一区之前：先判断「这是不是同一个 bug 换了张脸」
+- 显示几何统一由 `utils/DisplaySize.kt` 提供。Android 11+ 使用独立 display 窗口 Context 的整屏边界，不让已移除框选窗的历史尺寸覆盖它；Android 10 保留带时刻的窗口／朝向兼容解析。
+- `ScreenshotGeometry.kt` 的 `DisplayGeometry` 包含宽、高、真实旋转角度和密度。180° 翻转也必须使旧帧失效，不能只比较横屏／竖屏或宽高。
+- `Shooter` 按完整显示几何维护 ImageReader；几何变更后清空旧帧，API 34+ 同时核对投影实际宽高。尺寸调整失败不返回旧缓冲帧。
+- 截图请求使用全局唯一编号，游戏与漫画分开投递。异步结果只能交给对应服务的当前请求，不能重新解释为新的框选任务。
 
-本区曾连续 5 次修改都在**调「哪个来源优先」**，每次修好一处、另一处炸：
-取 max → 闩锁校正 → 逐轴 max → 朝向压制 → 时刻判定（最终）。
+### 框选与上屏
 
-**判据**：如果你正打算给两个来源**再定一条优先级规则**，停手 ——
-那说明其中一个来源**缺少时间信息**，问题的形状是「谁更新」而不是「谁重要」。
-先补齐时刻，再谈取值。（同理：`isReliable` 这类「可信度标志」若无人消费，
-它就不是设计的一部分，别拿它当依据。）
+- 每帧绑定不可变 `ScreenshotMapping`，保存截图时的实际整数裁剪边界。裁剪和窗口宽高必须由同一组左右／上下边界相减得到。
+- 越界、退化裁剪拒绝处理；不夹小位图后拉回原框，也不把裁剪失败的全屏图放进框选窗口。
+- 漫画普通结果、缓存回显、原文／译文切换、复制气泡均使用该帧映射。不能在翻译结束时读取可变的当前 `cropRect` 重新定位。
+- 框选与结果窗口共用 `OverlayWindow.fullDisplayParams`：整屏由 WMS 布局，裁剪窗口再指定映射矩形；API 30+ 不按系统栏内缩。挖孔模式 API 30+ 用 ALWAYS，API 29 用 SHORT_EDGES。
+- `OverlayWindow.setBitmapInPixels` 清除截图密度并使用 CENTER，保持物理像素 1:1；不使用 FIT_XY。
+- `AlignedResultGuard` 绘制前校验完整显示几何、窗口宽高和屏幕原点。不匹配则拒绝绘制并撤下结果；`DisplayGeometryMonitor` 同时监听旋转、分辨率和密度变化，取消旧任务并清除旧框选。
+- 截图的旧坐标缓存仅在源像素和裁剪边界都完全相同时复用；pHash 相同不足以证明位置相同。否则重新检测，文本译文缓存仍可使用。
 
-**另一个高发的同形陷阱**：`onConfigurationChanged` 里 **先读后写**同一个变量 →
-比较变成「新值 vs 新值」→ 条件恒假 → 整条链路静默失效。见下方专节。
-**凡是「读旧值→写新值→比较」三段式，顺序错一次就全废，且没有任何异常可查。**
+### 生命周期与提示浮层
 
-### 四套坐标，出问题只可能在「谁与谁不同源」
+结果切换的后台渲染持有独立原图副本；结束后校验仍是原窗口和映射，避免转屏／关闭后把旧图贴进新窗口。停止、转屏及服务重建都会作废待返回的截图请求。
 
-| 空间 | 原点 | 谁产生 |
-|------|------|--------|
-| 截图帧 Frame | 帧左上角 | `Shooter` 的 VirtualDisplay |
-| 框选窗口 Window | 框选 overlay 的 (0,0) | WMS 按 flags + 挖孔模式布局 |
-| 显示 Display | 物理屏左上角 | — |
-| 视图 View | = 框选窗口原点 | `CropView.mRect` |
+`TranslationStatusOverlay` 是独立提示窗口。阅读器传入位置时仍用 `getLocationOnScreen` 的屏幕坐标；窗口系统栏内缩由其校准方法实测，不按系统栏高度猜测。
 
-**帧的尺寸是从框选窗口学来的**（`DisplaySize` 由 `CropView.onSizeChanged` 上报），
-所以**帧与 `cropRect` 永远同一坐标空间** —— 裁剪/OCR 位置在结构上不会错。
-唯一可能错开的是**结果浮层的 x/y**（它按显示坐标解释）。
-
-### ⚠️ 挖孔模式决定「窗口 frame 等不等于 display」
-
-默认挖孔模式下 WMS 会**避开刘海**给一个安全矩形，于是产生第二套坐标系。横屏实测：
-
-```
-display    2712 x 1220
-框选窗口   2574 x 1220   原点 (138,0)      ← 被挤掉一个刘海宽度（2712-2574=138）
-```
-
-而 `cropRect` 是**窗口局部**坐标、结果浮层 x/y 是**显示**坐标 → 差 138px，译文整体偏移。
-
-**修法**（`OverlayWindow.applyFullDisplayCutout`）：让窗口覆盖整个 display，两套坐标重合。
-
-```kotlin
-// screenshot/OverlayWindow.kt —— 唯一入口，勿在调用点手写 flags
-API ≥ 30 → LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-API 29   → LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES   // ALWAYS 是 API 30 常量，29 上引用即抛异常！
-```
-
-⚠️ `ALWAYS` 是 **API 30** 新增，在 API < 30 上**引用即抛 `IllegalArgumentException`**。
-本项目 `minSdk 29` —— 写死它会让 Android 10 直接崩。必须分级（物理刘海都在短边上，
-`SHORT_EDGES` 在 29 上语义最接近）。
-
-### ⚠️ 竖屏会把这类问题完全掩盖
-
-刘海在顶部时窗口横向铺满，两套坐标恰好重合 → **只坏横屏**。所以：
-- 改坐标相关代码后**必须测横屏**，竖屏通过不等于对
-- 「横屏才有问题」本身就是「两套坐标系」的强信号
-
-### ⚠️ 同一个坑的第二处：提示浮层 `TranslationStatusOverlay`（2026-10-01）
-
-**症状是「提示条永远比章节胶囊低一大截，怎么调 dp 都像原地没动」**——不是没调对，是竖向也差一整个系统栏：
-
-| 窗口 | frame | `y` 的含义 |
-|---|---|---|
-| 阅读器 `MangaReaderActivity` | `[0,0][1220,2712]`（`layoutInDisplayCutoutMode=always`，整屏） | 视图坐标 == **屏幕坐标** |
-| 提示浮层 `TYPE_APPLICATION_OVERLAY` | `parent=[0,138][1220,2660]`（WMS 按系统栏内缩） | 窗口坐标 = 屏幕坐标 **−138px** |
-
-宿主传 `pill.bottom`（视图坐标）当窗口 `y` 用 → 整体低 138px（≈42dp）。**和上面框选那个是同一个病**：
-两个来源不同源。修法同样不是补 offset，而是**统一坐标系** —— 宿主一律用 `getLocationOnScreen`
-取屏幕坐标，浮层侧把屏幕坐标换算成窗口坐标。
-
-⚠️ **内缩量只能"量"不能"算"**：WM 用的是 stable/override insets，沉浸全屏时
-`WindowInsets.statusBars` 报 0 而 parent frame 仍是 138，也没有公开 API 拿得到。
-`calibrateTopOffset` 用 `getLocationOnScreen()[1] − 上次写进 LayoutParams.y 的值` 反推（精确、无假设）。
-**改这一区先想清楚：这个 y 是屏幕的，还是窗口的？** 混用只差 42dp、肉眼一眼看不出，只会表现成"有点偏低"。
-
-### ⚠️ `CropView.absolutePointOffset` 的取值时机
-
-它是「窗口原点在显示上的位置」。**必须用 `post{}` 取**（排在布局之后）——
-在 `onSizeChanged` 里取 `getLocationOnScreen` 时窗口刚 resize、WMS 尚未定位完，
-实测读到 `(0,0)`（真值 `(138,0)`），且此后再不更新 → 「本该补偿」实际是空的。
-另外 `confirmCrop()` 移除视图后该字段仍被消费方读取，**要趁窗口还在时抓下来**。
-
-### ⚠️ 「屏幕变了吗」的判据：`cropGeometryChanged()`
-
-**两个模式必须同源**（游戏/漫画同名同义，游戏曾有弱判据 `mRectF != null` 已对齐）：
-
-```
-框选确认时        记下 getScreenSize()        ← 必须与下面比较的来源一致
-触发前守卫         cropGeometryChanged() → 清框 + 停自动翻译 + 提示
-collector 拿到帧   同一判据（帧也是按 getScreenSize 建的，同源）
-```
-
-⚠️ **基准与比较必须同源**。曾「框选时记 `cropView.width/height`（窗口）、之后比 `getScreenSize()`（屏幕）」——
-两者不是同一个量（窗口 1080x2356 vs 屏幕 1080x2400），于是**每次框选都被判「几何变化」**（稳态必现）。
-
-⚠️ 判据**不能用** `resources.configuration.orientation`（Service 进程里被冻结在初始化方向，
-恒为「未变化」：游戏原来的三处比对是死代码，漫画的条件退化成 `cropRect != null`）。
-
-两模式失效后行为**有意不同**：游戏清框选并要求重新框选；漫画**回退全屏** ——
-`triggerTranslation` 是自动翻译循环每帧都会过的路径，在那儿弹框选界面会让自动翻译彻底停摆。
-**两者都停自动翻译 + 提示**（文案按当时是否在自动翻译区分 `_auto` 后缀）。
-
-### ⚠️ `onConfigurationChanged`：先读后写，且只在朝向翻转时清
-
-```kotlin
-val knownBefore = DisplaySize.currentOrientation()   // ① 先读旧值
-DisplaySize.reportOrientation(nowLandscape)          // ② 再上报新值
-if (knownBefore == null || knownBefore != nowLandscape) clearCropForScreenChange()
-```
-
-- ⚠️ **顺序反了 = 整条链路静默失效**：先写后读的话比较变成「新值 vs 新值」→ 恒假 →
-  `clearCropForScreenChange()` 一次都不执行（实测踩过：两模式回退+提示**完全失效**）。
-  `OrientationHandlerOrderingTest` 锁死这个顺序。
-- ⚠️ 只判朝向翻转：本回调对改字号/语言/密度/uiMode **同样触发**，无条件清框会把用户
-  正在用的会话平白毁掉。
-- `knownBefore == null` 时**照清不误**（宁可多清，不可漏掉转屏导致按旧坐标出结果）。
-
-### ⚠️ `CropSpace` 目前是**孤儿模块**（未接线）
-
-`CropSpace` / `WinGeom` / `FrameGeom` 生产代码**零调用**，只有测试在用。
-坐标正确性目前靠「窗口覆盖整屏 ⇒ 两套坐标重合」保证，**不是**靠它换算的。
-它是为 **P3**（provider 停止裁剪、裁剪统一到一处）准备的基础设施，别误以为当前链路走它。
-
-- **恒等分支**：帧与窗口**同尺寸**时原样返回、不做任何算术 → 正常设备零回归。
-  判据**只看尺寸、不看窗口原点**（帧覆盖的就是窗口那块像素区，两者同为窗口相对坐标）。
-- 用 `WinGeom`/`FrameGeom`/`IntRect`，**刻意不复用排版内核的 `Box`**（Float、另一种语义）。
-- **帧语义尚未实测定标**（「整屏等比缩放+黑边」还是「1:1 取景」，两种公式不同），
-  尺寸不同时保持原样并标 `calibrated=false`，**未定标前不得补比例公式**。
-
-### 顺带查实的三个坑
-
-- `ScreenshotManager.cropBitmap` 退化分支（`w<=0||h<=0`）曾**返回 `source` 本身** →
-  `croppedBitmap === fullBitmap`，而消费端写着 `if (croppedBitmap != null) fullBitmap.recycle()`，
-  前提被打破 → 已改为返回 null
-- `emitScreenshot` 用 `tryEmit`（容量 1）静默丢弃 → 两张 bitmap 泄漏，自动翻译下**无界泄漏** → 已改为丢弃时回收
-- 漫画 `cropViewParams` 初始化曾用 `getScreenSize()` 的像素值（横屏下被冻结成竖屏），
-  与游戏模式的 `MATCH_PARENT` 口径不一致
-
-### 待办：这条链路仍是「两份平行实现 + 三种裁剪分工」
-
-坐标系已统一（上面那节），但**结构混乱还在**，改一处要同时改对三处且无机制保证一致：
-| 问题 | 现状 |
-|------|------|
-| 两份平行实现 | `FloatingBallService.takeScreenshotWithProvider`（不藏球）与 `MangaFloatingService` 同名版（藏球、服务自己裁、190 行 collector vs 23 行）；`initScreenshotProvider`/`startForegroundForScreenshot`/`isViewAdded` 也是各一份 |
-| 三种裁剪分工 | 同一个 `MediaProjectionProvider`：**MediaProjection 路径游戏与漫画都传 `null`、各自裁**；只有无障碍分支传 `cropRect` 交给系统回调裁 |
-| 语义靠猜 | 消费端用 `croppedBitmap != null` 判断「裁过没有」，保不住语义 |
-
-**方向已定，未实施：**
-
-- **P3　provider 不再裁剪** —— provider 只产全屏帧，裁剪统一到一处，消除 `croppedBitmap != null` 判据。
-  需同时改 MP 与无障碍两条路径，且**无障碍帧坐标系须先实测**（与 MP 不保证一致）。
-- **P4　两服务接入统一 `ScreenshotPipeline`** —— 沿用本仓库既有范式
-  （`manga/pipeline/IncrementalBatchPipeline` + `BatchPipelineHost`：管线负责编排、宿主提供副作用钩子），
-  参数化差异（`keepFull` / `hideBall` / `cleanRecapture`）。
-
-完整方案见 `~/.claude/plans/linear-zooming-church.md`。
+针对性回归见 `ScreenshotGeometryTest`、`AlignedResultGuardTest` 和 `ShooterGeometryTest`。这些测试验证坐标契约与生命周期，不代表所有厂商窗口管理器已实机验证。
 
 ## 设置项实时生效规范（重要）
 

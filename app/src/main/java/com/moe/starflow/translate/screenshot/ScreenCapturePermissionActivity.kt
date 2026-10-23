@@ -10,6 +10,8 @@ import com.moe.starflow.R
 import android.content.Context
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
+import android.media.projection.MediaProjectionConfig
+import android.os.Build
 import android.os.Bundle
 import android.app.Activity
 import androidx.core.content.ContextCompat
@@ -51,7 +53,13 @@ class ScreenCapturePermissionActivity : Activity() {
 
         val mgr = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         @Suppress("DEPRECATION")
-        startActivityForResult(mgr.createScreenCaptureIntent(), REQUEST_CODE)
+        // OCR 框选和结果窗口都使用 display 坐标，不能把单应用投影当作整屏来映射。
+        val captureIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            mgr.createScreenCaptureIntent(MediaProjectionConfig.createConfigForDefaultDisplay())
+        } else {
+            mgr.createScreenCaptureIntent()
+        }
+        startActivityForResult(captureIntent, REQUEST_CODE)
     }
 
     @Suppress("DEPRECATION")

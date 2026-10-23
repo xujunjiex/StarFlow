@@ -35,7 +35,7 @@ object AccessibilityServiceManager {
 
     fun getService(): ScreenShotAccessibilityService? = screenShotService
 
-    fun takeScreenshot(mRectF: RectF?, offset: Point) {
-        screenShotService?.takeScreenshot(mRectF, offset)
+    fun takeScreenshot(mRectF: RectF?, offset: Point, target: ScreenshotTarget = ScreenshotTarget.MANGA, requestId: Long = 0) {
+        screenShotService?.takeScreenshot(mRectF, offset, target, requestId)
     }
 }

@@ -18,7 +18,6 @@
 package com.moe.starflow.launch
 import com.moe.starflow.translate.widget.*
 
-import android.content.pm.ActivityInfo
 import android.os.Bundle
 import androidx.viewpager2.widget.ViewPager2
 import com.moe.starflow.BaseActivity
@@ -27,8 +26,8 @@ import com.moe.starflow.R
 class FirstLaunchPage : BaseActivity() {
     lateinit var pager:ViewPager2
     override fun onCreate(savedInstanceState: Bundle?) {
+        com.moe.starflow.utils.StartupOrientation.apply(this)
         super.onCreate(savedInstanceState)
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT) //锁定竖屏
         setContentView(R.layout.activity_tutorial)
 
         applySystemBarsPadding(findViewById(R.id.tutorial_container), true, true)

@@ -15,7 +15,7 @@ import com.moe.starflow.utils.LogCollector
  * AccessibilityService 截图提供者
  * 包装现有的 AccessibilityServiceManager
  */
-class AccessibilityProvider : ScreenshotProvider {
+class AccessibilityProvider(private val target: ScreenshotTarget = ScreenshotTarget.MANGA) : ScreenshotProvider {
     companion object {
         private const val TAG = "AccessibilityProvider"
     }
@@ -28,10 +28,10 @@ class AccessibilityProvider : ScreenshotProvider {
         return false
     }
 
-    override suspend fun takeScreenshot(cropRect: RectF?, offset: Point): Bitmap? {
+    override suspend fun takeScreenshot(cropRect: RectF?, offset: Point, requestId: Long): Bitmap? {
         // AccessibilityService 的截图是异步的，通过 ScreenshotManager.screenshotFlow 返回
         // 这里直接调用，结果会在 flow 中收到
-        AccessibilityServiceManager.takeScreenshot(cropRect, offset)
+        AccessibilityServiceManager.takeScreenshot(cropRect, offset, target, requestId)
         return null // 实际结果通过 flow 返回
     }
 

@@ -224,6 +224,9 @@ class FloatingBallService : LifecycleService() {
      * 于是**每次框选都被判「几何变化」**（实测稳态复现，不是偶发）。
      */
     private var mRectFrameSize: android.util.Size? = null
+    private var cropDisplayGeometry: DisplayGeometry? = null
+    private var displayMonitor: DisplayGeometryMonitor? = null
+    private var activeCaptureRequest = -1L
 
 
     // 初始化的翻译对象
@@ -272,7 +275,7 @@ class FloatingBallService : LifecycleService() {
         val method = prefs.getString("Screenshot_Method", "0").toIntOrNull() ?: 0
         screenshotProvider = when (method) {
             0 -> MediaProjectionProvider(this)
-            1 -> AccessibilityProvider()
+            1 -> AccessibilityProvider(ScreenshotTarget.GAME)
             else -> MediaProjectionProvider(this)
         }
         LogCollector.d(TAG, "Screenshot provider initialized: ${screenshotProvider?.javaClass?.simpleName}")
@@ -324,6 +327,10 @@ class FloatingBallService : LifecycleService() {
     // @return true 截图已启动，false 截图未启动（需要权限等）
     private fun takeScreenshotWithProvider(cropRect: RectF?, offset: Point): Boolean {
         val provider = screenshotProvider ?: return false
+        val requestedCrop = cropRect?.let { RectF(it) }
+        val requestedOffset = Point(offset)
+        val requestedDisplay = com.moe.starflow.utils.DisplaySize.geometry(this)
+        val requestId = ScreenshotManager.newRequestId().also { activeCaptureRequest = it }
         LogCollector.d(TAG, "takeScreenshotWithProvider: provider=${provider.javaClass.simpleName}, cropRect=$cropRect")
 
         if (provider is MediaProjectionProvider) {
@@ -340,27 +347,15 @@ class FloatingBallService : LifecycleService() {
                 // 于是 **fullBitmap 名不副实**：下游拿它当全屏原图（几何判据、缓存）全都错。
                 // 实测后果：几何判据拿裁剪后的 856x260 与框选时的 1220x2712 比对 → 误判为
                 // 「屏幕变了」→ **清掉用户刚框好的区域**（一旋转就中招）。
-                val full = provider.takeScreenshot(null, offset)
-                val bitmap = if (full != null && cropRect != null) {
-                    val cropped = ScreenshotManager.cropBitmap(full, cropRect, offset)
-                    if (cropped != null) {
-                        LogCollector.d(TAG, "Cropped screenshot: ${cropped.width}x${cropped.height}")
-                        cropped
-                    } else {
-                        LogCollector.w(TAG, "裁剪区域无效，按全屏处理")
-                        null
-                    }
-                } else null
-                if (full != null) {
-                    LogCollector.d(
-                        TAG,
-                        "Screenshot captured: 帧=${com.moe.starflow.utils.DisplaySize.describe(full.width, full.height)} " +
-                            "裁剪后=${bitmap?.let { com.moe.starflow.utils.DisplaySize.describe(it.width, it.height) } ?: "无(全屏)"} " +
-                            "当前屏幕=${com.moe.starflow.utils.DisplaySize.describeCurrent(this@FloatingBallService)} " +
-                            "框选=${cropRect?.let { "[${it.left.toInt()},${it.top.toInt()}][${it.right.toInt()},${it.bottom.toInt()}]" } ?: "无(全屏)"}"
-                    )
-                    // fullBitmap 恒为真全屏、croppedBitmap 为裁剪结果（裁不出则 null）
-                    ScreenshotManager.emitScreenshot(ScreenshotData(full, bitmap))
+                val frame = provider.captureFrame()
+                if (requestId != activeCaptureRequest) {
+                    frame?.bitmap?.recycle()
+                    return@launch
+                }
+                if (frame != null) {
+                    ScreenshotManager.emitScreenshot(if (frame.display == requestedDisplay) {
+                        ScreenshotManager.createData(frame, requestedCrop, requestedOffset, requestId)
+                    } else ScreenshotData(frame.bitmap, null, requestId = requestId), ScreenshotTarget.GAME)
                 } else if (!provider.ensureInitialized()) {
                     // Shooter 已断开（系统回收录屏），停止自动翻译并提示重新授权
                     LogCollector.w(TAG, "Shooter not ready, stopping auto-translate")
@@ -386,7 +381,8 @@ class FloatingBallService : LifecycleService() {
             // AccessibilityService 模式：直接调用（结果通过 ScreenshotManager.screenshotFlow 返回）
             LogCollector.d(TAG, "Taking AccessibilityService screenshot")
             lifecycleScope.launch {
-                provider.takeScreenshot(cropRect, offset)
+                if (requestId != activeCaptureRequest) return@launch
+                provider.takeScreenshot(requestedCrop, requestedOffset, requestId)
             }
             return true
         }
@@ -412,6 +408,7 @@ class FloatingBallService : LifecycleService() {
      */
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
+        displayMonitor?.check()
         // ⚠️ 上报当前朝向：转屏后这是进程里**唯一新鲜**的方向信号。
         // 不报的话，DisplaySize 会拿「框选窗已移除→窗口读数陈旧」+「Display 冻结」两个
         // 都指向旧方向的来源去建帧 → 设备已横屏而帧仍是竖屏 → OCR 跑在转了 90° 的图上
@@ -696,6 +693,11 @@ class FloatingBallService : LifecycleService() {
         if (isFullyInitialized) return
         isFullyInitialized = true
         initialize()
+        displayMonitor = DisplayGeometryMonitor(this) {
+            if (isTranslating.get()) cancelInFlightTranslation(showMessage = false)
+            clearCropForScreenChange()
+            applyBallStyle()
+        }
         setupScreenshotCollector()
         LogCollector.d(TAG, "Full initialization complete")
     }
@@ -767,7 +769,8 @@ class FloatingBallService : LifecycleService() {
         // 游戏调试开关同时打开 det 后处理的逐框诊断（默认关闭、零开销）
         com.moe.starflow.manga.engine.PPOcrDetGeometry.enableDebugLogging = isGameDebugEnabled()
 
-        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        windowManager = com.moe.starflow.translate.screenshot.OverlayWindow.context(this)
+            .getSystemService(WINDOW_SERVICE) as WindowManager
 
         // 创建悬浮窗参数
         floatingBallParams = WindowManager.LayoutParams().apply {
@@ -783,7 +786,7 @@ class FloatingBallService : LifecycleService() {
 
         // 设置裁剪框视图参数（必须用屏幕真实尺寸，MATCH_PARENT 会被系统栏截断）
         val cropScreenSize = getScreenSize()
-        cropViewParams = WindowManager.LayoutParams().apply {
+        cropViewParams = com.moe.starflow.translate.screenshot.OverlayWindow.fullDisplayParams().apply {
             type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             format = PixelFormat.TRANSLUCENT
             flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -1546,7 +1549,16 @@ class FloatingBallService : LifecycleService() {
     }
 
     private fun confirmCrop() {
-        mRectF = cropView.mRect
+        val physical = com.moe.starflow.utils.DisplaySize.geometry(this)
+        val origin = IntArray(2)
+        cropView.getLocationOnScreen(origin)
+        if (origin[0] != 0 || origin[1] != 0 || cropView.width != physical.width || cropView.height != physical.height) {
+            clearCropForScreenChange()
+            statusOverlay.showSticky(getString(R.string.screenshot_geometry_changed))
+            return
+        }
+        mRectF = RectF(cropView.mRect)
+        cropDisplayGeometry = com.moe.starflow.utils.DisplaySize.geometry(this)
         // ⚠️ 记的必须是 `getScreenSize()`（= DisplaySize.size()），**不能**用 cropView 尺寸。
         // 二者不是同一个量：窗口会被系统缩小以避开手势条（1220x2660），而 DisplaySize 会与
         // Display 读数取大补回屏幕（1220x2712）→ 拿窗口值当基准，之后每次比对都不等 →
@@ -1648,6 +1660,9 @@ class FloatingBallService : LifecycleService() {
      * @return true 表示已判定失效并处理（调用方应中止当前动作）
      */
     private fun ensureCropStillValid(): Boolean {
+        if (mRectF != null && cropDisplayGeometry != null && cropDisplayGeometry != com.moe.starflow.utils.DisplaySize.geometry(this)) {
+            return clearCropForScreenChange()
+        }
         if (mRectF == null || !cropGeometryChanged()) return false
         return clearCropForScreenChange()
     }
@@ -1801,6 +1816,7 @@ class FloatingBallService : LifecycleService() {
      * showMessage=false 用于强制关闭自动翻译时（由「自动翻译已停止」提示代替）。
      */
     private fun cancelInFlightTranslation(showMessage: Boolean = true) {
+        activeCaptureRequest = -1L
         translationCancelled = true
         partialResultShown = false  // 已停止：再点悬浮球不再弹确认，直接幂等终止
         translationGeneration.incrementAndGet()
@@ -1900,14 +1916,25 @@ class FloatingBallService : LifecycleService() {
     private fun setupScreenshotCollector() {
         // 截图处理
         lifecycleScope.launch {
-            ScreenshotManager.screenshotFlow.collect { data ->
+            ScreenshotManager.screenshotsFor(ScreenshotTarget.GAME).collect { data ->
+                if (!data.belongsToRequest(activeCaptureRequest)) {
+                    data.recycle()
+                    return@collect
+                }
+                if (!data.isCurrent(com.moe.starflow.utils.DisplaySize.geometry(this@FloatingBallService))) {
+                    data.recycle()
+                    if (isTranslating.get()) cancelInFlightTranslation(showMessage = false)
+                    clearCropForScreenChange()
+                    isTranslating.set(false)
+                    return@collect
+                }
                 // 几何判定与框选时同源（都用 getScreenSize），见 ensureCropStillValid
                 if (ensureCropStillValid()) {
                     // ⚠️ 本帧是**用旧框裁出来的**（截图请求发出的那一刻框还没失效），
                     // 拿它继续翻译等于按旧坐标出结果。作废本帧，等用户重新框选后再翻。
                     LogCollector.d(TAG, "Screenshot collector: 几何变化已清框选，作废本帧")
                     isTranslating.set(false)
-                    data.fullBitmap.recycle()
+                    data.recycle()
                     return@collect
                 }
                 val bitmap = data.croppedBitmap ?: data.fullBitmap
@@ -2589,6 +2616,8 @@ class FloatingBallService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        displayMonitor?.close()
+        displayMonitor = null
         cancelInFlightTranslation(showMessage = false)
         LogCollector.d(TAG, "FloatingBallService onDestroy")
         super.onDestroy()

@@ -98,7 +98,7 @@ class StarFlowApplication : Application() {
             for (r in reasons) {
                 if (r.pid == android.os.Process.myPid()) continue  // 理论上不会出现当前进程，防御
                 val (label, isError) = exitReasonLabel(r)
-                val detail = "描述=${r.description ?: ""} 状态=${r.status}"
+                val detail = "退出时间=${r.timestamp} pid=${r.pid} 描述=${r.description ?: ""} 状态=${r.status}"
                 if (isError) {
                     LogCollector.e("ExitReason", "上次进程退出(${label}): $detail")
                 } else {
@@ -121,6 +121,7 @@ class StarFlowApplication : Application() {
         ApplicationExitInfo.REASON_SIGNALED -> "被信号杀死 SIGNALED" to true
         ApplicationExitInfo.REASON_LOW_MEMORY -> "内存不足被杀 LOW_MEMORY" to true
         ApplicationExitInfo.REASON_EXIT_SELF -> "主动退出 EXIT_SELF" to false
+        ApplicationExitInfo.REASON_USER_REQUESTED -> "用户或系统清理 USER_REQUESTED" to false
         else -> "其他(${r.reason})" to true
     }
 }

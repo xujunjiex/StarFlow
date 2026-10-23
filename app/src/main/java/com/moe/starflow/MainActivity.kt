@@ -18,7 +18,6 @@
 package com.moe.starflow
 import com.moe.starflow.translate.widget.*
 
-import android.content.pm.ActivityInfo
 import android.os.Build
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
@@ -34,8 +33,8 @@ class MainActivity : BaseActivity() {
     ) { /* 无论用户是否授权都继续 */ }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        com.moe.starflow.utils.StartupOrientation.apply(this)
         super.onCreate(savedInstanceState)
-        setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT) //锁定竖屏
 
         setContentView(R.layout.activity_main)
 

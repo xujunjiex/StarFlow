@@ -242,6 +242,13 @@ class MangaFloatingService : LifecycleService() {
      * 「几何变化」在框选界面关着时检测不到。帧尺寸每次截图都新鲜，且与框选窗口同几何。
      */
     private var cropRectFrameSize: android.util.Size? = null
+    private var cropDisplayGeometry: DisplayGeometry? = null
+    private var selectionDisplayGeometry: DisplayGeometry? = null
+    private var displayMonitor: DisplayGeometryMonitor? = null
+    private var activeCaptureRequest = -1L
+    private var processingMapping: ScreenshotMapping? = null
+    private var processingFrameActive = false
+    private var shownMapping: ScreenshotMapping? = null
 
     private lateinit var prefs: CustomPreference
     private lateinit var config: MangaModeConfig
@@ -471,6 +478,7 @@ class MangaFloatingService : LifecycleService() {
 
         // 权限就绪，正常初始化 UI
         initializeViews()
+        displayMonitor = DisplayGeometryMonitor(this) { invalidateDisplayGeometry() }
         setupScreenshotCollector()
 
         // 初始化 OCR 引擎（识别器）
@@ -517,6 +525,8 @@ class MangaFloatingService : LifecycleService() {
     }
 
     override fun onDestroy() {
+        displayMonitor?.close()
+        displayMonitor = null
         super.onDestroy()
         // 服务停止 = 一次翻译会话结束 → 清空上下文（用户口径：「关闭截屏翻译进程等待」）。
         // 关键是**引擎侧**那份：LlamaCpp 是进程级共享实例，服务重建后还是同一个对象，
@@ -669,7 +679,8 @@ class MangaFloatingService : LifecycleService() {
 
     @SuppressLint("InflateParams")
     private fun initializeViews() {
-        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        windowManager = com.moe.starflow.translate.screenshot.OverlayWindow.context(this)
+            .getSystemService(WINDOW_SERVICE) as WindowManager
         debugPanel = MangaDebugPanelController(
             this,
             windowManager,
@@ -739,7 +750,7 @@ class MangaFloatingService : LifecycleService() {
 
         // Result overlay (initially not added) — FrameLayout 包含 ImageView，按钮可加入同一窗口
         resultOverlayImage = ImageView(this).apply {
-            scaleType = ImageView.ScaleType.FIT_XY
+            scaleType = ImageView.ScaleType.CENTER
         }
         resultOverlayView = FrameLayout(this).apply {
             setBackgroundColor(Color.argb(180, 0, 0, 0))
@@ -765,7 +776,7 @@ class MangaFloatingService : LifecycleService() {
         // ⚠️ MATCH_PARENT，与游戏模式口径一致（原先这里用 getScreenSize() 的像素值，
         // 而该方法在横屏下会被冻结成竖屏 → 窗口与真实显示不一致）。此值虽会被
         // startCropSelection() 覆盖，但留着错误的初值是误导 —— 任何"只 addView 一次"的路径都会中招。
-        cropViewParams = WindowManager.LayoutParams().apply {
+        cropViewParams = com.moe.starflow.translate.screenshot.OverlayWindow.fullDisplayParams().apply {
             type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             format = PixelFormat.TRANSLUCENT
             flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
@@ -1244,6 +1255,7 @@ class MangaFloatingService : LifecycleService() {
             showToast(getString(R.string.manga_crop_active), true)
             return
         }
+        selectionDisplayGeometry = com.moe.starflow.utils.DisplaySize.geometry(this)
 
         // 暂停自动翻译
         if (autoTranslateEngine.isAutoTranslating) {
@@ -1297,6 +1309,7 @@ class MangaFloatingService : LifecycleService() {
      * CropView 已移除 → 该值冻结在框选那一刻，比对恒为「未变化」（与旧判据同样的失效模式）。
      */
     private fun cropGeometryChanged(): Boolean {
+        cropDisplayGeometry?.let { return it != com.moe.starflow.utils.DisplaySize.geometry(this) }
         val saved = cropRectFrameSize ?: return false
         // ⚠️ 基准与比较**必须同源**：都是 `getScreenSize()`。
         // 曾用「框选时记 cropView 尺寸、之后比截图帧尺寸」——那两个不是同一个量
@@ -1367,6 +1380,7 @@ class MangaFloatingService : LifecycleService() {
      */
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
+        displayMonitor?.check()
         // ⚠️ 上报当前朝向：转屏后这是进程里**唯一新鲜**的方向信号。
         // 不报的话 DisplaySize 会拿「框选窗已移除→窗口读数陈旧」+「Display 冻结」两个
         // 都指向旧方向的来源去建帧 → 设备已横屏而帧仍是竖屏 → OCR 跑在转了 90° 的图上。
@@ -1388,7 +1402,16 @@ class MangaFloatingService : LifecycleService() {
     }
 
     private fun confirmCrop() {
+        val physical = com.moe.starflow.utils.DisplaySize.geometry(this)
+        val origin = IntArray(2)
+        cropView.getLocationOnScreen(origin)
+        if (physical != selectionDisplayGeometry || origin[0] != 0 || origin[1] != 0 ||
+            cropView.width != physical.width || cropView.height != physical.height) {
+            invalidateDisplayGeometry()
+            return
+        }
         cropRect = RectF(cropView.mRect)
+        cropDisplayGeometry = physical
         // ⚠️ 记的必须是 `getScreenSize()`（= DisplaySize.size()），**不能**用 cropView 尺寸 ——
         // 二者不是同一个量（窗口避开手势条 1080x2400，DisplaySize 补回屏幕 1080x2400+），
         // 拿窗口值当基准会让之后每次比对都不等 → 每次框选都被判「几何变化」。见 cropGeometryChanged。
@@ -1501,8 +1524,13 @@ class MangaFloatingService : LifecycleService() {
         dismissProgressOverlay()
 
         // 延迟截图，确保 overlay 从屏幕上完全消失（需要等下一帧渲染）
+        val requestGeneration = translationGeneration.get()
         lifecycleScope.launch {
             kotlinx.coroutines.delay(150)
+            if (translationCancelled || requestGeneration != translationGeneration.get()) {
+                if (requestGeneration == translationGeneration.get()) isProcessing = false
+                return@launch
+            }
             LogCollector.d(TAG, "triggerTranslation: translatorText=${translatorText?.javaClass?.simpleName}")
             LogCollector.d(TAG, "triggerTranslation: cropRect=$cropRect")
             if (cropRect != null) {
@@ -1523,6 +1551,10 @@ class MangaFloatingService : LifecycleService() {
     // @return true 截图已启动，false 截图未启动（需要权限等）
     private fun takeScreenshotWithProvider(cropRect: RectF?, offset: Point): Boolean {
         val provider = screenshotProvider ?: return false
+        val requestedCrop = cropRect?.let { RectF(it) }
+        val requestedOffset = Point(offset)
+        val requestedDisplay = com.moe.starflow.utils.DisplaySize.geometry(this)
+        val requestId = ScreenshotManager.newRequestId().also { activeCaptureRequest = it }
         LogCollector.d(TAG, "takeScreenshotWithProvider: provider=${provider.javaClass.simpleName}, cropRect=$cropRect")
 
         var ballWasShowing = false
@@ -1551,21 +1583,15 @@ class MangaFloatingService : LifecycleService() {
                 }
                 LogCollector.d(TAG, "Taking MediaProjection screenshot")
                 try {
-                    val fullBitmap = provider.takeScreenshot(null, offset)
-                    if (fullBitmap != null) {
-                        LogCollector.d(TAG, "Full screenshot: ${fullBitmap.width}x${fullBitmap.height}")
-                        val croppedBitmap = if (cropRect != null) {
-                            val cropped = ScreenshotManager.cropBitmap(fullBitmap, cropRect, offset)
-                            // 裁不出有效区域（cropBitmap 返回 null）→ 交给下游按全屏处理，
-                            // 而不是让 croppedBitmap 退化成与 fullBitmap 同一个实例
-                            if (cropped != null) {
-                                LogCollector.d(TAG, "Cropped screenshot: ${cropped.width}x${cropped.height}")
-                            } else {
-                                LogCollector.w(TAG, "裁剪区域无效，按全屏翻译")
-                            }
-                            cropped
-                        } else null
-                        ScreenshotManager.emitScreenshot(ScreenshotData(fullBitmap, croppedBitmap))
+                    val frame = provider.captureFrame()
+                    if (requestId != activeCaptureRequest) {
+                        frame?.bitmap?.recycle()
+                        return@launch
+                    }
+                    if (frame != null) {
+                        ScreenshotManager.emitScreenshot(if (frame.display == requestedDisplay) {
+                            ScreenshotManager.createData(frame, requestedCrop, requestedOffset, requestId)
+                        } else ScreenshotData(frame.bitmap, null, requestId = requestId))
                     } else {
                         LogCollector.w(TAG, "Screenshot returned null")
                         isProcessing = false
@@ -1574,6 +1600,7 @@ class MangaFloatingService : LifecycleService() {
                         }
                     }
                 } catch (e: Exception) {
+                    if (requestId != activeCaptureRequest) return@launch
                     LogCollector.e(TAG, "Screenshot exception", e)
                     isProcessing = false
                     if (autoTranslateEngine.isAutoTranslating) {
@@ -1602,7 +1629,12 @@ class MangaFloatingService : LifecycleService() {
                 if (ballWasShowing) delay(50)
                 LogCollector.d(TAG, "Taking AccessibilityService screenshot")
                 try {
-                    provider.takeScreenshot(cropRect, offset)
+                    if (requestId != activeCaptureRequest) return@launch
+                    if (translationCancelled || requestedDisplay != com.moe.starflow.utils.DisplaySize.geometry(this@MangaFloatingService)) {
+                        invalidateDisplayGeometry()
+                        return@launch
+                    }
+                    provider.takeScreenshot(requestedCrop, requestedOffset, requestId)
                 } finally {
                     if (ballWasShowing) {
                         floatingBallView.visibility = View.VISIBLE
@@ -1675,6 +1707,17 @@ class MangaFloatingService : LifecycleService() {
         lifecycleScope.launch {
             LogCollector.d(TAG, "Screenshot collector: coroutine started, waiting for screenshots...")
             ScreenshotManager.screenshotFlow.collect { data ->
+                if (!data.belongsToRequest(activeCaptureRequest)) {
+                    data.recycle()
+                    return@collect
+                }
+                if (!data.isCurrent(com.moe.starflow.utils.DisplaySize.geometry(this@MangaFloatingService))) {
+                    data.recycle()
+                    invalidateDisplayGeometry()
+                    isProcessing = false
+                    return@collect
+                }
+                processingMapping = data.mapping
                 // ocrBitmap: 用于 OCR 和翻译流程的 bitmap（裁剪后或全屏）
                 val ocrBitmap = data.croppedBitmap ?: data.fullBitmap
                 LogCollector.d(
@@ -1692,7 +1735,7 @@ class MangaFloatingService : LifecycleService() {
                     // ⚠️ 本帧是**用旧框裁出来的**（截图请求发出时框还没失效），继续翻会按旧坐标出结果
                     LogCollector.d(TAG, "Screenshot collector: 截图帧几何变化，清框选并作废本帧")
                     clearCropForScreenChange()
-                    data.fullBitmap.recycle()
+                    data.recycle()
                     isProcessing = false
                     return@collect
                 }
@@ -1770,19 +1813,30 @@ class MangaFloatingService : LifecycleService() {
                             delay(50)
 
                             // 截图拿干净图
-                            val cleanFull = mpProvider.takeScreenshot(null, offset)
+                            val cleanRequest = data.requestId
+                            val cleanFrame = mpProvider.captureFrame()
+                            val cleanFull = cleanFrame?.bitmap
                             if (ballWasShowing) floatingBallView.visibility = View.VISIBLE
+                            if (cleanRequest != activeCaptureRequest || translationCancelled) {
+                                cleanFull?.recycle()
+                                data.recycle()
+                                return@collect
+                            }
 
                             if (cleanFull != null) {
                                 showProgressOverlay(getString(R.string.manga_translating))
                                 ocrBitmap.recycle()
                                 if (data.croppedBitmap != null) data.fullBitmap.recycle()
+                                val cleanData = ScreenshotManager.createData(cleanFrame, cropRect?.let { RectF(it) }, Point(offset))
+                                if (!cleanData.isCurrent(com.moe.starflow.utils.DisplaySize.geometry(this@MangaFloatingService))) {
+                                    cleanData.recycle()
+                                    invalidateDisplayGeometry()
+                                    isProcessing = false
+                                    return@collect
+                                }
+                                processingMapping = cleanData.mapping
                                 pendingFullBitmap = cleanFull
-                                val rect = cropRect
-                                // 裁剪失败 → 回退用干净全屏图（不要把 null 传进 processMangaScreenshot）
-                                val cleanOcr = if (rect != null) {
-                                    ScreenshotManager.cropBitmap(cleanFull, rect, offset) ?: cleanFull
-                                } else cleanFull
+                                val cleanOcr = cleanData.croppedBitmap ?: cleanFull
                                 val cleanExtHashes = PerceptualHash.computeExtended(cleanFull, centerCrop = true)
                                 processMangaScreenshot(cleanOcr, pHash, cleanExtHashes)
                             } else {
@@ -1794,8 +1848,10 @@ class MangaFloatingService : LifecycleService() {
                         } else {
                             // 无障碍异步重截：等冷却 → 隐藏球 → 触发截图 → 设标志等下一张 flow
                             // 无障碍 takeScreenshot API 需至少 350ms 冷却，否则系统限流返回失败
-                            lifecycleScope.launch {
-                                delay(350) // 无障碍截图 API 冷却期（Android 12+ 后台截图频率限制）
+                            val cleanRequest = ScreenshotManager.newRequestId().also { activeCaptureRequest = it }
+                            lifecycleScope.launch cleanScreenshot@ {
+                                delay(350)
+                                if (cleanRequest != activeCaptureRequest || translationCancelled) return@cleanScreenshot // 无障碍截图 API 冷却期（Android 12+ 后台截图频率限制）
                                 dismissProgressOverlay()  // 关掉 MOTION 阶段的"检测中..."，避免被截入
                                 val ballWasShowing = ::floatingBallView.isInitialized &&
                                     isViewAdded(floatingBallView) &&
@@ -1805,10 +1861,14 @@ class MangaFloatingService : LifecycleService() {
                                     LogCollector.d(TAG, "Auto STABLE: 无障碍隐藏悬浮球准备重截")
                                 }
                                 delay(50)
-                                screenshotProvider!!.takeScreenshot(cropRect, cropView.absolutePointOffset)
+                                if (cleanRequest != activeCaptureRequest || translationCancelled) {
+                                    if (ballWasShowing) floatingBallView.visibility = View.VISIBLE
+                                    return@cleanScreenshot
+                                }
                                 pendingDetectionPHash = pHash
                                 pendingDetectionExtHashes = extHashes
                                 pendingCleanScreenshot = true
+                                screenshotProvider!!.takeScreenshot(cropRect?.let { RectF(it) }, Point(cropView.absolutePointOffset), cleanRequest)
                                 if (ballWasShowing) {
                                     floatingBallView.visibility = View.VISIBLE
                                     LogCollector.d(TAG, "Auto STABLE: 无障碍恢复悬浮球")
@@ -1912,16 +1972,14 @@ class MangaFloatingService : LifecycleService() {
      * 保存翻译缓存（不渲染 overlay）。
      * 用于分批渲染场景：用户关闭 overlay 后仍保存完整缓存。
      */
-    private suspend fun saveCacheEntry(original: Bitmap, allBubbles: List<TranslatedBubble>) {
+    private suspend fun saveCacheEntry(allBubbles: List<TranslatedBubble>) {
         try {
             val translatorName = TranslateUtils.buildTranslatorDisplayName(translatorText, config.detEngine, config.ocrEngine, prefs.getSharedPreferences())
             val ocrTexts = allBubbles.mapIndexed { i, b -> "[${i + 1}] ${b.originalText}" }.joinToString("\n")
             val transTexts = allBubbles.mapIndexed { i, b -> "[${i + 1}] ${b.translatedText}" }.joinToString("\n")
             LogCollector.d(TAG, "saveCacheEntry: ${allBubbles.size} 个气泡")
             // 使用实际裁剪坐标（如果有 cropRect）或全屏尺寸
-            val fullWidth = pendingFullBitmap?.width ?: original.width
-            val fullHeight = pendingFullBitmap?.height ?: original.height
-            val useCrop = cropRect != null
+            val mapping = processingMapping ?: return
             val entry = CacheEntry(
                 type = TranslationCacheManager.MODE_MANGA,
                 sourceText = ocrTexts.ifEmpty { null },
@@ -1936,10 +1994,10 @@ class MangaFloatingService : LifecycleService() {
                 pHash4 = currentExtHashes?.getOrElse(3) { 0L } ?: 0L,
                 sessionId = sessionId,
                 lastSessionId = sessionId,
-                cropLeft = if (useCrop) cropRect!!.left.toInt() else 0,
-                cropTop = if (useCrop) cropRect!!.top.toInt() else 0,
-                cropRight = if (useCrop) cropRect!!.right.toInt() else fullWidth,
-                cropBottom = if (useCrop) cropRect!!.bottom.toInt() else fullHeight,
+                cropLeft = mapping.left,
+                cropTop = mapping.top,
+                cropRight = mapping.right,
+                cropBottom = mapping.bottom,
                 bubbleRects = if (allBubbles.isNotEmpty()) {
                     TranslationCacheUtils.serializeBubbleRects(allBubbles)
                 } else null
@@ -2083,8 +2141,9 @@ class MangaFloatingService : LifecycleService() {
             // Translating 状态已在分批翻译入口处设置（第一批翻译开始时），
             // 此处不再重复设置，避免图标在翻译完成后才短暂闪过。
             // 统一保存完整缓存
+            if (translationCancelled) return
             LogCollector.d(TAG, "finalizeIncremental: 保存完整缓存，共 ${allTranslated.size} 个气泡")
-            saveCacheEntry(bitmap, allTranslated)
+            saveCacheEntry(allTranslated)
             ballStateManager?.setState(BallStateManager.State.Completed)
         }
         statusOverlay.showImmediate(getString(R.string.translating_done))
@@ -2096,10 +2155,16 @@ class MangaFloatingService : LifecycleService() {
 
     private suspend fun processMangaScreenshot(bitmap: Bitmap, precomputedPHash: Long? = null, precomputedExtHashes: LongArray? = null) {
         val generation = translationGeneration.get()
-        withContext(OcrExecution.context { translationCancelled || generation != translationGeneration.get() }) {
-            processMangaScreenshotCancellable(bitmap, precomputedPHash, precomputedExtHashes)
+        processingFrameActive = true
+        try {
+            withContext(OcrExecution.context { translationCancelled || generation != translationGeneration.get() }) {
+                processMangaScreenshotCancellable(bitmap, precomputedPHash, precomputedExtHashes)
+            }
+        } finally {
+            processingFrameActive = false
         }
     }
+
 
     private suspend fun processMangaScreenshotCancellable(bitmap: Bitmap, precomputedPHash: Long?, precomputedExtHashes: LongArray?) {
         TranslationBusyRegistry.enter()
@@ -2303,7 +2368,9 @@ class MangaFloatingService : LifecycleService() {
             if (!isForceRefreshActive) {
                 val extHashesForCache = currentExtHashes
                     ?: PerceptualHash.computeExtended(pendingFullBitmap ?: bitmap, centerCrop = true)
-                val (curLeft, curTop) = cropRect?.let { Pair(it.left.toInt(), it.top.toInt()) } ?: Pair(-1, -1)
+                val map = processingMapping ?: return
+                val isFullFrame = map.left == 0 && map.top == 0 && map.width == map.display.width && map.height == map.display.height
+                val (curLeft, curTop) = if (isFullFrame) Pair(-1, -1) else Pair(map.left, map.top)
                 val cached = cacheManager.findCacheExt(
                     extHashesForCache,
                     TranslationCacheManager.MODE_MANGA,
@@ -2311,7 +2378,13 @@ class MangaFloatingService : LifecycleService() {
                     curLeft, curTop,
                     sessionId
                 )
-                if (cached != null && cached.resultBitmap != null) {
+                val sameSource = cached?.resultBitmap?.let { cachedOriginal ->
+                    withContext(Dispatchers.Default) {
+                        val cachedCrop = cached.pageCache?.let { Rect(it.cropLeft, it.cropTop, it.cropRight, it.cropBottom) }
+                        ScreenshotMapping.canReuseCoordinates(pendingFullBitmap ?: bitmap, cachedOriginal, cachedCrop, map.rect())
+                    }
+                } == true
+                if (cached != null && cached.resultBitmap != null && sameSource) {
                     LogCollector.d(TAG, "processMangaScreenshot: 缓存命中, historyId=${cached.historyId}")
                     lastCachedHistoryId = cached.historyId
                     lastCachedPHash = currentPHash
@@ -2352,6 +2425,8 @@ class MangaFloatingService : LifecycleService() {
                     }
                     return
                 }
+                // 压缩后的历史图或相同 pHash 都不足以证明位置一致；重新检测，仍可命中文本译文缓存。
+                cached?.resultBitmap?.takeUnless { it.isRecycled }?.recycle()
             } else {
                 LogCollector.d(TAG, "processMangaScreenshot: 强制刷新，跳过缓存")
                 forceRefresh = false
@@ -2674,7 +2749,7 @@ class MangaFloatingService : LifecycleService() {
         withContext(Dispatchers.Main) {
             // 有任何气泡渲染上屏（首批/流式）即标记部分结果已显示 → 之后再单击悬浮球/浮层走确认弹窗
             partialRenderShown = true
-            showResultOverlay(resultBitmap, showCopyButton = showCopyButton)
+            if (!showResultOverlay(resultBitmap, showCopyButton = showCopyButton)) return@withContext
             // 必须在 showResultOverlay 之后赋值，因为 dismissResultOverlay 会清空 currentShowBubbles
             currentShowBubbles = newBubbles
             currentOriginalBitmap?.recycle()
@@ -2683,8 +2758,9 @@ class MangaFloatingService : LifecycleService() {
             currentOverlayBitmapH = resultBitmap.height
         }
 
+        if (translationCancelled) return
         // 保存到缓存和历史（分批翻译时由 finalizeIncremental 统一保存，避免保存中间结果）
-        if (saveCache) {
+        if (saveCache && !translationCancelled) {
             try {
                 val translatorName = TranslateUtils.buildTranslatorDisplayName(translatorText, config.detEngine, config.ocrEngine, prefs.getSharedPreferences())
                 val ocrTexts = newBubbles.mapIndexed { i, b -> "[${i + 1}] ${b.originalText}" }.joinToString("\n")
@@ -2692,8 +2768,6 @@ class MangaFloatingService : LifecycleService() {
                 val transTexts = if (ocrOnly) null else newBubbles.mapIndexed { i, b -> "[${i + 1}] ${b.translatedText}" }.joinToString("\n")
                 LogCollector.d(TAG, "保存缓存: ${newBubbles.size} 个气泡")
                 // 使用实际裁剪坐标（如果有 cropRect 或重翻）或全屏尺寸
-                val fullWidth = pendingFullBitmap?.width ?: original.width
-                val fullHeight = pendingFullBitmap?.height ?: original.height
                 val saveOrigBmp = if (isRetranslate) originalBitmap else pendingFullBitmap
                 val entryCropLeft: Int
                 val entryCropTop: Int
@@ -2704,16 +2778,12 @@ class MangaFloatingService : LifecycleService() {
                     entryCropTop = cropTop
                     entryCropRight = cropRight
                     entryCropBottom = cropBottom
-                } else if (cropRect != null) {
-                    entryCropLeft = cropRect!!.left.toInt()
-                    entryCropTop = cropRect!!.top.toInt()
-                    entryCropRight = cropRect!!.right.toInt()
-                    entryCropBottom = cropRect!!.bottom.toInt()
                 } else {
-                    entryCropLeft = 0
-                    entryCropTop = 0
-                    entryCropRight = fullWidth
-                    entryCropBottom = fullHeight
+                    val mapping = processingMapping ?: return
+                    entryCropLeft = mapping.left
+                    entryCropTop = mapping.top
+                    entryCropRight = mapping.right
+                    entryCropBottom = mapping.bottom
                 }
                 val entry = CacheEntry(
                     type = TranslationCacheManager.MODE_MANGA,
@@ -2766,40 +2836,35 @@ class MangaFloatingService : LifecycleService() {
     /** 结果浮层当前用的窗口几何（框选模式 = crop 矩形；全屏 = 屏幕尺寸）。null = 窗口未在。 */
     private var overlayGeometry: android.graphics.Rect? = null
 
-    /** 本次调用需要的窗口几何。框选模式 = crop 矩形；全屏模式 = 屏幕矩形。 */
-    private fun desiredOverlayGeometry(): android.graphics.Rect {
-        val crop = cropRect
-        return if (crop != null) {
-            android.graphics.Rect(
-                crop.left.toInt(), crop.top.toInt(),
-                crop.right.toInt(), crop.bottom.toInt()
-            )
-        } else {
-            val s = getScreenSize()
-            android.graphics.Rect(0, 0, s.width, s.height)
+    private fun showResultOverlay(bitmap: Bitmap, fromCache: Boolean = false, showCopyButton: Boolean = true): Boolean {
+        val mapping = processingMapping
+        if (translationCancelled || mapping == null ||
+            mapping.display != com.moe.starflow.utils.DisplaySize.geometry(this) ||
+            !mapping.matchesBitmap(bitmap.width, bitmap.height)) {
+            bitmap.recycle()
+            invalidateDisplayGeometry()
+            return false
         }
-    }
-
-    private fun showResultOverlay(bitmap: Bitmap, fromCache: Boolean = false, showCopyButton: Boolean = true) {
+        bitmap.density = Bitmap.DENSITY_NONE
         if (fromCache) {
             if (isResultShowing) dismissResultOverlay()
-            showCacheOverlay(bitmap)
-            return
+            showCacheOverlay(bitmap, mapping)
+            return true
         }
 
         // ⚠️ 原地更新只有在**窗口几何没变**时才能用。
         // 此前无条件走它 → 旋转（或框选↔全屏切换）后窗口还 attach 着，于是只换图、
         // **从不重新定位窗口**：窗口仍是旧 crop 的尺寸/位置，新图却是全屏尺寸，
         // 被 FIT_XY 压进那个小窗口 → 译文位置完全错（用户报的「回退全屏后位置错误」）。
-        val desired = desiredOverlayGeometry()
-        if (isResultShowing && resultOverlayView.isAttachedToWindow && desired == overlayGeometry) {
+        val desired = mapping.rect()
+        if (isResultShowing && resultOverlayView.isAttachedToWindow && desired == overlayGeometry && shownMapping === mapping) {
             // 几何一致：原地换图，避免 dismiss+重新 add 造成的闪烁
             val old = (resultOverlayImage.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
-            resultOverlayImage.setImageBitmap(bitmap)
+            OverlayWindow.setBitmapInPixels(resultOverlayImage, bitmap)
             currentOverlayBitmapW = bitmap.width
             currentOverlayBitmapH = bitmap.height
             if (old != null && old !== bitmap) old.recycle()
-            return
+            return true
         }
 
         if (isResultShowing) {
@@ -2808,7 +2873,7 @@ class MangaFloatingService : LifecycleService() {
 
         currentOverlayBitmapW = bitmap.width
         currentOverlayBitmapH = bitmap.height
-        resultOverlayImage.setImageBitmap(bitmap)
+        OverlayWindow.setBitmapInPixels(resultOverlayImage, bitmap)
         // touch listener 放在 ImageView 上（FrameLayout 最底层子 View），
         // 按钮作为更上层子 View 先收到触摸，不会被打断
         resultOverlayImage.setOnTouchListener { _, event ->
@@ -2829,20 +2894,16 @@ class MangaFloatingService : LifecycleService() {
         // 确保 FrameLayout 本身不拦截触摸（使用默认行为）
 
         // 框选模式下，结果只显示在框选区域内
-        if (cropRect != null) {
-            val crop = cropRect!!
-            val params = WindowManager.LayoutParams().apply {
-                type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                format = PixelFormat.RGBA_8888
-                flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                width = crop.width().toInt()
-                height = crop.height().toInt()
-                gravity = Gravity.START or Gravity.TOP
-                x = crop.left.toInt() + cropView.absolutePointOffset.x
-                y = crop.top.toInt() + cropView.absolutePointOffset.y
+        if (mapping.left != 0 || mapping.top != 0 || mapping.width != mapping.display.width || mapping.height != mapping.display.height) {
+            val crop = mapping.rect()
+            val params = com.moe.starflow.translate.screenshot.OverlayWindow.fullDisplayParams().apply {
+                width = crop.width()
+                height = crop.height()
+                gravity = Gravity.LEFT or Gravity.TOP
+                x = crop.left
+                y = crop.top
             }
-            resultOverlayImage.scaleType = ImageView.ScaleType.FIT_XY
+            resultOverlayImage.scaleType = ImageView.ScaleType.CENTER
             windowManager.addView(resultOverlayView, params)
             overlayGeometry = desired
         } else {
@@ -2856,31 +2917,28 @@ class MangaFloatingService : LifecycleService() {
                     "屏幕=${com.moe.starflow.utils.DisplaySize.describe(screenW, screenH)} " +
                     "模式=${if (cropRect != null) "框选" else "全屏"}"
             )
-            val params = WindowManager.LayoutParams().apply {
-                type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                format = PixelFormat.RGBA_8888
-                flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-                width = screenW
-                height = screenH
-                gravity = Gravity.START or Gravity.TOP
-                x = 0
-                y = 0
-            }
-            resultOverlayImage.scaleType = ImageView.ScaleType.FIT_XY
+            val params = com.moe.starflow.translate.screenshot.OverlayWindow.fullDisplayParams()
+            resultOverlayImage.scaleType = ImageView.ScaleType.CENTER
             windowManager.addView(resultOverlayView, params)
             overlayGeometry = desired
         }
+        shownMapping = mapping
         isResultShowing = true
+        AlignedResultGuard(resultOverlayView, mapping) {
+            if (shownMapping === mapping && resultOverlayView.isAttachedToWindow) invalidateDisplayGeometry()
+        }
+        logOverlayLayout(resultOverlayView, bitmap.width, bitmap.height)
 
         bringFloatingBallToFront()
         if (showCopyButton) {
             showCopyButtons()
         }
+        return true
     }
 
     private fun dismissResultOverlay() {
+        shownMapping = null
+        renderToggleJob?.cancel()
         overlayGeometry = null
         if (cacheOverlayContainer != null) {
             dismissCacheOverlay()
@@ -2922,23 +2980,19 @@ class MangaFloatingService : LifecycleService() {
 
     /** 显示带缓存标记的漫画结果 overlay。 */
     @SuppressLint("ClickableViewAccessibility")
-    private fun showCacheOverlay(bitmap: Bitmap) {
+    private fun showCacheOverlay(bitmap: Bitmap, mapping: ScreenshotMapping) {
         dismissProgressOverlay()
 
         currentOverlayBitmapW = bitmap.width
         currentOverlayBitmapH = bitmap.height
 
-        val screenSize = getScreenSize()
-        val screenW = screenSize.width
-        val screenH = screenSize.height
         val container = android.widget.FrameLayout(this).apply {
             setBackgroundColor(Color.argb(180, 0, 0, 0))
         }
 
         // 结果图片
         val imageView = ImageView(this).apply {
-            setImageBitmap(bitmap)
-            scaleType = ImageView.ScaleType.FIT_XY
+            OverlayWindow.setBitmapInPixels(this, bitmap)
         }
         cacheOverlayImage = imageView
         container.addView(imageView, android.widget.FrameLayout.LayoutParams(
@@ -2975,46 +3029,48 @@ class MangaFloatingService : LifecycleService() {
             }
         }
 
-        val params = if (cropRect != null) {
-            val crop = cropRect!!
-            WindowManager.LayoutParams().apply {
-                type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                format = PixelFormat.RGBA_8888
-                flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
-                width = crop.width().toInt()
-                height = crop.height().toInt()
-                gravity = Gravity.START or Gravity.TOP
-                x = crop.left.toInt() + cropView.absolutePointOffset.x
-                y = crop.top.toInt() + cropView.absolutePointOffset.y
+        val params = if (mapping.left != 0 || mapping.top != 0 || mapping.width != mapping.display.width || mapping.height != mapping.display.height) {
+            val crop = mapping.rect()
+            com.moe.starflow.translate.screenshot.OverlayWindow.fullDisplayParams().apply {
+                width = crop.width()
+                height = crop.height()
+                gravity = Gravity.LEFT or Gravity.TOP
+                x = crop.left
+                y = crop.top
             }
         } else {
-            WindowManager.LayoutParams().apply {
-                type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                format = PixelFormat.RGBA_8888
-                flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-                width = screenW
-                height = screenH
-                gravity = Gravity.START or Gravity.TOP
-                x = 0
-                y = 0
-            }
+            com.moe.starflow.translate.screenshot.OverlayWindow.fullDisplayParams()
         }
 
         windowManager.addView(container, params)
         cacheOverlayContainer = container
+        shownMapping = mapping
         isResultShowing = true
+        AlignedResultGuard(container, mapping) {
+            if (shownMapping === mapping && container.isAttachedToWindow) invalidateDisplayGeometry()
+        }
+        logOverlayLayout(container, bitmap.width, bitmap.height)
 
         bringFloatingBallToFront()
         showCopyButtons()
+    }
+
+    /** 记录 WMS 真正布局出的尺寸与原点，不能把请求参数当实测值。 */
+    private fun logOverlayLayout(view: View, bitmapW: Int, bitmapH: Int) {
+        view.post {
+            if (!view.isAttachedToWindow) return@post
+            val origin = IntArray(2)
+            view.getLocationOnScreen(origin)
+            LogCollector.d(TAG, "Overlay laid out: bitmap=${bitmapW}x${bitmapH} " +
+                "window=${view.width}x${view.height}@(${origin[0]},${origin[1]}) crop=${cropRect != null}")
+        }
     }
 
     /**
      * 关闭缓存 overlay
      */
     private fun dismissCacheOverlay() {
+        shownMapping = null
         cacheOverlayContainer?.let { container ->
             try {
                 // 回收 bitmap
@@ -3207,39 +3263,55 @@ class MangaFloatingService : LifecycleService() {
         // 切换 overlay 图片：原文/译文都实时渲染（不再依赖预渲染的 currentTranslatedOverlay）
         renderToggleJob?.cancel()
         renderToggleJob = lifecycleScope.launch {
-            val original = currentOriginalBitmap ?: return@launch
+            val mapping = shownMapping ?: return@launch
+            val original = currentOriginalBitmap?.copy(Bitmap.Config.ARGB_8888, false) ?: return@launch
             val bubbles = currentShowBubbles
-            if (bubbles.isEmpty()) return@launch
-            val overlay = withContext(Dispatchers.Default) {
-                // 防止竞态：用户可能在 suspension point 期间关闭 overlay 导致 bitmap 被回收
-                if (original.isRecycled) return@withContext null
-                OverlayRenderer.renderOverlay(
-                    original = original,
-                    regions = bubbles,
-                    fontSize = config.fontSize,
-                    autoFit = config.autoFontSize,
-                    textColor = config.textColor,
-                    bgColor = config.bgColor,
-                    useOriginalText = copyOriginalMode,
-                    verticalDirection = config.renderTextDirection,   // RT-DETR 用 RT 渲染方向；PP 用竖排方向
-                    fontTypeface = OverlayRenderer.loadResultTypeface(this@MangaFloatingService, prefs),
-                    showCacheMarker = prefs.getBoolean(com.moe.starflow.data.TranslationCacheManager.KEY_CACHE_MARKER, false),
-                    align = config.horizontalAlign,
-                    trackingRatio = config.trackingRatio,
-                leadingRatio = config.leadingRatio,
-                    mergeOverlap = prefs.getBoolean(com.moe.starflow.data.TranslationCacheManager.KEY_OVERLAP_MERGE, false),
-                    // 译文替换表：渲染时套用（现读）
-                    replacementRules = TranslationTextRules.load(prefs.getSharedPreferences()),
-                    density = resources.displayMetrics.density
-                )
+            if (bubbles.isEmpty()) {
+                original.recycle()
+                return@launch
             }
-            withContext(Dispatchers.Main) {
-                if (!isResultShowing || overlay == null) return@withContext
-                val target = cacheOverlayImage ?: resultOverlayImage
-                // 先回收旧 bitmap，避免全屏 overlay 每次切换都泄漏一张 ~13MB（OOM 风险）
-                val oldBitmap = (target.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
-                target.setImageBitmap(overlay)
-                if (oldBitmap !== overlay) oldBitmap?.recycle()
+            val renderOriginal = copyOriginalMode
+            var pendingOverlay: Bitmap? = null
+            try {
+                withContext(Dispatchers.Default + kotlinx.coroutines.NonCancellable) {
+                    pendingOverlay = OverlayRenderer.renderOverlay(
+                        original = original,
+                        regions = bubbles,
+                        fontSize = config.fontSize,
+                        autoFit = config.autoFontSize,
+                        textColor = config.textColor,
+                        bgColor = config.bgColor,
+                        useOriginalText = renderOriginal,
+                        verticalDirection = config.renderTextDirection,   // RT-DETR 用 RT 渲染方向；PP 用竖排方向
+                        fontTypeface = OverlayRenderer.loadResultTypeface(this@MangaFloatingService, prefs),
+                        showCacheMarker = prefs.getBoolean(com.moe.starflow.data.TranslationCacheManager.KEY_CACHE_MARKER, false),
+                        align = config.horizontalAlign,
+                        trackingRatio = config.trackingRatio,
+                        leadingRatio = config.leadingRatio,
+                        mergeOverlap = prefs.getBoolean(com.moe.starflow.data.TranslationCacheManager.KEY_OVERLAP_MERGE, false),
+                        // 译文替换表：渲染时套用（现读）
+                        replacementRules = TranslationTextRules.load(prefs.getSharedPreferences()),
+                        density = resources.displayMetrics.density
+                    )
+                }
+                withContext(Dispatchers.Main) {
+                    val overlay = pendingOverlay ?: return@withContext
+                    if (!isResultShowing || shownMapping !== mapping ||
+                        mapping.display != com.moe.starflow.utils.DisplaySize.geometry(this@MangaFloatingService) ||
+                        !mapping.matchesBitmap(overlay.width, overlay.height)) {
+                        return@withContext
+                    }
+                    overlay.density = Bitmap.DENSITY_NONE
+                    val target = cacheOverlayImage ?: resultOverlayImage
+                    // 先回收旧 bitmap，避免全屏 overlay 每次切换都泄漏一张 ~13MB（OOM 风险）
+                    val oldBitmap = (target.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+                    OverlayWindow.setBitmapInPixels(target, overlay)
+                    pendingOverlay = null
+                    if (oldBitmap !== overlay) oldBitmap?.recycle()
+                }
+            } finally {
+                original.recycle()
+                pendingOverlay?.recycle()
             }
         }
     }
@@ -3390,7 +3462,6 @@ class MangaFloatingService : LifecycleService() {
     private fun createCopyClickLayer() {
         removeCopyClickLayer()
 
-        val container = android.widget.FrameLayout(this)
         copyBubbleViews.clear()
 
         // 获取气泡 rect 列表：优先用 currentShowBubbles（新翻译），否则用缓存数据
@@ -3405,48 +3476,31 @@ class MangaFloatingService : LifecycleService() {
             return
         }
 
-        // 计算坐标映射参数：与 showResultOverlay / showCacheOverlay 一致
-        val screenSize = getScreenSize()
-        val screenW = screenSize.width
-        val screenH = screenSize.height
-        val bitmapW = if (currentOverlayBitmapW > 0) currentOverlayBitmapW else screenW
-        val bitmapH = if (currentOverlayBitmapH > 0) currentOverlayBitmapH else screenH
-
-        // overlay 窗口的屏幕坐标偏移和尺寸
-        val overlayScreenX: Int
-        val overlayScreenY: Int
-        val overlayWidth: Int
-        val overlayHeight: Int
-
-        if (cropRect != null) {
-            val crop = cropRect!!
-            val offset = cropView.absolutePointOffset
-            overlayScreenX = offset.x + crop.left.toInt()
-            overlayScreenY = offset.y + crop.top.toInt()
-            overlayWidth = crop.width().toInt()
-            overlayHeight = crop.height().toInt()
-        } else {
-            overlayScreenX = 0
-            overlayScreenY = 0
-            overlayWidth = screenW
-            overlayHeight = screenH
+        val mapping = shownMapping ?: return
+        if (mapping.display != com.moe.starflow.utils.DisplaySize.geometry(this)) {
+            invalidateDisplayGeometry()
+            return
         }
-
-        // bitmap → overlay 缩放比例
-        val scaleX = if (bitmapW > 0) overlayWidth.toFloat() / bitmapW else 1f
-        val scaleY = if (bitmapH > 0) overlayHeight.toFloat() / bitmapH else 1f
+        val bitmapW = mapping.width
+        val bitmapH = mapping.height
+        val overlayScreenX = mapping.left
+        val overlayScreenY = mapping.top
+        val overlayWidth = mapping.width
+        val overlayHeight = mapping.height
+        val scaleX = 1f
+        val scaleY = 1f
 
         LogCollector.d(TAG, "createCopyClickLayer: ${bubbles.size} bubbles, " +
             "bitmap=${bitmapW}x${bitmapH}, overlay=${overlayWidth}x${overlayHeight}@($overlayScreenX,$overlayScreenY), " +
             "cropRect=${cropRect != null}, scale=(${scaleX},${scaleY})")
 
-        // 每个气泡一个独立小窗口，精确覆盖气泡区域，不阻挡按钮和悬浮球
+        // 使用与截图绑定的相同像素映射，不读取当前框选或重新计算缩放。
         for ((idx, rect) in bubbles.withIndex()) {
-            // bitmap 坐标 → 屏幕坐标
-            val screenLeft = (rect.left * scaleX + overlayScreenX).toInt()
-            val screenTop = (rect.top * scaleY + overlayScreenY).toInt()
-            val bubbleW = (rect.width() * scaleX).toInt()
-            val bubbleH = (rect.height() * scaleY).toInt()
+            val targetRect = mapping.toDisplayRect(rect) ?: continue
+            val screenLeft = targetRect.left
+            val screenTop = targetRect.top
+            val bubbleW = targetRect.width()
+            val bubbleH = targetRect.height()
 
             val overlay = View(this).apply {
                 setBackgroundColor(Color.argb(40, 100, 200, 255))
@@ -3461,15 +3515,12 @@ class MangaFloatingService : LifecycleService() {
             }
             copyBubbleViews.add(overlay)
 
-            val params = WindowManager.LayoutParams().apply {
-                type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            val params = com.moe.starflow.translate.screenshot.OverlayWindow.fullDisplayParams().apply {
                 format = PixelFormat.TRANSLUCENT
-                flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+                flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
                 width = bubbleW
                 height = bubbleH
-                gravity = Gravity.START or Gravity.TOP
+                gravity = Gravity.LEFT or Gravity.TOP
                 x = screenLeft
                 y = screenTop
             }
@@ -3592,6 +3643,10 @@ class MangaFloatingService : LifecycleService() {
      * showMessage=false 用于强制关闭自动翻译时（由「自动翻译已停止」提示代替）。
      */
     private fun cancelInFlightTranslation(showMessage: Boolean = true) {
+        activeCaptureRequest = -1L
+        pendingCleanScreenshot = false
+        pendingDetectionPHash = 0L
+        pendingDetectionExtHashes = null
         translationCancelled = true
         translationGeneration.incrementAndGet()
         partialRenderShown = false  // 已停止：再点悬浮球不再弹确认，直接幂等终止
@@ -3600,6 +3655,21 @@ class MangaFloatingService : LifecycleService() {
         dismissResultOverlay()
         ballStateManager?.setState(BallStateManager.State.Idle)
         if (showMessage) statusOverlay.showImmediate(getString(R.string.translation_stopped), autoDismiss = true)
+    }
+
+    /** 旧几何只允许结束，不能在新屏幕上继续回填或沿用旧框选。 */
+    private fun invalidateDisplayGeometry() {
+        LogCollector.w(TAG, "显示几何变化或坐标校验失败，丢弃旧帧结果")
+        val notify = isProcessing || isResultShowing || isCropActive
+        val hadCropOrAuto = cropRect != null || autoTranslateEngine.isAutoTranslating
+        if (isProcessing) cancelInFlightTranslation(showMessage = false) else dismissResultOverlay()
+        processingMapping = null
+        if (!processingFrameActive) isProcessing = false
+        cropDisplayGeometry = null
+        clearCropForScreenChange()
+        menuDialog?.dismiss()
+        applyBallStyle()
+        if (notify && !hadCropOrAuto) statusOverlay.showSticky(getString(R.string.screenshot_geometry_changed))
     }
 
     private fun dismissProgressOverlay() {

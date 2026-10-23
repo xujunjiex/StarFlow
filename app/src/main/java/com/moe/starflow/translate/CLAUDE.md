@@ -234,6 +234,12 @@ IDLE（跳过OCR）──像素变化──→ CHANGED ──稳定1帧──→
 - **MediaProjection（默认）**：弹窗授权，门槛低，每次启动都要授权
 - **AccessibilityService**：需要手动开启无障碍服务，永久有效
 
+截图、框选与漫画结果使用默认显示屏的同一物理像素空间。Android 14+ 请求整屏 MediaProjection，`Shooter` 在每次取帧时核对真实旋转角度、尺寸、密度和投影内容尺寸；180° 翻转同样重建缓冲并清除旧帧。调整失败不能返回旧帧。
+
+截图结果携带唯一请求编号和不可变裁剪映射，游戏／漫画使用独立流。无障碍截图在请求和回调之间再次检查几何；旧请求不进入新任务。裁剪越界或帧尺寸不符时，不回退成另一种坐标空间。
+
+`OverlayWindow.context` 复用独立显示屏窗口 Context，`DisplaySize` 从其最大边界查询整屏尺寸。框选和漫画结果共用 `fullDisplayParams`；结果图片清除密度、保持像素 1:1。绘制前的实际窗口校验及结果生命周期见[漫画模块指南](../manga/CLAUDE.md#截图几何与结果对齐)。
+
 ### 架构
 
 ```
@@ -242,7 +248,7 @@ ScreenshotProvider（接口）
 └── AccessibilityProvider — 无障碍服务截图
 
 ScreenshotManager（单例）
-├── screenshotFlow: SharedFlow<ScreenshotData>
+├── screenshotsFor(target): 游戏／漫画独立的截图流（含请求编号和帧映射）
 └── eventTriggerFlow: MutableSharedFlow<String>
 ```
 

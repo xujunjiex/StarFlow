@@ -50,16 +50,19 @@ class ScreenShotAccessibilityService: AccessibilityService() {
     }.also { ScreenshotManager.registerEventHandler(it) }
 
     // 当用户点击悬浮球时调用此方法
-    fun takeScreenshot(mRectF: RectF?, offset: Point) {
+    fun takeScreenshot(mRectF: RectF?, offset: Point, target: ScreenshotTarget = ScreenshotTarget.MANGA, requestId: Long = 0) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {  // Android 11及以上
-            takeScreenshotImpl(mRectF, offset)
+            takeScreenshotImpl(mRectF, offset, target, requestId)
         } else {
             LogCollector.w(TAG, "Screenshot requires API 30; sdk=${Build.VERSION.SDK_INT}")
         }
     }
 
     @RequiresApi(Build.VERSION_CODES.R)
-    private fun takeScreenshotImpl(mRectF: RectF?, offset: Point) {
+    private fun takeScreenshotImpl(mRectF: RectF?, offset: Point, target: ScreenshotTarget, requestId: Long) {
+        val requestedGeometry = com.moe.starflow.utils.DisplaySize.geometry(this)
+        val requestedCrop = mRectF?.let { RectF(it) }
+        val requestedOffset = Point(offset)
         try {
             LogCollector.d(TAG, "request: display=$DEFAULT_DISPLAY crop=$mRectF offset=$offset")
             takeScreenshot(
@@ -83,16 +86,15 @@ class ScreenShotAccessibilityService: AccessibilityService() {
                             }
                             fullBitmap = full
                             // cropBitmap 裁不出有效区域时返回 null（不再退化成返回 fullBitmap 本身）
-                            val cropped = if (mRectF != null) {
-                                ScreenshotManager.cropBitmap(full, mRectF, offset)
-                            } else {
-                                null
-                            }
+                            val data = if (requestedGeometry == com.moe.starflow.utils.DisplaySize.geometry(this@ScreenShotAccessibilityService)) {
+                                ScreenshotManager.createData(CapturedScreen(full, requestedGeometry), requestedCrop, requestedOffset, requestId)
+                            } else ScreenshotData(full, null, requestId = requestId)
+                            val cropped = data.croppedBitmap
                             croppedBitmap = cropped
 
                             //使用sharedflow，发送截图完成信号以及全屏+裁剪bitmap
                             LogCollector.d(TAG, "success: full=${full.width}x${full.height} cropped=${cropped?.let { "${it.width}x${it.height}" }}")
-                            ScreenshotManager.emitScreenshot(ScreenshotData(full, cropped))
+                            ScreenshotManager.emitScreenshot(data, target)
                             delivered = true
                         } catch (e: OutOfMemoryError) {
                             LogCollector.e(TAG, "Screenshot bitmap allocation failed", e)

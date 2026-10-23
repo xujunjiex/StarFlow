@@ -16,7 +16,23 @@ import kotlinx.coroutines.flow.asSharedFlow
 /**
  * 截图数据
  */
-data class ScreenshotData(val fullBitmap: Bitmap, val croppedBitmap: Bitmap?)
+data class ScreenshotData(val fullBitmap: Bitmap, val croppedBitmap: Bitmap?, val mapping: ScreenshotMapping? = null, val requestId: Long = 0) {
+    fun belongsToRequest(requestId: Long): Boolean = requestId > 0 && this.requestId == requestId
+
+    fun isCurrent(display: DisplayGeometry): Boolean {
+        val map = mapping ?: return false
+        val ocr = croppedBitmap ?: fullBitmap
+        return map.display == display && fullBitmap.width == display.width && fullBitmap.height == display.height &&
+            map.matchesBitmap(ocr.width, ocr.height)
+    }
+
+    fun recycle() {
+        if (croppedBitmap !== fullBitmap) croppedBitmap?.takeUnless { it.isRecycled }?.recycle()
+        if (!fullBitmap.isRecycled) fullBitmap.recycle()
+    }
+}
+
+enum class ScreenshotTarget { GAME, MANGA }
 
 /**
  * 截图管理器 - 解耦截图生产者和消费者
@@ -24,10 +40,19 @@ data class ScreenshotData(val fullBitmap: Bitmap, val croppedBitmap: Bitmap?)
  */
 object ScreenshotManager {
 
+    private val requestIds = java.util.concurrent.atomic.AtomicLong()
+    fun newRequestId(): Long = requestIds.incrementAndGet()
+
     private const val TAG = "ScreenshotManager"
 
     private val _screenshotFlow = MutableSharedFlow<ScreenshotData>(extraBufferCapacity = 1)
     val screenshotFlow = _screenshotFlow.asSharedFlow()
+    private val gameScreenshots = MutableSharedFlow<ScreenshotData>(extraBufferCapacity = 1)
+
+    fun screenshotsFor(target: ScreenshotTarget) = when (target) {
+        ScreenshotTarget.MANGA -> screenshotFlow
+        ScreenshotTarget.GAME -> gameScreenshots.asSharedFlow()
+    }
 
     private val _eventTriggerFlow = MutableSharedFlow<String>(extraBufferCapacity = 2)
     val eventTriggerFlow = _eventTriggerFlow.asSharedFlow()
@@ -54,8 +79,9 @@ object ScreenshotManager {
      *
      * @return true 表示已投递；false 表示被丢弃（此时两张 bitmap 已被回收，调用方不得再使用）
      */
-    fun emitScreenshot(data: ScreenshotData): Boolean {
-        val accepted = _screenshotFlow.tryEmit(data)
+    fun emitScreenshot(data: ScreenshotData, target: ScreenshotTarget = ScreenshotTarget.MANGA): Boolean {
+        val stream = if (target == ScreenshotTarget.GAME) gameScreenshots else _screenshotFlow
+        val accepted = stream.subscriptionCount.value > 0 && stream.tryEmit(data)
         if (!accepted) {
             LogCollector.w(
                 TAG,
@@ -91,19 +117,28 @@ object ScreenshotManager {
      * 返回 null 让调用方走「没裁出东西」的显式分支，前提重新成立。
      */
     fun cropBitmap(source: Bitmap, cropRect: RectF, offset: Point): Bitmap? {
-        val x = (cropRect.left.toInt() + offset.x).coerceIn(0, source.width - 1)
-        val y = (cropRect.top.toInt() + offset.y).coerceIn(0, source.height - 1)
-        val w = cropRect.width().toInt().coerceAtMost(source.width - x)
-        val h = cropRect.height().toInt().coerceAtMost(source.height - y)
-
-        if (w <= 0 || h <= 0) {
-            LogCollector.w(
-                TAG,
-                "cropBitmap: 裁剪区域无效（w=$w h=$h，源 ${source.width}x${source.height}，" +
-                    "crop=$cropRect offset=$offset）→ 返回 null"
-            )
+        val bounds = ScreenshotMapping.exactCropBounds(source.width, source.height, cropRect, offset)
+        if (bounds == null) {
+            LogCollector.w(TAG, "cropBitmap: 拒绝越界/无效区域，源=${source.width}x${source.height} crop=$cropRect offset=$offset")
             return null
         }
-        return Bitmap.createBitmap(source, x, y, w, h)
+        val cropped = Bitmap.createBitmap(source, bounds.left, bounds.top, bounds.width(), bounds.height())
+        // Android 对整图裁剪可能返回原实例，消费端分别持有并回收 full/cropped。
+        return if (cropped === source) source.copy(source.config ?: Bitmap.Config.ARGB_8888, false) else cropped
+    }
+
+    /** 无效映射保留为 null 交收集端丢弃并结束本轮请求，不能降级成另一种坐标空间。 */
+    fun createData(frame: CapturedScreen, crop: RectF?, offset: Point, requestId: Long = 0): ScreenshotData {
+        val mapping = ScreenshotMapping.create(frame.display, crop, offset)
+        val full = frame.bitmap
+        if (mapping == null || full.width != frame.display.width || full.height != frame.display.height) {
+            LogCollector.w(TAG, "createData: 帧/框选几何不匹配，丢弃截图")
+            return ScreenshotData(full, null, requestId = requestId)
+        }
+        val cropped = if (crop != null) cropBitmap(full, crop, offset) else null
+        if (crop != null && cropped == null) {
+            return ScreenshotData(full, null, requestId = requestId)
+        }
+        return ScreenshotData(full, cropped, mapping, requestId)
     }
 }
