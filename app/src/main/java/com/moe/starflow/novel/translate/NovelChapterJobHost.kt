@@ -65,7 +65,7 @@ data class NovelWaitingBatch(
  * - 进度快照通过 [TranslationJobRegistry] 汇总给前台服务（`TranslationJobService` 每章一条通知）
  *
  * ⚠️ **单位号必须全局唯一**：[ChapterJobRunner] 内部按**自增 `Task.id`** 记在途项（页号只是 Task 的字段），
- * 多章同时跑时各章的批序号会撞车（第 3 章的第 0 批与第 5 章的第 0 批都是 0）——
+ * 多章排队时各章的批序号会撞车（第 3 章的第 0 批与第 5 章的第 0 批都是 0）——
  * 所以这里发的是**自增 unitId**，再映射回 (章, 批序号, 段号)。
  */
 class NovelChapterJobHost(

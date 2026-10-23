@@ -1876,7 +1876,7 @@ class ReaderTranslationController(
      * 提交一章的批量翻译。[pages] 由调用方按状态筛好（默认「未成功」的页）。
      *
      * 会先停掉自动/增量队列与在途手动翻译（它们与本任务抢同一把 `OcrLock`），
-     * 但**不会动别的章已经在跑的任务** —— 用户要求可以同时启动多个章节。
+     * 已有章节任务继续执行，新章按提交顺序排队，等前章在途项结束后再启动。
      */
     fun startChapterJob(chapterIndex: Int, pages: List<Int>, label: String = "", startPage: Int = 0) {
         val targets = pages.filter { it >= 0 }

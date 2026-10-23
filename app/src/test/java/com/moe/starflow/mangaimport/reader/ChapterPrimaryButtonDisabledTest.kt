@@ -10,6 +10,7 @@ import com.moe.starflow.mangaimport.data.MangaChapter
 import com.moe.starflow.mangaimport.translate.ReaderTranslationController
 import com.moe.starflow.translate.batch.ChapterJobState
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -112,6 +113,33 @@ class ChapterPrimaryButtonDisabledTest {
     }
 
     // ========== 翻译面板 ==========
+
+    @Test
+    fun queuedChapterShowsWaitingAndKeepsPauseAndCancelAvailable() {
+        var pausedChapter: Int? = null
+        var cancelledChapter: Int? = null
+        val adapter = ReaderPageStateAdapter(
+            chapterLabelOf = { it.title },
+            onJump = {}, onSelectChapter = {},
+            onChapterPrimary = { pausedChapter = it },
+            onChapterSecondary = { cancelledChapter = it }, onDeletePage = {},
+        )
+        adapter.submit(chapters, emptyList(), selectedChapter = 0, jobs = mapOf(0 to ChapterJobState.QUEUED))
+        val holder = adapter.onCreateViewHolder(FrameLayout(ctx), 0)
+        adapter.onBindViewHolder(holder, 0)
+        val card = holder.itemView
+        assertEquals(ctx.getString(R.string.reader_translate_state_waiting), card.findViewById<TextView>(R.id.tv_chapter_badge).text.toString())
+        val primary = card.findViewById<TextView>(R.id.btn_chapter_primary)
+        assertTrue(primary.isEnabled)
+        assertEquals(ctx.getString(R.string.reader_translate_chapter_pause), primary.text.toString())
+        primary.performClick()
+        card.findViewById<TextView>(R.id.btn_chapter_secondary).apply {
+            assertEquals(ctx.getString(R.string.cancel), text.toString())
+            performClick()
+        }
+        assertEquals(0, pausedChapter)
+        assertEquals(0, cancelledChapter)
+    }
 
     private fun bindTrPrimary(
         records: List<ImportedPageTranslation>,

@@ -5,7 +5,9 @@ import com.moe.starflow.translate.batch.ChapterJobState
 import com.moe.starflow.translate.batch.ChapterTaskStage
 
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -31,6 +33,177 @@ import kotlin.math.max
  * 4. **暂停/取消不影响别的章**（多章同时提交时按提交顺序排队）
  */
 class ChapterJobRunnerTest {
+
+    @Test
+    fun repeatedResumeDoesNotRequeueTheRunningChapter() = runBlocking {
+        // 共用事件循环：先连续操作状态，再让工人启动，覆盖两页之间没有在途项的窗口。
+        val scope = CoroutineScope(coroutineContext + SupervisorJob())
+        try {
+            val runner = ChapterJobRunner(
+                scope = scope,
+                concurrency = { 2 },
+                ocr = { page -> page },
+                translate = { _, _ -> true },
+            )
+            runner.submit(0, listOf(1))
+            runner.pause(0)
+            runner.submit(1, listOf(2))
+            runner.resume(0)
+            runner.resume(1)
+            assertEquals(ChapterJobState.RUNNING, runner.stateOf(1))
+            assertEquals(ChapterJobState.QUEUED, runner.stateOf(0))
+            awaitIdle(runner)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun chapters_waitForEveryPreviousRequest_andFollowSubmissionOrder() = runBlocking {
+        val scope = newScope()
+        try {
+            val gates = (1..4).associateWith { CompletableDeferred<Unit>() }
+            val started = (1..4).associateWith { CompletableDeferred<Unit>() }
+            val prepared = Collections.synchronizedList(mutableListOf<Int>())
+            val runner = ChapterJobRunner(
+                scope = scope,
+                concurrency = { 3 },
+                ocr = { page -> prepared += page; page },
+                translate = { page, _ ->
+                    started.getValue(page).complete(Unit)
+                    gates.getValue(page).await()
+                    true
+                },
+            )
+            runner.submit(7, listOf(1, 2))
+            runner.submit(2, listOf(3))
+            runner.submit(4, listOf(4))
+            withTimeout(4_000) { started.getValue(1).await(); started.getValue(2).await() }
+            assertEquals(ChapterJobState.QUEUED, runner.stateOf(2))
+            assertEquals(ChapterJobState.QUEUED, runner.stateOf(4))
+            assertTrue(runner.runningOwnedPages().containsAll(listOf(3, 4)))
+            delay(200)
+            assertEquals("下一章连准备阶段也必须等待", listOf(1, 2), prepared.toList())
+
+            gates.getValue(2).complete(Unit)
+            withTimeout(4_000) { while (runner.jobOf(7)?.done != 1) delay(10) }
+            delay(200)
+            assertFalse("上一章最后一个请求未返回时不能放行", started.getValue(3).isCompleted)
+            gates.getValue(1).complete(Unit)
+            withTimeout(4_000) { started.getValue(3).await() }
+            assertEquals(ChapterJobState.DONE, runner.stateOf(7))
+            assertEquals(ChapterJobState.RUNNING, runner.stateOf(2))
+            assertEquals(ChapterJobState.QUEUED, runner.stateOf(4))
+            assertFalse(started.getValue(4).isCompleted)
+            gates.getValue(3).complete(Unit)
+            withTimeout(4_000) { started.getValue(4).await() }
+            gates.getValue(4).complete(Unit)
+            awaitIdle(runner)
+            assertEquals(listOf(1, 2, 3, 4), prepared.toList())
+            assertTrue(runner.jobs.value.all { it.state == ChapterJobState.DONE })
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun pauseDrainsCurrentChapter_resumeDoesNotPreemptNextChapter() = runBlocking {
+        val scope = newScope()
+        try {
+            val first = CompletableDeferred<Unit>()
+            val next = CompletableDeferred<Unit>()
+            val secondPrepared = CompletableDeferred<Unit>()
+            val allowSecondPreparation = CompletableDeferred<Unit>()
+            val started = (1..3).associateWith { CompletableDeferred<Unit>() }
+            val runner = ChapterJobRunner(
+                scope = scope,
+                concurrency = { 3 },
+                ocr = { page ->
+                    if (page == 2) {
+                        secondPrepared.complete(Unit)
+                        allowSecondPreparation.await()
+                    }
+                    page
+                },
+                translate = { page, _ ->
+                    started.getValue(page).complete(Unit)
+                    when (page) {
+                        1 -> first.await()
+                        3 -> next.await()
+                    }
+                    true
+                },
+            )
+            runner.submit(0, listOf(1, 2))
+            withTimeout(4_000) { started.getValue(1).await(); secondPrepared.await() }
+            runner.pause(0)
+            runner.submit(1, listOf(3))
+            allowSecondPreparation.complete(Unit)
+            delay(200)
+            assertEquals(ChapterJobState.QUEUED, runner.stateOf(1))
+            assertFalse(started.getValue(3).isCompleted)
+            first.complete(Unit)
+            withTimeout(4_000) { started.getValue(3).await() }
+            assertEquals(ChapterJobState.PAUSED, runner.stateOf(0))
+            runner.resume(0)
+            assertEquals(ChapterJobState.QUEUED, runner.stateOf(0))
+            delay(200)
+            assertFalse("恢复或重新提交不能抢占当前章", started.getValue(2).isCompleted)
+            next.complete(Unit)
+            awaitIdle(runner)
+            assertTrue(started.getValue(2).isCompleted)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun cancelWaitingChapter_skipsIt_andActiveCancellationWaitsForCleanup() = runBlocking {
+        val scope = newScope()
+        try {
+            val started = CompletableDeferred<Unit>()
+            val cleanupStarted = CompletableDeferred<Unit>()
+            val cleanupFinished = CompletableDeferred<Unit>()
+            val prepared = Collections.synchronizedList(mutableListOf<Int>())
+            val runner = ChapterJobRunner(
+                scope = scope,
+                concurrency = { 3 },
+                ocr = { page -> prepared += page; page },
+                translate = { page, _ ->
+                    if (page == 1) {
+                        started.complete(Unit)
+                        try {
+                            CompletableDeferred<Unit>().await()
+                        } finally {
+                            withContext(NonCancellable) {
+                                cleanupStarted.complete(Unit)
+                                cleanupFinished.await()
+                            }
+                        }
+                    }
+                    true
+                },
+            )
+            runner.submit(0, listOf(1))
+            withTimeout(4_000) { started.await() }
+            runner.submit(1, listOf(2))
+            runner.submit(2, listOf(3))
+            runner.cancel(1)
+            assertEquals(ChapterJobState.CANCELLED, runner.stateOf(1))
+            assertFalse(2 in runner.waitingPages.value)
+            runner.cancel(0)
+            withTimeout(4_000) { cleanupStarted.await() }
+            delay(200)
+            assertEquals("取消正在收尾时，下一章仍需等待", listOf(1), prepared.toList())
+            assertEquals(ChapterJobState.QUEUED, runner.stateOf(2))
+            cleanupFinished.complete(Unit)
+            awaitIdle(runner)
+            assertEquals(listOf(1, 3), prepared.toList())
+            assertEquals(ChapterJobState.DONE, runner.stateOf(2))
+        } finally {
+            scope.cancel()
+        }
+    }
 
     /** 等 runner 空下来（带超时兜底防挂死）。 */
     private suspend fun awaitIdle(runner: ChapterJobRunner<Int>, timeoutMs: Long = 8_000) {

@@ -3167,6 +3167,7 @@ class NovelReaderActivity : AppCompatActivity() {
             val stage = chapterHost?.imageStageTextOf(job.chapterIndex)
                 ?: imageStageText?.takeIf { imageStageChapter == job.chapterIndex }
             val text = when {
+                job.state == ChapterJobState.QUEUED -> getString(R.string.reader_translate_state_waiting)
                 stage != null -> stage
                 job.state == ChapterJobState.PAUSED ->
                     getString(R.string.novel_chapter_overlay_paused, job.chapterIndex + 1, job.done, job.total)

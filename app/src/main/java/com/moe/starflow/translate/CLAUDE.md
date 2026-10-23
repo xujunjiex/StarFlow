@@ -284,7 +284,7 @@ FloatingBallService 和 MangaFloatingService 在 MediaProjection 模式下自动
 - **单项跑在自己的协程里**（`runTask` 用 `scope.async` + `await`，**不能**用 `launch`：单项异常会走
   未捕获处理器 = 崩进程）：取消分两种来源，必须分清 —— 这一项被单独取消（工人还活着 → `Aborted`，
   继续干别的）vs 整条流水线被取消（`shutdown`/scope 取消 → 原样抛出，循环退出）。
-- **多章互不影响**：某章暂停/取消不挡别的章；每章一个 job，`onJobFinished` 走**监听器列表**
+- **同书章节串行排队**：仅当前章为 `RUNNING`，后续章为 `QUEUED`。队列取空仍需等该章在途项全部结算，不能提前准备或翻译下一章；暂停/取消也先等在途项退出再交接，继续不能抢占正在执行的章。章内并发设置不变。每章一个 job，`onJobFinished` 走**监听器列表**
   （`addJobFinishedListener/remove`），不要用单个 `var`（会被多个宿主互相覆盖）。
 - **提交顺序 = 阅读顺序**（用户口径：「即便是翻译整章，也要按照文章顺序提交请求」）：队列是 FIFO，
   并发只决定"同时在飞几个"，**不改变提交顺序**。调用方传进来的列表必须已按页/段序排好。
@@ -320,7 +320,7 @@ FloatingBallService 和 MangaFloatingService 在 MediaProjection 模式下自动
 - ⚠️ **关闭一次性通道必须同时置 `channelsClosed = true`**（`shutdown()` 与 `finishIfIdle()` 两处都要）：
   `ensureStarted` 只认这个标志决定"要不要换新通道"，漏了它下次 `submit()` 会往**已关闭**的通道 send。
 - **`inFlightPages()` / `runningOwnedPages()` 语义不同**：前者含暂停章的在途项（宿主清残留状态时排除用），
-  后者只含**RUNNING** 章占住的页（宿主做"别重复翻同一页"的去重时用）。用错会让暂停章的页永远挑不到。
+  后者包含 **RUNNING/QUEUED** 章的队列和全部在途项（宿主做"别重复翻同一页"的去重时用），不包含暂停章的待翻队列。
 - **通道容量只有一个来源**（`newOcrChannel()` / `newPreparedChannel()`）：通道是一次性的，
   收尾关闭后下次提交要重建；重建处曾手写 `Channel(8)` 与声明的 0 不一致 → **第一次任务正常、
   第二次起预取整章**（「等待」页数不对、暂停拦不住）。重建必须调同一个工厂函数。
@@ -342,7 +342,7 @@ FloatingBallService 和 MangaFloatingService 在 MediaProjection 模式下自动
   `utils/TokenEstimator`；判据收敛在 `NovelChapterTranslator.translateBatch` 一处，
   后台任务没有 UI 可弹窗时**放行不拦**。
 - **回归守卫**：`ChapterJobRunnerTest`（OCR 串行 / 翻译并发 / OCR 与请求重叠 / 等待项 /
-  按章暂停不影响别的章 / 取消丢等待留已完成 / 收尾后可再提交 / **每页都要结算** /
+  多章等待前章全部请求结束 / 暂停交接与继续不抢占 / 取消等待章及在途收尾 / 取消丢等待留已完成 / 收尾后可再提交 / **每页都要结算** /
   **阶段查询** / **通道重建后预取深度不失控**）、小说侧
   `NovelTranslationConcurrencyTest`、`NovelBatchWarningTest`。
 

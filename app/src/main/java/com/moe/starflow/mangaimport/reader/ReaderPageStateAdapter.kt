@@ -347,10 +347,12 @@ class ReaderPageStateAdapter(
 
         val running = row.jobState == ChapterJobState.RUNNING || row.jobState == ChapterJobState.QUEUED
         val paused = row.jobState == ChapterJobState.PAUSED
+        val queued = row.jobState == ChapterJobState.QUEUED
         // 「这一章翻完了」= 成功页数覆盖整章（用户口径：完成的章要有**完成标记**，而不是只剩按钮在变）
         val allDone = row.pageCount > 0 && row.success >= row.pageCount
         item.findViewById<TextView>(R.id.tv_chapter_badge).apply {
             text = when {
+                queued -> ctx.getString(R.string.reader_translate_state_waiting)
                 // ⚠️ 分母用**任务自己的 total**：默认「只翻未完成」时任务 total 只是待翻页数，
                 // 用章页数会出现「已译 12/22」→「翻译中 0/22」→ 停在 10/22 的倒退（小说侧一直是 done/total）。
                 running -> ctx.getString(

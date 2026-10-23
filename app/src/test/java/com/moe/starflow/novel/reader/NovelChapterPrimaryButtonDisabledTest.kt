@@ -9,6 +9,7 @@ import com.moe.starflow.novel.model.NovelChapterMeta
 import com.moe.starflow.translate.batch.ChapterJob
 import com.moe.starflow.translate.batch.ChapterJobState
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -51,6 +52,34 @@ class NovelChapterPrimaryButtonDisabledTest {
     }
 
     private val totals = mapOf(0 to 4, 1 to 3)
+
+    @Test
+    fun queuedChapterShowsWaitingAndKeepsPauseAndCancelAvailable() {
+        var pausedChapter: Int? = null
+        var cancelledChapter: Int? = null
+        val adapter = NovelChapterStateAdapter(
+            onJump = {},
+            onChapterPrimary = { pausedChapter = it },
+            onChapterSecondary = { cancelledChapter = it },
+        )
+        adapter.chapters = chapters
+        adapter.totals = totals
+        adapter.jobs = mapOf(0 to ChapterJob(0, total = 4, done = 0, state = ChapterJobState.QUEUED))
+        val holder = adapter.onCreateViewHolder(FrameLayout(ctx), 0)
+        adapter.onBindViewHolder(holder, 0)
+        val card = holder.itemView
+        assertEquals(ctx.getString(R.string.reader_translate_state_waiting), card.findViewById<TextView>(R.id.tv_chapter_badge).text.toString())
+        val primary = card.findViewById<TextView>(R.id.btn_chapter_primary)
+        assertTrue(primary.isEnabled)
+        assertEquals(ctx.getString(R.string.reader_translate_chapter_pause), primary.text.toString())
+        primary.performClick()
+        card.findViewById<TextView>(R.id.btn_chapter_secondary).apply {
+            assertEquals(ctx.getString(R.string.cancel), text.toString())
+            performClick()
+        }
+        assertEquals(0, pausedChapter)
+        assertEquals(0, cancelledChapter)
+    }
 
     private fun stat(success: Int) = mapOf(0 to NovelChapterStat(chapterIndex = 0, total = 4, success = success))
 

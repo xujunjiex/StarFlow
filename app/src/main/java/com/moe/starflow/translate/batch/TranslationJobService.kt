@@ -200,6 +200,7 @@ class TranslationJobService : LifecycleService() {
             // ⚠️ **暂停优先**：暂停在插图 OCR 中间时，"正在识别插图 2/3…"会骗人（其实已经不再推进）
             job.state == ChapterJobState.PAUSED ->
                 getString(R.string.chapter_translate_notify_paused, job.done, job.total)
+            job.state == ChapterJobState.QUEUED -> getString(R.string.reader_translate_state_waiting)
             // 更细的一行状态（小说插图：「正在识别插图 2/3…」）—— 要能盖过"第 x/y"与"仅 OCR"，
             // 否则阅读器关掉后用户看到的是进度不动（见 ActiveChapterJob.stageText）
             !job.stageText.isNullOrBlank() -> job.stageText

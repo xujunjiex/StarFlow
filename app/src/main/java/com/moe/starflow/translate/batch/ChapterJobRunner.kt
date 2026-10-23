@@ -47,7 +47,7 @@ enum class ChapterTaskStage {
 /**
  * 在途项快照（页号 + 阶段）：面板「识别中 / 翻译中」标签与状态浮层都读它。
  *
- * @param chapterIndex 属于哪一章（多章同时跑时要能分辨）
+ * @param chapterIndex 属于哪一章
  * @param page 页号（漫画=全书页号；小说=批号）
  */
 data class InFlightTask(
@@ -93,8 +93,8 @@ data class ChapterJob(
  *   一个 OCR 工人（[ocrLoop]）+ N 个翻译工人（[translateLoop]），中间用 `preparedChannel` 衔接。
  *   ⚠️ OCR 本身**必须串行**（PP-OCR/manga-ocr 是单例，见 `OcrLock`），所以只开一个 OCR 工人；
  *   并发的只有翻译请求（远端 API 可以并发；本地引擎由调用方把并发数压到 1）。
- * - 「可以同时启动多个章节」→ 每章一个 [Runtime]（各自队列），调度器**按提交顺序**取页；
- *   某一章暂停时它的队列原样留着（＝面板上的「等待」），调度器直接跳到下一章继续。
+ * - 多章按提交顺序排队，每章一个 [Runtime]；当前章的在途项全部结算后才启动下一章。
+ *   暂停章保留队列，等其在途项结束后跳到下一章；恢复时排队，不抢占正在执行的章。
  * - 「暂停等待的页面不会清除 / 取消等待的页全部删除、保留已下载的」→ 暂停只停取页、
  *   取消丢队列 + **强制结束在途项**（各自协程被 cancel、产物丢弃不入库、立刻派发收尾事件）。
  *
@@ -265,7 +265,7 @@ class ChapterJobRunner<T>(
             runtimes += Runtime(
                 chapterIndex = chapterIndex,
                 queue = ArrayDeque(pages),
-                state = ChapterJobState.RUNNING,
+                state = ChapterJobState.QUEUED,
                 total = pages.size,
                 done = 0,
                 ok = 0,
@@ -280,7 +280,7 @@ class ChapterJobRunner<T>(
     fun pause(chapterIndex: Int) = setState(chapterIndex, ChapterJobState.PAUSED)
 
     fun resume(chapterIndex: Int) {
-        setState(chapterIndex, ChapterJobState.RUNNING)
+        setState(chapterIndex, ChapterJobState.QUEUED)
         ensureStarted()
     }
 
@@ -349,14 +349,16 @@ class ChapterJobRunner<T>(
     }
 
     /**
-     * **真正被"正在跑"的章占住**的页：在途项 + RUNNING 章的队列。
+     * **被待执行章节任务占住**的页：在途项 + RUNNING/QUEUED 章的队列。
      *
-     * ⚠️ 与 `waitingPages`（含 PAUSED/QUEUED 章）不同：暂停的章不该把页扣住 ——
+     * ⚠️ 与 `waitingPages`（含 PAUSED 章）不同：暂停的章不该把页扣住 ——
      * 宿主要用它去重"增量窗口别翻同一页"，用 `waitingPages` 会让暂停章的页在增量/自动模式下
      * 永远挑不到（窗口里全是它们 → 直接判"队列耗尽"）。
      */
     fun runningOwnedPages(): Set<Int> = synchronized(lock) {
-        val queued = runtimes.filter { it.state == ChapterJobState.RUNNING }.flatMap { it.queue }
+        val queued = runtimes.filter {
+            it.state == ChapterJobState.RUNNING || it.state == ChapterJobState.QUEUED
+        }.flatMap { it.queue }
         (inFlight.values.map { it.page } + queued).toSet()
     }
 
@@ -421,6 +423,8 @@ class ChapterJobRunner<T>(
         synchronized(lock) {
             val rt = runtimes.firstOrNull { it.chapterIndex == chapterIndex } ?: return
             if (rt.state == ChapterJobState.CANCELLED || rt.state == ChapterJobState.DONE) return
+            // 迟到或重复的“继续”只对暂停章生效，不能将当前执行章重新排队。
+            if (state == ChapterJobState.QUEUED && rt.state != ChapterJobState.PAUSED) return
             rt.state = state
             publish()
         }
@@ -466,16 +470,6 @@ class ChapterJobRunner<T>(
                 delay(IDLE_POLL_MS)
                 continue
             }
-            synchronized(lock) {
-                // 这一项从「队列」进入流水线 —— 但**还不是「识别中」**：它可能先在 OCR 通道里排队，
-                // 或者泵正卡在 send 上等 OCR 工人腾出手。用户视角这就是「等待」（见 ChapterTaskStage）
-                task.stage = ChapterTaskStage.QUEUED
-                inFlight[task.id] = task
-                // ⚠️ `publish()` 必须**在锁里**（它要遍历 runtimes / 各 runtime.queue / inFlight，
-                // 而别的线程正在锁里改这三样）→ 放外面会 CME/IOOBE，而它跑在应用级 scope 的协程里
-                // （没有异常处理器）= 直接崩进程（2026-09-28 审查抓到）。
-                publish()
-            }
             LogCollector.d(TAG, "第 ${task.chapterIndex} 章 page=${task.page} 进入流水线（等待识别）")
             try {
                 ocrChannel.send(task)
@@ -494,12 +488,18 @@ class ChapterJobRunner<T>(
     private fun nextTask(): Task? = synchronized(lock) {
         val rt = runtimes.firstOrNull { it.state == ChapterJobState.RUNNING && it.queue.isNotEmpty() }
             ?: return null
-        Task(nextTaskId++, rt.chapterIndex, rt.queue.removeFirst(), rt)
+        // 取页和登记在途必须原子完成，避免暂停/取消在两者之间放行下一章。
+        Task(nextTaskId++, rt.chapterIndex, rt.queue.removeFirst(), rt).also {
+            inFlight[it.id] = it
+            publish()
+        }
     }
 
     /** 没有任何可调度/在途的页了。 */
     private fun allSettled(): Boolean = synchronized(lock) {
-        inFlight.isEmpty() && runtimes.none { it.state == ChapterJobState.RUNNING && it.queue.isNotEmpty() }
+        inFlight.isEmpty() && runtimes.none {
+            it.state == ChapterJobState.RUNNING || it.state == ChapterJobState.QUEUED
+        }
     }
 
     /**
@@ -629,8 +629,9 @@ class ChapterJobRunner<T>(
             // - 取消 → 直接丢（用户口径：取消就把还没开始翻的丢掉），不计 done
             // 不这么做的话，这两页会照旧翻完 —— 用户看到的「暂停/取消没反应」正是这么来的。
             val runnable = synchronized(lock) {
-                val rt = runtimes.firstOrNull { it.chapterIndex == item.task.chapterIndex }
-                val shouldRun = rt != null && rt.state == ChapterJobState.RUNNING
+                val rt = item.task.runtime
+                val registered = rt in runtimes
+                val shouldRun = registered && !item.task.cancelled && rt.state == ChapterJobState.RUNNING
                 if (shouldRun) {
                     // 这一项归 **翻译中**（正常情况下 OCR 结束时已经标过，这里是兜底：
                     // 万一通道实现变了导致阶段没来得及更新，至少工人接手时一定是对的）
@@ -638,7 +639,7 @@ class ChapterJobRunner<T>(
                     publish()
                 } else {
                     inFlight.remove(item.task.id)
-                    if (rt != null && rt.state == ChapterJobState.PAUSED) rt.queue.addFirst(item.task.page)
+                    if (registered && rt.state == ChapterJobState.PAUSED) rt.queue.addFirst(item.task.page)
                     publish()
                 }
                 shouldRun
@@ -754,7 +755,9 @@ class ChapterJobRunner<T>(
             preparedChannel.close()
             // ⚠️ 这一句不能漏：`ensureStarted` 靠它决定"要不要换一对新通道"（见 shutdown 的同款修复）
             channelsClosed = true
+            pumpJob?.cancel()
             pumpJob = null
+            ocrJob?.cancel()
             ocrJob = null
             // ⚠️ 必须**取消**旧工人：只把它们从列表里丢掉的话，它们还挂在**旧通道**的 `hasNext()`
             // 上（通道关了以后会自己退出，但那是"迟早"）—— 下次提交会换一对新通道，谁读哪一对
@@ -767,6 +770,16 @@ class ChapterJobRunner<T>(
     }
 
     private fun publish() {
+        // 队列取空不代表章节完成：API/OCR 仍可能在途。暂停和取消也要等旧项退出，
+        // 才能将执行权交给下一章；恢复较早提交的章节不能抢占当前章。
+        val owner = inFlight.values.firstOrNull()?.runtime
+            ?: runtimes.firstOrNull { it.state == ChapterJobState.RUNNING }
+            ?: runtimes.firstOrNull { it.state == ChapterJobState.QUEUED }
+        runtimes.forEach { rt ->
+            if (rt.state == ChapterJobState.RUNNING || rt.state == ChapterJobState.QUEUED) {
+                rt.state = if (rt === owner) ChapterJobState.RUNNING else ChapterJobState.QUEUED
+            }
+        }
         _jobs.value = runtimes.map {
             ChapterJob(
                 chapterIndex = it.chapterIndex,

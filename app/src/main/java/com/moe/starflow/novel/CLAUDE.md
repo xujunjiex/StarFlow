@@ -430,6 +430,8 @@ MOBI/AZW、FB2、PDF、RAR/7z 小说包当前没有对应解析器，不应在�
 `NovelChapterJobHost` + `object NovelTranslationHub`（仿 `ReaderTranslationHub`：应用级 scope、
 按 `novelId` 缓存、实现 `ChapterJobSource` 并 `register`、**无 UI 且无任务时回收**并取消收集协程）。
 
+同一本书多章按提交顺序排队，仅一章处于 `RUNNING`，其余为 `QUEUED`；当前章在途批次全部结束后才启动下一章。暂停保留队列、等在途批次结束后跳过；继续不抢占当前章。章节卡片、浮层及通知栏对排队章显示“等待”；章内批次仍使用既有请求并发设置。
+
 **面板 UI（改了面板就必须跟着改这几处）**：
 - **字号层级（用户口径 2026-09-27）**：**筛选 tab 15sp > 章卡片标题 14sp > 页/段行 13sp**；按钮 12sp
 - 章行 = **卡片**（`item_novel_chapter_card.xml`）：章标题 14sp 加粗 +

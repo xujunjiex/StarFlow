@@ -372,12 +372,14 @@ class NovelChapterStateAdapter(
 
         val running = job?.state == ChapterJobState.RUNNING || job?.state == ChapterJobState.QUEUED
         val paused = job?.state == ChapterJobState.PAUSED
+        val queued = job?.state == ChapterJobState.QUEUED
         // ⚠️ `done` 把**失败也计进去了**（见 ChapterJob 注释）→ 成功/失败必须拆开显示，
         // 否则「跑到一半全失败」和「正常在跑」在卡片上长得一模一样（用户口径 2026-10-03）
         val okCount = job?.ok ?: 0
         val failCount = ((job?.done ?: 0) - okCount).coerceAtLeast(0)
         item.findViewById<TextView>(R.id.tv_chapter_badge).apply {
             text = when {
+                queued -> ctx.getString(R.string.reader_translate_state_waiting)
                 running -> ctx.getString(R.string.novel_chapter_running_split, okCount, failCount, job?.total ?: 0)
                 paused -> ctx.getString(R.string.novel_chapter_paused_split, okCount, failCount, job?.total ?: 0)
                 waitingCount > 0 -> ctx.getString(R.string.reader_translate_state_waiting)
