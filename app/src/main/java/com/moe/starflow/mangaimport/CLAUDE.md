@@ -84,12 +84,12 @@
 - **队列耗尽**：窗口内无可翻页 → 发 `ReaderTranslatePhase.QUEUE_DRAINED` → 顶栏显示「翻译队列已耗尽，翻页后继续」后消失；翻页经 `onCurrentPageChanged` 自动重启队列
 - **状态浮层带批次与页码**：分批时用管线传来的文案「识别中（1/2）…」「翻译中（2/2）…」（与截屏翻译对齐），后面拼 `· P%2$d`。批次判定靠 `onBatchResult` 置 `batchIndex=2`（管线回调只给 resId，不带批次）。队列页的**检测/翻译阶段照常上报**，只有成功/失败静音（否则连翻 10 页会弹 10 次"翻译完成"）
 - **管线复用**：分批走 `manga/pipeline/IncrementalBatchPipeline`（与截屏翻译同一套）；非分批走 `TranslationEngineInit.ensureReady` → `DetectionBridge.runOCR → ocrToBubbleRegions` → `TranslateUtils.translateBubbles`
-- **`ReaderTranslationController`**：三态、每页记录写库、`OcrLock` 互斥、渲染缓存 `renderLru`（~100MB，key=`page:idx:MODE`）
+- **`ReaderTranslationController`**：翻译模式、每页翻译记录和译图缓存（~100MB）；缓存 key 包含页号、显示模式和底图签名。超分职责见下方「阅读器超分职责与所有权」
 - ⚠️ **半成品必须用独立 key `page:<i>:PARTIAL`**：首批/流式结果上屏时本页状态还是 `TRANSLATING`，而 `cachedDisplayBitmap` 对 `TRANSLATING` **只查 PARTIAL**。写成 `renderKey` 会让首批结果**根本显示不出来**（分批形同虚设）；最终结果 `renderInto` 时 `remove(partialKey)`
 - ⚠️ **`TRANSLATING` 会永久卡死该页**：该状态在翻译**开始时**写库，只有跑完才改 `SUCCESS`。退出阅读器/崩溃会让记录永久停在「翻译中」→ 该页既不显示译文也再也翻不了。三层治理：①进阅读器 `dao.resetTranslating()` 清残留；②取消时用 `withContext(NonCancellable)` 退回 `IDLE`（普通 catch 里写库会被取消打断而写不进）；③`runTranslate` 开翻时先 `renderLru.remove(partialKey)`
 - ⚠️ **`rows` 必须用 `update{}` 原子更新，`fail()` 要 upsert 局部变量**：`rows.value = rows.value + x` 是读-改-写，与取消清理协程并发会丢更新；`dao.upsert(rows.value.getValue(i))` 还会因并发替换 map 而抛 `NoSuchElementException`
 - **进度条四色三层**（`ReaderProgressBar`，2026-10 加了超分那一层）：
-  ```
+  ```text
     ▓▓▓ 2dp 绿：已翻译（压在粗带**中间**）
     ███ 5dp 粗带：白=已读 / 灰=未读（黑白交界 = 当前阅读位置）
     ━━━ 3dp 紫：已超分（画在粗带**下方**）
@@ -362,6 +362,18 @@
   CJK 注释会吞掉后一个换行（曾把一条赋值吞进注释里，脚本静默走错分支）。
 
 
+### 阅读器超分职责与所有权
+
+`ReaderTranslationController` 保留阅读器和通知宿主使用的公开入口，以及 `SrAction`、`SrClickResult`、`SrChapterJob` 类型；超分工作委托给内部 `ReaderSuperResolution`。
+
+- `ReaderSuperResolution` 持有超分记录、产物索引、显示底图缓存、自动超分任务和 `SrChapterQueue`。原生调用仍通过 `SrProcessor`，未引入第二套调度或存储实现。
+- 控制器持有翻译记录、分页／Webtoon 译图缓存和 UI 回调；底图变更通过宿主接口作废译图并按当前 UI 绑定刷新。超分底图签名包含实际产物修订，迟到渲染仍须核对签名和渲染代次。
+- 控制器拥有自持 `ReaderPageSource`。超分组件借用来源，不关闭它；UI 解绑后加载入口切回自持来源、清除 Activity 回调，章节队列继续运行。
+- 本次解码的超分输入在执行退出后回收；借用 OCR 的输入由翻译流水线等待超分结束后回收。预览／导出返回独立副本由调用方回收，显示底图缓存淘汰仅移除引用。
+- 关闭阅读器取消页面自动超分并解绑 UI；完整关闭先取消并等待章节队列、在途工作退出，再释放来源。不能以发出取消信号代替实际结束。
+
+行为验证入口：`ReaderSuperResolutionTest`（后台执行、取消收尾、输入所有权及缓存通知）、`SrChapterQueueTest`（队列）和 `SrActionStateTest`（原控制器入口）。JVM 后端替身不代表原生推理已验证。
+
 ### 章节批量翻译
 
 > 用户口径：翻译本章要像模型下载一样**能在后台跑、通知栏看进度、可暂停/取消**，
@@ -373,7 +385,7 @@
 | `ChapterJobRunner<T>` | `translate/batch/`（**跨模块共用**，漫画/小说都用） | 纯协程调度：**OCR 串行 + 翻译并发 N + 按章暂停/取消/等待**。不依赖 Android，可纯 JVM 单测（`ChapterJobRunnerTest`） |
 | `TranslationJobs.kt` | `translate/batch/` | `ChapterJobState`/`ChapterJob`(`label`,`startPage`)/`ActiveChapterJob`/`ChapterJobSource`/`TranslationJobRegistry`（通知栏与前台服务的唯一数据源） |
 | `TranslationJobService` | `translate/batch/` | 前台服务（`dataSync`）：**单章一条、多章最多两条通知**（总进度及当前章；当前章可暂停/继续/取消，点击返回阅读器）。任务状态**不在这里**，只镜像 registry；registry 空了就 `stopSelf` |
-| `ReaderTranslationHub` | `mangaimport/translate/` | 漫画的**应用级宿主**：按 mangaId 缓存 `ReaderTranslationController`（应用级 scope）、实现 `ChapterJobSource`、无 UI 且无任务时 `releaseIfIdle` 回收 |
+| `ReaderTranslationHub` | `mangaimport/translate/` | 漫画的**应用级宿主**：按 `manga.translationKey`（位置、漫画类型和 UUID）缓存 `ReaderTranslationController`（应用级 scope）、实现 `ChapterJobSource`、UI 已解绑且章节翻译、超分及其收尾均结束时 `releaseIfIdle` 回收 |
 | `ReaderTranslationController` | 同上 | 控制器：两阶段单页翻译（见下）+ 章任务 API（`startChapterJob/pause/resume/cancel`）+ `chapterJobs`/`waitingPages` flow |
 
 **两阶段翻译是并发的关键**（`ocrPhase` / `translatePhase`）：
@@ -584,7 +596,7 @@
 默认 prefs），正好把这个 bug 掩盖掉。同一个坑 `anime4kPreviewFor` 的注释里早就写着。
 **给 SR/Anime4K 的任何一个 API 传 prefs 之前，先确认它是哪一份。**
 
-**「超分本章」任务**：`startSrChapterJob(chapterIndex, pages, request)` 提交到 `SrChapterQueue`，同书章节按提交顺序排队，章内逐页 `runSr` + 回收原图。排队时只保存页号及冻结的 `SrRequest`，不解码图片、不加载模型；轮到章节后先做模型预检，失败跳过本章。
+**「超分本章」任务**：`startSrChapterJob(chapterIndex, pages, request)` 提交到 `SrChapterQueue`，同书章节按提交顺序排队，由 `ReaderSuperResolution` 在章内逐页执行 `runSr` 并回收原图。排队时只保存页号及冻结的 `SrRequest`，不解码图片、不加载模型；轮到章节后先做模型预检，失败跳过本章。
 - `srChapterJobs`（StateFlow）包含当前及等待章节，宿主通过 `ChapterPanelState.srJobs` 推送面板；`srChapterJob` 保留当前章，用于忙碌及停止状态。等待章显示“等待”，主按钮取消该章；正在停止时禁用主按钮，直到原生退出。
 - `cancelSrChapterJob(chapterIndex)` 取消指定章，不影响其他章；无参数取消当前章并清空等待队列。取消当前章后必须等实际协程及原生收尾完成才交接，已完成产物保留。
 - 超分全局串行，不使用翻译的两阶段 `ChapterJobRunner`；与翻译和页面模式的互斥不变。

@@ -9,7 +9,7 @@
 **调试渲染子包 `manga/debug/`：** `MangaDebugOverlays.kt`（object：4 个 render*DebugOverlay 纯渲染函数 + applyCropDimming/createInfoPanelView/createToggleButton/MaxHeightScrollView 辅助）、`MangaDebugPanelController.kt`（全屏 debug overlay 窗口骨架 + 折叠状态机，4 个引擎共用的窗口管理）、`MangaDebugSliders.kt`（object：PP-OCRv5/v6 参数滑块面板构建器，注入 `CustomPreference` + `context`，无服务引用）。
 **滑块面板的控件构造全部收在 8 个私有 helper 里**（`panelContainer`/`sliderRow`/`sectionTitle`/`addSlider`(竖排 标签在上)/`addInlineSlider`(横排 标签在左)/`addSwitch`/`addLimitTypeToggle`/`addResetButton`）——两个公开入口只保留「刻度 + prefs key」，每个参数一条 `SliderSpec`。改滑块样式/尺寸只动 helper，不要在入口里重写控件。⚠️ 两个面板的**布局形态不同**：v5 的 `merge_gap` 是竖排、v6 的是横排内联；`large_box_ratio` 两边都是横排。
 ⚠️ **滑块刻度一律用 `LinearScale(lo, step, max)`（位置 k ↔ 取值 `lo + k*step`），不要再写一对互逆函数。** 散写的公式出过一串问题：`min_height` 默认 30 落在位置 11、而位置 11 代表 31（加载显示 30、一碰变 31）；`max_candidates` 1000→1006；`rec_batch_num` 显示 5 而实际是 6；`box_thresh` 0.3→0.2991；`limit_side_len` 的 snap 写法**不是单射**（100 个位置里有两个代表同一个值，拖了没反应）。改成三元组后两条性质是构造性保证的：**默认值精确落在格点上** + **单射**。新增参数必须登记进 `SCALE_REGISTRY`。
-⚠️ **UI 层无法用 `SeekBar.setProgress(k, true)` 模拟用户拖动**（第二个参数是 `animate` 不是 `fromUser`）—— 见根文件「高频踩坑」同名条目。
+⚠️ **UI 层无法用 `SeekBar.setProgress(k, true)` 模拟用户拖动**（第二个参数是 `animate` 不是 `fromUser`）—— 真实拖动通过触摸事件验证。
 回归守卫 `MangaDebugSlidersTest`（15 例：控件结构、标签序列、刻度逐位置全量检查、恢复默认、开关/limit_type 接线、真实触摸拖动）。
 这些函数从 `MangaFloatingService` 提取，无状态、依赖全部参数化；`show*DebugView` 等编排函数仍在主服务里，窗口骨架由 `MangaDebugPanelController` 承载。
 
@@ -267,7 +267,7 @@ PP-OCRv5 检测框可能倾斜（QuadBox 4 顶点非正交），全链路处理�
 ## 漫画翻译（自动翻页）
 
 **状态机（`manga/state/MangaAutoTranslateEngine.kt`，不是 `MangaFloatingService`）：**
-```
+```text
 IDLE（等变化）──sim<0.95──→ MOTION（等稳定）──连续2次sim≥0.95──→ STABLE（翻译）→ IDLE
 ```
 - IDLE：比较 `currentHash vs lastTranslatedHash`，相同则跳过
@@ -313,7 +313,7 @@ View 层并与 `imageMatrix` 逐帧同步，改动横跨 `ReaderAdapters`/`Zooma
 
 倍率取值规则（**唯一来源 `manga/render/OverlayRenderer.kt` 的 `readerRenderScale`**）：
 
-```
+```text
 上屏倍率 = max(显示倍率, 超分底图倍率)      显示倍率 = 显示宽 / 页图宽
 ```
 
@@ -337,3 +337,10 @@ View 层并与 `imageMatrix` 逐帧同步，改动横跨 `ReaderAdapters`/`Zooma
 ONNX 推理统一走 `OcrExecution.run`，取消信号随协程上下文传入 PP-OCR、RT-DETR 与 MangaOCR；同步解码循环也要检查取消。`NativeOperation` 发送终止信号后等待原生返回，返回前不关闭输入、输出或运行选项。ML Kit 每次请求持有独立输入和识别器，SDK 完成后回收，取消调用方不能提前回收 SDK 正在读取的图片。
 
 `OcrLock.acquire` 必须传实际执行任务及来源。心跳由锁持有者生命周期管理；取消中的原生任务不能被超时自愈抢占，任务真正完成后自动清理残留。自动阅读器在 OCR 完成后释放锁，文本推理使用本地翻译协调器。
+
+## 异步取消与位图所有权
+
+- `TranslateUtils` 等待异步回调时，取消路径可能不再收到引擎回调，必须由既有取消检查结束等待。看门狗与回调竞争同一 continuation 时用原子单次取出，避免重复恢复。
+- `TranslationCancelledException` 和协程 `CancellationException` 继续向上传递，不当作识别失败触发回退 OCR；取消标志贯穿渲染与保存，过期结果不能写库或上屏。
+- `OverlayRenderer.renderOverlay` 从源位图生成独立渲染结果。派生位图与异步渲染尚在使用时保留源图；切换渲染前取消旧任务，源图在其最后一个使用者退出后回收。
+- 复制模式和缓存结果仍使用当前帧的不可变映射。独立 WindowManager 窗口的触摸反馈由自身处理，不依赖 Activity 窗口焦点。

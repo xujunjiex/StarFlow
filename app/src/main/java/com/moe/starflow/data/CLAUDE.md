@@ -76,3 +76,11 @@
 - 漫画翻译：仅 `TranslatedBubble.isInMemoryCache = true` 时在 overlay 显示"⚡"
 - 漫画翻译：**数据库反序列化的 bubbles 永远不显示"⚡"**（`fromCache=true` 但 `isInMemoryCache=false`）
 - 底层规则：`OverlayRenderer.renderOverlay` 只检查 `region.isInMemoryCache`，不检查 `fromCache`。数据库反序列化走 `rebuildBubblesFromCache` 默认 `isInMemoryCache=false`
+
+## 历史译图与缓存生命周期
+
+- 有 `bubbleRects` 的历史记录按区域载荷实时渲染；旧记录没有该载荷时回退 `imagePath`。不能因统一新路径而丢掉旧译图。
+- `MangaViewerActivity` 的 `BitmapLruCache` key 包含条目、模式和替换规则指纹，并保持条目 ID 前缀。运行期淘汰、替换和筛选仅移除引用；只有视图释放后的整体关闭才回收缓存位图。异步结果交付前核对 ViewHolder 当前条目与模式，尚未交付的过期结果可以回收。
+- 重翻沿用条目原框选区域并保留历史 ID；完成后更新内存条目和详情，再作废该条目的各显示态缓存。不能仅更新数据库而继续绑定旧快照。
+- `TranslationCacheUtils.isSparseHash` 排除信息量过低的 hash，避免低纹理页面被相似度分组错误合并。pHash 展示保留完整 64 位（`%016X`），不截成低 32 位。
+- `ui/viewer/ZoomableImageView` 的旋转使用图片矩阵和旋转后的外接尺寸适配；三态切换、换页时复位旋转，不用 View 旋转绕过图片几何。

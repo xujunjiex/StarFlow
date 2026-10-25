@@ -429,8 +429,9 @@ MOBI/AZW、FB2、PDF、RAR/7z 小说包当前没有对应解析器，不应在�
 **共享基础设施在 `translate/batch/`（漫画共用，改它之前看 `translate/CLAUDE.md`）**：
 `ChapterJobRunner`（准备阶段串行 + 翻译阶段并发 N + 按章暂停/取消/等待）、`TranslationJobRegistry`
 （通知栏唯一数据源）、`TranslationJobService`（前台服务，**单章一条、多章总进度与当前章两条通知**）。小说侧的宿主是
-`NovelChapterJobHost` + `object NovelTranslationHub`（仿 `ReaderTranslationHub`：应用级 scope、
-按 `novelId` 缓存、实现 `ChapterJobSource` 并 `register`、**无 UI 且无任务时回收**并取消收集协程）。
+`NovelChapterJobHost` 与 `NovelTranslationHub` 使用应用级 scope，按 `book.translationKey`（位置、小说类型和 UUID）缓存宿主，实现 `ChapterJobSource` 并注册。数字 ID 可复用，标题和 `addedAt` 不作为当前书库的处理身份。
+
+宿主至少挂载过一次 UI 后，只有 UI 已解绑、准备态与章节及在途任务全部退出时才回收，同时取消对应收集协程。UI 解绑清除阅读器回调，保留后台章节任务；删除书籍通过 `shutdownBook` 等待宿主实际关闭。
 
 同一本书多章按提交顺序排队，仅一章处于 `RUNNING`，其余为 `QUEUED`；当前章在途批次全部结束后才启动下一章。暂停保留队列、等在途批次结束后跳过；继续不抢占当前章。章节卡片、浮层及通知栏对排队章显示“等待”；章内批次仍使用既有请求并发设置。
 

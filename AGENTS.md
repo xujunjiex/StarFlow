@@ -1,5 +1,15 @@
 # 仓库协作规则
 
+本文约定 StarFlow 的任务边界、源码与文档维护、验证及设备操作方式。
+
+## 任务范围与交付
+
+- 开工先核对当前改动和相关调用链，简述目标行为、预计影响范围及可复用实现；按任务复杂度控制说明长度。
+- 一次完成一个可独立验收的改动。功能修复、结构重构和无关清理分别安排；扩大到其他职责或子系统时说明必要的因果关系，不顺手扩展任务。
+- 新增或提取组件时明确状态、任务和资源的所有权：谁创建、谁更新、谁取消或释放。新增状态优先从已有事实派生；必须独立保存时明确同步入口和终结路径。
+- 复用现有入口和共享实现。新增抽象应解决具体的职责或依赖问题；文件变短、文件数增加或代码行数减少本身不作为优化成果。
+- 完成时说明实际行为与结构变化、验证结果及未验证部分；重命名、删除或迁移符号后同步核对相关指南。既有用户改动保留，不纳入无关整理。
+
 ## 项目与文档
 
 - StarFlow 是 Android 翻译应用。仓库源码和测试是当前实现的事实来源；引用规则前先核对代码。
@@ -34,10 +44,11 @@
 
 | 模块 | 指南 |
 |---|---|
-| 漫画引擎、渲染与处理流程 | `app/src/main/java/com/moe/starflow/manga/CLAUDE.md` |
-| 漫画书架与阅读器 | `app/src/main/java/com/moe/starflow/mangaimport/CLAUDE.md` |
-| 小说导入、阅读与翻译 | `app/src/main/java/com/moe/starflow/novel/CLAUDE.md` |
-| 翻译服务与截图流程 | `app/src/main/java/com/moe/starflow/translate/CLAUDE.md` |
-| 数据、缓存、历史与数据库 | `app/src/main/java/com/moe/starflow/data/CLAUDE.md` |
-| 模型下载与管理 | `app/src/main/java/com/moe/starflow/download/CLAUDE.md` |
-| 图片超分 | `app/src/main/java/com/moe/starflow/sr/CLAUDE.md` |
+| 漫画引擎、渲染与处理流程 | [manga/CLAUDE.md](app/src/main/java/com/moe/starflow/manga/CLAUDE.md) |
+| 漫画书架与阅读器 | [mangaimport/CLAUDE.md](app/src/main/java/com/moe/starflow/mangaimport/CLAUDE.md) |
+| 小说导入、阅读与翻译 | [novel/CLAUDE.md](app/src/main/java/com/moe/starflow/novel/CLAUDE.md) |
+| 翻译服务与截图流程 | [translate/CLAUDE.md](app/src/main/java/com/moe/starflow/translate/CLAUDE.md) |
+| 书库身份、存储、扫描与迁移 | [library/CLAUDE.md](app/src/main/java/com/moe/starflow/library/CLAUDE.md) |
+| 数据、缓存、历史与数据库 | [data/CLAUDE.md](app/src/main/java/com/moe/starflow/data/CLAUDE.md) |
+| 模型下载与管理 | [download/CLAUDE.md](app/src/main/java/com/moe/starflow/download/CLAUDE.md) |
+| 图片超分 | [sr/CLAUDE.md](app/src/main/java/com/moe/starflow/sr/CLAUDE.md) |

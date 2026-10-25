@@ -4,7 +4,7 @@
 
 ## 产品路径
 
-当前 11 个 2x 模型来自 downloadinfo.json；使用 ncnn。唯一页执行入口是 ReaderTranslationController.runSr → SrProcessor → NcnnSrEngine → JNI。Anime4K 是独立的 GLES3 阅读器显示处理，保留原有着色器与线程归属，不能当作模型超分成功结果。OCR 的 ONNX 依赖仍需保留。
+当前 11 个 2x 模型来自 downloadinfo.json；使用 ncnn。唯一页执行入口是 `mangaimport/translate/ReaderSuperResolution.runSr` → `SrProcessor` → `NcnnSrEngine` → JNI。Anime4K 是独立的 GLES3 阅读器显示处理，保留原有着色器与线程归属，不能当作模型超分成功结果。OCR 的 ONNX 依赖仍需保留。
 
 - 不使用邻页预加载、宽高跳过阈值、1080 短边限制、输出 10MP / 输入 2.5MP 隐藏上限。
 - 仅按用户 MP 阈值预处理，默认 1.5MP。输入 ≤ 阈值原图送模型；超过则 k=sqrt(阈值像素/原像素)，宽高向下取整。0 不主动压缩。
@@ -35,6 +35,6 @@ SrRequest 冻结任务参数和模型权重版本。参数变化保留旧产物�
 
 SrStore 使用书籍身份 + 稳定源页键，每页保留一个有效超分结果；图片使用不可变 UUID 修订，新图写入并验证后才提交新的不可变 JSON 修订引用，再删除旧图；SAF 不依赖原子重命名，失败保留旧图。产物没有容量上限，不按使用时间自动淘汰；仅清理无引用图片和中断写入的临时文件。删除增加页 generation 并取消任务，迟到输出不能恢复已删除结果；有效性检查与数据库过程记录独立。
 
-紫色进度条以实际可用产物为准，与 OCR/翻译成功无关。缺失/损坏文件显示结果已丢失。保存、删除刷新记录和底图；渲染缓存签名含真实产物修订，渲染中签名变化丢弃结果。预览不得回收缓存自持的 bitmap。
+紫色进度条以实际可用产物为准，与 OCR/翻译成功无关。缺失/损坏文件显示结果已丢失。保存、删除由 `ReaderSuperResolution` 更新记录和底图，并通知原控制器作废译图缓存；渲染缓存签名含真实产物修订，渲染中签名变化丢弃结果。预览不得回收缓存自持的 bitmap。
 
 全局历史数据库保留旧 schema v24，活动书库使用按目录分离的 `LibraryDatabase` v1：v21→22 增加小说 imagePayload；v22→23 增加 SR sourcePageKey/executionJson；v23→24 兼容性补列。两表页序重排使用同一个 Room 事务。记录包含请求与有效参数、尺寸、MP、后端、解码/等待/初始化/预处理/RGB/推理/保存/总耗时。修改状态字面量须同步 DAO 查询。

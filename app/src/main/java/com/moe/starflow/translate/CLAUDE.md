@@ -26,7 +26,7 @@
 - 主页语言切换限制已移除，翻译运行中也可在主页切换语言
 
 **状态机：**
-```
+```text
 IDLE（跳过OCR）──像素变化──→ CHANGED ──稳定1帧──→ STABLE_1 ──稳定2帧──→ STABLE_2（触发OCR）→ IDLE
 ```
 - IDLE：翻译完成后进入，像素不变则跳过 OCR（节省性能）
@@ -186,6 +186,8 @@ IDLE（跳过OCR）──像素变化──→ CHANGED ──稳定1帧──→
 
 ## 全局状态浮层 `TranslationStatusOverlay`
 
+所有显示入口在复用现有芯片时也必须确保窗口已经附着；窗口被系统移除或 `updateViewLayout` 失败后走既有重新附着流程，不能只相信内存中的显示标志。`showSticky` 仍自动到期，`dismiss()` 保留 sticky；其他并行任务提示按各自句柄移除。
+
 进程级单例 + `TYPE_APPLICATION_OVERLAY` 系统窗口，游戏/漫画/无障碍/阅读器/小说共用同一个浮窗
 （多条消息在竖直容器里堆叠，最多 3 条，超出排队）。位置与时长读 prefs：`Status_Position`
 （top/center/bottom）、`Status_Duration`（默认 2000ms），总开关 `status_overlay_enabled`。
@@ -242,7 +244,7 @@ IDLE（跳过OCR）──像素变化──→ CHANGED ──稳定1帧──→
 
 ### 架构
 
-```
+```text
 ScreenshotProvider（接口）
 ├── MediaProjectionProvider — Shooter 截图
 └── AccessibilityProvider — 无障碍服务截图
@@ -254,13 +256,12 @@ ScreenshotManager（单例）
 
 ### 前台服务
 
-MediaProjection 模式需要前台服务 + `FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION`，但**必须是「先按 SPECIAL_USE 起服务、切到 MP 才升级」**（Manifest 同时声明 `mediaProjection|specialUse`）——直接用 MEDIA_PROJECTION 起服务会 SecurityException 崩，见根文件「高频踩坑」。
+MediaProjection 截图需要前台服务与有效投影授权。按各服务在 Manifest 中声明的类型启动：`MangaFloatingService` 常驻阶段先使用 `SPECIAL_USE`，获得投影授权后升级为 `MEDIA_PROJECTION`；`FloatingBallService` 按自身截图授权路径启动 `mediaProjection` 服务。不能把漫画常驻服务的类型策略无条件复制到其他服务，也不能在未满足投影授权条件时直接启动投影类型。
 FloatingBallService 和 MangaFloatingService 在 MediaProjection 模式下自动启动前台服务。
 
 ## 章节翻译与超分共用的后台基础设施
 
-> 2026-10 新增。用户口径：阅读器里的「翻译本章」要像模型下载一样**能在后台跑、通知栏看进度、
-> 可暂停/继续/取消**；漫画因为要 OCR，**OCR 串行、翻译请求并发**。
+章节翻译在后台继续，通过通知查看和操作；准备阶段串行，翻译阶段按设置并发。超分复用通知与保活设施，执行仍由独立的串行队列负责。
 
 | 文件 | 职责 |
 |---|---|

@@ -2,7 +2,6 @@ package com.moe.starflow.sr
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.system.Os
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -15,12 +14,8 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
-import org.robolectric.annotation.Implementation
-import org.robolectric.annotation.Implements
 import java.io.File
 import java.io.RandomAccessFile
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 
 @RunWith(RobolectricTestRunner::class)
 @Config(shadows = [SrStoreTestOs::class])
@@ -132,20 +127,5 @@ class SrStoreRetentionTest {
 
         assertEquals("cunet", SrStore.modelOf(context, bookId, 0, bookKey))
         assertEquals("upconv7", SrStore.modelOf(context, bookId, 1, bookKey))
-    }
-}
-
-/** Robolectric does not implement Os.rename; exercise the real filesystem commit in these tests. */
-@Implements(Os::class)
-class SrStoreTestOs {
-    companion object {
-        @JvmStatic
-        @Implementation
-        fun rename(oldPath: String, newPath: String) {
-            Files.move(
-                File(oldPath).toPath(), File(newPath).toPath(),
-                StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING,
-            )
-        }
     }
 }
