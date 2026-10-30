@@ -24,16 +24,16 @@ import android.graphics.Bitmap
 import android.util.Base64
 import android.util.Log
 import com.moe.starflow.me.apiconfig.CustomPicAPIConfig
+import com.moe.starflow.translate.ImageTranslationPayload
+import com.moe.starflow.translate.ImageUpload
 import com.moe.starflow.translate.TranslationPicAPI
 import com.moe.starflow.translate.TranslationResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
@@ -49,12 +49,18 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
+/**
+ * 自定义图片翻译接口。
+ *
+ * 自定义配置只提供一个 JSON 文本响应路径，没有坐标字段 —— 因此结果永远是
+ * `blocks = emptyList()`，导入/插图侧会降级为文本面板。
+ * 本类**不回收调用方传入的 Bitmap**；只回收自己按长边上限生成的缩略上传副本。
+ */
 class CustomTranslationImage(private val config: CustomPicAPIConfig): TranslationPicAPI {
     private val coroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val inFlight = InFlightRequests()
-    private lateinit var base64Image: String
 
-    private val SOCKET_TIMEOUT = 10L
+    private val SOCKET_TIMEOUT = 30L
     private val JSON_TYPE = "application/json; charset=utf-8".toMediaType()
     private val MULTIPART_FORM_DATA = "multipart/form-data".toMediaType()
 
@@ -71,34 +77,32 @@ class CustomTranslationImage(private val config: CustomPicAPIConfig): Translatio
         callback: (TranslationResult) -> Unit
     ) {
         inFlight.track(coroutineScope) {
-            val tempFile = File.createTempFile("translate_", ".jpg")
+            val prepared = ImageUpload.prepare(pic)
+            var tempFile: File? = null
             try {
-                // 如果是multipart/form-data，需要保存临时文件
-                if (config.method == "POST" && config.contentType == "multipart/form-data") {
+                val base64Image = if (config.method == "POST" && config.contentType == "multipart/form-data") {
+                    tempFile = File.createTempFile("translate_", ".jpg")
                     withContext(Dispatchers.IO) {
-                        FileOutputStream(tempFile).use { out ->
-                            pic.compress(Bitmap.CompressFormat.JPEG, 100, out)
+                        FileOutputStream(tempFile!!).use { out ->
+                            prepared.bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
                         }
                     }
+                    ""
                 } else {
-                    // 提前计算bitmap的base64
-                    base64Image = convertBitmapToBase64(pic)
+                    withContext(Dispatchers.IO) { convertBitmapToBase64(prepared.bitmap) }
                 }
 
-                pic.recycle() // 回收bitmap
-
-                // 根据不同的请求方式执行请求
                 val result = when {
-                    config.method == "GET" -> executeGetRequest()
-                    config.contentType == "application/json" -> executePostJsonRequest()
-                    config.contentType == "multipart/form-data" -> executePostMultipartRequest(tempFile)
+                    config.method == "GET" -> executeGetRequest(base64Image)
+                    config.contentType == "application/json" -> executePostJsonRequest(base64Image)
+                    config.contentType == "multipart/form-data" -> executePostMultipartRequest(tempFile!!)
                     else -> throw Exception("Unsupported request type")
                 }
 
+                val payload = ImageTranslationPayload(blocks = emptyList(), text = result)
                 withContext(Dispatchers.Main) {
-                    callback(TranslationResult.Success(result))
+                    callback(TranslationResult.Success(result, payload))
                 }
-
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -107,15 +111,14 @@ class CustomTranslationImage(private val config: CustomPicAPIConfig): Translatio
                     callback(TranslationResult.Error(e))
                 }
             } finally {
-                // 确保清理临时文件
-                withContext(Dispatchers.IO) {
-                    tempFile.delete()
-                }
+                // 取消路径上 withContext 会立刻抛 CancellationException，临时文件/缩放副本会泄漏。
+                tempFile?.delete()
+                if (prepared.owned && !prepared.bitmap.isRecycled) prepared.bitmap.recycle()
             }
         }
     }
 
-    private fun executeGetRequest(): String {
+    private fun executeGetRequest(base64Image: String): String {
         // 构建URL，添加查询参数
         val urlBuilder = config.baseUrl.toHttpUrl().newBuilder()
 
@@ -142,7 +145,7 @@ class CustomTranslationImage(private val config: CustomPicAPIConfig): Translatio
         return executeRequest(request)
     }
 
-    private fun executePostJsonRequest(): String {
+    private fun executePostJsonRequest(base64Image: String): String {
         // 构建JSON请求体
         val jsonBody = JSONObject().apply {
             config.body.forEach { field ->
@@ -251,7 +254,7 @@ class CustomTranslationImage(private val config: CustomPicAPIConfig): Translatio
 
     private fun convertBitmapToBase64(bitmap: Bitmap): String {
         return ByteArrayOutputStream().use { outputStream ->
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 100, outputStream)
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 95, outputStream)
             Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
         }
     }

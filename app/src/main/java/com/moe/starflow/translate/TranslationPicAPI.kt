@@ -1,20 +1,3 @@
-/*
- * Copyright (C) 2024 murangogo
- *
- * This library is free software; you can redistribute it and/or modify it under
- * the terms of the GNU Lesser General Public License as published by the Free
- * Software Foundation; either version 3 of the License, or (at your option)
- * any later version.
- *
- * This library is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
- * FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public License along
- * with this library; if not, write to the Free Software Foundation, Inc.,
- * 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
- */
-
 package com.moe.starflow.translate
 import com.moe.starflow.translate.widget.*
 import com.moe.starflow.translate.autotranslate.*
@@ -22,9 +5,24 @@ import com.moe.starflow.translate.screenshot.*
 
 import android.graphics.Bitmap
 
+/**
+ * Cloud image translation provider (no local OCR).
+ *
+ * ### Bitmap ownership
+ * The caller owns [pic]. Implementations **must not** recycle it; they may create and
+ * recycle their own upload copy. This keeps the caller free to use the same bitmap for
+ * rendering after the callback.
+ */
 interface TranslationPicAPI {
 
-    // 异步翻译方法
+    /**
+     * Asynchronously translate an image.
+     *
+     * On success the callback receives [TranslationResult.Success] with an
+     * [ImageTranslationPayload] (possibly empty `blocks`). On failure it receives
+     * [TranslationResult.Error]. Callbacks should arrive on the main thread, matching the
+     * existing text engines.
+     */
     fun getTranslation(
         pic: Bitmap,
         sourceLanguage: String,
@@ -32,9 +30,9 @@ interface TranslationPicAPI {
         callback: (TranslationResult) -> Unit
     )
 
-    // 用于取消正在进行的翻译任务
+    /** Cancel all in-flight requests owned by this instance. */
     fun cancelTranslation()
 
-    // 释放资源
+    /** Cancel and release the provider's coroutine scope. */
     fun release()
 }

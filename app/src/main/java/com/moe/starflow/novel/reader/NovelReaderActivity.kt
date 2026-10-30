@@ -1,5 +1,7 @@
 package com.moe.starflow.novel.reader
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
@@ -66,7 +68,9 @@ import com.moe.starflow.ui.reader.ReaderTranslateModePopup
 import com.moe.starflow.translate.batch.ChapterJobState
 import com.moe.starflow.translate.batch.ReaderTranslationNotify
 import com.moe.starflow.translate.batch.TranslationJobService
+import com.moe.starflow.translate.ImageTranslatorFactory
 import com.moe.starflow.utils.CustomPreference
+import com.moe.starflow.utils.TranslationExecutionMode
 import com.moe.starflow.utils.LogCollector
 import com.moe.starflow.utils.TranslationConcurrency
 import com.moe.starflow.utils.ReaderDialogs
@@ -759,6 +763,8 @@ class NovelReaderActivity : AppCompatActivity() {
         }
         enginePrefsListener = null
         translationJob?.cancel()
+        imagePipeline?.release()
+        imagePipeline = null
         // ⚠️ 章任务**不取消**（应用级宿主继续跑）：只解绑 UI + 撤监听，让宿主能在"没有 UI
         // 且没有任务"时被回收。译文已经写库，回到阅读器直接读得到。
         jobFinishedListener?.let { chapterHost?.removeJobFinishedListener(it) }
@@ -1414,7 +1420,12 @@ class NovelReaderActivity : AppCompatActivity() {
             showOverlayToast(getString(R.string.novel_image_already_translating), error = false)
             return
         }
-        if (runCatching { TranslatorFactory.createForText(this, CustomPreference.getInstance(this)) }.getOrNull() == null) {
+        if (TranslationExecutionMode.isImage(this)) {
+            if (!ImageTranslatorFactory.isConfigured(this, CustomPreference.getInstance(this))) {
+                showOverlayToast(getString(R.string.image_translate_api_not_configured), error = true)
+                return
+            }
+        } else if (runCatching { TranslatorFactory.createForText(this, CustomPreference.getInstance(this)) }.getOrNull() == null) {
             showOverlayToast(getString(R.string.novel_image_need_config), error = true)
             return
         }
@@ -1479,7 +1490,14 @@ class NovelReaderActivity : AppCompatActivity() {
                     refreshImageChrome()
                 }
                 refreshChapterStats()
-                showOverlayToast(getString(R.string.novel_image_translated, payload.blocks.size), error = false)
+                if (payload.blocks.isEmpty() && !payload.plainText.isNullOrBlank()) {
+                    showOverlayToast(getString(R.string.image_translate_text_only), error = false)
+                    if (chapter == chapterIndex && !isFinishing) {
+                        showImageTextDialog(payload.translatedText)
+                    }
+                } else {
+                    showOverlayToast(getString(R.string.novel_image_translated, payload.blocks.size), error = false)
+                }
             } finally {
                 if (imageJob === coroutineContext[Job]) {
                     imageJob = null
@@ -1496,10 +1514,29 @@ class NovelReaderActivity : AppCompatActivity() {
 
     /** 三态循环（译文 → 识别原文 → 原图 → 译文）。 */
     private fun cycleImageVisual(paraIndex: Int) {
+        val payload = imageTranslations[paraIndex]
+        if (payload != null && payload.blocks.isEmpty() && !payload.plainText.isNullOrBlank()) {
+            showImageTextDialog(payload.translatedText)
+            return
+        }
         val next = imageVisualOf(paraIndex).next()
         imageVisuals[paraIndex] = next
         refreshImageChrome()
         showOverlayToast(getString(visualLabelRes(next)), error = false)
+    }
+
+    /** 图片接口只返回文本时的整段译文弹窗；复制/关闭与其它阅读器弹窗同一套配色。 */
+    private fun showImageTextDialog(text: String) {
+        if (text.isBlank()) return
+        ReaderDialogs.show(this, NovelPanelStyle.isDarkBackground(bgMode, prefs)) {
+            setTitle(R.string.image_translate_text_title)
+            setMessage(text)
+            setPositiveButton(R.string.user_known, null)
+            setNeutralButton(R.string.image_translate_copy) { _, _ ->
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("image translation", text))
+            }
+        }
     }
 
     /**

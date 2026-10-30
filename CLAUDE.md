@@ -56,7 +56,7 @@ Gradle 已启用 daemon、缓存和增量构建。测试范围与设备操作遵
 - 书库运行时身份包含位置、作品类型和 UUID，不能依赖数字 ID 或标题。捕获的 `LibrarySession` 固定数据库与后端，迟到任务仍需校验身份、代次和删除状态，详见 [书库存储](app/src/main/java/com/moe/starflow/library/CLAUDE.md)。
 - `OcrLock` 保护原生 OCR 与超分；调用实际退出前保持互斥。取消协程不等于原生已经停止，不能提前释放锁。获取时登记执行 Job、来源和心跳。
 - `LocalTranslationCoordinator` 串行化本地 NLLB／llama.cpp 文本翻译；远端 API 不使用这把锁。成功、错误、取消和同步异常都必须释放本次持有资源。
-- `TranslationExecutionMode` 控制本地 OCR／文本翻译的翻译或仅 OCR 模式；图片直传另走其流程。`TranslationBusyRegistry` 的登记覆盖实际异步请求，而不只覆盖截屏函数调用。
+- `TranslationExecutionMode` 控制三种全局执行模式：文本翻译、仅 OCR、图片直传。图片直传把截图／阅读器页图交给百度、腾讯云或自定义图片接口，不获取 `OcrLock`、不加载本地 OCR；接口带坐标时画回原图，仅返回文本时走文本面板。文本翻译、仅 OCR 和小说正文始终走原文本链路，`TranslateTools` 文本调用方显式传 `forImage = false`。`TranslationBusyRegistry` 的登记覆盖实际异步请求，而不只覆盖截屏函数调用。
 - OCR 已完成与译文可用使用显式状态区分。普通翻译复用有效 OCR；不能用 `translatedText == null` 猜测处理状态。
 - 修改 Room 实体同步核对版本、迁移和旧载荷兼容。全局历史库与位置隔离的活动书库职责不同，见 [数据模块](app/src/main/java/com/moe/starflow/data/CLAUDE.md)。
 - 本次新解码、尚未交付的位图由执行方释放；缓存或 View 仍可能持有的位图不能在运行期淘汰时主动回收。取消与异常路径同样遵守资源所有权。

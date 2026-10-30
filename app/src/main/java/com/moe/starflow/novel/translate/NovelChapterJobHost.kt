@@ -228,6 +228,8 @@ class NovelChapterJobHost(
     /** 模型 / 引擎配置变了 → 丢掉缓存的那份（下次用到时按新配置重建）。 */
     fun invalidateTranslator() {
         translatorCache = null
+        imagePipeline?.release()
+        imagePipeline = null
     }
 
     // ===== 流水线 =====

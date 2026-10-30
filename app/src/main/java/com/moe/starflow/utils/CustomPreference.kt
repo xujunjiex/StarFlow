@@ -36,7 +36,8 @@ class CustomPreference private constructor(context: Context) {
     //App_Language(Str)：用户选择的应用语言
 
     //----翻译选项----
-    //Translate_Mode(Int)：0为本地OCR后进行文本翻译；1为上传截图后进行图片翻译
+    //Translate_Mode(Int)：旧版兼容镜像（0=文本翻译，1=图片直传）；业务判断统一用 TranslationExecutionMode
+    //translation_execution_mode(Int)：0=文本翻译，1=仅OCR，2=图片直传
     //Text_API(Int)：0为使用本地大模型；1为使用必应翻译；2为使用小牛翻译；3为使用火山引擎；4为使用Azure AI翻译；5为使用百度翻译；6为使用腾讯云；7为使用自定义API；8为使用聚合AI翻译
     //Text_AI(Int)：0为使用NLLB模型（本地机器翻译）
     //Pic_API(Int)：0为使用百度翻译；1为使用腾讯云；2为使用自定义API

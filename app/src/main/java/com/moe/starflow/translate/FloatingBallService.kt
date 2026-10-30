@@ -232,6 +232,7 @@ class FloatingBallService : LifecycleService() {
     // 初始化的翻译对象
     private var translatorText: TranslationTextAPI? = null
     private var translatorPic: TranslationPicAPI? = null
+    private var imageBusyToken: TranslationBusyRegistry.Token? = null
 
     // AI 上下文（仅游戏模式：OpenAI 兼容 API + 本地 LlamaCpp，见 ContextBudget）
     private val contextHistory = LinkedList<Pair<String, String>>()
@@ -502,7 +503,19 @@ class FloatingBallService : LifecycleService() {
     private fun currentGameOcrEngineValue(): Int =
         OcrEngineManager.getGameVideoOcrEngineGroup(prefs.getSharedPreferences()).gameEngine
 
-    private fun getOcrEngineName(): String = engineLabel(currentGameOcrEngineValue())
+    private fun getOcrEngineName(): String =
+        if (TranslationExecutionMode.isImage(this)) {
+            getString(R.string.engine_status_image, ImageTranslatorFactory.label(this, prefs))
+        } else {
+            engineLabel(currentGameOcrEngineValue())
+        }
+
+    /** 图片模式不创建本地 OCR；从图片模式切回文本模式时按需创建。 */
+    private fun ensureOcrEngine() {
+        if (!::ocrEngine.isInitialized) {
+            ocrEngine = GameOcrEngine(this) { msg -> showToast(msg, true) }
+        }
+    }
 
     /**
      * 游戏模式竖排读取方向（`Game_Text_Direction`）。
@@ -642,11 +655,14 @@ class FloatingBallService : LifecycleService() {
                 key == GameRecentResults.KEY_HIDE -> applyResultOverlayVisibility()
                 // 翻译模型切换：重建 translator（共享 Hy-MT2 实例由 Holder 换出/重建，无需重启服务）
                 key == "Text_API" || key == "Text_AI" -> {
-                    if (prefs.getInt("Translate_Mode", Constants.TranslateMode.TEXT.id) == Constants.TranslateMode.TEXT.id) {
+                    if (!TranslationExecutionMode.isImage(this)) {
                         translatorText = TranslatorFactory.create(this, prefs, TranslatorFactory.Mode.GAME)
                         if (translatorText == null) LogCollector.e(TAG, "翻译引擎重建失败")
                     }
                 }
+                // 执行模式/图片接口切换：图片接口与文本接口不是同一套实例，必须重建
+                key == TranslationExecutionMode.KEY ||
+                    key == "Pic_API" || key == "Custom_Pic_API" -> rebuildTranslatorForMode()
                 key in watchedKeys -> checkLanguageHints()
                 // 悬浮球大小 / 透明度：设置页拖完立刻应用到在屏的球
                 key in FloatingBallStyle.KEYS -> applyBallStyle()
@@ -709,40 +725,21 @@ class FloatingBallService : LifecycleService() {
         LogCollector.d(TAG, "缓存管理器初始化完成")
 
         // 初始化翻译API
-        LogCollector.d(TAG, "开始初始化翻译 API, Text_API=${prefs.getInt("Text_API", Constants.TextApi.BING.id)}")
+        LogCollector.d(TAG, "开始初始化翻译 API, Text_API=${prefs.getInt("Text_API", Constants.TextApi.BING.id)}, imageMode=${TranslationExecutionMode.isImage(this)}")
         try {
-            if (prefs.getInt("Translate_Mode", Constants.TranslateMode.TEXT.id) == Constants.TranslateMode.TEXT.id){
+            if (TranslationExecutionMode.isImage(this)) {
+                translatorPic = ImageTranslatorFactory.create(this, prefs)
+                if (translatorPic == null) {
+                    LogCollector.e(TAG, "图片翻译 API 初始化失败")
+                    showToast(getString(R.string.image_translate_api_not_configured), true)
+                }
+            } else {
                 translatorText = TranslatorFactory.create(this, prefs, TranslatorFactory.Mode.GAME)
                 if (translatorText == null) {
                     LogCollector.e(TAG, "翻译 API 初始化失败")
                     showToast(getString(R.string.toast_engine_init_failed))
                 }
-            }else{
-                when (prefs.getInt("Pic_API", Constants.PicApi.BAIDU.id)){
-                    Constants.PicApi.BAIDU.id -> {
-                        translatorPic = BaiduTranslationImage(KeystoreManager.retrieveKey(this, "Baidu_Translate_ACCOUNT")!!, KeystoreManager.retrieveKey(this, "Baidu_Translate_SECRETKEY")!!)
-                        LogCollector.d(TAG, "翻译 API 初始化: Baidu Image Translation")
-                    }
-                    Constants.PicApi.TENCENT.id -> {
-                        translatorPic = TencentTranslationImage(KeystoreManager.retrieveKey(this, "Tencent_Cloud_ACCOUNT")!!, KeystoreManager.retrieveKey(this, "Tencent_Cloud_SECRETKEY")!!)
-                        LogCollector.d(TAG, "翻译 API 初始化: Tencent Image Translation")
-                    }
-                    Constants.PicApi.CUSTOM_PIC.id -> {
-                        val apiList = ConfigurationStorage.loadPicConfigList(prefs)
-                        val selectedIndex = prefs.getInt("Custom_Pic_API", 0)
-                        if (apiList.isEmpty() || selectedIndex >= apiList.size) {
-                            LogCollector.e(TAG, "No Custom Pic API Config Found")
-                            showToast(getString(R.string.toast_no_custom_pic_api))
-                        } else {
-                            translatorPic = CustomTranslationImage(apiList[selectedIndex].config)
-                            LogCollector.d(TAG, "翻译 API 初始化: Custom Pic API")
-                        }
-                    }
-                    else -> {
-                        LogCollector.e(TAG, "Unknown Pic API: ${prefs.getInt("Pic_API", 0)}")
-                        showToast(getString(R.string.toast_unknown_translator))
-                    }
-                }
+                ensureOcrEngine()
             }
         } catch (e: Exception){
             LogCollector.e(TAG, "翻译 API 初始化失败", e)
@@ -763,9 +760,11 @@ class FloatingBallService : LifecycleService() {
         // 新会话开始：翻译器刚创建（或拿到共享的 LlamaCpp 实例）→ 清掉可能残留的上下文
         clearContext()
 
-        // 初始化 OCR 引擎
-        ocrEngine = GameOcrEngine(this) { msg -> showToast(msg, true) }
-        LogCollector.d(TAG, "OCR 引擎初始化: ${getOcrEngineName()}")
+        // 初始化 OCR 引擎（图片模式完全不使用本地 OCR）
+        if (!TranslationExecutionMode.isImage(this)) {
+            ensureOcrEngine()
+            LogCollector.d(TAG, "OCR 引擎初始化: ${getOcrEngineName()}")
+        }
         // 游戏调试开关同时打开 det 后处理的逐框诊断（默认关闭、零开销）
         com.moe.starflow.manga.engine.PPOcrDetGeometry.enableDebugLogging = isGameDebugEnabled()
 
@@ -1159,6 +1158,12 @@ class FloatingBallService : LifecycleService() {
 
     /** 引擎标签的本地化跟随**弹窗上下文**：Service 自己的 Resources 不随 App_Language 变。 */
     private fun getOcrEngineLabel(ctx: android.content.Context): String {
+        if (TranslationExecutionMode.isImage(ctx)) {
+            return ctx.getString(
+                R.string.engine_status_image,
+                ImageTranslatorFactory.label(ctx, prefs),
+            )
+        }
         val engineVal = currentGameOcrEngineValue()
         val label = engineLabel(engineVal, ctx)
         LogCollector.d(TAG, "getOcrEngineLabel: raw=$engineVal → label=$label")
@@ -1170,13 +1175,32 @@ class FloatingBallService : LifecycleService() {
      * 只循环当前游戏/视频实际 OCR 引擎支持的语言，跳过不支持的。
      */
     private fun cycleSourceLang() {
-        val next = com.moe.starflow.utils.OcrEngineManager.cycleFloatingSourceLang(
-            prefs.getSharedPreferences(), gameVideo = true
-        )
-            ?: run { showToast(getString(R.string.no_available_ocr_model), true); return }
+        val next = if (TranslationExecutionMode.isImage(this)) {
+            cycleImageSourceLang()
+        } else {
+            com.moe.starflow.utils.OcrEngineManager.cycleFloatingSourceLang(
+                prefs.getSharedPreferences(), gameVideo = true
+            )
+        } ?: run { showToast(getString(R.string.no_available_ocr_model), true); return }
         val langName = com.moe.starflow.translate.CustomLocale.getInstance(next).getDisplayName()
         showToast(getString(R.string.language_switched_to, langName), true)
         checkLanguageHints()
+    }
+
+    /** 图片模式的悬浮窗语言循环：只看图片接口语言表，不看 OCR 组。 */
+    private fun cycleImageSourceLang(): String? {
+        val allowed = ImageTranslatorFactory.supportedSourceLangs(this)
+        val cycle = com.moe.starflow.manga.config.OcrEngineGroup.FLOATING_COMMON_LANGS.filter { it in allowed }
+        if (cycle.isEmpty()) return null
+        val current = prefs.getString("Source_Language", "ja")
+        val idx = cycle.indexOf(current).coerceAtLeast(0)
+        for (i in 1..cycle.size) {
+            val next = cycle[(idx + i) % cycle.size]
+            if (next == current) return null
+            prefs.setString("Source_Language", next)
+            return next
+        }
+        return null
     }
 
     /**
@@ -1193,6 +1217,10 @@ class FloatingBallService : LifecycleService() {
 
     /** 循环切换 OCR 引擎：v5 → v6 → ML Kit → v5 */
     private fun cycleOcrEngine() {
+        if (TranslationExecutionMode.isImage(this)) {
+            showToast(getString(R.string.image_mode_ocr_engine_disabled), true)
+            return
+        }
         val current = currentGameOcrEngineValue()
         val currentIdx = engineCycle.indexOf(current).coerceAtLeast(0)
 
@@ -1286,6 +1314,18 @@ class FloatingBallService : LifecycleService() {
      * 4. 俄文 + PP引擎 + RU未下载 → 提示下载
      */
     private fun checkLanguageHints() {
+        if (TranslationExecutionMode.isImage(this)) {
+            val src = prefs.getString("Source_Language", "ja")
+            val supported = ImageTranslatorFactory.supportedSourceLangs(this)
+            if (supported.isNotEmpty() && src !in supported) {
+                Toast.makeText(
+                    this,
+                    getString(R.string.image_language_unsupported, src),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+            return
+        }
         val currentOcr = currentGameOcrEngineValue()
         val isPPv5 = currentOcr == 1   // PP-OCRv5
         val isMangaOcr = currentOcr == 2  // manga-ocr
@@ -1390,6 +1430,10 @@ class FloatingBallService : LifecycleService() {
     private fun startAutoTranslate() {
         if (TranslationExecutionMode.isOcrOnly(this)) {
             showToast(getString(R.string.execution_ocr_only_auto_disabled), true)
+            return
+        }
+        if (TranslationExecutionMode.isImage(this) && translatorPic == null) {
+            showToast(getString(R.string.image_translate_api_not_configured), true)
             return
         }
         // ⚠️ 框选守卫必须排在最前：自动翻译是围绕框选区域的定时像素/OCR 循环，
@@ -1823,6 +1867,8 @@ class FloatingBallService : LifecycleService() {
         textRequest?.cancel()
         textRequest = null
         translatorPic?.cancelTranslation()
+        imageBusyToken?.release()
+        imageBusyToken = null
         releaseLocalTranslationLock()
         isTranslating.set(false)
         exitScreenshotBusy()
@@ -2014,7 +2060,7 @@ class FloatingBallService : LifecycleService() {
 
     private suspend fun processScreenshotCancellable(bitmap: Bitmap) {
         try {
-            if (prefs.getInt("Translate_Mode", 0) == 0) {
+            if (!TranslationExecutionMode.isImage(this)) {
                 val engine = autoTranslateEngine
                 if (engine != null && isAutoTranslating) {
                     // 第一步：像素快检
@@ -2181,11 +2227,7 @@ class FloatingBallService : LifecycleService() {
                     }
                 }
             } else {
-                updateDebugStatus("【翻译中】图片翻译")
-                statusOverlay.show(getString(R.string.text_translate_translating))
-                ballStateManager?.setState(BallStateManager.State.Translating)
-                val bitmapCopy = bitmap.copy(bitmap.config!!, true)
-                translateByPic(bitmapCopy)
+                processImageScreenshot(bitmap)
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
@@ -2210,6 +2252,41 @@ class FloatingBallService : LifecycleService() {
     }
 
 
+
+    /**
+     * 执行模式 / 图片接口变化：停止在途与自动翻译，释放旧翻译器，按新模式重建。
+     * 图片模式不初始化本地 OCR；切回文本模式时按需创建。
+     */
+    private fun rebuildTranslatorForMode() {
+        try {
+            if (isTranslating.get()) cancelInFlightTranslation(showMessage = false)
+            if (isAutoTranslating) stopAutoTranslate()
+            translatorText?.release()
+            translatorText = null
+            translatorPic?.release()
+            translatorPic = null
+            if (TranslationExecutionMode.isImage(this)) {
+                translatorPic = ImageTranslatorFactory.create(this, prefs)
+                if (translatorPic == null) {
+                    showToast(getString(R.string.image_translate_api_not_configured), true)
+                } else {
+                    showToast(
+                        getString(R.string.image_translate_api_configured, ImageTranslatorFactory.label(this, prefs)),
+                        true,
+                    )
+                }
+            } else {
+                translatorText = TranslatorFactory.create(this, prefs, TranslatorFactory.Mode.GAME)
+                ensureOcrEngine()
+                if (translatorText == null) {
+                    LogCollector.e(TAG, "翻译引擎重建失败")
+                }
+            }
+            clearContext()
+        } catch (e: Exception) {
+            LogCollector.e(TAG, "执行模式切换后重建翻译器失败", e)
+        }
+    }
 
     /**
      * 清空 AI 上下文（内存历史 + 引擎里已推入的那份）。
@@ -2274,6 +2351,73 @@ class FloatingBallService : LifecycleService() {
             return translated
         }
         return processed
+    }
+
+    /**
+     * 图片模式截图入口：不跑本地 OCR，只做像素稳定门控后把图片交给图片接口。
+     *
+     * 自动翻译仍复用 [AutoTranslateEngine.checkPixel]（纯像素比较，不触发 OCR），
+     * 避免每 300ms 把同一画面反复上传烧额度。
+     */
+    private suspend fun processImageScreenshot(bitmap: Bitmap) {
+        if (translatorPic == null) {
+            statusOverlay.showError(getString(R.string.image_translate_api_not_configured))
+            ballStateManager?.setState(BallStateManager.State.Error)
+            isTranslating.set(false)
+            return
+        }
+
+        val engine = autoTranslateEngine
+        if (engine != null && isAutoTranslating) {
+            when (val decision = engine.checkPixel(bitmap)) {
+                is AutoTranslateEngine.Decision.Idle -> {
+                    updateDebugStatus("【IDLE】图片内容未变化，跳过上传")
+                    isTranslating.set(false)
+                }
+                is AutoTranslateEngine.Decision.Empty -> {
+                    // 图片模式不做 OCR，正常不会走到这里；保留兜底避免状态卡死。
+                    updateDebugStatus("【无内容】图片翻译")
+                    isTranslating.set(false)
+                }
+                is AutoTranslateEngine.Decision.PixelChanging -> {
+                    updateDebugStatus("【像素变化】", diffRatio = decision.diffRatio)
+                    isTranslating.set(false)
+                }
+                is AutoTranslateEngine.Decision.PixelStabilizing -> {
+                    if (decision.stableCount < 2) {
+                        updateDebugStatus("【像素稳定】${decision.stableCount}/2", diffRatio = decision.diffRatio)
+                        isTranslating.set(false)
+                    } else {
+                        updateDebugStatus("【上传图片】", diffRatio = decision.diffRatio)
+                        statusOverlay.showImmediate(getString(R.string.image_translating))
+                        ballStateManager?.setState(BallStateManager.State.Translating)
+                        translateByPic(copyForImageTranslation(bitmap))
+                    }
+                }
+                else -> {
+                    // checkPixel 不会返回缓存/文本决策；保留兜底避免状态卡死。
+                    isTranslating.set(false)
+                }
+            }
+        } else {
+            updateDebugStatus("【图片翻译中】")
+            statusOverlay.showImmediate(getString(R.string.image_translating))
+            ballStateManager?.setState(BallStateManager.State.Translating)
+            translateByPic(copyForImageTranslation(bitmap))
+        }
+    }
+
+    /** 截图位图会在 processScreenshot 的 finally 里回收，异步接口必须拿独立副本。 */
+    private fun copyForImageTranslation(bitmap: Bitmap): Bitmap? {
+        return try {
+            bitmap.copy(bitmap.config ?: Bitmap.Config.ARGB_8888, false)
+        } catch (e: OutOfMemoryError) {
+            LogCollector.e(TAG, "图片翻译复制位图失败", e)
+            null
+        } catch (e: Exception) {
+            LogCollector.e(TAG, "图片翻译复制位图失败", e)
+            null
+        }
     }
 
     // 文本翻译
@@ -2414,48 +2558,76 @@ class FloatingBallService : LifecycleService() {
         }
     }
 
-    private fun translateByPic(bitmap: Bitmap){
+    private fun translateByPic(bitmap: Bitmap?) {
+        if (bitmap == null) {
+            statusOverlay.showError(getString(R.string.image_translate_empty))
+            ballStateManager?.setState(BallStateManager.State.Error)
+            isTranslating.set(false)
+            exitScreenshotBusy()
+            return
+        }
+        val api = translatorPic
+        if (api == null) {
+            bitmap.recycle()
+            statusOverlay.showError(getString(R.string.image_translate_api_not_configured))
+            ballStateManager?.setState(BallStateManager.State.Error)
+            isTranslating.set(false)
+            exitScreenshotBusy()
+            return
+        }
+
         val generation = translationGeneration.incrementAndGet()
         val sourceLang = prefs.getString("Source_Language", "ja")
         val targetLang = prefs.getString("Target_Language", "zh")
+        val busyToken = TranslationBusyRegistry.begin()
+        imageBusyToken = busyToken
         LogCollector.d(TAG, "开始图片翻译: ${bitmap.width}x${bitmap.height}, $sourceLang → $targetLang")
-        translatorPic?.getTranslation(bitmap, sourceLang, targetLang){
-                result->
+        api.getTranslation(bitmap, sourceLang, targetLang) { result ->
+            // 接口实现不回收调用方位图；上传副本由这里负责。
+            if (!bitmap.isRecycled) bitmap.recycle()
+            busyToken.release()
+            if (imageBusyToken === busyToken) imageBusyToken = null
             lifecycleScope.launch(Dispatchers.Main) {
                 if (generation != translationGeneration.get()) return@launch
                 when (result) {
                     is TranslationResult.Success -> {
                         if (translationCancelled) {
                             LogCollector.d(TAG, "translateByPic: 用户已停止，忽略成功结果")
-                            return@launch
+                        } else if (result.translatedText.isBlank()) {
+                            LogCollector.e(TAG, "图片翻译返回空译文")
+                            updateDebugStatus("【错误】图片翻译返回空译文")
+                            statusOverlay.showError(getString(R.string.image_translate_empty))
+                            ballStateManager?.setState(BallStateManager.State.Error)
+                        } else {
+                            val elapsed = System.currentTimeMillis() - translateStartTime
+                            LogCollector.d(TAG, "图片翻译成功: ${result.translatedText.take(50)}..., 耗时: ${elapsed}ms")
+                            updateDebugStatus("【完成】图片翻译", elapsedMs = elapsed)
+                            statusOverlay.showImmediate(getString(R.string.image_translate_done))
+                            ballStateManager?.setState(BallStateManager.State.Completed)
+                            // 图片翻译没有原文文本：source 传 null —— 既不会覆盖「重新翻译」用的
+                            // lastTranslatedSource，也不会在开启「同时显示原文」时把上一次文本翻译的原文串进来
+                            showGameResult(source = null, translated = result.translatedText)
+                            autoTranslateEngine?.markIdle()
                         }
-                        val elapsed = System.currentTimeMillis() - translateStartTime
-                        LogCollector.d(TAG, "图片翻译成功: ${result.translatedText.take(50)}..., 耗时: ${elapsed}ms")
-                        updateDebugStatus("【完成】图片翻译", elapsedMs = elapsed)
-                        statusOverlay.showImmediate(getString(R.string.translating_done))
-                        ballStateManager?.setState(BallStateManager.State.Completed)
-                        // 图片翻译没有原文文本：source 传 null —— 既不会覆盖「重新翻译」用的
-                        // lastTranslatedSource，也不会在开启「同时显示原文」时把上一次文本翻译的原文串进来
-                        showGameResult(source = null, translated = result.translatedText)
                     }
                     is TranslationResult.Error -> {
                         if (translationCancelled) {
                             LogCollector.d(TAG, "translateByPic: 用户已停止，忽略错误")
-                            return@launch
-                        }
-                        LogCollector.e(TAG, "图片翻译失败", result.error)
-                        updateDebugStatus("【错误】图片翻译失败")
-                        statusOverlay.showError(
+                        } else {
+                            LogCollector.e(TAG, "图片翻译失败", result.error)
+                            updateDebugStatus("【错误】图片翻译失败")
+                            statusOverlay.showError(
                                 getString(
                                     R.string.translation_failed,
                                     result.error.message ?: getString(R.string.unknown_error)
                                 )
                             )
-                        ballStateManager?.setState(BallStateManager.State.Error)
-                        translationResultView.setText(getString(R.string.translation_failed, result.error.message))
-                        // 报错时停止自动翻译，让用户可以复制错误信息
-                        if (isAutoTranslating) {
-                            stopAutoTranslate()
+                            ballStateManager?.setState(BallStateManager.State.Error)
+                            translationResultView.setText(getString(R.string.translation_failed, result.error.message))
+                            // 报错时停止自动翻译，避免每 300ms 重复上传/报错
+                            if (isAutoTranslating) {
+                                stopAutoTranslate()
+                            }
                         }
                     }
                 }
@@ -2592,6 +2764,8 @@ class FloatingBallService : LifecycleService() {
             // 清理资源
             hideDebugOverlay()
             OCRTextRecognizer.cleanup()
+            imageBusyToken?.release()
+            imageBusyToken = null
             translatorText?.release()
             translatorPic?.release()
             handler.removeCallbacks(longPressRunnable)

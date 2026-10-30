@@ -78,6 +78,8 @@ internal object NovelImageOverlay {
         targetWidth: Int,
     ): Bitmap? {
         if (visual == NovelImageVisual.PLAIN) return null
+        // 图片接口只返回文本：没有坐标可画，阅读器用文本弹窗展示。
+        if (payload.blocks.isEmpty()) return null
         // ⚠️ 底图先取（它自己有缓存，命中就是一次 LRU 查找）：`renderScale` 由**实际底图宽**算出来，
         // 而底图宽取决于采样率（解码缓存按文件路径存、可能先被别的目标宽解过）—— 把倍率写进键里，
         // 才不会拿"上一次用另一个倍率渲的那张"顶上（那会糊一点点，且很难查）。

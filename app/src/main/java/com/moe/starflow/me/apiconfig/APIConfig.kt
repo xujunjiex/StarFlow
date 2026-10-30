@@ -38,6 +38,7 @@ import com.moe.starflow.utils.Constants
 import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.ServiceUtils
 import com.moe.starflow.utils.LogCollector
+import com.moe.starflow.utils.TranslationExecutionMode
 import com.moe.starflow.me.ManageActivity
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -49,7 +50,7 @@ class APIConfig : PreferenceFragmentCompat() {
 
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
         prefs = CustomPreference.getInstance(requireContext())
-        if(prefs.getInt("Translate_Mode", 0) == 0){
+        if(!TranslationExecutionMode.isImage(requireContext())){
             setPreferencesFromResource(R.xml.preferences_ocr, rootKey)
             allTranslationKeys = listOf(
                 "nllb_translation", "hymt2_translation",
@@ -83,7 +84,7 @@ class APIConfig : PreferenceFragmentCompat() {
             }
         }
 
-        if (prefs.getInt("Translate_Mode", 0) == 0){
+        if (!TranslationExecutionMode.isImage(requireContext())){
 
             findPreference<Preference>("manage_nllb_model")?.setOnPreferenceClickListener {
                 val intent = Intent(requireContext(), ManageActivity::class.java).apply {
@@ -288,7 +289,7 @@ class APIConfig : PreferenceFragmentCompat() {
         }
 
         // 获取当前设置
-        val translateMode = prefs.getInt("Translate_Mode", Constants.TranslateMode.TEXT.id)
+        val imageMode = TranslationExecutionMode.isImage(requireContext())
         val textApi = prefs.getInt("Text_API", Constants.TextApi.BING.id)
         val textAi = prefs.getInt("Text_AI", Constants.TextAI.NLLB.id)
         val picApi = prefs.getInt("Pic_API", Constants.PicApi.BAIDU.id)
@@ -296,7 +297,7 @@ class APIConfig : PreferenceFragmentCompat() {
 
         // 加载设置到UI上
         when {
-            translateMode == Constants.TranslateMode.TEXT.id -> when (textApi) {
+            !imageMode -> when (textApi) {
                 Constants.TextApi.AI.id -> {
                     val textAi = prefs.getInt("Text_AI", Constants.TextAI.NLLB.id)
                     if (textAi == Constants.TextAI.HYMT2.id) {
@@ -386,7 +387,7 @@ class APIConfig : PreferenceFragmentCompat() {
             findPreference<SwitchPreferenceCompat>(otherKey)?.isChecked = false
         }
         // 关闭动态 custom API switches
-        val isText = prefs.getInt("Translate_Mode", 0) == 0
+        val isText = !TranslationExecutionMode.isImage(requireContext())
         val categoryKey = if (isText) "ui_custom_cloud_api_translation_text" else "ui_custom_cloud_api_translation_pic"
         val category = findPreference<PreferenceCategory>(categoryKey)
         category?.let {

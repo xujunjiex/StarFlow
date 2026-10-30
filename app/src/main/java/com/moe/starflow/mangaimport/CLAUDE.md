@@ -69,6 +69,7 @@
 
 **阅读器内嵌翻译（`mangaimport/translate/`，feature/reader-translation）：**
 - PP-OCRv5/v6 与截屏翻译共用个性化的「PP 异常选区尺寸过滤」。普通、分批及章节识别经 `DetectionBridge` 在裁剪及分批前对整页检测框过滤，不在批次内重算阈值；已存 OCR／译文需重新识别才能应用设置，算法与参数见[漫画模块](../manga/CLAUDE.md)。
+- **图片直传模式**（`TranslationExecutionMode.isImage`）：`ocrPhase` 直接走 `imagePhase(page)`，用 `ImageTranslatorFactory` 请求整页图，**不获取 `OcrLock`、不调用 `TranslationEngineInit`**；`translatePhase` 先看 `PreparedPage.image`，有 `blocks` 时复用 `TranslatedBubble` / `renderInto`，无坐标时把整段文本落成成功行并只在当前页弹 `onImageText`。三态按钮在 `imageTextOf(page) != null` 时改为打开文本弹窗，不再循环空覆盖层。图片请求用 `TranslationBusyRegistry` 登记；文本翻译页/小说正文仍显式 `forImage = false`，不受图片语言表影响。
 - ⚠️ **在阅读器里跳「个性化设置」返回后必须 `recreate()`**：那一批参数（字号/颜色/字距行距/竖排方向/合并开关）是创建时读进缓存并被已渲染的译图固化的，就地刷新既漏项又容易只改一半。现场经 `onSaveInstanceState` 带过去（当前页 / 翻译模式 / 「这次是从设置返回」标记）。⚠️ 恢复模式的判据必须是 `restoredTranslateMode >= 0`（-1 = 不是从设置返回触发的重建）；写成 `!= MODE_MANUAL` 会把 -1 当模式塞进控制器 → **一进阅读器就自动开翻**（踩过，`ReaderMenuSheetTranslateTest` 有源码级守卫）
 - ⚠️ **阅读器面板（`ReaderMenuSheet`）新增任何控件必须做两件事**：① 接 `applyPanelTheme` —— 面板**不随全局主题**，按 `darkPanel`（跟阅读背景）翻转；「标签」进 `labelColor` 组、「值」进 `subColor` 组，**两组都要登记**（漏登记的控件在深色面板下保持布局默认深色字 → 压在同色背景上看不见）；② 字号与同面板邻居一致（说明行 12sp、正文行 14sp），**谨慎挂浅色背景 drawable**（如 `bg_preview_cell`，深色面板下就是一块白底）。文案一律双语（`values/` + `values-zh/`）。回归守卫：`ReaderMenuSheetTranslateTest`（面板底色 vs 文字色亮度差、与 OCR模型行字号相等）
 - **译文字号只有一个来源**：`utils/MangaFontSize.kt`（`PRESET_SIZES` 档位 / 自动 / 上下限都在它）。三个入口**都必须调它**：个性化设置页「字体大小」（**最初始的位置**）、悬浮窗菜单「字体大小」、阅读器翻译面板该行。直接写 `Manga_Font_Size`/`Manga_Auto_Font_Size` 的旧写法已收敛（游戏那套是独立的 `utils/CustomFontSize.kt`，两套**不要混用**——游戏是浮层 TextView 的 sp，漫画字号参与排版计算）。服务侧 `watchedKeys` 已含这两个键，改完实时生效
@@ -171,7 +172,20 @@
 - **阅读器**：顶部胶囊 = `章标题 · 章内第几页/本章共几页`（`reader_page_indicator_chapter`），
   **点它打开章节目录**（`ReaderChapterDialog`，每章带「已译 x/y」徽章）；底部进度条左右箭头 =
   **切章**（到头 toast「当前已是第一/最后一章」；单章漫画也照此 —— 翻页靠滑动/点击分区）。
-  进度条本体仍是**全书**口径（拖拽寻页、长按预览、绿条都是整本）。
+  **换章必有 app 内提示**（`notifyChapterIfChanged`，2026-10 用户口径）：箭头切章、目录/面板跳章、
+  翻页跨章（含 Webtoon 连续滚动）都会用 `notifyUser` 弹一条「已切换到 第N章 · 共 x 页」——
+  就是阅读器顶部那条应用内提示（`AppNotice`，位置在胶囊下方），不是系统 Toast。
+  判据是**章下标变化**：进阅读器落点那一章不提示（`notifiedChapterIndex` 首帧只记账），同章不重复提示；
+  连按箭头那种高频切换按 `CHAPTER_NOTICE_MIN_MS`（1s）节流 —— 提示可以少发一条，但**不能排队**
+  （浮层只有 3 个槽位，晚到的「已切换到第 2 章」会跟眼前那一章对不上）。
+  进度条本体 = **当前章**口径（2026-10 改动，用户口径：「按当前章节选择移动跳转，而不是所有章节」）：
+  拖拽/点击寻页、绿条（已翻译）、紫条（已超分）全都只表达本章，坐标系由 `ReaderProgressScope`
+  统一换算（章内页号 ↔ 全书页号）——与胶囊的「章内第几页/本章共几页」同一个口径，与小说阅读器一致。
+  ⚠️ 三处口径必须同源：`setPage` 喂章内页号，`onSeek` 加回 `startPage`，两条细色带的整本页集合
+  先过 `localPages()`（章外的页丢掉），否则区间会按整本刻度落到别的章上。
+  ⚠️ **翻页跨章时也要重刷色带**：Webtoon 滚动只走 `refreshOverlay()`（没有 `applyPageVisual` 那一拍），
+  两章页数相同时 `setPage` 不会重算区间 → 绿条紫条会停在上一条章的页号上。
+  长按预览网格仍是**整本**（`ReaderPagePreviewDialog` 按全书页号跳页）。
   ⚠️ **提示条紧贴胶囊下沿，且必须用屏幕坐标推**（2026-10-01 定稿，此前三版都被用户打回）：
   - 胶囊 `layout_marginTop` = **38dp**（两个阅读器一致；用户口径：「不要紧贴屏幕顶部」，
     但不许为了给提示让位而下移 —— 「这个位置不要动」）

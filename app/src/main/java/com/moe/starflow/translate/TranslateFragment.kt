@@ -62,6 +62,7 @@ import com.moe.starflow.utils.NotificationChecker
 import com.moe.starflow.utils.NotificationResult
 import com.moe.starflow.utils.ServiceUtils
 import com.moe.starflow.utils.ThemeManager
+import com.moe.starflow.utils.TranslationExecutionMode
 import com.moe.starflow.utils.UiUtils
 import com.moe.starflow.utils.UpdateResult
 import kotlinx.coroutines.launch
@@ -134,7 +135,10 @@ class TranslateFragment : Fragment() {
                 if (key == "Source_Language" || key == "Target_Language") {
                     refreshLanguageLabels()
                 }
-                if (key == "Ocr_Engine_Group" || key == "Text_API" || key == "Text_AI") {
+                if (key == "Ocr_Engine_Group" || key == "Text_API" || key == "Text_AI" ||
+                    key == TranslationExecutionMode.KEY || key == "Pic_API" || key == "Custom_Pic_API"
+                ) {
+                    refreshLanguageLabels()
                     refreshEngineStatusBar()
                 }
             }
@@ -187,10 +191,9 @@ class TranslateFragment : Fragment() {
                 // checkScreenshotMethod 放最后，因为它会弹出授权窗口并返回 false，
                 // 授权成功后由 ScreenCapturePermissionActivity 自动启动服务
                 if (checkAndroidSDK() && checkFloatingBall() && checkNotify() && checkTranslateAPI() && checkCombination() && checkScreenshotMethod("game")) {
-                    if ((prefs.getInt("Translate_Mode", Constants.TranslateMode.TEXT.id) == Constants.TranslateMode.TEXT.id) && (prefs.getInt(
-                            "Text_API",
-                            Constants.TextApi.BING.id
-                        ) == Constants.TextApi.AI.id) && (prefs.getInt("Text_AI", Constants.TextAI.NLLB.id) == Constants.TextAI.NLLB.id)
+                    if (!TranslationExecutionMode.isImage(requireContext()) &&
+                        prefs.getInt("Text_API", Constants.TextApi.BING.id) == Constants.TextApi.AI.id &&
+                        prefs.getInt("Text_AI", Constants.TextAI.NLLB.id) == Constants.TextAI.NLLB.id
                     ) {
                         checkRAM()
                     }
@@ -263,11 +266,12 @@ class TranslateFragment : Fragment() {
      * 调用时机：onViewCreated 初始化、首页手动选择语言、prefs 变化（悬浮窗内切换语言）时。
      */
     private fun refreshLanguageLabels() {
-        if ((prefs.getInt("Translate_Mode", Constants.TranslateMode.TEXT.id) == Constants.TranslateMode.TEXT.id) && (prefs.getInt("Text_API", Constants.TextApi.BING.id) == Constants.TextApi.CUSTOM_TEXT.id)) {
+        val imageMode = TranslationExecutionMode.isImage(requireContext())
+        if (!imageMode && prefs.getInt("Text_API", Constants.TextApi.BING.id) == Constants.TextApi.CUSTOM_TEXT.id) {
             binding.SourceLanguageName.text =
                 CustomLocale.getInstance(prefs.getString("Source_Language", "ja")).getDisplayName()
             binding.TargetLanguageName.text = getString(R.string.custom_api_select_language)
-        } else if ((prefs.getInt("Translate_Mode", Constants.TranslateMode.TEXT.id) == Constants.TranslateMode.PIC.id) && (prefs.getInt("Pic_API", Constants.PicApi.BAIDU.id) == Constants.PicApi.CUSTOM_PIC.id)) {
+        } else if (imageMode && prefs.getInt("Pic_API", Constants.PicApi.BAIDU.id) == Constants.PicApi.CUSTOM_PIC.id) {
             binding.SourceLanguageName.text = getString(R.string.custom_api_select_language)
             binding.TargetLanguageName.text = getString(R.string.custom_api_select_language)
         } else {
@@ -283,6 +287,17 @@ class TranslateFragment : Fragment() {
      * 调用时机：onViewCreated 初始化、OCR组/翻译引擎 prefs 变化。
      */
     private fun refreshEngineStatusBar() {
+        if (TranslationExecutionMode.isImage(requireContext())) {
+            binding.selectedAPI.text = getString(
+                R.string.engine_status_image,
+                com.moe.starflow.translate.ImageTranslatorFactory.label(requireContext(), prefs),
+            )
+            binding.engineSubtitle.text = getString(
+                R.string.engine_status_text_unaffected,
+                getCurrentTranslatorName(),
+            )
+            return
+        }
         val group = com.moe.starflow.utils.OcrEngineManager.getOcrEngineGroup(prefs.getSharedPreferences())
         binding.selectedAPI.text = getString(R.string.engine_status_ocr, getString(group.labelRes))
         binding.engineSubtitle.text = getString(R.string.engine_status_translator, getCurrentTranslatorName())
@@ -386,13 +401,13 @@ class TranslateFragment : Fragment() {
     }
 
     private fun checkTranslateAPI(): Boolean {
-        val translateMode = prefs.getInt("Translate_Mode", Constants.TranslateMode.TEXT.id)
+        val imageMode = TranslationExecutionMode.isImage(requireContext())
         val textApi = prefs.getInt("Text_API", Constants.TextApi.BING.id)
         val textAi = prefs.getInt("Text_AI", Constants.TextAI.NLLB.id)
         val picApi = prefs.getInt("Pic_API", Constants.PicApi.BAIDU.id)
 
         val ret: Boolean = when {
-            translateMode == Constants.TranslateMode.TEXT.id -> when (textApi) {
+            !imageMode -> when (textApi) {
                 Constants.TextApi.AI.id -> {
                     // 用磁盘文件检查 NLLB 是否已完整下载，替代旧的 Download_NLLB 布尔标记
                     val nllbDownloaded = ModelDownloadRepository.getInstance(requireContext())
@@ -955,14 +970,12 @@ class TranslateFragment : Fragment() {
     }
 
     private fun showLanguageListDialog(type: Int) {
-        if (((prefs.getInt("Translate_Mode", Constants.TranslateMode.TEXT.id) == Constants.TranslateMode.TEXT.id) && (prefs.getInt(
-                "Text_API",
-                Constants.TextApi.BING.id
-            ) == Constants.TextApi.CUSTOM_TEXT.id) && (type == 2)) || ((prefs.getInt(
-                "Translate_Mode",
-                Constants.TranslateMode.TEXT.id
-            ) == Constants.TranslateMode.PIC.id) && (prefs.getInt("Pic_API", Constants.PicApi.BAIDU.id) == Constants.PicApi.CUSTOM_PIC.id))
-        ) {
+        val imageMode = TranslationExecutionMode.isImage(requireContext())
+        val customTextSelection =
+            !imageMode && type == 2 && prefs.getInt("Text_API", Constants.TextApi.BING.id) == Constants.TextApi.CUSTOM_TEXT.id
+        val customPicSelection =
+            imageMode && prefs.getInt("Pic_API", Constants.PicApi.BAIDU.id) == Constants.PicApi.CUSTOM_PIC.id
+        if (customTextSelection || customPicSelection) {
             val dialog = AlertDialog.Builder(requireContext())
                 .setTitle(R.string.custom_api_select_language_title)
                 .setMessage(R.string.custom_api_select_language_content)
@@ -972,23 +985,33 @@ class TranslateFragment : Fragment() {
             dialog.show()
             dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
         } else {
-            // 源语言(type=1)：按当前 OCR 组排序置灰；目标语言(type=2)：按翻译模型过滤
-            val ocrGroup = if (type == 1) {
+            // 源语言(type=1)：文本模式按 OCR 组排序置灰；图片模式按图片接口语言表，不置灰。
+            // 目标语言(type=2)：文本模式按翻译模型过滤；图片模式只受图片接口语言表限制。
+            val ocrGroup = if (type == 1 && !imageMode) {
                 com.moe.starflow.utils.OcrEngineManager.getGameVideoOcrEngineGroup(prefs.getSharedPreferences())
             } else null
-            val locales = TranslateTools.getLanguagesList(requireContext(), type, ocrGroup) ?: return
+            val locales = TranslateTools.getLanguagesList(
+                requireContext(), type, ocrGroup, forImage = imageMode,
+            ) ?: return
             LogCollector.d(TAG, locales.toString())
-            val disabledTargets = if (type == 2) TranslateTools.getDisabledTargetLangs(prefs) else emptySet()
+            val disabledTargets = if (type == 2 && !imageMode) {
+                TranslateTools.getDisabledTargetLangs(prefs)
+            } else {
+                emptySet()
+            }
             // 只有「预制 Hy-MT2」才套官方 38 种目标语言白名单；用户导入的任意 GGUF 不限制（模型能力未知，交给用户）
-            val isLlamaCppEngine = prefs.getInt("Text_API", Constants.TextApi.BING.id) == Constants.TextApi.AI.id &&
+            val isLlamaCppEngine = !imageMode &&
+                prefs.getInt("Text_API", Constants.TextApi.BING.id) == Constants.TextApi.AI.id &&
                 prefs.getInt("Text_AI", Constants.TextAI.NLLB.id) == Constants.TextAI.HYMT2.id
             val isHyMt2 = if (isLlamaCppEngine) {
                 com.moe.starflow.llamacpp.LlamaCppModelStore.init(requireContext())
                 com.moe.starflow.llamacpp.LlamaCppModelStore.isHyMt2Active()
             } else false
             val enabled = when (type) {
-                1 -> locales.map { ocrGroup!!.sourceLangs.contains(it.getOriCode()) }
-                2 -> if (isHyMt2) {
+                1 -> if (imageMode) null else locales.map { ocrGroup!!.sourceLangs.contains(it.getOriCode()) }
+                2 -> if (imageMode) {
+                    null
+                } else if (isHyMt2) {
                     locales.map { it.getOriCode() in com.moe.starflow.llamacpp.LlamaCppLanguages.hyMt2SupportedCodes }
                 } else {
                     locales.map { it.getOriCode() !in disabledTargets }
@@ -1017,22 +1040,29 @@ class TranslateFragment : Fragment() {
                 enabled = enabled,
                 onDisabledClick = when (type) {
                     1 -> { locale ->
-                        val supportedNames = com.moe.starflow.manga.config.OcrEngineGroup.entries
-                            .map { com.moe.starflow.utils.OcrEngineManager.gameVideoGroup(it) }
-                            .distinct()
-                            .filter { it.sourceLangs.contains(locale.getOriCode()) }
-                            .joinToString(" / ") { getString(it.labelRes) }
-                        val msg = if (supportedNames.isEmpty()) {
-                            "该语言当前 OCR 模型不支持"
+                        if (imageMode) {
+                            AlertDialog.Builder(requireContext())
+                                .setMessage(getString(R.string.toast_lang_not_supported))
+                                .setPositiveButton(R.string.user_known, null)
+                                .create().also { it.window?.setBackgroundDrawableResource(R.drawable.dialog_background) }.show()
                         } else {
-                            "该语言当前 OCR 模型不支持，请使用 $supportedNames"
+                            val supportedNames = com.moe.starflow.manga.config.OcrEngineGroup.entries
+                                .map { com.moe.starflow.utils.OcrEngineManager.gameVideoGroup(it) }
+                                .distinct()
+                                .filter { it.sourceLangs.contains(locale.getOriCode()) }
+                                .joinToString(" / ") { getString(it.labelRes) }
+                            val msg = if (supportedNames.isEmpty()) {
+                                "该语言当前 OCR 模型不支持"
+                            } else {
+                                "该语言当前 OCR 模型不支持，请使用 $supportedNames"
+                            }
+                            AlertDialog.Builder(requireContext())
+                                .setMessage(msg)
+                                .setPositiveButton(R.string.user_known, null)
+                                .create().also { it.window?.setBackgroundDrawableResource(R.drawable.dialog_background) }.show()
                         }
-                        AlertDialog.Builder(requireContext())
-                            .setMessage(msg)
-                            .setPositiveButton(R.string.user_known, null)
-                            .create().also { it.window?.setBackgroundDrawableResource(R.drawable.dialog_background) }.show()
                     }
-                    2 -> { locale ->
+                    2 -> { _ ->
                         AlertDialog.Builder(requireContext())
                             .setMessage(getString(R.string.toast_lang_not_supported))
                             .setPositiveButton(R.string.user_known, null)

@@ -264,6 +264,22 @@ PP-OCRv5 检测框可能倾斜（QuadBox 4 顶点非正交），全链路处理�
 - 框选初始位置：`CropView.setRectCentered()` 延迟到布局完成后用 view 自身尺寸计算居中（游戏 90%×35%，漫画 80%×60%）
 - 框选触点响应区域：50px 半径（`POINT_RADIUS = 2500`）
 
+### 图片直传模式（悬浮窗）
+
+`TranslationExecutionMode.isImage` 为真时，`MangaFloatingService` 的截图流程在
+`processMangaScreenshotCancellable` 开头、调试/缓存/检测之前分流到
+`processMangaImageScreenshot`：不初始化 OCR/检测引擎、不拿 `OcrLock`，整张截图交给
+`ImageTranslatorFactory` 创建的当前图片接口。
+
+- 自动翻译仍用 `MangaAutoTranslateEngine` 的 pHash 门控，稳定后才上传；成功后更新
+  `lastTranslatedHash/lastTranslatedTime` 并重新排下一次检测。
+- 接口返回 `ImageTextBlock` 时映射为 `TranslatedBubble`（矩形、竖排方向、估算字号），复用
+  `renderAndShowMergedOverlay` 上屏并保存缓存；只返回文本（腾讯无坐标/自定义）时用
+  `TranslationResultView` 文本结果窗口（`showTextResult`），不伪造气泡。
+- 图片请求用 `TranslationBusyRegistry.Token` 登记，取消/迟到回调都能幂等释放；模式/图片接口
+  pref 变化时 `rebuildTranslatorForMode()` 停自动、重建接口，切回文本模式再补初始化 OCR。
+- 悬浮窗语言切换在图片模式只循环图片接口语言表 ∩ 常用语言，不经过 `OcrEngineManager`。
+
 ## 漫画翻译（自动翻页）
 
 **状态机（`manga/state/MangaAutoTranslateEngine.kt`，不是 `MangaFloatingService`）：**

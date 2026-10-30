@@ -22,7 +22,15 @@ import com.moe.starflow.translate.screenshot.*
 
 // 定义翻译结果的封装类
 sealed class TranslationResult {
-    data class Success(val translatedText: String) : TranslationResult()
+    /**
+     * @param image 图片翻译的附加载荷（文字块坐标）。文本翻译恒为 null。
+     *   图片接口即便只返回整段文本，也应带一个 blocks 为空的 payload，调用方可据此区分
+     *   “文字接口的普通成功”与“图片接口只返回文本”。
+     */
+    data class Success(
+        val translatedText: String,
+        val image: ImageTranslationPayload? = null,
+    ) : TranslationResult()
     data class Error(val error: Exception) : TranslationResult()
 }
 

@@ -67,17 +67,26 @@ data class NovelImageTextBlock(
 data class NovelImageTranslation(
     val sourceLang: String,
     val targetLang: String,
-    /** 认出这些字的 OCR 引擎（排查用；也用于"换了引擎想重认"的场景）。 */
+    /** 认出这些字的引擎（本地 OCR 或图片接口名，排查用）。 */
     val ocrEngine: String,
     val blocks: List<NovelImageTextBlock>,
+    /**
+     * 图片接口只返回整段文本、没有文字坐标时的兜底载荷。
+     *
+     * 有它时 [blocks] 为空：图片不画覆盖层，阅读器用文本弹窗展示译文；
+     * 但它仍然算“这张图已经翻过”（导出/进度/「已翻」判据都复用 [translatedText]）。
+     */
+    val plainText: String? = null,
 ) {
     /** 各块原文按换行拼接（写入 `sourceText` 列）。 */
     val sourceText: String get() = blocks.joinToString("\n") { it.original }
 
-    /** 各块译文按换行拼接（写入 `translatedText` 列）。 */
-    val translatedText: String get() = blocks.joinToString("\n") { it.translated }
+    /** 各块译文按换行拼接（写入 `translatedText` 列）；纯文本兜底时直接用 [plainText]。 */
+    val translatedText: String
+        get() = plainText?.takeIf { it.isNotBlank() }
+            ?: blocks.joinToString("\n") { it.translated }
 
-    val isEmpty: Boolean get() = blocks.isEmpty()
+    val isEmpty: Boolean get() = blocks.isEmpty() && plainText.isNullOrBlank()
 }
 
 /**
@@ -109,6 +118,7 @@ object NovelImagePayloadCodec {
             put("tl", t.targetLang)
             put("eng", t.ocrEngine)
             put("blocks", arr)
+            t.plainText?.takeIf { it.isNotBlank() }?.let { put("text", it) }
         }.toString()
     }
 
@@ -134,12 +144,14 @@ object NovelImagePayloadCodec {
                     fontSize = b.optDouble("f", 16.0).toFloat(),
                 )
             }
-            if (blocks.isEmpty()) return null
+            val plainText = o.optString("text").takeIf { it.isNotBlank() }
+            if (blocks.isEmpty() && plainText == null) return null
             NovelImageTranslation(
                 sourceLang = o.optString("sl"),
                 targetLang = o.optString("tl"),
                 ocrEngine = o.optString("eng"),
                 blocks = blocks,
+                plainText = plainText,
             )
         } catch (e: Exception) {
             null

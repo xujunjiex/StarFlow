@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.preference.PreferenceManager
+import com.moe.starflow.R
 import com.moe.starflow.data.TranslationCacheManager
 import com.moe.starflow.manga.OcrLock
 import com.moe.starflow.manga.engine.OcrExecution
@@ -18,11 +19,17 @@ import com.moe.starflow.manga.types.BubbleRegion
 import com.moe.starflow.manga.types.TextDirection
 import com.moe.starflow.manga.types.TranslatedBubble
 import com.moe.starflow.mangaimport.translate.TranslationEngineInit
+import com.moe.starflow.translate.ImageTextBlock
+import com.moe.starflow.translate.ImageTranslatorFactory
+import com.moe.starflow.translate.TranslationPicAPI
+import com.moe.starflow.translate.TranslationResult
 import com.moe.starflow.translate.TranslationTextAPI
 import com.moe.starflow.translate.isLocalHeavyEngine
 import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.LogCollector
 import com.moe.starflow.utils.OcrEngineManager
+import com.moe.starflow.utils.TranslationBusyRegistry
+import com.moe.starflow.utils.TranslationExecutionMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -30,8 +37,10 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.coroutines.resume
 
 /** 一次图片翻译的结果：[payload] 与 [error] 必有其一（都为空 = 调用方取消了）。 */
 class NovelImageOutcome(val payload: NovelImageTranslation?, val error: String?)
@@ -110,6 +119,25 @@ class NovelImagePipeline(
     private val appPrefs = PreferenceManager.getDefaultSharedPreferences(app)
     private val customPrefs = CustomPreference.getInstance(app)
 
+    private var picTranslator: TranslationPicAPI? = null
+    private var picTranslatorKey: String = ""
+
+    /** 释放图片接口（宿主换配置/退出时可选调用；不调用也只会随管线实例一起被回收）。 */
+    fun release() {
+        picTranslator?.release()
+        picTranslator = null
+    }
+
+    private fun imageTranslator(): TranslationPicAPI? {
+        val key = "${appPrefs.getInt("Pic_API", 0)}:${appPrefs.getInt("Custom_Pic_API", 0)}"
+        if (picTranslator == null || key != picTranslatorKey) {
+            picTranslator?.release()
+            picTranslator = ImageTranslatorFactory.create(app, customPrefs)
+            picTranslatorKey = key
+        }
+        return picTranslator
+    }
+
     /**
      * 翻一张插图。
      *
@@ -139,6 +167,9 @@ class NovelImagePipeline(
     ): NovelImageOutcome {
         if (isCancelled()) return NovelImageOutcome(null, null)
         if (!file.isFile) return NovelImageOutcome(null, "插图文件不存在")
+        if (TranslationExecutionMode.isImage(app)) {
+            return translateImageOnIo(file, sourceLang, targetLang, isCancelled)
+        }
         // ⚠️ **先校验语言与 OCR 引擎组是否兼容**：`DetectionBridge.runOCR` 在语言不受支持时
         // **静默返回空列表**（PP-OCRv5 的 ko/ru 没下 rec 模型时就是这样，manga-ocr 只认日文），
         // 直接去 OCR 的话用户看到的是"这张图里没识别到文字"—— 一个完全误导的错误。
@@ -191,6 +222,96 @@ class NovelImagePipeline(
             // renderOverlay 会自己 copy 出新的位图；OCR 用的这张用完就可以还给系统
             if (!base.isRecycled) base.recycle()
         }
+    }
+
+    /**
+     * 图片模式：解码插图 → 云端图片接口。有坐标就生成 blocks；只有文本则用 [NovelImageTranslation.plainText]。
+     * 全程不碰 [OcrLock]，也不初始化本地 OCR/检测模型。
+     */
+    private suspend fun translateImageOnIo(
+        file: File,
+        sourceLang: String,
+        targetLang: String,
+        isCancelled: () -> Boolean,
+    ): NovelImageOutcome {
+        val decoded = decodeForOcr(file) ?: return NovelImageOutcome(null, "插图读不出来（可能已损坏）")
+        val base = decoded.bitmap
+        val api = imageTranslator()
+            ?: run {
+                base.recycle()
+                return NovelImageOutcome(null, app.getString(R.string.image_translate_api_not_configured))
+            }
+        TranslationBusyRegistry.enter()
+        try {
+            val result = try {
+                suspendCancellableCoroutine<TranslationResult> { cont ->
+                    api.getTranslation(base, sourceLang, targetLang) { outcome ->
+                        if (cont.isActive) cont.resume(outcome)
+                    }
+                    cont.invokeOnCancellation { api.cancelTranslation() }
+                }
+            } catch (e: CancellationException) {
+                if (!currentCoroutineContext().isActive || isCancelled()) {
+                    return NovelImageOutcome(null, null)
+                }
+                throw e
+            }
+
+            when (result) {
+                is TranslationResult.Success -> {
+                    if (isCancelled()) return NovelImageOutcome(null, null)
+                    val payload = result.image
+                    val text = result.translatedText.ifBlank {
+                        payload?.blocks?.joinToString("\n") { it.translatedText }.orEmpty()
+                    }
+                    val scale = decoded.originalWidth.toFloat() / base.width.coerceAtLeast(1)
+                    val blocks = payload?.blocks.orEmpty().mapNotNull { it.toNovelBlock(scale) }
+                    if (blocks.isEmpty() && text.isBlank()) {
+                        return NovelImageOutcome(null, app.getString(R.string.image_translate_empty))
+                    }
+                    return NovelImageOutcome(
+                        NovelImageTranslation(
+                            sourceLang = sourceLang,
+                            targetLang = targetLang,
+                            ocrEngine = ImageTranslatorFactory.label(app, customPrefs),
+                            blocks = blocks,
+                            plainText = if (blocks.isEmpty()) text else null,
+                        ),
+                        null,
+                    )
+                }
+                is TranslationResult.Error -> {
+                    LogCollector.e(TAG, "插图图片翻译失败: ${file.name}", result.error)
+                    return NovelImageOutcome(
+                        null,
+                        result.error.message ?: app.getString(R.string.image_translate_empty),
+                    )
+                }
+            }
+        } finally {
+            TranslationBusyRegistry.exit()
+            if (!base.isRecycled) base.recycle()
+        }
+    }
+
+    private fun ImageTextBlock.toNovelBlock(scale: Float): NovelImageTextBlock? {
+        val l = (left * scale).toInt()
+        val t = (top * scale).toInt()
+        val r = (right * scale).toInt()
+        val b = (bottom * scale).toInt()
+        if (r <= l || b <= t) return null
+        val translated = translatedText.ifBlank { sourceText }
+        if (translated.isBlank()) return null
+        return NovelImageTextBlock(
+            left = l,
+            top = t,
+            right = r,
+            bottom = b,
+            original = sourceText,
+            translated = translated,
+            vertical = vertical,
+            fontSize = (fontSize * scale).coerceAtLeast(1f),
+        )
     }
 
     // ===== OCR =====

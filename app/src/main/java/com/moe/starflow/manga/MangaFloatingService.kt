@@ -69,6 +69,10 @@ import com.moe.starflow.translate.screenshot.ScreenshotManager
 import com.moe.starflow.translate.screenshot.MediaProjectionIntentHolder
 import com.moe.starflow.translate.screenshot.ScreenshotProvider
 import com.moe.starflow.translate.screenshot.ScreenCapturePermissionActivity
+import com.moe.starflow.translate.ImageTranslatorFactory
+import com.moe.starflow.translate.ImageTextBlock
+import com.moe.starflow.translate.TranslationPicAPI
+import com.moe.starflow.translate.TranslationResult
 import com.moe.starflow.translate.TranslationTextAPI
 import com.moe.starflow.translate.isLocalHeavyEngine
 import com.moe.starflow.utils.Constants
@@ -89,7 +93,9 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
 import translationapi.bingtranslation.BingTranslation
 import translationapi.niutrans.NiuTranslation
 import translationapi.openaitranslation.OpenAITranslation
@@ -275,8 +281,13 @@ class MangaFloatingService : LifecycleService() {
         it.detEngine == config.detEngine && it.ocrEngine == config.ocrEngine
     } ?: engineCombos[0]
 
-    /** combo key → 显示标签 */
-    private fun comboLabel(combo: ComboDef): String = getString(combo.labelRes)
+    /** combo key → 显示标签；图片模式显示图片接口名，不再展示 OCR 组合。 */
+    private fun comboLabel(combo: ComboDef): String =
+        if (TranslationExecutionMode.isImage(this)) {
+            getString(R.string.engine_status_image, ImageTranslatorFactory.label(this, prefs))
+        } else {
+            getString(combo.labelRes)
+        }
 
     /** 检查需下载的组合是否可用 */
     private fun isComboAvailable(combo: ComboDef): Boolean = when {
@@ -301,6 +312,13 @@ class MangaFloatingService : LifecycleService() {
         }
     }
     private var translatorText: TranslationTextAPI? = null
+    private var translatorPic: TranslationPicAPI? = null
+    private var imageBusyToken: TranslationBusyRegistry.Token? = null
+
+    // 图片模式：接口只返回文本时的结果窗口（有坐标时仍走结果覆盖层）
+    private var textResultView: TranslationResultView? = null
+    private var textResultParams: WindowManager.LayoutParams? = null
+    private var isTextResultShowing = false
 
     // 截图提供者
     private var screenshotProvider: ScreenshotProvider? = null
@@ -383,7 +401,7 @@ class MangaFloatingService : LifecycleService() {
         // 自动翻译状态机（副作用经回调注入服务）
         autoTranslateEngine = MangaAutoTranslateEngine(
             context = this,
-            isResultOrMenuShowing = { isResultShowing || isMenuShowing },
+            isResultOrMenuShowing = { isResultShowing || isMenuShowing || isTextResultShowing },
             isProcessing = { isProcessing },
             onShowProgress = { showProgressOverlay(it) },
             onDismissProgress = { dismissProgressOverlay() },
@@ -434,7 +452,12 @@ class MangaFloatingService : LifecycleService() {
         prefChangeListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             when {
                 // 翻译模型切换：重建 translator（共享 Hy-MT2 实例由 Holder 换出/重建，无需重启服务）
-                key == "Text_API" || key == "Text_AI" -> initTranslator()
+                key == "Text_API" || key == "Text_AI" -> {
+                    if (!TranslationExecutionMode.isImage(this)) initTranslator()
+                }
+                // 执行模式/图片接口切换：图片接口与文本接口不是同一套实例，必须重建
+                key == TranslationExecutionMode.KEY ||
+                    key == "Pic_API" || key == "Custom_Pic_API" -> rebuildTranslatorForMode()
                 // 主题切换：Service 不随 AppCompat 重建，在屏的悬浮球/弹窗要手动重建才跟上
                 key == ThemeManager.KEY -> rebuildThemedWindows()
                 // 悬浮球大小 / 透明度：设置页拖完立刻应用到在屏的球
@@ -481,20 +504,9 @@ class MangaFloatingService : LifecycleService() {
         displayMonitor = DisplayGeometryMonitor(this) { invalidateDisplayGeometry() }
         setupScreenshotCollector()
 
-        // 初始化 OCR 引擎（识别器）
-        when (config.ocrEngine) {
-            OcrEngine.MLKit -> {}  // MLKit 无需初始化
-            OcrEngine.MangaOcr -> lifecycleScope.launch { engineManager.ensureMangaOcrInitialized() }
-            OcrEngine.PPOcrV5 -> lifecycleScope.launch { engineManager.initPPOcrV5("识别器") }
-            OcrEngine.PPOcrV6 -> lifecycleScope.launch { engineManager.initPPOcrV6("识别器") }
-        }
-
-        // 初始化检测引擎（检测器）
-        when (config.detEngine) {
-            DetEngine.MLKIT -> {}
-            DetEngine.RT_DETR_V2 -> lifecycleScope.launch { engineManager.initRTDetrV2() }
-            DetEngine.PP_OCR_V5 -> lifecycleScope.launch { engineManager.initPPOcrV5("检测器") }
-            DetEngine.PP_OCR_V6 -> lifecycleScope.launch { engineManager.initPPOcrV6("检测器") }
+        // 图片模式不加载任何本地 OCR/检测模型
+        if (!TranslationExecutionMode.isImage(this)) {
+            initOcrEnginesForTextMode()
         }
 
         LogCollector.d(TAG, "MangaFloatingService created")
@@ -551,7 +563,10 @@ class MangaFloatingService : LifecycleService() {
         statusOverlay.release()
         ballStateManager?.release()
         ballStateManager = null
+        imageBusyToken?.release()
+        imageBusyToken = null
         translatorText?.release()
+        translatorPic?.release()
         autoTranslateEngine.clearScheduled()
         regionCache.clear()
 
@@ -616,27 +631,82 @@ class MangaFloatingService : LifecycleService() {
     }
 
     private fun initTranslator() {
-        LogCollector.d(TAG, "initTranslator: Text_API=${prefs.getInt("Text_API", Constants.TextApi.BING.id)}")
+        val imageMode = TranslationExecutionMode.isImage(this)
+        LogCollector.d(
+            TAG,
+            "initTranslator: imageMode=$imageMode, Text_API=${prefs.getInt("Text_API", Constants.TextApi.BING.id)}, " +
+                "Pic_API=${prefs.getInt("Pic_API", Constants.PicApi.BAIDU.id)}",
+        )
+        translatorText?.release()
+        translatorText = null
+        translatorPic?.release()
+        translatorPic = null
         try {
-            translatorText = TranslatorFactory.create(this, prefs, TranslatorFactory.Mode.MANGA)
-            if (translatorText == null) {
-                LogCollector.e(TAG, "initTranslator: 引擎创建失败")
-                showToast(getString(R.string.toast_engine_init_failed))
+            if (imageMode) {
+                translatorPic = ImageTranslatorFactory.create(this, prefs)
+                if (translatorPic == null) {
+                    LogCollector.e(TAG, "initTranslator: 图片接口创建失败")
+                    showToast(getString(R.string.image_translate_api_not_configured), true)
+                } else {
+                    showToast(
+                        getString(R.string.image_translate_api_configured, ImageTranslatorFactory.label(this, prefs)),
+                    )
+                }
+            } else {
+                translatorText = TranslatorFactory.create(this, prefs, TranslatorFactory.Mode.MANGA)
+                if (translatorText == null) {
+                    LogCollector.e(TAG, "initTranslator: 引擎创建失败")
+                    showToast(getString(R.string.toast_engine_init_failed))
+                } else {
+                    val apiName = translatorText!!::class.simpleName ?: "Translation API"
+                    showToast(getString(R.string.toast_engine_init_ok, apiName))
+                }
             }
         } catch (e: Exception) {
             LogCollector.e(TAG, "initTranslator: Exception", e)
             showToast(getString(R.string.toast_init_error_format, e.message ?: ""))
         }
 
-        // 显示翻译 API 初始化成功的消息
-        if (translatorText != null) {
-            val apiName = translatorText!!::class.simpleName ?: "Translation API"
-            showToast(getString(R.string.toast_engine_init_ok, apiName))
-        }
-
-        LogCollector.d(TAG, "initTranslator: result translatorText=${translatorText?.javaClass?.simpleName}")
+        LogCollector.d(
+            TAG,
+            "initTranslator: result text=${translatorText?.javaClass?.simpleName}, pic=${translatorPic?.javaClass?.simpleName}",
+        )
     }
 
+
+    /**
+     * 执行模式 / 图片接口变化：停自动翻译、释放旧翻译器、按新模式重建；
+     * 切回文本模式时补初始化本地 OCR/检测引擎。图片模式不初始化 OCR。
+     */
+    private fun rebuildTranslatorForMode() {
+        try {
+            if (autoTranslateEngine.isAutoTranslating) stopAutoTranslate()
+            initTranslator()
+            if (!TranslationExecutionMode.isImage(this)) {
+                config = loadConfig()
+                initOcrEnginesForTextMode()
+                checkLanguageHints()
+            }
+        } catch (e: Exception) {
+            LogCollector.e(TAG, "执行模式切换后重建翻译器失败", e)
+        }
+    }
+
+    /** 文本模式按当前配置初始化本地 OCR/检测引擎；图片模式调用方不要调。 */
+    private fun initOcrEnginesForTextMode() {
+        when (config.ocrEngine) {
+            OcrEngine.MLKit -> {}  // MLKit 无需初始化
+            OcrEngine.MangaOcr -> lifecycleScope.launch { engineManager.ensureMangaOcrInitialized() }
+            OcrEngine.PPOcrV5 -> lifecycleScope.launch { engineManager.initPPOcrV5("识别器") }
+            OcrEngine.PPOcrV6 -> lifecycleScope.launch { engineManager.initPPOcrV6("识别器") }
+        }
+        when (config.detEngine) {
+            DetEngine.MLKIT -> {}
+            DetEngine.RT_DETR_V2 -> lifecycleScope.launch { engineManager.initRTDetrV2() }
+            DetEngine.PP_OCR_V5 -> lifecycleScope.launch { engineManager.initPPOcrV5("检测器") }
+            DetEngine.PP_OCR_V6 -> lifecycleScope.launch { engineManager.initPPOcrV6("检测器") }
+        }
+    }
 
     private fun loadConfig(): MangaModeConfig {
         val spacing = MangaTextSpacing.read(prefs.getSharedPreferences())
@@ -681,6 +751,7 @@ class MangaFloatingService : LifecycleService() {
     private fun initializeViews() {
         windowManager = com.moe.starflow.translate.screenshot.OverlayWindow.context(this)
             .getSystemService(WINDOW_SERVICE) as WindowManager
+        initTextResultView()
         debugPanel = MangaDebugPanelController(
             this,
             windowManager,
@@ -1099,6 +1170,14 @@ class MangaFloatingService : LifecycleService() {
      * 4. 俄文 + PP引擎 + RU未下载 → 提示下载
      */
     private fun checkLanguageHints() {
+        if (TranslationExecutionMode.isImage(this)) {
+            val src = prefs.getString("Source_Language", "ja")
+            val supported = ImageTranslatorFactory.supportedSourceLangs(this)
+            if (supported.isNotEmpty() && src !in supported) {
+                showSystemToast(getString(R.string.image_language_unsupported, src))
+            }
+            return
+        }
         val isPPv5 = config.ocrEngine == OcrEngine.PPOcrV5 || config.detEngine == DetEngine.PP_OCR_V5
         val isMangaOcr = config.ocrEngine == OcrEngine.MangaOcr
         val src = config.sourceLang
@@ -1133,14 +1212,33 @@ class MangaFloatingService : LifecycleService() {
      * 只循环当前 OCR 组支持的语言，跳过不支持的。逻辑统一收敛到 OcrEngineManager.cycleFloatingSourceLang。
      */
     private fun cycleSourceLang() {
-        val next = com.moe.starflow.utils.OcrEngineManager.cycleFloatingSourceLang(
-            prefs.getSharedPreferences(), gameVideo = false
-        )
-            ?: run { showToast(getString(R.string.no_available_ocr_model), true); return }
+        val next = if (TranslationExecutionMode.isImage(this)) {
+            cycleImageSourceLang()
+        } else {
+            com.moe.starflow.utils.OcrEngineManager.cycleFloatingSourceLang(
+                prefs.getSharedPreferences(), gameVideo = false
+            )
+        } ?: run { showToast(getString(R.string.no_available_ocr_model), true); return }
         config = loadConfig()  // 写 pref 之后再读，刷新内存 config.sourceLang
         val langName = com.moe.starflow.translate.CustomLocale.getInstance(next).getDisplayName()
         showToast(getString(R.string.language_switched_to, langName), true)
         checkLanguageHints()
+    }
+
+    /** 图片模式的悬浮窗语言循环：只看图片接口语言表，不看 OCR 组。 */
+    private fun cycleImageSourceLang(): String? {
+        val allowed = ImageTranslatorFactory.supportedSourceLangs(this)
+        val cycle = OcrEngineGroup.FLOATING_COMMON_LANGS.filter { it in allowed }
+        if (cycle.isEmpty()) return null
+        val current = prefs.getString("Source_Language", "ja")
+        val idx = cycle.indexOf(current).coerceAtLeast(0)
+        for (i in 1..cycle.size) {
+            val next = cycle[(idx + i) % cycle.size]
+            if (next == current) return null
+            prefs.setString("Source_Language", next)
+            return next
+        }
+        return null
     }
 
     /**
@@ -1158,6 +1256,10 @@ class MangaFloatingService : LifecycleService() {
      * 切换模型组合（循环遍历 engineCombos，跳过不可用的）
      */
     private fun toggleModelSimple(@Suppress("UNUSED_PARAMETER") dialog: AlertDialog, listView: android.widget.ListView) {
+        if (TranslationExecutionMode.isImage(this)) {
+            showToast(getString(R.string.image_mode_ocr_engine_disabled), true)
+            return
+        }
         val cur = currentCombo()
         val curIdx = engineCombos.indexOf(cur).coerceAtLeast(0)
 
@@ -1217,6 +1319,10 @@ class MangaFloatingService : LifecycleService() {
     private fun startAutoTranslate() {
         if (TranslationExecutionMode.isOcrOnly(this)) {
             showToast(getString(R.string.execution_ocr_only_auto_disabled), true)
+            return
+        }
+        if (TranslationExecutionMode.isImage(this) && translatorPic == null) {
+            showToast(getString(R.string.image_translate_api_not_configured), true)
             return
         }
         // 只在 AccessibilityService 模式下检查无障碍服务
@@ -1969,6 +2075,103 @@ class MangaFloatingService : LifecycleService() {
     // ========== 翻译流水线 ==========
 
     /**
+     * 图片模式单次截图翻译（不碰本地 OCR）。
+     *
+     * 有文字块坐标 → 复用 [renderAndShowMergedOverlay] 画回原图并保存缓存；
+     * 只有文本（腾讯无坐标 / 自定义接口）→ 文本结果窗口。
+     */
+    private suspend fun processMangaImageScreenshot(bitmap: Bitmap) {
+        val api = translatorPic
+        if (api == null) {
+            statusOverlay.showError(getString(R.string.image_translate_api_not_configured))
+            ballStateManager?.setState(BallStateManager.State.Error)
+            return
+        }
+        val busyToken = TranslationBusyRegistry.begin()
+        imageBusyToken = busyToken
+        try {
+            processMangaImageScreenshotWithApi(bitmap, api)
+        } finally {
+            busyToken.release()
+            if (imageBusyToken === busyToken) imageBusyToken = null
+        }
+    }
+
+    private suspend fun processMangaImageScreenshotWithApi(bitmap: Bitmap, api: TranslationPicAPI) {
+        showProgressOverlay(getString(R.string.image_translating))
+        ballStateManager?.setState(BallStateManager.State.Processing)
+        val result = try {
+            suspendCancellableCoroutine<TranslationResult> { cont ->
+                api.getTranslation(bitmap, config.sourceLang, config.targetLang) { outcome ->
+                    if (cont.isActive) cont.resume(outcome)
+                }
+                cont.invokeOnCancellation { api.cancelTranslation() }
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            LogCollector.e(TAG, "图片翻译调用失败", e)
+            TranslationResult.Error(e)
+        }
+
+        if (translationCancelled) return
+
+        when (result) {
+            is TranslationResult.Success -> {
+                val text = result.translatedText
+                if (text.isBlank()) {
+                    statusOverlay.showError(getString(R.string.image_translate_empty))
+                    ballStateManager?.setState(BallStateManager.State.Error)
+                    return
+                }
+                val blocks = result.image?.blocks.orEmpty()
+                if (blocks.isNotEmpty()) {
+                    val bubbles = blocks.map { block -> block.toTranslatedBubble() }
+                    renderAndShowMergedOverlay(
+                        original = bitmap,
+                        newBubbles = bubbles,
+                        saveCache = true,
+                        showCopyButton = false,
+                    )
+                } else {
+                    withContext(Dispatchers.Main) {
+                        showTextResult(text)
+                    }
+                    LogCollector.d(TAG, "图片翻译仅返回文本，已使用文本结果窗口")
+                }
+                if (translationCancelled) return
+                statusOverlay.showImmediate(getString(R.string.image_translate_done))
+                ballStateManager?.setState(BallStateManager.State.Completed)
+                autoTranslateEngine.lastTranslatedHash = currentPHash
+                autoTranslateEngine.lastTranslatedTime = System.currentTimeMillis()
+                if (autoTranslateEngine.isAutoTranslating) {
+                    autoTranslateEngine.scheduleNextDetection(MangaAutoTranslateEngine.DETECT_INTERVAL_MS)
+                }
+            }
+            is TranslationResult.Error -> {
+                LogCollector.e(TAG, "图片翻译失败", result.error)
+                statusOverlay.showError(
+                    getString(
+                        R.string.translation_failed,
+                        result.error.message ?: getString(R.string.unknown_error),
+                    )
+                )
+                ballStateManager?.setState(BallStateManager.State.Error)
+                if (autoTranslateEngine.isAutoTranslating) stopAutoTranslate()
+            }
+        }
+    }
+
+    private fun ImageTextBlock.toTranslatedBubble(): TranslatedBubble = TranslatedBubble(
+        rect = Rect(left, top, right, bottom),
+        originalText = sourceText,
+        translatedText = translatedText,
+        backgroundColor = Color.TRANSPARENT,
+        fontSize = fontSize,
+        direction = if (vertical) TextDirection.VERTICAL_RL else TextDirection.HORIZONTAL,
+    )
+
+    /**
      * 保存翻译缓存（不渲染 overlay）。
      * 用于分批渲染场景：用户关闭 overlay 后仍保存完整缓存。
      */
@@ -2204,6 +2407,12 @@ class MangaFloatingService : LifecycleService() {
                 if (autoTranslateEngine.isAutoTranslating) {
                     autoTranslateEngine.scheduleNextDetection(MangaAutoTranslateEngine.DETECT_INTERVAL_MS)
                 }
+                return
+            }
+
+            // 图片翻译：不进入本地检测/OCR；有坐标画回原图，无坐标显示文本结果。
+            if (TranslationExecutionMode.isImage(this)) {
+                processMangaImageScreenshot(bitmap)
                 return
             }
 
@@ -2836,6 +3045,54 @@ class MangaFloatingService : LifecycleService() {
     /** 结果浮层当前用的窗口几何（框选模式 = crop 矩形；全屏 = 屏幕尺寸）。null = 窗口未在。 */
     private var overlayGeometry: android.graphics.Rect? = null
 
+    private fun initTextResultView() {
+        if (textResultView != null) return
+        val params = WindowManager.LayoutParams().apply {
+            type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            format = PixelFormat.TRANSLUCENT
+            flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            width = WindowManager.LayoutParams.WRAP_CONTENT
+            height = WindowManager.LayoutParams.WRAP_CONTENT
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            y = dpToPx(92)
+        }
+        textResultParams = params
+        textResultView = TranslationResultView(this, windowManager, params).apply {
+            onClose = { dismissTextResult() }
+            onRetranslate = {
+                dismissTextResult()
+                triggerTranslation()
+            }
+            applyStyle()
+        }
+    }
+
+    /** 图片接口只返回文本时的结果窗口；有坐标的图片走 [showResultOverlay]。 */
+    private fun showTextResult(text: String) {
+        val view = textResultView ?: run {
+            initTextResultView()
+            textResultView
+        } ?: return
+        if (isResultShowing) dismissResultOverlay()
+        view.setText(text)
+        view.hideCacheIndicator()
+        if (!isViewAdded(view)) {
+            windowManager.addView(view, textResultParams)
+        }
+        isTextResultShowing = true
+        bringFloatingBallToFront()
+    }
+
+    private fun dismissTextResult() {
+        isTextResultShowing = false
+        val view = textResultView ?: return
+        try {
+            if (isViewAdded(view)) windowManager.removeView(view)
+        } catch (e: Exception) {
+            LogCollector.e(TAG, "移除图片文本结果窗口失败", e)
+        }
+    }
+
     private fun showResultOverlay(bitmap: Bitmap, fromCache: Boolean = false, showCopyButton: Boolean = true): Boolean {
         val mapping = processingMapping
         if (translationCancelled || mapping == null ||
@@ -2937,6 +3194,7 @@ class MangaFloatingService : LifecycleService() {
     }
 
     private fun dismissResultOverlay() {
+        dismissTextResult()
         shownMapping = null
         renderToggleJob?.cancel()
         overlayGeometry = null
@@ -3651,6 +3909,9 @@ class MangaFloatingService : LifecycleService() {
         translationGeneration.incrementAndGet()
         partialRenderShown = false  // 已停止：再点悬浮球不再弹确认，直接幂等终止
         // TranslationAwaiter and OcrExecution observe this request's stop flag.
+        translatorPic?.cancelTranslation()
+        imageBusyToken?.release()
+        imageBusyToken = null
         dismissProgressOverlay()
         dismissResultOverlay()
         ballStateManager?.setState(BallStateManager.State.Idle)

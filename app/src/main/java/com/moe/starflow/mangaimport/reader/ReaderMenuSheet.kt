@@ -388,15 +388,30 @@ class ReaderMenuSheet(
     private fun refreshModelRows() {
         val v = view ?: return
         refreshExecutionModeRows(v)
-        v.findViewById<TextView>(R.id.tv_ocr_model_row).text =
+        val imageMode = TranslationExecutionMode.isImage(requireContext())
+        v.findViewById<TextView>(R.id.tv_ocr_model_row).text = if (imageMode) {
+            getString(R.string.reader_translate_image_api, ReaderTranslationInfo.imageApiLabel(requireContext()))
+        } else {
             getString(R.string.reader_translate_ocr_model, ReaderTranslationInfo.ocrModelLabel(requireContext()))
-        v.findViewById<TextView>(R.id.tv_translator_model_row).text =
+        }
+        v.findViewById<View>(R.id.btn_model_ocr).setOnClickListener {
+            if (TranslationExecutionMode.isImage(requireContext())) cb.onOpenApiConfig() else cb.onOpenModelManagement()
+        }
+        v.findViewById<TextView>(R.id.tv_translator_model_row).text = if (imageMode) {
+            getString(
+                R.string.engine_status_text_unaffected,
+                ReaderTranslationInfo.translatorModelLabel(requireContext()),
+            )
+        } else {
             getString(R.string.reader_translate_translator_model, ReaderTranslationInfo.translatorModelLabel(requireContext()))
+        }
         v.findViewById<TextView>(R.id.tv_translate_mode_label).apply {
             text = getString(
-                if (TranslationExecutionMode.isOcrOnly(requireContext()))
-                    R.string.reader_execution_mode_ocr_only
-                else R.string.reader_execution_mode_translate
+                when {
+                    TranslationExecutionMode.isOcrOnly(requireContext()) -> R.string.reader_execution_mode_ocr_only
+                    imageMode -> R.string.reader_execution_mode_image
+                    else -> R.string.reader_execution_mode_translate
+                }
             )
             setOnClickListener { cb.onOpenExecutionModeSettings() }
         }
@@ -405,6 +420,7 @@ class ReaderMenuSheet(
     /** Keep controls truthful when this screen runs the page scheduler as OCR-only. */
     private fun refreshExecutionModeRows(v: View) {
         val onlyOcr = TranslationExecutionMode.isOcrOnly(requireContext())
+        val imageMode = TranslationExecutionMode.isImage(requireContext())
         ocrOnly = onlyOcr
         v.findViewById<RadioButton>(R.id.translate_mode_manual).setText(
             if (onlyOcr) R.string.reader_ocr_mode_manual else R.string.reader_translate_mode_manual
@@ -429,8 +445,10 @@ class ReaderMenuSheet(
         v.findViewById<TextView>(R.id.tv_ahead_hint).setText(
             if (onlyOcr) R.string.reader_ocr_ahead_hint else R.string.reader_translate_ahead_hint
         )
-        v.findViewById<View>(R.id.row_concurrency).visibility = if (onlyOcr) View.GONE else View.VISIBLE
-        v.findViewById<View>(R.id.btn_model_translate).visibility = if (onlyOcr) View.GONE else View.VISIBLE
+        v.findViewById<View>(R.id.row_concurrency).visibility =
+            if (onlyOcr || imageMode) View.GONE else View.VISIBLE
+        v.findViewById<View>(R.id.btn_model_translate).visibility =
+            if (onlyOcr || imageMode) View.GONE else View.VISIBLE
     }
 
     /** Webtoon(3) 下翻页动画/自动翻页不生效：即时禁用置灰，切回分页模式自动恢复。 */
@@ -1268,15 +1286,27 @@ class ReaderMenuSheet(
         val ctx = requireContext()
         val appPrefs = PreferenceManager.getDefaultSharedPreferences(ctx)
         val customPrefs = CustomPreference.getInstance(ctx)
-        val ocrGroup = if (type == 1) OcrEngineManager.getOcrEngineGroup(appPrefs) else null
+        val imageMode = TranslationExecutionMode.isImage(ctx)
+        if (imageMode && customPrefs.getInt("Pic_API", Constants.PicApi.BAIDU.id) == Constants.PicApi.CUSTOM_PIC.id) {
+            ReaderDialogs.show(requireActivity(), darkPanel) {
+                setTitle(R.string.custom_api_select_language_title)
+                setMessage(R.string.custom_api_select_language_content)
+                setPositiveButton(R.string.user_known, null)
+            }
+            return
+        }
+        val ocrGroup = if (type == 1 && !imageMode) OcrEngineManager.getOcrEngineGroup(appPrefs) else null
         val locales = languagesList(type, ocrGroup)
         if (locales.isEmpty()) return
-        // 只有「预制 Hy-MT2」套官方 38 种白名单；导入的任意 GGUF 不限制
-        val isHyMt2 = com.moe.starflow.llamacpp.LlamaCppModelStore.isHyMt2ActiveFromPrefs(customPrefs)
-        val disabledTargets = if (type == 2) TranslateTools.getDisabledTargetLangs(customPrefs) else emptySet()
+        // 只有「预制 Hy-MT2」套官方 38 种白名单；导入的任意 GGUF 不限制。
+        // 图片模式的 manga 页面翻译走图片接口，语言表由 Pic_API 决定，不按 OCR/Hy-MT2 置灰。
+        val isHyMt2 = !imageMode && com.moe.starflow.llamacpp.LlamaCppModelStore.isHyMt2ActiveFromPrefs(customPrefs)
+        val disabledTargets = if (type == 2 && !imageMode) TranslateTools.getDisabledTargetLangs(customPrefs) else emptySet()
         val enabled = when (type) {
-            1 -> locales.map { ReaderTranslationInfo.isSourceSupported(it.getOriCode(), ocrGroup!!.sourceLangs) }
-            2 -> locales.map {
+            1 -> if (imageMode) null else locales.map {
+                ReaderTranslationInfo.isSourceSupported(it.getOriCode(), ocrGroup!!.sourceLangs)
+            }
+            2 -> if (imageMode) null else locales.map {
                 ReaderTranslationInfo.isTargetSupported(
                     it.getOriCode(), isHyMt2,
                     com.moe.starflow.llamacpp.LlamaCppLanguages.hyMt2SupportedCodes, disabledTargets

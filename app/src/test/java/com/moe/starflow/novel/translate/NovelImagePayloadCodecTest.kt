@@ -38,6 +38,23 @@ class NovelImagePayloadCodecTest {
         assertEquals(inPayload, out)
     }
 
+    /** 图片接口只返回文本：blocks 为空但 plainText 非空，仍然要算“已经翻过”。 */
+    @Test
+    fun `纯文本载荷可往返且不算空`() {
+        val inPayload = NovelImageTranslation(
+            sourceLang = "ja",
+            targetLang = "zh",
+            ocrEngine = "百度翻译",
+            blocks = emptyList(),
+            plainText = "整段译文\n第二行",
+        )
+        val out = NovelImagePayloadCodec.decode(NovelImagePayloadCodec.encode(inPayload))
+        assertEquals(inPayload, out)
+        assertFalse(out!!.isEmpty)
+        assertEquals("整段译文\n第二行", out.translatedText)
+        assertEquals("", out.sourceText)
+    }
+
     /** 拼接出来的两列（导出/进度/「已翻」判据都吃它们）。 */
     @Test
     fun `拼接原文与译文按块顺序换行`() {

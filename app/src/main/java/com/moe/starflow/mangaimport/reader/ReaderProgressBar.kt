@@ -28,6 +28,11 @@ import kotlin.math.roundToInt
  *
  * 配色固定：进度条始终压在深色半透明胶囊（`bg_progress_pill`）上，不受页面背景深浅影响，
  * 因此不再有 darkBackground 分支（那个开关是历史遗留，早已是 no-op）。
+ *
+ * ## 坐标域 = **当前章**（页号由调用方换算）
+ * 本控件只认「0..total-1」的页号，不关心它是全书还是章内。**两个阅读器都喂章内页号**
+ * （漫画 `MangaReaderActivity.progressScope` / 小说 `refreshOverlay`）：几百页挤在一条约 900px
+ * 的线上时一像素代表好几页，整本口径根本拖不准；全书进度由目录弹窗承载。
  */
 class ReaderProgressBar @JvmOverloads constructor(
     context: Context,

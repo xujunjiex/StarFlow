@@ -177,11 +177,29 @@
     <string name="translate_execution_translate_desc">识别文字后继续翻译，阅读器和截屏都显示译文</string>
     <string name="translate_execution_ocr_only">仅 OCR</string>
     <string name="translate_execution_ocr_only_desc">只识别并保存原文，不调用翻译</string>
+    <string name="translate_execution_image">图片翻译</string>
+    <string name="translate_execution_image_desc">直接把截图或导入图片上传到云端图片翻译接口，不经过本地 OCR；接口返回文字坐标时画回原图</string>
     <string name="execution_ocr_only_auto_disabled">仅 OCR 模式已关闭自动翻译，请点击 OCR 识别当前画面</string>
     <string name="execution_ocr_only_done">OCR 完成</string>
     <string name="execution_mode_busy">请先停止正在进行的 OCR/翻译任务，再切换执行模式</string>
+    <string name="image_mode_not_configured_title">图片翻译接口未配置</string>
+    <string name="image_mode_not_configured_content">图片翻译模式需要百度、腾讯云或自定义图片翻译接口。请先在 API 配置中启用并填写接口信息。</string>
+    <string name="image_translating">图片翻译中…</string>
+    <string name="image_translate_done">图片翻译完成</string>
+    <string name="image_translate_text_only">当前接口只返回文本，已使用文本面板</string>
+    <string name="image_translate_empty">图片翻译没有返回文字</string>
+    <string name="image_translate_api_not_configured">请先配置图片翻译接口</string>
+    <string name="image_translate_api_configured">图片翻译接口：%1$s</string>
+    <string name="image_language_unsupported">当前图片翻译接口不支持源语言「%1$s」</string>
+    <string name="image_mode_ocr_engine_disabled">图片模式不使用本地 OCR；请在 API 配置中切换图片翻译接口</string>
+    <string name="image_translate_text_title">图片译文</string>
+    <string name="image_translate_copy">复制</string>
+    <string name="reader_execution_mode_image">执行模式：图片翻译</string>
+    <string name="reader_translate_image_api">图片翻译接口：%1$s</string>
+    <string name="engine_status_image">图片翻译：%1$s</string>
+    <string name="engine_status_text_unaffected">文本翻译：%1$s</string>
     <string name="pic_mode">直接上传图片进行翻译</string>
-    <string name="pic_mode_description">直接把截图上传到云端API进行翻译。支持使用预置的云端图片翻译API，也支持使用自定义的云端图片翻译API，<font color="#55AEEA">不支持本地翻译</font>。这种方式花费的数据流量相对来说要多一些。</string>
+    <string name="pic_mode_description">直接把截图或导入的图片上传到云端图片翻译接口，不经过本地 OCR。支持百度、腾讯云和自定义图片翻译 API；接口返回文字坐标时会把译文画回原图，只返回文本时使用文本结果。<font color="#55AEEA">文本翻译不受影响</font>。这种方式花费的数据流量相对来说要多一些。</string>
     <string name="mlkit_name">ML Kit</string>
     <string name="nllb_name">NLLB翻译模型</string>
     <string name="nllb_description">NLLB 是萌译（MoeTranslate）作者内置的机器翻译模型，支持多语言，翻译效果好。该模型需下载后使用，首次使用需下载约 1GB 模型文件，且设备需至少 6GB 运行内存。下载完成后无需联网即可使用。点击下方「管理 NLLB 模型文件」可进行下载、删除等操作。</string>
@@ -1235,6 +1253,7 @@
     <string name="reader_page_indicator_chapter">%1$s · %2$d/%3$d</string>
     <string name="reader_chapter_first">当前已是第一章</string>
     <string name="reader_chapter_last">当前已是最后一章</string>
+    <string name="reader_chapter_switched">已切换到 %1$s · 共 %2$d 页</string>
     <string name="reader_chapter_badge">已译 %1$d/%2$d</string>
     <string name="reader_ocr_chapter_badge">已识别 %1$d/%2$d</string>
 

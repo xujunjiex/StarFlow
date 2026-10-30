@@ -16,10 +16,9 @@
  */
 
 package com.moe.starflow.me.settings
-import com.moe.starflow.translate.widget.*
-import com.moe.starflow.translate.autotranslate.*
-import com.moe.starflow.translate.screenshot.*
 
+import android.app.AlertDialog
+import android.content.Intent
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -28,13 +27,13 @@ import android.view.animation.AnimationUtils
 import androidx.fragment.app.Fragment
 import com.moe.starflow.R
 import com.moe.starflow.databinding.FragmentTranslationModeBinding
-import com.moe.starflow.utils.CustomPreference
-import com.moe.starflow.utils.TranslationExecutionMode
 import com.moe.starflow.manga.OcrLock
+import com.moe.starflow.translate.ImageTranslatorFactory
 import com.moe.starflow.translate.batch.TranslationJobRegistry
-import com.moe.starflow.utils.UiUtils
+import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.TranslationBusyRegistry
-
+import com.moe.starflow.utils.TranslationExecutionMode
+import com.moe.starflow.utils.UiUtils
 
 class TranslationMode : Fragment() {
     private lateinit var binding: FragmentTranslationModeBinding
@@ -46,27 +45,23 @@ class TranslationMode : Fragment() {
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
-        binding = FragmentTranslationModeBinding.inflate(inflater,container,false)
+        binding = FragmentTranslationModeBinding.inflate(inflater, container, false)
         return binding.root
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        // 图片直传翻译暂不暴露；保留 Translate_Mode=0 兼容旧逻辑。
-        prefs.setInt("Translate_Mode", 0)
-        binding.picModeLayout.visibility = View.GONE
         applyExecutionMode(animate = false)
 
         binding.translateModeLayout.setOnClickListener {
-            if (!canChangeExecutionMode()) return@setOnClickListener
-            TranslationExecutionMode.set(requireContext(), TranslationExecutionMode.TRANSLATE)
-            applyExecutionMode(animate = true)
+            selectMode(TranslationExecutionMode.TRANSLATE)
         }
         binding.ocrOnlyModeLayout.setOnClickListener {
-            if (!canChangeExecutionMode()) return@setOnClickListener
-            TranslationExecutionMode.set(requireContext(), TranslationExecutionMode.OCR_ONLY)
-            applyExecutionMode(animate = true)
+            selectMode(TranslationExecutionMode.OCR_ONLY)
+        }
+        binding.picModeLayout.setOnClickListener {
+            selectMode(TranslationExecutionMode.IMAGE)
         }
 
         // 截图方式选择
@@ -81,6 +76,38 @@ class TranslationMode : Fragment() {
         }
     }
 
+    private fun selectMode(mode: Int) {
+        if (!canChangeExecutionMode()) return
+        TranslationExecutionMode.set(requireContext(), mode)
+        applyExecutionMode(animate = true)
+        if (mode == TranslationExecutionMode.IMAGE &&
+            !ImageTranslatorFactory.isConfigured(requireContext(), prefs)
+        ) {
+            showImageApiMissingDialog()
+        }
+    }
+
+    private fun showImageApiMissingDialog() {
+        val dialog = AlertDialog.Builder(requireContext())
+            .setTitle(R.string.image_mode_not_configured_title)
+            .setMessage(R.string.image_mode_not_configured_content)
+            .setCancelable(true)
+            .setPositiveButton(R.string.go_to_config) { _, _ ->
+                startActivity(
+                    Intent(requireContext(), SettingPageActivity::class.java).apply {
+                        putExtra(
+                            SettingPageActivity.EXTRA_FRAGMENT_TYPE,
+                            SettingPageActivity.TYPE_FRAGMENT_API_CONFIG,
+                        )
+                    }
+                )
+            }
+            .setNegativeButton(R.string.user_cancel, null)
+            .create()
+        dialog.show()
+        dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
+    }
+
     private fun canChangeExecutionMode(): Boolean {
         val busy = OcrLock.isRunning || TranslationJobRegistry.hasActiveJobs.value || TranslationBusyRegistry.isBusy
         if (busy) {
@@ -91,19 +118,31 @@ class TranslationMode : Fragment() {
     }
 
     private fun applyExecutionMode(animate: Boolean) {
-        val translate = binding.translateModeLayout
-        val ocrOnly = binding.ocrOnlyModeLayout
-        val selected = if (TranslationExecutionMode.isOcrOnly(requireContext())) ocrOnly else translate
-        val unselected = if (selected === ocrOnly) translate else ocrOnly
-        selected.setBackgroundResource(R.drawable.custom_radio_button_selected_background)
-        unselected.setBackgroundResource(R.drawable.custom_radio_button_background)
+        val mode = TranslationExecutionMode.get(requireContext())
+        val cards = mapOf(
+            TranslationExecutionMode.TRANSLATE to binding.translateModeLayout,
+            TranslationExecutionMode.OCR_ONLY to binding.ocrOnlyModeLayout,
+            TranslationExecutionMode.IMAGE to binding.picModeLayout,
+        )
+        val selected = cards[mode] ?: binding.translateModeLayout
+        cards.values.forEach { card ->
+            card.setBackgroundResource(
+                if (card === selected) {
+                    R.drawable.custom_radio_button_selected_background
+                } else {
+                    R.drawable.custom_radio_button_background
+                }
+            )
+        }
         if (animate) {
             val bounceIn = AnimationUtils.loadAnimation(requireContext(), R.anim.card_select_bounce_in)
             val bounceOut = AnimationUtils.loadAnimation(requireContext(), R.anim.card_select_bounce_out)
             bounceIn.setAnimationListener(object : android.view.animation.Animation.AnimationListener {
                 override fun onAnimationStart(animation: android.view.animation.Animation?) {}
                 override fun onAnimationRepeat(animation: android.view.animation.Animation?) {}
-                override fun onAnimationEnd(animation: android.view.animation.Animation?) { selected.startAnimation(bounceOut) }
+                override fun onAnimationEnd(animation: android.view.animation.Animation?) {
+                    selected.startAnimation(bounceOut)
+                }
             })
             selected.startAnimation(bounceIn)
         }

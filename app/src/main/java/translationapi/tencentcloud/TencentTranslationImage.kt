@@ -23,8 +23,11 @@ import translationapi.TranslationResponseDiagnostics
 import android.graphics.Bitmap
 import android.util.Base64
 import android.util.Log
+import com.moe.starflow.translate.ImageTranslationPayload
+import com.moe.starflow.translate.ImageUpload
 import com.moe.starflow.translate.TranslationPicAPI
 import com.moe.starflow.translate.TranslationResult
+import com.moe.starflow.translate.scaledToOriginal
 import kotlinx.coroutines.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -32,7 +35,6 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
-import java.io.IOException
 import java.util.concurrent.TimeUnit
 import kotlin.random.Random
 
@@ -42,6 +44,10 @@ import kotlin.random.Random
  * URL没有查询参数
  * 腾讯云API需要特殊的认证头信息，通过TencentSign.getSignature生成，显式设置Content-Type为application/json
  * 请求参数放在请求体中，图片数据转换为Base64格式，以json形式发送
+ *
+ * 响应主路径是 `ImageRecord.Value[*].TargetText`；若接口带行坐标则解析成 blocks，
+ * 否则只返回整段文本（导入侧会降级成文本面板）。
+ * 本类**不回收调用方传入的 Bitmap**；只回收自己按长边上限生成的缩略上传副本。
  */
 
 class TencentTranslationImage(
@@ -51,7 +57,7 @@ class TencentTranslationImage(
     private val coroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val inFlight = InFlightRequests()
 
-    private val SOCKET_TIMEOUT = 10L
+    private val SOCKET_TIMEOUT = 30L
     private val JSON_TYPE = "application/json; charset=utf-8".toMediaType()
 
     private val client = OkHttpClient.Builder()
@@ -67,71 +73,24 @@ class TencentTranslationImage(
         callback: (TranslationResult) -> Unit
     ) {
         inFlight.track(coroutineScope) {
+            val prepared = ImageUpload.prepare(pic)
             try {
                 // 转换图片为Base64
-                val imageBase64 = convertBitmapToBase64(pic)
-                pic.recycle()
+                val imageBase64 = withContext(Dispatchers.IO) {
+                    convertBitmapToBase64(prepared.bitmap)
+                }
                 ensureActive()
 
-                // 构建请求体
-                // 生成 1 到 100 之间的随机整数
-                val randomInt = Random.nextInt(1, 100000)
-                // 将整数转换为三位字符串格式
-                val formattedString = randomInt.toString().padStart(5, '0')
-                val sessionUuid = "session-$formattedString"
-//                val sessionUuid = UUID.randomUUID().toString()
-                val requestBody = JSONObject().apply {
-                    put("SessionUuid", sessionUuid)
-                    put("Scene", "doc")
-                    put("Data", imageBase64)
-                    put("Source", sourceLanguage)
-                    put("Target", targetLanguage)
-                    put("ProjectId", 0)
-                }.toString()
+                val payload = translate(
+                    imageBase64 = imageBase64,
+                    imageWidth = prepared.bitmap.width,
+                    imageHeight = prepared.bitmap.height,
+                    sourceLanguage = sourceLanguage,
+                    targetLanguage = targetLanguage,
+                ).scaledToOriginal(prepared.scaleToOriginal)
 
-                ensureActive()
-
-                // 获取签名头
-                val headers = TencentSign.getSignature(secretId, secretKey, "ImageTranslate", requestBody)
-
-                // 构建请求
-                val request = Request.Builder()
-                    .url("https://tmt.tencentcloudapi.com")
-                    .post(requestBody.toRequestBody(JSON_TYPE))
-                    .apply {
-                        headers.forEach { (key, value) ->
-                            addHeader(key, value)
-                        }
-                    }
-                    .build()
-
-                ensureActive()
-
-                // 执行请求
-                client.newCall(request).execute().use { response ->
-                    ensureActive()
-                    val responseBody = response.body?.string().orEmpty()
-
-                    if (!response.isSuccessful) {
-                        throw TranslationResponseDiagnostics.httpError(
-                            "Tencent Cloud image translation", response.code, responseBody,
-                            response.header("Content-Type")
-                        )
-                    }
-
-                    if (responseBody.isBlank()) {
-                        throw TranslationResponseDiagnostics.emptyBody(
-                            "Tencent Cloud image translation", response.code, response.header("Content-Type")
-                        )
-                    }
-
-                    Log.d("TENCENT_PIC", "Response: $responseBody")
-
-                    // 解析响应
-                    val result = parseResponse(responseBody)
-                    withContext(Dispatchers.Main) {
-                        callback(TranslationResult.Success(result))
-                    }
+                withContext(Dispatchers.Main) {
+                    callback(TranslationResult.Success(payload.text, payload))
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -140,60 +99,81 @@ class TencentTranslationImage(
                 withContext(Dispatchers.Main) {
                     callback(TranslationResult.Error(e))
                 }
+            } finally {
+                if (prepared.owned && !prepared.bitmap.isRecycled) prepared.bitmap.recycle()
             }
+        }
+    }
+
+    private suspend fun translate(
+        imageBase64: String,
+        imageWidth: Int,
+        imageHeight: Int,
+        sourceLanguage: String,
+        targetLanguage: String,
+    ): ImageTranslationPayload = withContext(Dispatchers.IO) {
+        ensureActive()
+
+        // 构建请求体
+        // 生成 1 到 100 之间的随机整数
+        val randomInt = Random.nextInt(1, 100000)
+        // 将整数转换为三位字符串格式
+        val formattedString = randomInt.toString().padStart(5, '0')
+        val sessionUuid = "session-$formattedString"
+        val requestBody = JSONObject().apply {
+            put("SessionUuid", sessionUuid)
+            put("Scene", "doc")
+            put("Data", imageBase64)
+            put("Source", sourceLanguage)
+            put("Target", targetLanguage)
+            put("ProjectId", 0)
+        }.toString()
+
+        ensureActive()
+
+        // 获取签名头
+        val headers = TencentSign.getSignature(secretId, secretKey, "ImageTranslate", requestBody)
+
+        // 构建请求
+        val request = Request.Builder()
+            .url("https://tmt.tencentcloudapi.com")
+            .post(requestBody.toRequestBody(JSON_TYPE))
+            .apply {
+                headers.forEach { (key, value) ->
+                    addHeader(key, value)
+                }
+            }
+            .build()
+
+        ensureActive()
+
+        // 执行请求
+        client.newCall(request).execute().use { response ->
+            ensureActive()
+            val responseBody = response.body?.string().orEmpty()
+
+            if (!response.isSuccessful) {
+                throw TranslationResponseDiagnostics.httpError(
+                    "Tencent Cloud image translation", response.code, responseBody,
+                    response.header("Content-Type")
+                )
+            }
+
+            if (responseBody.isBlank()) {
+                throw TranslationResponseDiagnostics.emptyBody(
+                    "Tencent Cloud image translation", response.code, response.header("Content-Type")
+                )
+            }
+
+            Log.d("TENCENT_PIC", "Response: $responseBody")
+            TencentImageResponseParser.parse(responseBody, imageWidth, imageHeight)
         }
     }
 
     private fun convertBitmapToBase64(bitmap: Bitmap): String {
         return ByteArrayOutputStream().use { outputStream ->
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 100, outputStream)
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 95, outputStream)
             Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
-        }
-    }
-
-    private fun parseResponse(responseBody: String): String {
-        try {
-            val jsonObject = JSONObject(responseBody)
-
-            // 检查错误
-            if (!jsonObject.has("Response")) {
-                throw IOException("Tencent Cloud image translation response is missing 'Response'")
-            }
-
-            val response = jsonObject.getJSONObject("Response")
-            if (response.has("Error")) {
-                val error = response.getJSONObject("Error")
-                throw IOException(
-                    "Tencent Cloud API error ${error.getString("Code")}: " +
-                        TranslationResponseDiagnostics.safeMessage(error.getString("Message"))
-                )
-            }
-
-            // 获取翻译结果
-            val imageRecord = response.getJSONObject("ImageRecord")
-            val records = imageRecord.getJSONArray("Value")
-
-            // 合并所有翻译结果
-            val translated = buildString {
-                for (i in 0 until records.length()) {
-                    val record = records.getJSONObject(i)
-                    if (isNotEmpty()) append("\n")
-                    append(record.getString("TargetText"))
-                }
-            }
-            if (translated.isBlank()) {
-                throw IOException(
-                    "Tencent Cloud image translation returned no 'ImageRecord.Value[*].TargetText'; " +
-                        "response=${TranslationResponseDiagnostics.responsePreview(responseBody)}"
-                )
-            }
-            return translated
-        } catch (e: IOException) {
-            throw e
-        } catch (e: Exception) {
-            throw TranslationResponseDiagnostics.invalidResponse(
-                "Tencent Cloud image translation", responseBody, e
-            )
         }
     }
 

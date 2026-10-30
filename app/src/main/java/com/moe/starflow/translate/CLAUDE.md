@@ -2,6 +2,23 @@
 
 > 范围：本文记录 `translate/` 的当前实现约束。跨模块规则见仓库根目录 `AGENTS.md` 和 `CLAUDE.md`。源码与测试为准；实现变化后同步更新本文。
 
+## 翻译执行模式
+
+`TranslationExecutionMode`（默认偏好 `translation_execution_mode`）有三种全局模式：
+
+| 值 | 模式 | 行为 |
+|---|---|---|
+| `TRANSLATE(0)` | 文本翻译 | 本地 OCR → 文本翻译（原有链路） |
+| `OCR_ONLY(1)` | 仅 OCR | 只识别并上屏/落库原文，不调用翻译 |
+| `IMAGE(2)` | 图片直传 | 整张图交给云端图片接口，**不获取 `OcrLock`、不加载本地 OCR/检测模型** |
+
+- 旧键 `Translate_Mode` 只作为兼容镜像：`set()` 会同步写（图片=1，其余=0）；读取时新键缺失且旧键为 1 才迁移成 `IMAGE`。业务代码只读 `isImage` / `isOcrOnly`，不要再读旧键。
+- 图片接口由 `ImageTranslatorFactory` 按 `Pic_API` 创建：百度（`BaiduTranslationImage`）、腾讯云（`TencentTranslationImage`）、自定义（`CustomTranslationImage`）。每个宿主持有自己的实例，接口回调不回收调用方位图；只回收 `ImageUpload` 生成的缩略副本与临时文件。
+- 百度 / 腾讯的响应解析在 `BaiduImageResponseParser` / `TencentImageResponseParser`：坐标是**上传位图空间**，`ImageUpload.scaledToOriginal` 再映射回调用方原图。自定义接口只有 JSON 文本路径，`blocks` 恒为空。
+- 图片结果按宿主分派：游戏/视频走既有 `TranslationResultView` 文本结果；漫画悬浮窗和导入阅读器有坐标时复用 `TranslatedBubble` / `OverlayRenderer` 画回原图，无坐标时用文本结果窗口/弹窗；小说插图有坐标时写 `NovelImageTextBlock`，无坐标时写 `NovelImageTranslation.plainText` 并显示文本弹窗。
+- 图片模式的语言表来自 `TranslateTools.getLanguagesList(..., forImage = true)`（百度/腾讯 raw 资源；自定义无表）。文本翻译页与小说正文**必须显式传 `forImage = false`**，图片模式不能改变文本翻译的可选语言。
+- 实际异步请求通过 `TranslationBusyRegistry`（可用 `begin()` 返回幂等 `Token`）登记；模式页在 `OcrLock`、章节任务或图片请求进行中拒绝切换。切换模式/图片接口后，服务按新配置重建翻译器并释放旧实例。
+
 ## 自动翻译
 
 **翻译中单击悬浮球（终止/确认语义，游戏/漫画通用）：**

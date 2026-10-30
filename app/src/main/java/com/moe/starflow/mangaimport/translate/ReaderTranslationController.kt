@@ -36,6 +36,11 @@ import com.moe.starflow.manga.types.TextDirection
 import com.moe.starflow.manga.types.TranslatedBubble
 import com.moe.starflow.mangaimport.data.ImportedManga
 import com.moe.starflow.mangaimport.reader.ReaderPageSource
+import com.moe.starflow.translate.ImageTextBlock
+import com.moe.starflow.translate.ImageTranslationPayload
+import com.moe.starflow.translate.ImageTranslatorFactory
+import com.moe.starflow.translate.TranslationPicAPI
+import com.moe.starflow.translate.TranslationResult
 import com.moe.starflow.translate.TranslationTextAPI
 import com.moe.starflow.translate.isLocalHeavyEngine
 import com.moe.starflow.sr.SrRequest
@@ -58,12 +63,15 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
 import translationapi.TranslatorFactory
 import java.util.LinkedList
 import java.util.concurrent.ConcurrentHashMap
@@ -229,6 +237,30 @@ class ReaderTranslationController(
 
     /** 当前全局执行模式：仅 OCR 时仍跑阅读器的手动/自动/增量调度，但跳过翻译阶段。 */
     fun isOcrOnlyMode(): Boolean = TranslationExecutionMode.isOcrOnly(context)
+
+    /** 图片模式：图片接口结果有坐标就画回原图，无坐标则用文本弹窗。 */
+    fun isImageMode(): Boolean = TranslationExecutionMode.isImage(context)
+
+    /** 图片接口实例（按 Pic_API/Custom_Pic_API 指纹复用；配置变化时重建）。 */
+    private var picTranslator: TranslationPicAPI? = null
+    private var picTranslatorKey: String = ""
+
+    /**
+     * 图片接口只返回文本时的 UI 回调；由 Activity 挂载，`unbindUi()` 清空。
+     * 参数为页号和**可显示的整段译文**（无 [N] 前缀）。
+     */
+    @Volatile
+    var onImageText: (page: Int, text: String) -> Unit = { _, _ -> }
+
+    private fun imageTranslator(): TranslationPicAPI? {
+        val key = "${appPrefs.getInt("Pic_API", 0)}:${appPrefs.getInt("Custom_Pic_API", 0)}"
+        if (picTranslator == null || key != picTranslatorKey) {
+            picTranslator?.release()
+            picTranslator = ImageTranslatorFactory.create(context, customPrefs)
+            picTranslatorKey = key
+        }
+        return picTranslator
+    }
 
     /**
      * 「译文替换表」的原始存储串（指纹，**不解析 JSON**）：它一变就说明规则被改过。
@@ -533,6 +565,7 @@ class ReaderTranslationController(
         onPhase = { _, _ -> }
         onSrNotice = { _, _ -> }
         onSrProgress = { _, _ -> }
+        onImageText = { _, _ -> }
     }
 
     /**
@@ -661,6 +694,8 @@ class ReaderTranslationController(
     fun shutdownAll() {
         superResolution.stopPageWork()
         closed = true
+        picTranslator?.release()
+        picTranslator = null
         cancelEverything()
         cancelSrChapterJob()
         chapterRunner.shutdown()
@@ -844,7 +879,11 @@ class ReaderTranslationController(
                         break
                     }
                     queuePage.value = page
-                    reportQueuePhase(page, ReaderTranslatePhase.DETECTING, null)
+                    if (isImageMode()) {
+                        reportQueuePhase(page, ReaderTranslatePhase.TRANSLATING, context.getString(R.string.image_translating))
+                    } else {
+                        reportQueuePhase(page, ReaderTranslatePhase.DETECTING, null)
+                    }
                     val prep = ocrPhase(page, trackForegroundPage = true)
                     if (prep == null) {
                         reportQueuePhase(
@@ -1165,6 +1204,8 @@ class ReaderTranslationController(
         val ocr: OcrEngine,
         val srcLang: String,
         val tgtLang: String,
+        /** 图片模式产物；非空时 [bubbles] 必为空，普通 OCR 管线不会创建它。 */
+        val image: ImageTranslationPayload? = null,
     )
 
     /**
@@ -1326,6 +1367,8 @@ class ReaderTranslationController(
      */
     private suspend fun ocrPhase(page: Int, trackForegroundPage: Boolean = false): PreparedPage? {
         if (!sourcePageAvailable(page)) return null
+        // 图片模式：整条本地 OCR/检测链路都不进入，直接走云端图片接口。
+        if (isImageMode()) return imagePhase(page)
         // 翻译模式下已有 OCR 载荷直接复用，避免重新调用 OCR；仅 OCR 模式只挑 IDLE 页。
         if (!isOcrOnlyMode()) {
             cachedPreparedPage(page)?.let { return it }
@@ -1335,6 +1378,83 @@ class ReaderTranslationController(
             return ocrPhaseLocked(page, trackForegroundPage)
         } finally {
             OcrLock.endOcrDemand()
+        }
+    }
+
+    /**
+     * 图片模式准备阶段：加载页图 → 云端图片接口。不获取 `OcrLock`，也不初始化本地 OCR。
+     * 失败/取消时自行回收位图；成功时位图交给 [translatePhase] 的 finally 回收。
+     */
+    private suspend fun imagePhase(page: Int): PreparedPage? {
+        val bitmap = loadFull(page)
+        if (bitmap == null) {
+            val msg = loadError(page) ?: context.getString(R.string.reader_translate_load_failed)
+            withContext(NonCancellable) { runCatching { fail(page, "PROCESS_EXCEPTION", msg) } }
+            return null
+        }
+        val api = imageTranslator()
+        if (api == null) {
+            bitmap.recycle()
+            val msg = context.getString(R.string.image_translate_api_not_configured)
+            withContext(NonCancellable) { runCatching { fail(page, "IMAGE_API_NOT_CONFIGURED", msg) } }
+            return null
+        }
+
+        val srcLang = customPrefs.getString("Source_Language", "ja")
+        val tgtLang = customPrefs.getString("Target_Language", "zh")
+        TranslationBusyRegistry.enter()
+        try {
+            val result = suspendCancellableCoroutine<TranslationResult> { cont ->
+                api.getTranslation(bitmap, srcLang, tgtLang) { outcome ->
+                    if (cont.isActive) cont.resume(outcome)
+                }
+                cont.invokeOnCancellation { api.cancelTranslation() }
+            }
+            when (result) {
+                is TranslationResult.Success -> {
+                    val payload = result.image
+                        ?: ImageTranslationPayload(blocks = emptyList(), text = result.translatedText)
+                    val text = payload.text.ifBlank {
+                        payload.blocks.joinToString("\n") { it.translatedText }
+                    }
+                    if (text.isBlank() && payload.blocks.isEmpty()) {
+                        bitmap.recycle()
+                        val msg = context.getString(R.string.image_translate_empty)
+                        withContext(NonCancellable) { runCatching { fail(page, "IMAGE_EMPTY", msg) } }
+                        return null
+                    }
+                    return PreparedPage(
+                        bitmap = bitmap,
+                        bubbles = emptyList(),
+                        det = lastDet,
+                        ocr = lastOcr,
+                        srcLang = srcLang,
+                        tgtLang = tgtLang,
+                        image = if (payload.text.isBlank()) payload.copy(text = text) else payload,
+                    )
+                }
+                is TranslationResult.Error -> {
+                    bitmap.recycle()
+                    LogCollector.e(TAG, "图片翻译失败 page=$page", result.error)
+                    val msg = result.error.message ?: context.getString(R.string.image_translate_empty)
+                    withContext(NonCancellable) {
+                        runCatching { fail(page, "IMAGE_TRANSLATE_FAILED", msg) }
+                    }
+                    return null
+                }
+            }
+        } catch (e: CancellationException) {
+            if (!bitmap.isRecycled) bitmap.recycle()
+            throw e
+        } catch (e: Exception) {
+            if (!bitmap.isRecycled) bitmap.recycle()
+            LogCollector.e(TAG, "图片翻译异常 page=$page", e)
+            withContext(NonCancellable) {
+                runCatching { fail(page, "PROCESS_EXCEPTION", e.message ?: context.getString(R.string.image_translate_empty)) }
+            }
+            return null
+        } finally {
+            TranslationBusyRegistry.exit()
         }
     }
 
@@ -1438,6 +1558,90 @@ class ReaderTranslationController(
      *
      * @return true = 这一页真的翻出来了（用于任务面板上的成功计数）
      */
+    /**
+     * 图片模式落库/上屏：有 blocks 就复用 OCR 那套气泡渲染与序列化；
+     * 没有 blocks 就存“成功但无坐标”的行，当前页用文本弹窗展示。
+     */
+    private suspend fun applyImageTranslation(page: Int, prep: PreparedPage): Boolean {
+        currentCoroutineContext().ensureActive()
+        val payload = prep.image ?: return false
+        val bubbles = payload.blocks.mapNotNull { it.toTranslatedBubble() }
+        val sourceText: String?
+        val translatedText: String
+        val bubbleRects: String?
+        if (bubbles.isNotEmpty()) {
+            sourceText = PageTranslationCodec.sourceText(bubbles)
+            translatedText = PageTranslationCodec.translatedText(bubbles)
+            bubbleRects = PageTranslationCodec.bubbleRects(bubbles)
+            if (page == currentPageProvider()) {
+                val overlayConfig = cacheManager.getOverlayConfig(appPrefs)
+                renderInto(
+                    page,
+                    bubbles,
+                    TranslationCacheManager.OverlayMode.TRANSLATED,
+                    prep.bitmap,
+                    overlayConfig,
+                    prep.det,
+                )
+            }
+        } else {
+            val plain = payload.text.ifBlank {
+                payload.blocks.joinToString("\n") { it.translatedText }
+            }
+            if (plain.isBlank()) {
+                fail(page, "IMAGE_EMPTY", context.getString(R.string.image_translate_empty))
+                return false
+            }
+            sourceText = null
+            translatedText = plain
+            bubbleRects = null
+            if (page == currentPageProvider()) {
+                withContext(Dispatchers.Main) { onImageText(page, plain) }
+            }
+        }
+        currentCoroutineContext().ensureActive()
+
+        val row = ImportedPageTranslation(
+            mangaId = manga.id,
+            pageIndex = page,
+            state = ImportedPageTranslation.STATE_SUCCESS,
+            sourceText = sourceText,
+            translatedText = translatedText,
+            bubbleRects = bubbleRects,
+            failCode = null,
+            failMessage = null,
+            updatedAtMs = System.currentTimeMillis(),
+            mangaKey = mangaKey,
+            translatorName = ImageTranslatorFactory.label(context, customPrefs),
+            sourceLang = prep.srcLang,
+            targetLang = prep.tgtLang,
+            ocrModel = "image",
+        )
+        rows.update { it + (page to row) }
+        dao.upsert(row)
+        version.value += 1
+        withContext(Dispatchers.Main) { onVisual() }
+        LogCollector.d(
+            TAG,
+            "图片翻译完成 page=$page blocks=${bubbles.size} textOnly=${bubbles.isEmpty()}",
+        )
+        return true
+    }
+
+    private fun ImageTextBlock.toTranslatedBubble(): TranslatedBubble? {
+        if (right <= left || bottom <= top) return null
+        val translated = translatedText.ifBlank { sourceText }
+        if (translated.isBlank()) return null
+        return TranslatedBubble(
+            rect = Rect(left, top, right, bottom),
+            originalText = sourceText,
+            translatedText = translated,
+            backgroundColor = Color.TRANSPARENT,
+            fontSize = fontSize.coerceAtLeast(1f),
+            direction = if (vertical) TextDirection.VERTICAL_RL else TextDirection.HORIZONTAL,
+        )
+    }
+
     private suspend fun translatePhase(
         page: Int,
         prep: PreparedPage,
@@ -1472,6 +1676,11 @@ class ReaderTranslationController(
         )
         var result = "未完成"
         try {
+            if (prep.image != null) {
+                val ok = applyImageTranslation(page, prep)
+                result = if (ok) "图片翻译" else "失败(图片)"
+                return ok
+            }
             if(allowAutoSr)srJob=maybeStartAutoSr(page,prep)
             if (isOcrOnlyMode()) {
                 val shown = showOcrOnlyPageSafely(page, prep)
@@ -1886,6 +2095,17 @@ class ReaderTranslationController(
         return hasOcrPayload(row)
     }
 
+    /**
+     * 图片模式“只剩文本”的成功行（接口没有返回坐标）。三态按钮据此改为打开文本弹窗。
+     */
+    fun imageTextOf(pageIndex: Int): String? {
+        if (!isImageMode()) return null
+        val row = rows.value[pageIndex] ?: return null
+        if (row.state != ImportedPageTranslation.STATE_SUCCESS) return null
+        if (!row.bubbleRects.isNullOrBlank()) return null
+        return row.translatedText?.takeIf { it.isNotBlank() }
+    }
+
     fun failMessageOf(pageIndex: Int): String? = rows.value[pageIndex]?.failMessage
 
     /** 全部记录（pageIndex 升序），供面板。 */
@@ -1905,6 +2125,36 @@ class ReaderTranslationController(
      * [fromQueue] = true 时表示这是自动模式排队的页：**只有该页恰好是用户正在看的那页才渲染上屏** ——
      * 后台预翻的页面渲染出来没人看，纯烧 CPU 和 100MB 渲染缓存。
      */
+    /** 图片模式的手动/自动单页路径：图片接口完成后落库/上屏，不进入 OCR 锁。 */
+    private suspend fun runImageTranslate(page: Int, fromQueue: Boolean) {
+        val shouldRender = { page == currentPageProvider() }
+        val phase: (ReaderTranslatePhase, String?) -> Unit = { p, msg ->
+            if (fromQueue && (p == ReaderTranslatePhase.SUCCESS || p == ReaderTranslatePhase.FAILED)) {
+                if (shouldRender()) onPhase(p, msg)
+            } else {
+                onPhase(p, msg)
+            }
+        }
+        phase(ReaderTranslatePhase.TRANSLATING, context.getString(R.string.image_translating))
+        val prep = imagePhase(page)
+        if (prep == null) {
+            phase(
+                ReaderTranslatePhase.FAILED,
+                failMessageOf(page) ?: context.getString(R.string.image_translate_empty),
+            )
+            return
+        }
+        val ok = translatePhase(page, prep, label = "图片", allowAutoSr = false)
+        if (ok) {
+            phase(ReaderTranslatePhase.SUCCESS, context.getString(R.string.image_translate_done))
+        } else {
+            phase(
+                ReaderTranslatePhase.FAILED,
+                failMessageOf(page) ?: context.getString(R.string.image_translate_empty),
+            )
+        }
+    }
+
     private suspend fun runTranslate(page: Int, fromQueue: Boolean) {
         if (!sourcePageAvailable(page)) {
             if (!fromQueue || page == currentPageProvider())
@@ -1929,6 +2179,10 @@ class ReaderTranslationController(
                 if (fromQueue) reportQueuePhase(page, ReaderTranslatePhase.FAILED, message)
                 else onPhase(ReaderTranslatePhase.FAILED, message)
             }
+            return
+        }
+        if (isImageMode()) {
+            runImageTranslate(page, fromQueue)
             return
         }
         // 放在缓存复用分支之前：该分支同样需要状态提示，而且不需要先拿 OCR 锁。

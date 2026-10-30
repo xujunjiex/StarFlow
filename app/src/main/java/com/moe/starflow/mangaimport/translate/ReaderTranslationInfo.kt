@@ -2,6 +2,7 @@ package com.moe.starflow.mangaimport.translate
 
 import android.content.Context
 import androidx.preference.PreferenceManager
+import com.moe.starflow.translate.ImageTranslatorFactory
 import com.moe.starflow.translate.TranslatorNames
 import com.moe.starflow.utils.CustomPreference
 import com.moe.starflow.utils.OcrEngineManager
@@ -14,6 +15,10 @@ object ReaderTranslationInfo {
         val group = OcrEngineManager.getOcrEngineGroup(PreferenceManager.getDefaultSharedPreferences(context))
         return context.getString(group.labelRes)
     }
+
+    /** 图片模式下实际使用的图片接口名；不走本地 OCR。 */
+    fun imageApiLabel(context: Context): String =
+        ImageTranslatorFactory.label(context, CustomPreference.getInstance(context))
 
     /** 当前翻译模型显示名。 */
     fun translatorModelLabel(context: Context): String =

@@ -21,24 +21,24 @@ import translationapi.InFlightRequests
 import translationapi.TranslationResponseDiagnostics
 
 import android.graphics.Bitmap
+import android.util.Log
+import com.moe.starflow.translate.ImageTranslationPayload
+import com.moe.starflow.translate.ImageUpload
 import com.moe.starflow.translate.TranslationPicAPI
 import com.moe.starflow.translate.TranslationResult
-import android.util.Log
+import com.moe.starflow.translate.scaledToOriginal
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.asRequestBody
-import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -52,6 +52,9 @@ import java.util.concurrent.TimeUnit
  * URL没有查询参数
  * 请求头设置Content-Type为multipart/form-data
  * 请求参数放在请求体中，包含图片文件数据，包含多个表单字段（有签名）
+ *
+ * 响应里的 `data.content[]` 带 `rect`（"x y w h"）、`src`、`dst`，用于把译文画回原图。
+ * 本类**不回收调用方传入的 Bitmap**；只回收自己按长边上限生成的缩略上传副本。
  */
 
 class BaiduTranslationImage(
@@ -63,7 +66,7 @@ class BaiduTranslationImage(
     private val inFlight = InFlightRequests()
 
     private val TRANS_API_HOST = "https://fanyi-api.baidu.com/api/trans/sdk/picture"
-    private val SOCKET_TIMEOUT = 10L // 10秒
+    private val SOCKET_TIMEOUT = 30L // 图片上传比文本慢，留足时间
     private val MULTIPART_FORM_DATA = "multipart/form-data".toMediaType()
 
     // 创建OkHttpClient实例
@@ -80,27 +83,26 @@ class BaiduTranslationImage(
         callback: (TranslationResult) -> Unit
     ) {
         inFlight.track(coroutineScope) {
+            val prepared = ImageUpload.prepare(pic)
+            var tempFile: File? = null
             try {
-                // 创建临时文件
-                val tempFile = File.createTempFile("translate_", ".jpg")
-                try {
-                    // 将Bitmap保存到临时文件
-                    withContext(Dispatchers.IO) {
-                        FileOutputStream(tempFile).use { out ->
-                            pic.compress(Bitmap.CompressFormat.JPEG, 100, out)
-                        }
+                tempFile = File.createTempFile("translate_", ".jpg")
+                withContext(Dispatchers.IO) {
+                    FileOutputStream(tempFile).use { out ->
+                        prepared.bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
                     }
-                    pic.recycle() // 回收bitmap
+                }
 
-                    val result = translate(tempFile, sourceLanguage, targetLanguage)
-                    withContext(Dispatchers.Main) {
-                        callback(TranslationResult.Success(result))
-                    }
-                } finally {
-                    // 确保清理临时文件
-                    withContext(Dispatchers.IO) {
-                        tempFile.delete()
-                    }
+                val payload = translate(
+                    imageFile = tempFile,
+                    imageWidth = prepared.bitmap.width,
+                    imageHeight = prepared.bitmap.height,
+                    from = sourceLanguage,
+                    to = targetLanguage,
+                ).scaledToOriginal(prepared.scaleToOriginal)
+
+                withContext(Dispatchers.Main) {
+                    callback(TranslationResult.Success(payload.text, payload))
                 }
             } catch (e: CancellationException) {
                 // 协程被取消，不调用callback
@@ -110,15 +112,22 @@ class BaiduTranslationImage(
                 withContext(Dispatchers.Main) {
                     callback(TranslationResult.Error(e))
                 }
+            } finally {
+                // 取消路径上不能再 suspend（withContext 会立刻抛 CancellationException），
+                // 否则临时文件和缩放副本都会泄漏。delete/recycle 都是非挂起操作，直接做。
+                tempFile?.delete()
+                if (prepared.owned && !prepared.bitmap.isRecycled) prepared.bitmap.recycle()
             }
         }
     }
 
     private suspend fun translate(
         imageFile: File,
+        imageWidth: Int,
+        imageHeight: Int,
         from: String,
         to: String
-    ): String = withContext(Dispatchers.IO) {
+    ): ImageTranslationPayload = withContext(Dispatchers.IO) {
         ensureActive()
         // 计算图片MD5
         val imageMd5 = getMD5File(imageFile)
@@ -172,36 +181,7 @@ class BaiduTranslationImage(
             }
 
             Log.d("BAIDU_PIC", "Response: $responseBody")
-            parseResponse(responseBody)
-        }
-    }
-
-    private fun parseResponse(responseBody: String): String {
-        try {
-            val jsonObject = JSONObject(responseBody)
-
-            // 检查是否有错误
-            if (jsonObject.has("error_code") && jsonObject.getString("error_code") != "0") {
-                throw IOException(
-                    "Baidu image translation API error ${jsonObject.getString("error_code")}: " +
-                        TranslationResponseDiagnostics.safeMessage(jsonObject.optString("error_msg"))
-                )
-            }
-
-            // 获取翻译结果
-            val data = jsonObject.getJSONObject("data")
-            val translated = data.getString("sumDst")
-            if (translated.isBlank()) {
-                throw IOException(
-                    "Baidu image translation returned a blank 'data.sumDst'; " +
-                        "response=${TranslationResponseDiagnostics.responsePreview(responseBody)}"
-                )
-            }
-            return translated // 返回未分段的完整译文
-        } catch (e: IOException) {
-            throw e
-        } catch (e: Exception) {
-            throw TranslationResponseDiagnostics.invalidResponse("Baidu image translation", responseBody, e)
+            BaiduImageResponseParser.parse(responseBody, imageWidth, imageHeight)
         }
     }
 
@@ -258,5 +238,4 @@ class BaiduTranslationImage(
         cancelTranslation()
         coroutineScope.cancel() // 取消整个作用域
     }
-
 }

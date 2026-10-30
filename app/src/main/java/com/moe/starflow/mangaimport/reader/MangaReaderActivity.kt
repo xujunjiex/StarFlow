@@ -1,6 +1,9 @@
 package com.moe.starflow.mangaimport.reader
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ContentValues
+import android.content.Context
 import android.animation.AnimatorSet
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
@@ -123,6 +126,12 @@ class MangaReaderActivity : AppCompatActivity() {
         /** 上下 UI 显隐的淡入淡出时长（短促，跟随系统「动画时长」缩放）。 */
         private const val CHROME_FADE_MS = 160L
 
+        /**
+         * 切章提示的最小间隔（见 [notifyChapterIfChanged]）：连按箭头 / 在章边界来回滑时不再排队刷屏
+         * —— 提示浮层只有 3 个槽位，多出来的会排队，晚到的「已切换到第 N 章」反而在说别的章。
+         */
+        private const val CHAPTER_NOTICE_MIN_MS = 1000L
+
 
         /** 重建时恢复现场用（见 [onSaveInstanceState]）。 */
         private const val STATE_CURRENT_PAGE = "reader_state_page"
@@ -142,6 +151,15 @@ class MangaReaderActivity : AppCompatActivity() {
      * 面板选中、顶部胶囊、批量翻译都取同一个值，翻页即跟随，不存在两套状态对不上的可能。
      */
     private var chapters: List<MangaChapter> = emptyList()
+
+    /**
+     * 上一次提示过的章下标（-1 = 还没提示过）。
+     * 见 [notifyChapterIfChanged]：进阅读器落点那一章不提示，之后换到别的章才提示。
+     */
+    private var notifiedChapterIndex = -1
+
+    /** 上一次切章提示的时刻（elapsedRealtime，节流用，见 [notifyChapterIfChanged]）。 */
+    private var lastChapterNoticeMs = 0L
 
     private var currentPage = 0
     private var colorFilter = ReaderColorFilter.EMPTY
@@ -320,6 +338,15 @@ class MangaReaderActivity : AppCompatActivity() {
                 )
                 c.onVisual = { runOnUiThread { applyPageVisual(currentPage) } }
                 c.onPhase = ::onTranslatePhase
+                c.onImageText = { page, text ->
+                    runOnUiThread {
+                        if (!isFinishing && page == currentPage &&
+                            lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+                        ) {
+                            showImageTextDialog(text)
+                        }
+                    }
+                }
                 // 超分提示（失败原因 / 其它）统一走 app 状态浮层。⚠️ 必须在主线程调：
                 // 控制器可能从 IO 协程发过来（它内部只在自动超分那条路径 `withContext(Main)`）。
                 c.onSrNotice = { text, isError ->
@@ -964,7 +991,8 @@ class MangaReaderActivity : AppCompatActivity() {
             false // 不消费，交给 RecyclerView 正常滚动
         }
 
-        binding.readerProgress.onSeek = { page -> goToPage(page) }
+        // 进度条是**章内**坐标 → 寻页时换算回全书页号（见 [progressScope]）
+        binding.readerProgress.onSeek = { page -> goToPage(progressScope().globalPage(page)) }
         binding.readerProgress.onLongPress = {
             lastInteractionMs = SystemClock.elapsedRealtime()
             openPagePreview()
@@ -1049,9 +1077,15 @@ class MangaReaderActivity : AppCompatActivity() {
         } else {
             getString(R.string.reader_page_indicator, currentPage + 1, source.size)
         }
-        // 进度条仍按**全书**页数（拖拽寻页/长按预览都是整本的，绿条也是整本口径）；
-        // 章内位置由顶部胶囊表达，两者不冲突
-        binding.readerProgress.setPage(currentPage, source.size)
+        // 进度条 = **当前章**口径（拖拽寻页 / 绿条 / 紫条都只表达本章），与胶囊的
+        // 「章内第几页 / 本章共几页」同一个坐标系。整本口径下几百页挤在一条线上，一像素好几页，
+        // 拖起来落不准（用户口径：按当前章节选择移动跳转，不是所有章节）。
+        val scope = progressScope()
+        binding.readerProgress.setPage(scope.localPage(currentPage), scope.pageCount)
+        // 翻页也可能跨了章（Webtoon 那条路只走到这里）→ 绿条/紫条的章内区间跟着重算
+        refreshProgressMarks(scope)
+        // 换章时用 app 内提示条告知当前章（进度条按章走，归零不该被当成丢进度）
+        notifyChapterIfChanged()
     }
 
     // ===== 阅读器内嵌翻译 =====
@@ -1071,8 +1105,14 @@ class MangaReaderActivity : AppCompatActivity() {
         // Webtoon 没有单页三态（连续滚动下"当前页"语义不唯一），整屏切换改由阅读模式分段器
         // 上「连续滑动」按钮的两态控制（见 ReaderMenuSheet），本按钮在 Webtoon 下整组隐藏。
         binding.btnToggleTranslate.setOnClickListener {
-            // ⚠️ 三态切换**不要旋转**（用户口径：三态别用旋转、重新翻译才用旋转）
-            controller.cycleVisual(currentPage)
+            // 图片接口没有坐标时三态没有可切换的图，按钮改为打开整段译文。
+            val imageText = controller.imageTextOf(currentPage)
+            if (imageText != null) {
+                showImageTextDialog(imageText)
+            } else {
+                // ⚠️ 三态切换**不要旋转**（用户口径：三态别用旋转、重新翻译才用旋转）
+                controller.cycleVisual(currentPage)
+            }
         }
         // 失败页：感叹号 → 小气泡显示失败原因（不弹窗）
         binding.btnFailTranslate.setOnClickListener { showFailBubble() }
@@ -1309,6 +1349,41 @@ class MangaReaderActivity : AppCompatActivity() {
     private fun currentChapterIndex(): Int = chapterIndexOf(chapters, currentPage)
 
     private fun currentChapter(): MangaChapter? = chapters.getOrNull(currentChapterIndex())
+
+    /**
+     * 底部进度条的坐标域：**当前章**（章表与当前页对不上时退回整本，见 [ReaderProgressScope]）。
+     * 拖拽寻页、绿条（已翻译）、紫条（已超分）都必须用同一个 scope，否则区间会落到别的章上。
+     */
+    private fun progressScope(): ReaderProgressScope =
+        ReaderProgressScope.of(currentChapter(), currentPage, source.size)
+
+    /**
+     * 切章提示（用户口径 2026-10）：换到另一章时用 **app 内提示条**（[notifyUser] → `AppNotice`，
+     * 与阅读器其它提示同一个出口，位置就在顶部章节胶囊下方）告知当前章 —— 进度条按章走，
+     * 归零不该被当成丢进度。
+     *
+     * 判据是**章下标的变化**，所以箭头切章、目录/面板跳章、翻页跨章（含 Webtoon 连续滚动）都会提示一次。
+     * ⚠️ 首次落点不提示（进阅读器 / 从设置返回重建不是"切换"），同章也不重复提示；
+     * 章表为空（异常来源）时什么都不做。连按箭头那种高频切换按 [CHAPTER_NOTICE_MIN_MS] 节流：
+     * 提示可以少发一条，但**不能排队**——晚到的「已切换到第 2 章」会跟用户眼前那一章对不上。
+     */
+    private fun notifyChapterIfChanged() {
+        val index = currentChapterIndex()
+        val chapter = chapters.getOrNull(index) ?: return
+        if (notifiedChapterIndex < 0) {
+            notifiedChapterIndex = index
+            return
+        }
+        if (index == notifiedChapterIndex) return
+        // 先记账再判节流：被节流吞掉的那次也算"已提示"，回头翻到这一章不该补一条迟到的提示
+        notifiedChapterIndex = index
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastChapterNoticeMs < CHAPTER_NOTICE_MIN_MS) return
+        lastChapterNoticeMs = now
+        notifyUser(
+            getString(R.string.reader_chapter_switched, mangaChapterLabel(this, chapter), chapter.pageCount)
+        )
+    }
 
     /**
      * 切到 [index] 章（跳到该章第一页）。
@@ -2034,6 +2109,20 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     /** 同步翻译浮层组：成功页显示三态按钮、失败页显示感叹号；隐藏态 / Webtoon 整组隐藏。 */
+    /** 图片接口只返回文本：可滚动译文弹窗；复制按钮与清除/删除确认同一套阅读器配色。 */
+    private fun showImageTextDialog(text: String) {
+        if (text.isBlank()) return
+        ReaderDialogs.show(this, isDarkBackground()) {
+            setTitle(R.string.image_translate_text_title)
+            setMessage(text)
+            setPositiveButton(R.string.user_known, null)
+            setNeutralButton(R.string.image_translate_copy) { _, _ ->
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("image translation", text))
+            }
+        }
+    }
+
     private fun refreshTranslationChrome() {
         // Webtoon（连续滚动）不支持单页翻译，也没有单页三态 → 整个浮层组（翻译/重翻 +
         // 三态 + 失败感叹号）隐藏，只留底部模式分段器上「连续滑动」按钮的两态角标。
@@ -2070,9 +2159,11 @@ class MangaReaderActivity : AppCompatActivity() {
         if (translated || ocrComplete) {
             binding.ivToggleTranslate.setImageResource(overlayModeIcon(controller.currentVisual(currentPage)))
         }
-        val toggleDescription = getString(
-            if (ocrOnly) R.string.reader_ocr_toggle_desc else R.string.reader_toggle_desc
-        )
+        val toggleDescription = if (controller.imageTextOf(currentPage) != null) {
+            getString(R.string.image_translate_text_title)
+        } else {
+            getString(if (ocrOnly) R.string.reader_ocr_toggle_desc else R.string.reader_toggle_desc)
+        }
         binding.btnToggleTranslate.contentDescription = toggleDescription
         binding.ivToggleTranslate.contentDescription = toggleDescription
         // 走到这里说明是分页模式（Webtoon 在上面已整组隐藏）→ 按钮恒可用，无需置灰
@@ -2233,11 +2324,7 @@ class MangaReaderActivity : AppCompatActivity() {
     }
     /** 刷新进度条上的「已翻译」绿色区间。 */
     private fun refreshProgressTranslation() {
-        binding.readerProgress.setTranslatedPages(translationController?.completedPages() ?: emptySet())
-        // 超分那一条**独立**的紫色区间（用户口径：超分过的页也要在进度条上有标记）。
-        // 与绿色分居粗带两侧：绿在粗带中间、紫在粗带下方 —— 一页可以"翻了没超"或"超了没翻"，
-        // 两个维度互不遮盖。
-        binding.readerProgress.setSrPages(translationController?.srPages() ?: emptySet())
+        refreshProgressMarks(progressScope())
         // 顺带把打开着的面板一起刷新：面板是打开那一刻的快照，宿主不推它就停在旧状态
         // （`ReaderMenuSheet.notifyTranslateChanged` 以前从来没有调用方 —— 面板开着时
         // 译文在涨、每页列表与汇总却一直不动）
@@ -2255,6 +2342,24 @@ class MangaReaderActivity : AppCompatActivity() {
 
     /** 上一次把状态推给面板的时刻（节流用，见 [refreshProgressTranslation]）。 */
     private var lastPanelPushMs = 0L
+
+    /**
+     * 进度条上的两条细色带（绿=已翻译、紫=已超分）。
+     *
+     * ⚠️ 两者都喂**章内**页号（[scope]）：整本的集合原样传进去，本章以外的页会被
+     * `computeTranslatedRuns` 当越界页丢掉，剩下的又会按整本刻度落到别的章的位置上。
+     * 超分与翻译是**互相独立**的两个维度（一页可以"翻了没超"或"超了没翻"），所以各喂各的集合。
+     */
+    private fun refreshProgressMarks(scope: ReaderProgressScope) {
+        binding.readerProgress.setTranslatedPages(
+            scope.localPages(translationController?.completedPages() ?: emptySet())
+        )
+        // 超分那一条**独立**的紫色区间（用户口径：超分过的页也要在进度条上有标记）。
+        // 与绿色分居粗带两侧：绿在粗带中间、紫在粗带下方，一页可以"翻了没超"或"超了没翻"，互不遮盖。
+        binding.readerProgress.setSrPages(
+            scope.localPages(translationController?.srPages() ?: emptySet())
+        )
+    }
 
     /**
      * 把面板状态**立即**推一次。

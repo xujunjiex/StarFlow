@@ -153,7 +153,7 @@
                     <TextView 
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="@string/pic_mode"
+                        android:text="@string/translate_execution_image"
                         android:textSize="14sp"
                         android:textStyle="bold" />
 
@@ -161,7 +161,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:layout_marginTop="8dp"
-                        android:text="@string/pic_mode_description"
+                        android:text="@string/translate_execution_image_desc"
                         android:textColorHighlight="@android:color/transparent"/>
 
                 </LinearLayout>

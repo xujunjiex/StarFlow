@@ -185,6 +185,14 @@ MOBI/AZW、FB2、PDF、RAR/7z 小说包当前没有对应解析器，不应在�
 | 渲染 | `NovelImageOverlay` | 三态 = 译文（`useOriginalText=false`）/ 识别原文（`true`）/ 纯图（**不调** `renderOverlay`）；按 `(图片路径, 态, 载荷 hashCode, 目标宽, 渲染倍率)` 缓存；`renderScale` 按"这张图最终画多大"给（**不再是 1f**，见下面「⑤ 覆盖层按最终画多大光栅化」）。"原文"是**把 OCR 原文画回原位**，不是裸原图 |
 | 交互 | `NovelImageControls` + `NovelPageView`/`NovelScrollAdapter` | **长按只进"编辑模式"**（按钮亮出来，**不自动开翻**）→ 点右下角「翻译」按钮才 OCR+翻译；按钮**画在图上**（贴图片绘制矩形右下角内侧），**画与命中同源**（`controlsOf()` 一份几何） |
 
+**图片直传执行模式**：`NovelImagePipeline.translateOnIo` 在 OCR 语言兼容检查之前分流到
+`translateImageOnIo`，用 `ImageTranslatorFactory` 请求 `decodeForOcr` 的插图；**不碰 `OcrLock`、不调
+`TranslationEngineInit`**。接口返回 `ImageTextBlock` 时按 `originalWidth / base.width` 映射成
+`NovelImageTextBlock`；只返回文本时 `blocks` 为空、`NovelImageTranslation.plainText` 存整段译文，
+`NovelImageOverlay` 对空块直接返回 null（保留原图），阅读器三态按钮改为打开 `showImageTextDialog`。
+`NovelImagePayloadCodec` 的 `"text"` 字段保证这种行也能往返并被「已翻」判据识别。正文/语言面板仍
+`forImage = false`，图片模式不改变小说文本翻译。
+
 **硬约束与踩过的坑**：
 
 - ⚠️ **插图不拆批**（`NovelBatchPlanner.planBatches` 就是普通 `chunked(每批段数)`）：一批里

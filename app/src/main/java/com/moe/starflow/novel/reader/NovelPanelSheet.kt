@@ -1263,7 +1263,8 @@ class NovelPanelSheet(
     /** 测试缝：语言下拉数据源（见 `ReaderMenuSheet` 同名属性）。 */
     @androidx.annotation.VisibleForTesting
     var languagesList: (Int, OcrEngineGroup?) -> List<CustomLocale> = { type, group ->
-        TranslateTools.getLanguagesList(requireContext(), type, group) ?: emptyList()
+        // 小说正文翻译始终是文本翻译；图片模式只影响插图，不能用图片接口语言表限制正文。
+        TranslateTools.getLanguagesList(requireContext(), type, group, forImage = false) ?: emptyList()
     }
 
     private fun showLangDialog(type: Int) {

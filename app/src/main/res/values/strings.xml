@@ -240,11 +240,29 @@
     <string name="translate_execution_translate_desc">Translate after recognition and show translated results</string>
     <string name="translate_execution_ocr_only">OCR only</string>
     <string name="translate_execution_ocr_only_desc">Recognize and save the original text without translating</string>
+    <string name="translate_execution_image">Image translation</string>
+    <string name="translate_execution_image_desc">Upload screenshots or imported images directly to a cloud image translation API without local OCR; draw the translation back when the API returns text coordinates</string>
     <string name="execution_ocr_only_auto_disabled">OCR-only mode: automatic translation is disabled. Tap OCR to recognize the current screen.</string>
     <string name="execution_ocr_only_done">OCR complete</string>
     <string name="execution_mode_busy">Stop OCR/translation tasks before changing execution mode</string>
+    <string name="image_mode_not_configured_title">Image translation API not configured</string>
+    <string name="image_mode_not_configured_content">Image translation needs Baidu, Tencent Cloud, or a custom image translation API. Enable and fill in the API configuration first.</string>
+    <string name="image_translating">Translating image…</string>
+    <string name="image_translate_done">Image translation complete</string>
+    <string name="image_translate_text_only">This API only returns text; showing the text panel</string>
+    <string name="image_translate_empty">The image translation API returned no text</string>
+    <string name="image_translate_api_not_configured">Configure an image translation API first</string>
+    <string name="image_translate_api_configured">Image translation API: %1$s</string>
+    <string name="image_language_unsupported">The current image translation API does not support source language “%1$s”</string>
+    <string name="image_mode_ocr_engine_disabled">Image mode does not use local OCR; change the image translation API in API settings</string>
+    <string name="image_translate_text_title">Image translation</string>
+    <string name="image_translate_copy">Copy</string>
+    <string name="reader_execution_mode_image">Execution mode: image translation</string>
+    <string name="reader_translate_image_api">Image translation API: %1$s</string>
+    <string name="engine_status_image">Image translation: %1$s</string>
+    <string name="engine_status_text_unaffected">Text translation: %1$s</string>
     <string name="pic_mode">Upload Images Directly for Translation</string>
-    <string name="pic_mode_description">Upload the screenshot directly to the cloud API for translation. It supports using the preset cloud image translation API, and also supports using the custom cloud image translation API. <font color="#55AEEA">It does not support local translation</font>. This method consumes relatively more data traffic.</string>
+    <string name="pic_mode_description">Upload screenshots or imported images directly to a cloud image translation API without local OCR. Baidu, Tencent Cloud, and custom image translation APIs are supported. When the API returns text coordinates the translation is drawn back onto the image; text-only APIs use a text result. <font color="#55AEEA">Text translation is unaffected</font>. This method consumes relatively more data traffic.</string>
     <string name="nllb_name">NLLB Translate Model</string>
     <string name="mlkit_name">ML Kit</string>
     <string name="nllb_description">NLLB is a built-in machine translation model by the MoeTranslate author. It supports multiple languages with good translation quality. The model needs to be downloaded before use: about 1GB on first use, and the device needs at least 6GB of RAM. After the download is complete, it works offline. Click "Manage NLLB Model Files" below to download or delete the model files.</string>
@@ -1297,6 +1315,8 @@
     <string name="reader_page_indicator_chapter">%1$s · %2$d/%3$d</string>
     <string name="reader_chapter_first">Already at the first chapter</string>
     <string name="reader_chapter_last">Already at the last chapter</string>
+    <!-- 切章提示：进阅读器落点不提示；翻页跨章 / 箭头切章 / 目录跳章各提示一次 -->
+    <string name="reader_chapter_switched">Switched to %1$s · %2$d pages</string>
     <string name="reader_chapter_badge">%1$d/%2$d translated</string>
     <string name="reader_ocr_chapter_badge">%1$d/%2$d recognized</string>
 
