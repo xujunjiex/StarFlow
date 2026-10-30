@@ -21,7 +21,8 @@ import translationapi.InFlightRequests
 import translationapi.TranslationResponseDiagnostics
 
 import android.graphics.Bitmap
-import android.util.Log
+import com.moe.starflow.translate.ImageApiException
+import com.moe.starflow.translate.ImageTranslationLog
 import com.moe.starflow.translate.ImageTranslationPayload
 import com.moe.starflow.translate.ImageUpload
 import com.moe.starflow.translate.TranslationPicAPI
@@ -65,6 +66,11 @@ class BaiduTranslationImage(
     private val coroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val inFlight = InFlightRequests()
 
+    companion object {
+        /** 稳定 provider id（日志 `provider=` 字段，不随语言本地化变化）。 */
+        const val PROVIDER = "baidu"
+    }
+
     private val TRANS_API_HOST = "https://fanyi-api.baidu.com/api/trans/sdk/picture"
     private val SOCKET_TIMEOUT = 30L // 图片上传比文本慢，留足时间
     private val MULTIPART_FORM_DATA = "multipart/form-data".toMediaType()
@@ -80,18 +86,38 @@ class BaiduTranslationImage(
         pic: Bitmap,
         sourceLanguage: String,
         targetLanguage: String,
+        requestContext: String,
         callback: (TranslationResult) -> Unit
     ) {
         inFlight.track(coroutineScope) {
-            val prepared = ImageUpload.prepare(pic)
+            val prepared = try {
+                ImageUpload.prepare(pic)
+            } catch (e: Exception) {
+                // 连上传副本都生成不了（超大图分配失败等）：没有请求可发，但也必须留一行日志
+                ImageTranslationLog.prepareFailed(PROVIDER, requestContext, pic.width, pic.height, e)
+                withContext(Dispatchers.Main) { callback(TranslationResult.Error(e)) }
+                return@track
+            }
+            val session = ImageTranslationLog.start(
+                provider = PROVIDER,
+                requestContext = requestContext,
+                sourceLanguage = sourceLanguage,
+                targetLanguage = targetLanguage,
+                sourceWidth = pic.width,
+                sourceHeight = pic.height,
+                upload = prepared,
+            )
+            var stage = "encode"
             var tempFile: File? = null
             try {
+                val uploadBytes = withContext(Dispatchers.IO) { ImageUpload.encodeJpeg(prepared.bitmap) }
+                session.uploaded(uploadBytes.size)
+
                 tempFile = File.createTempFile("translate_", ".jpg")
                 withContext(Dispatchers.IO) {
-                    FileOutputStream(tempFile).use { out ->
-                        prepared.bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
-                    }
+                    FileOutputStream(tempFile!!).use { it.write(uploadBytes) }
                 }
+                stage = "request"
 
                 val payload = translate(
                     imageFile = tempFile,
@@ -99,16 +125,23 @@ class BaiduTranslationImage(
                     imageHeight = prepared.bitmap.height,
                     from = sourceLanguage,
                     to = targetLanguage,
+                    session = session,
                 ).scaledToOriginal(prepared.scaleToOriginal)
 
+                session.ok(
+                    blocks = payload.blocks.size,
+                    textOnly = payload.blocks.isEmpty(),
+                    chars = payload.text.length,
+                )
                 withContext(Dispatchers.Main) {
                     callback(TranslationResult.Success(payload.text, payload))
                 }
             } catch (e: CancellationException) {
                 // 协程被取消，不调用callback
+                session.cancelled()
                 throw e
             } catch (e: Exception) {
-                Log.e("BAIDU_PIC", "Translation error", e)
+                session.fail(e, fallbackStage = stage)
                 withContext(Dispatchers.Main) {
                     callback(TranslationResult.Error(e))
                 }
@@ -126,7 +159,8 @@ class BaiduTranslationImage(
         imageWidth: Int,
         imageHeight: Int,
         from: String,
-        to: String
+        to: String,
+        session: ImageTranslationLog.Session,
     ): ImageTranslationPayload = withContext(Dispatchers.IO) {
         ensureActive()
         // 计算图片MD5
@@ -167,21 +201,43 @@ class BaiduTranslationImage(
         client.newCall(request).execute().use { response ->
             ensureActive()
             val responseBody = response.body?.string().orEmpty()
+            session.http(response.code)
 
             if (!response.isSuccessful) {
-                throw TranslationResponseDiagnostics.httpError(
-                    "Baidu image translation", response.code, responseBody, response.header("Content-Type")
+                throw ImageApiException(
+                    TranslationResponseDiagnostics.httpError(
+                        "Baidu image translation", response.code, responseBody, response.header("Content-Type")
+                    ).message.orEmpty(),
+                    stage = "http",
+                    httpStatus = response.code,
                 )
             }
 
             if (responseBody.isBlank()) {
-                throw TranslationResponseDiagnostics.emptyBody(
-                    "Baidu image translation", response.code, response.header("Content-Type")
+                throw ImageApiException(
+                    TranslationResponseDiagnostics.emptyBody(
+                        "Baidu image translation", response.code, response.header("Content-Type")
+                    ).message.orEmpty(),
+                    stage = "empty",
+                    httpStatus = response.code,
                 )
             }
 
-            Log.d("BAIDU_PIC", "Response: $responseBody")
-            BaiduImageResponseParser.parse(responseBody, imageWidth, imageHeight)
+            try {
+                BaiduImageResponseParser.parse(responseBody, imageWidth, imageHeight)
+            } catch (e: ImageApiException) {
+                throw e
+            } catch (e: Exception) {
+                throw ImageApiException(
+                    TranslationResponseDiagnostics.invalidResponse(
+                        "Baidu image translation", responseBody, e, response.code,
+                        response.header("Content-Type"),
+                    ).message.orEmpty(),
+                    stage = "parse",
+                    httpStatus = response.code,
+                    cause = e,
+                )
+            }
         }
     }
 

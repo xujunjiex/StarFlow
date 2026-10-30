@@ -22,8 +22,9 @@ import translationapi.TranslationResponseDiagnostics
 
 import android.graphics.Bitmap
 import android.util.Base64
-import android.util.Log
 import com.moe.starflow.me.apiconfig.CustomPicAPIConfig
+import com.moe.starflow.translate.ImageApiException
+import com.moe.starflow.translate.ImageTranslationLog
 import com.moe.starflow.translate.ImageTranslationPayload
 import com.moe.starflow.translate.ImageUpload
 import com.moe.starflow.translate.TranslationPicAPI
@@ -43,7 +44,6 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
@@ -56,9 +56,18 @@ import java.util.concurrent.TimeUnit
  * `blocks = emptyList()`，导入/插图侧会降级为文本面板。
  * 本类**不回收调用方传入的 Bitmap**；只回收自己按长边上限生成的缩略上传副本。
  */
-class CustomTranslationImage(private val config: CustomPicAPIConfig): TranslationPicAPI {
+class CustomTranslationImage(
+    private val config: CustomPicAPIConfig,
+    /** 稳定 provider id（`custom#<序号>`），只用于日志。 */
+    private val providerId: String = PROVIDER_PREFIX,
+): TranslationPicAPI {
     private val coroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val inFlight = InFlightRequests()
+
+    companion object {
+        /** 稳定 provider id 前缀（日志里带自定义接口序号：`custom#1`）。 */
+        const val PROVIDER_PREFIX = "custom"
+    }
 
     private val SOCKET_TIMEOUT = 30L
     private val JSON_TYPE = "application/json; charset=utf-8".toMediaType()
@@ -74,39 +83,62 @@ class CustomTranslationImage(private val config: CustomPicAPIConfig): Translatio
         pic: Bitmap,
         sourceLanguage: String,
         targetLanguage: String,
+        requestContext: String,
         callback: (TranslationResult) -> Unit
     ) {
         inFlight.track(coroutineScope) {
-            val prepared = ImageUpload.prepare(pic)
+            val prepared = try {
+                ImageUpload.prepare(pic)
+            } catch (e: Exception) {
+                ImageTranslationLog.prepareFailed(providerId, requestContext, pic.width, pic.height, e)
+                withContext(Dispatchers.Main) { callback(TranslationResult.Error(e)) }
+                return@track
+            }
+            val session = ImageTranslationLog.start(
+                provider = providerId,
+                requestContext = requestContext,
+                sourceLanguage = sourceLanguage,
+                targetLanguage = targetLanguage,
+                sourceWidth = pic.width,
+                sourceHeight = pic.height,
+                upload = prepared,
+            )
+            var stage = "encode"
             var tempFile: File? = null
             try {
+                val uploadBytes = withContext(Dispatchers.IO) { ImageUpload.encodeJpeg(prepared.bitmap) }
+                session.uploaded(uploadBytes.size)
                 val base64Image = if (config.method == "POST" && config.contentType == "multipart/form-data") {
                     tempFile = File.createTempFile("translate_", ".jpg")
                     withContext(Dispatchers.IO) {
-                        FileOutputStream(tempFile!!).use { out ->
-                            prepared.bitmap.compress(Bitmap.CompressFormat.JPEG, 95, out)
-                        }
+                        FileOutputStream(tempFile!!).use { it.write(uploadBytes) }
                     }
                     ""
                 } else {
-                    withContext(Dispatchers.IO) { convertBitmapToBase64(prepared.bitmap) }
+                    Base64.encodeToString(uploadBytes, Base64.NO_WRAP)
                 }
+                stage = "request"
 
                 val result = when {
-                    config.method == "GET" -> executeGetRequest(base64Image)
-                    config.contentType == "application/json" -> executePostJsonRequest(base64Image)
-                    config.contentType == "multipart/form-data" -> executePostMultipartRequest(tempFile!!)
-                    else -> throw Exception("Unsupported request type")
+                    config.method == "GET" -> executeGetRequest(base64Image, session)
+                    config.contentType == "application/json" -> executePostJsonRequest(base64Image, session)
+                    config.contentType == "multipart/form-data" -> executePostMultipartRequest(tempFile!!, session)
+                    else -> throw ImageApiException(
+                        "Unsupported request type (method=${config.method}, contentType=${config.contentType})",
+                        stage = "config",
+                    )
                 }
 
                 val payload = ImageTranslationPayload(blocks = emptyList(), text = result)
+                session.ok(blocks = 0, textOnly = true, chars = result.length)
                 withContext(Dispatchers.Main) {
                     callback(TranslationResult.Success(result, payload))
                 }
             } catch (e: CancellationException) {
+                session.cancelled()
                 throw e
             } catch (e: Exception) {
-                Log.e("CUSTOM_IMAGE", "Translation error", e)
+                session.fail(e, fallbackStage = stage)
                 withContext(Dispatchers.Main) {
                     callback(TranslationResult.Error(e))
                 }
@@ -118,7 +150,10 @@ class CustomTranslationImage(private val config: CustomPicAPIConfig): Translatio
         }
     }
 
-    private fun executeGetRequest(base64Image: String): String {
+    private fun executeGetRequest(
+        base64Image: String,
+        session: ImageTranslationLog.Session,
+    ): String {
         // 构建URL，添加查询参数
         val urlBuilder = config.baseUrl.toHttpUrl().newBuilder()
 
@@ -142,10 +177,13 @@ class CustomTranslationImage(private val config: CustomPicAPIConfig): Translatio
             .build()
 
         // 执行请求
-        return executeRequest(request)
+        return executeRequest(request, session)
     }
 
-    private fun executePostJsonRequest(base64Image: String): String {
+    private fun executePostJsonRequest(
+        base64Image: String,
+        session: ImageTranslationLog.Session,
+    ): String {
         // 构建JSON请求体
         val jsonBody = JSONObject().apply {
             config.body.forEach { field ->
@@ -167,10 +205,13 @@ class CustomTranslationImage(private val config: CustomPicAPIConfig): Translatio
             }
             .build()
 
-        return executeRequest(request)
+        return executeRequest(request, session)
     }
 
-    private fun executePostMultipartRequest(imageFile: File): String {
+    private fun executePostMultipartRequest(
+        imageFile: File,
+        session: ImageTranslationLog.Session,
+    ): String {
         // 构建MultipartBody
         val multipartBuilder = MultipartBody.Builder()
             .setType(MultipartBody.FORM)
@@ -201,22 +242,34 @@ class CustomTranslationImage(private val config: CustomPicAPIConfig): Translatio
             }
             .build()
 
-        return executeRequest(request)
+        return executeRequest(request, session)
     }
 
-    private fun executeRequest(request: Request): String {
+    private fun executeRequest(
+        request: Request,
+        session: ImageTranslationLog.Session,
+    ): String {
         // 执行请求
         client.newCall(request).execute().use { response ->
             val responseBody = response.body?.string().orEmpty()
+            session.http(response.code)
             if (!response.isSuccessful) {
-                throw TranslationResponseDiagnostics.httpError(
-                    "Custom image API", response.code, responseBody, response.header("Content-Type")
+                throw ImageApiException(
+                    TranslationResponseDiagnostics.httpError(
+                        "Custom image API", response.code, responseBody, response.header("Content-Type")
+                    ).message.orEmpty(),
+                    stage = "http",
+                    httpStatus = response.code,
                 )
             }
 
             if (responseBody.isBlank()) {
-                throw TranslationResponseDiagnostics.emptyBody(
-                    "Custom image API", response.code, response.header("Content-Type")
+                throw ImageApiException(
+                    TranslationResponseDiagnostics.emptyBody(
+                        "Custom image API", response.code, response.header("Content-Type")
+                    ).message.orEmpty(),
+                    stage = "empty",
+                    httpStatus = response.code,
                 )
             }
 
@@ -227,35 +280,25 @@ class CustomTranslationImage(private val config: CustomPicAPIConfig): Translatio
     private fun parseResponse(responseBody: String): String {
         return try {
             val jsonObject = JSONObject(responseBody)
-            // 使用配置的JSON响应路径解析结果
-            val parts = config.jsonResponsePath.split(".")
-            var current: Any = jsonObject
-
-            for (part in parts) {
-                current = when (current) {
-                    is JSONObject -> current.get(part)
-                    else -> throw Exception("Invalid JSON path at: $part")
-                }
-            }
-
-            val translated = current.toString()
-            if (current == JSONObject.NULL || translated.isBlank()) {
-                throw IOException(
+            // 使用配置的 JSON 响应路径解析结果（支持对象属性 + 数组下标，见 JsonPathParser）
+            val value = JsonPathParser.valueOf(jsonObject, config.jsonResponsePath)
+            val translated = value?.toString()
+            if (value == null || value === JSONObject.NULL || translated.isNullOrBlank()) {
+                throw ImageApiException(
                     "Custom image API returned an empty value at response path '${config.jsonResponsePath}'; " +
-                        "response=${TranslationResponseDiagnostics.responsePreview(responseBody)}"
+                        "response=${TranslationResponseDiagnostics.responsePreview(responseBody)}",
+                    stage = "empty",
                 )
             }
             translated
+        } catch (e: ImageApiException) {
+            throw e
         } catch (e: Exception) {
-            if (e is IOException) throw e
-            throw TranslationResponseDiagnostics.invalidResponse("Custom image API", responseBody, e)
-        }
-    }
-
-    private fun convertBitmapToBase64(bitmap: Bitmap): String {
-        return ByteArrayOutputStream().use { outputStream ->
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 95, outputStream)
-            Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
+            throw ImageApiException(
+                TranslationResponseDiagnostics.invalidResponse("Custom image API", responseBody, e).message.orEmpty(),
+                stage = "parse",
+                cause = e,
+            )
         }
     }
 

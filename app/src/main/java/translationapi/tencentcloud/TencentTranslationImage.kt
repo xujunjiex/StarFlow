@@ -22,7 +22,8 @@ import translationapi.TranslationResponseDiagnostics
 
 import android.graphics.Bitmap
 import android.util.Base64
-import android.util.Log
+import com.moe.starflow.translate.ImageApiException
+import com.moe.starflow.translate.ImageTranslationLog
 import com.moe.starflow.translate.ImageTranslationPayload
 import com.moe.starflow.translate.ImageUpload
 import com.moe.starflow.translate.TranslationPicAPI
@@ -34,7 +35,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
-import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
 import kotlin.random.Random
 
@@ -57,6 +57,11 @@ class TencentTranslationImage(
     private val coroutineScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val inFlight = InFlightRequests()
 
+    companion object {
+        /** 稳定 provider id（日志 `provider=` 字段）。 */
+        const val PROVIDER = "tencent"
+    }
+
     private val SOCKET_TIMEOUT = 30L
     private val JSON_TYPE = "application/json; charset=utf-8".toMediaType()
 
@@ -70,16 +75,34 @@ class TencentTranslationImage(
         pic: Bitmap,
         sourceLanguage: String,
         targetLanguage: String,
+        requestContext: String,
         callback: (TranslationResult) -> Unit
     ) {
         inFlight.track(coroutineScope) {
-            val prepared = ImageUpload.prepare(pic)
+            val prepared = try {
+                ImageUpload.prepare(pic)
+            } catch (e: Exception) {
+                ImageTranslationLog.prepareFailed(PROVIDER, requestContext, pic.width, pic.height, e)
+                withContext(Dispatchers.Main) { callback(TranslationResult.Error(e)) }
+                return@track
+            }
+            val session = ImageTranslationLog.start(
+                provider = PROVIDER,
+                requestContext = requestContext,
+                sourceLanguage = sourceLanguage,
+                targetLanguage = targetLanguage,
+                sourceWidth = pic.width,
+                sourceHeight = pic.height,
+                upload = prepared,
+            )
+            var stage = "encode"
             try {
-                // 转换图片为Base64
-                val imageBase64 = withContext(Dispatchers.IO) {
-                    convertBitmapToBase64(prepared.bitmap)
-                }
+                // 转换图片为 Base64（与百度/自定义共用同一份 JPEG 编码，日志里 bytes= 才可比）
+                val uploadBytes = withContext(Dispatchers.IO) { ImageUpload.encodeJpeg(prepared.bitmap) }
+                session.uploaded(uploadBytes.size)
+                val imageBase64 = Base64.encodeToString(uploadBytes, Base64.NO_WRAP)
                 ensureActive()
+                stage = "request"
 
                 val payload = translate(
                     imageBase64 = imageBase64,
@@ -87,15 +110,22 @@ class TencentTranslationImage(
                     imageHeight = prepared.bitmap.height,
                     sourceLanguage = sourceLanguage,
                     targetLanguage = targetLanguage,
+                    session = session,
                 ).scaledToOriginal(prepared.scaleToOriginal)
 
+                session.ok(
+                    blocks = payload.blocks.size,
+                    textOnly = payload.blocks.isEmpty(),
+                    chars = payload.text.length,
+                )
                 withContext(Dispatchers.Main) {
                     callback(TranslationResult.Success(payload.text, payload))
                 }
             } catch (e: CancellationException) {
+                session.cancelled()
                 throw e
             } catch (e: Exception) {
-                Log.e("TENCENT_PIC", "Translation error", e)
+                session.fail(e, fallbackStage = stage)
                 withContext(Dispatchers.Main) {
                     callback(TranslationResult.Error(e))
                 }
@@ -111,6 +141,7 @@ class TencentTranslationImage(
         imageHeight: Int,
         sourceLanguage: String,
         targetLanguage: String,
+        session: ImageTranslationLog.Session,
     ): ImageTranslationPayload = withContext(Dispatchers.IO) {
         ensureActive()
 
@@ -151,29 +182,44 @@ class TencentTranslationImage(
         client.newCall(request).execute().use { response ->
             ensureActive()
             val responseBody = response.body?.string().orEmpty()
+            session.http(response.code)
 
             if (!response.isSuccessful) {
-                throw TranslationResponseDiagnostics.httpError(
-                    "Tencent Cloud image translation", response.code, responseBody,
-                    response.header("Content-Type")
+                throw ImageApiException(
+                    TranslationResponseDiagnostics.httpError(
+                        "Tencent Cloud image translation", response.code, responseBody,
+                        response.header("Content-Type")
+                    ).message.orEmpty(),
+                    stage = "http",
+                    httpStatus = response.code,
                 )
             }
 
             if (responseBody.isBlank()) {
-                throw TranslationResponseDiagnostics.emptyBody(
-                    "Tencent Cloud image translation", response.code, response.header("Content-Type")
+                throw ImageApiException(
+                    TranslationResponseDiagnostics.emptyBody(
+                        "Tencent Cloud image translation", response.code, response.header("Content-Type")
+                    ).message.orEmpty(),
+                    stage = "empty",
+                    httpStatus = response.code,
                 )
             }
 
-            Log.d("TENCENT_PIC", "Response: $responseBody")
-            TencentImageResponseParser.parse(responseBody, imageWidth, imageHeight)
-        }
-    }
-
-    private fun convertBitmapToBase64(bitmap: Bitmap): String {
-        return ByteArrayOutputStream().use { outputStream ->
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 95, outputStream)
-            Base64.encodeToString(outputStream.toByteArray(), Base64.NO_WRAP)
+            try {
+                TencentImageResponseParser.parse(responseBody, imageWidth, imageHeight)
+            } catch (e: ImageApiException) {
+                throw e
+            } catch (e: Exception) {
+                throw ImageApiException(
+                    TranslationResponseDiagnostics.invalidResponse(
+                        "Tencent Cloud image translation", responseBody, e, response.code,
+                        response.header("Content-Type"),
+                    ).message.orEmpty(),
+                    stage = "parse",
+                    httpStatus = response.code,
+                    cause = e,
+                )
+            }
         }
     }
 

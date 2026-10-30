@@ -2569,6 +2569,10 @@ class FloatingBallService : LifecycleService() {
         val api = translatorPic
         if (api == null) {
             bitmap.recycle()
+            ImageTranslationLog.configMissing(
+                ImageTranslatorFactory.providerId(prefs), "game",
+                missing = "factory returned null（见 ImageTranslatorFactory 的同段日志）",
+            )
             statusOverlay.showError(getString(R.string.image_translate_api_not_configured))
             ballStateManager?.setState(BallStateManager.State.Error)
             isTranslating.set(false)
@@ -2581,8 +2585,7 @@ class FloatingBallService : LifecycleService() {
         val targetLang = prefs.getString("Target_Language", "zh")
         val busyToken = TranslationBusyRegistry.begin()
         imageBusyToken = busyToken
-        LogCollector.d(TAG, "开始图片翻译: ${bitmap.width}x${bitmap.height}, $sourceLang → $targetLang")
-        api.getTranslation(bitmap, sourceLang, targetLang) { result ->
+        api.getTranslation(bitmap, sourceLang, targetLang, "game") { result ->
             // 接口实现不回收调用方位图；上传副本由这里负责。
             if (!bitmap.isRecycled) bitmap.recycle()
             busyToken.release()
@@ -2614,7 +2617,7 @@ class FloatingBallService : LifecycleService() {
                         if (translationCancelled) {
                             LogCollector.d(TAG, "translateByPic: 用户已停止，忽略错误")
                         } else {
-                            LogCollector.e(TAG, "图片翻译失败", result.error)
+                            // 失败详情已由 ImageTranslate 的 ✗ 行落盘（ctx=game），这里只更新界面
                             updateDebugStatus("【错误】图片翻译失败")
                             statusOverlay.showError(
                                 getString(

@@ -29,7 +29,10 @@ object ImageTranslatorFactory {
                     val appId = KeystoreManager.retrieveKey(context, "Baidu_Translate_ACCOUNT")
                     val secret = KeystoreManager.retrieveKey(context, "Baidu_Translate_SECRETKEY")
                     if (appId.isNullOrBlank() || secret.isNullOrBlank()) {
-                        LogCollector.e(TAG, "百度图片翻译缺少 API Key")
+                        ImageTranslationLog.configMissing(
+                            BaiduTranslationImage.PROVIDER, "factory",
+                            missing = missingKeys(appId, secret, "Baidu_Translate_ACCOUNT", "Baidu_Translate_SECRETKEY"),
+                        )
                         null
                     } else {
                         BaiduTranslationImage(appId, secret)
@@ -39,7 +42,12 @@ object ImageTranslatorFactory {
                     val secretId = KeystoreManager.retrieveKey(context, "Tencent_Cloud_ACCOUNT")
                     val secretKey = KeystoreManager.retrieveKey(context, "Tencent_Cloud_SECRETKEY")
                     if (secretId.isNullOrBlank() || secretKey.isNullOrBlank()) {
-                        LogCollector.e(TAG, "腾讯云图片翻译缺少 API Key")
+                        ImageTranslationLog.configMissing(
+                            TencentTranslationImage.PROVIDER, "factory",
+                            missing = missingKeys(
+                                secretId, secretKey, "Tencent_Cloud_ACCOUNT", "Tencent_Cloud_SECRETKEY",
+                            ),
+                        )
                         null
                     } else {
                         TencentTranslationImage(secretId, secretKey)
@@ -50,22 +58,43 @@ object ImageTranslatorFactory {
                     val index = prefs.getInt("Custom_Pic_API", 0)
                     val selected = list.getOrNull(index)
                     if (selected == null) {
-                        LogCollector.e(TAG, "未找到自定义图片翻译 API 配置（index=$index, size=${list.size}）")
+                        ImageTranslationLog.configMissing(
+                            "${CustomTranslationImage.PROVIDER_PREFIX}#$index", "factory",
+                            missing = "custom pic api #$index (size=${list.size})",
+                        )
                         null
                     } else {
-                        CustomTranslationImage(selected.config)
+                        CustomTranslationImage(selected.config, "${CustomTranslationImage.PROVIDER_PREFIX}#$index")
                     }
                 }
                 else -> {
-                    LogCollector.e(TAG, "未知图片翻译 API: ${prefs.getInt("Pic_API", 0)}")
+                    val raw = prefs.getInt("Pic_API", 0)
+                    LogCollector.e(TAG, "未知图片翻译 API: $raw")
                     null
                 }
             }
         } catch (e: Exception) {
-            LogCollector.e(TAG, "创建图片翻译接口失败", e)
+            LogCollector.e(TAG, "创建图片翻译接口失败 provider=${providerId(prefs)}", e)
             null
         }
     }
+
+    /**
+     * 稳定 provider id（日志 `provider=` 字段，**不要用本地化名称**）：`baidu` / `tencent` / `custom#<序号>`。
+     */
+    fun providerId(prefs: CustomPreference): String = when (prefs.getInt("Pic_API", Constants.PicApi.BAIDU.id)) {
+        Constants.PicApi.BAIDU.id -> BaiduTranslationImage.PROVIDER
+        Constants.PicApi.TENCENT.id -> TencentTranslationImage.PROVIDER
+        Constants.PicApi.CUSTOM_PIC.id ->
+            "${CustomTranslationImage.PROVIDER_PREFIX}#${prefs.getInt("Custom_Pic_API", 0)}"
+        else -> "pic:${prefs.getInt("Pic_API", 0)}"
+    }
+
+    private fun missingKeys(first: String?, second: String?, firstName: String, secondName: String): String =
+        listOfNotNull(
+            firstName.takeIf { first.isNullOrBlank() },
+            secondName.takeIf { second.isNullOrBlank() },
+        ).joinToString(",")
 
     /** 供模式页/首页启动前校验；不实际创建 OkHttp 客户端。 */
     fun isConfigured(context: Context, prefs: CustomPreference): Boolean = when (

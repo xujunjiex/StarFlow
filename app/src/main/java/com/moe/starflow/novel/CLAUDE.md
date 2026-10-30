@@ -193,6 +193,10 @@ MOBI/AZW、FB2、PDF、RAR/7z 小说包当前没有对应解析器，不应在�
 `NovelImagePayloadCodec` 的 `"text"` 字段保证这种行也能往返并被「已翻」判据识别。正文/语言面板仍
 `forImage = false`，图片模式不改变小说文本翻译。
 
+每张插图的请求在 `starflow.log` 留两条 `ImageTranslate` 日志（`ctx=novel image=<文件名>`）：开始与结束
+（`✓/✗/⏹`）；失败带 `stage`/服务商 `code`/`http`/耗时，解码失败另记 `NovelImage` 的 W 行。日志契约见
+[翻译模块指南](../translate/CLAUDE.md#图片直传的日志与排障)。
+
 **硬约束与踩过的坑**：
 
 - ⚠️ **插图不拆批**（`NovelBatchPlanner.planBatches` 就是普通 `chunked(每批段数)`）：一批里

@@ -1,5 +1,6 @@
 package translationapi.tencentcloud
 
+import com.moe.starflow.translate.ImageApiException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -7,7 +8,6 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
-import java.io.IOException
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -70,21 +70,24 @@ class TencentImageResponseParserTest {
     }
 
     @Test
-    fun `api error is surfaced`() {
-        val error = assertThrows(IOException::class.java) {
+    fun `api error is surfaced with provider code and stage`() {
+        val error = assertThrows(ImageApiException::class.java) {
             TencentImageResponseParser.parse(
                 """{"Response":{"Error":{"Code":"AuthFailure","Message":"bad key"}}}""",
                 100,
                 100,
             )
         }
+        assertEquals("provider", error.stage)
+        assertEquals("AuthFailure", error.providerCode)
         assertTrue(error.message!!.contains("AuthFailure"))
     }
 
     @Test
-    fun `empty image record is surfaced`() {
-        assertThrows(IOException::class.java) {
+    fun `empty image record is surfaced as parse failure`() {
+        val error = assertThrows(ImageApiException::class.java) {
             TencentImageResponseParser.parse("""{"Response":{"ImageRecord":{"Value":[]}}}""", 100, 100)
         }
+        assertEquals("parse", error.stage)
     }
 }

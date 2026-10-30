@@ -37,6 +37,7 @@ import com.moe.starflow.manga.types.TranslatedBubble
 import com.moe.starflow.mangaimport.data.ImportedManga
 import com.moe.starflow.mangaimport.reader.ReaderPageSource
 import com.moe.starflow.translate.ImageTextBlock
+import com.moe.starflow.translate.ImageTranslationLog
 import com.moe.starflow.translate.ImageTranslationPayload
 import com.moe.starflow.translate.ImageTranslatorFactory
 import com.moe.starflow.translate.TranslationPicAPI
@@ -258,6 +259,10 @@ class ReaderTranslationController(
             picTranslator?.release()
             picTranslator = ImageTranslatorFactory.create(context, customPrefs)
             picTranslatorKey = key
+            LogCollector.d(
+                TAG,
+                "图片翻译接口已重建 provider=${ImageTranslatorFactory.providerId(customPrefs)} key=$key",
+            )
         }
         return picTranslator
     }
@@ -1384,6 +1389,12 @@ class ReaderTranslationController(
     /**
      * 图片模式准备阶段：加载页图 → 云端图片接口。不获取 `OcrLock`，也不初始化本地 OCR。
      * 失败/取消时自行回收位图；成功时位图交给 [translatePhase] 的 finally 回收。
+     *
+     * ⚠️ **同一宿主的图片请求必须保持串行**：取消用的是 `api.cancelTranslation()`（接口没有
+     * 单个请求句柄）= **取消该实例上全部在飞请求**。现在手动/自动/增量/章节四条路径都在
+     * “准备”阶段发出请求且是串行的，所以取消只会命中自己那一条；如果以后把图片请求改成
+     * 并发 N（像文本翻译那样），必须先让每个请求持有自己的接口实例，否则取消一页会把别人的
+     * 在飞请求一起掐掉 —— 而被掐的那条**不会回调**，等待方会永久挂起（见 `InFlightRequests` 注释）。
      */
     private suspend fun imagePhase(page: Int): PreparedPage? {
         val bitmap = loadFull(page)
@@ -1395,6 +1406,11 @@ class ReaderTranslationController(
         val api = imageTranslator()
         if (api == null) {
             bitmap.recycle()
+            ImageTranslationLog.configMissing(
+                ImageTranslatorFactory.providerId(customPrefs),
+                "reader page=$page",
+                missing = "factory returned null（见 ImageTranslatorFactory 的同段日志）",
+            )
             val msg = context.getString(R.string.image_translate_api_not_configured)
             withContext(NonCancellable) { runCatching { fail(page, "IMAGE_API_NOT_CONFIGURED", msg) } }
             return null
@@ -1405,7 +1421,7 @@ class ReaderTranslationController(
         TranslationBusyRegistry.enter()
         try {
             val result = suspendCancellableCoroutine<TranslationResult> { cont ->
-                api.getTranslation(bitmap, srcLang, tgtLang) { outcome ->
+                api.getTranslation(bitmap, srcLang, tgtLang, "reader page=$page") { outcome ->
                     if (cont.isActive) cont.resume(outcome)
                 }
                 cont.invokeOnCancellation { api.cancelTranslation() }
@@ -1435,7 +1451,7 @@ class ReaderTranslationController(
                 }
                 is TranslationResult.Error -> {
                     bitmap.recycle()
-                    LogCollector.e(TAG, "图片翻译失败 page=$page", result.error)
+                    // 失败详情已由 ImageTranslate 的 ✗ 行落盘（ctx 带页号）；这里只负责把行标失败
                     val msg = result.error.message ?: context.getString(R.string.image_translate_empty)
                     withContext(NonCancellable) {
                         runCatching { fail(page, "IMAGE_TRANSLATE_FAILED", msg) }
@@ -1621,10 +1637,10 @@ class ReaderTranslationController(
         dao.upsert(row)
         version.value += 1
         withContext(Dispatchers.Main) { onVisual() }
-        LogCollector.d(
-            TAG,
-            "图片翻译完成 page=$page blocks=${bubbles.size} textOnly=${bubbles.isEmpty()}",
-        )
+        // 只额外记「无坐标」这一跳：有坐标的成功由 ImageTranslate 的 ✓ 行覆盖，别每页刷三行
+        if (bubbles.isEmpty()) {
+            LogCollector.d(TAG, "图片翻译落库 page=$page textOnly=true chars=${translatedText.length}")
+        }
         return true
     }
 
@@ -2096,10 +2112,16 @@ class ReaderTranslationController(
     }
 
     /**
-     * 图片模式“只剩文本”的成功行（接口没有返回坐标）。三态按钮据此改为打开文本弹窗。
+     * 「成功但只有文本」的页（图片接口没有返回坐标，行里 `bubbleRects` 为空）。
+     * 三态按钮据此改为打开文本弹窗。
+     *
+     * ⚠️ **不按当前执行模式过滤**：这些行是图片接口写下的，用户之后切回文本模式时它们仍然是
+     * SUCCESS（绿条上也算已翻译）—— 如果这里跟着 `isImageMode()` 返回 null，切回文本模式后
+     * 这些页就变成「显示已翻译、画面什么都没有、三态按钮也点不出译文」的死页面。
+     * 判据只看行的形状：成功 + 无气泡坐标 + 有译文，文本模式下的 OCR 成功行不可能长这样
+     * （OCR 成功必有 bubbles → `bubbleRects` 非空）。
      */
     fun imageTextOf(pageIndex: Int): String? {
-        if (!isImageMode()) return null
         val row = rows.value[pageIndex] ?: return null
         if (row.state != ImportedPageTranslation.STATE_SUCCESS) return null
         if (!row.bubbleRects.isNullOrBlank()) return null

@@ -1,9 +1,9 @@
 package translationapi.tencentcloud
 
+import com.moe.starflow.translate.ImageApiException
 import com.moe.starflow.translate.ImageTextBlock
 import com.moe.starflow.translate.ImageTranslationPayload
 import translationapi.TranslationResponseDiagnostics
-import java.io.IOException
 import org.json.JSONObject
 
 /**
@@ -13,6 +13,8 @@ import org.json.JSONObject
  * Some responses also carry per-line geometry (`Line[].Points[].X/Y`); we use it when
  * present and fall back to plain text otherwise. Coordinates are best-effort because the
  * exact geometry block is not guaranteed by every API version.
+ *
+ * 失败一律抛 [ImageApiException]（带 `stage` / `Error.Code`），便于日志按字段检索。
  */
 object TencentImageResponseParser {
 
@@ -27,21 +29,25 @@ object TencentImageResponseParser {
             ?: throw TranslationResponseDiagnostics.invalidResponse(
                 "Tencent image translation",
                 body,
-                IOException("response is missing 'Response'"),
+                IllegalStateException("response is missing 'Response'"),
             )
 
         response.optJSONObject("Error")?.let { error ->
-            throw IOException(
-                "Tencent Cloud image translation API error ${error.optString("Code")}: " +
-                    TranslationResponseDiagnostics.safeMessage(error.optString("Message"))
+            val code = error.optString("Code")
+            throw ImageApiException(
+                "Tencent Cloud image translation API error $code: " +
+                    TranslationResponseDiagnostics.safeMessage(error.optString("Message")),
+                stage = "provider",
+                providerCode = code.takeIf { it.isNotBlank() },
             )
         }
 
         val values = response.optJSONObject("ImageRecord")?.optJSONArray("Value")
         if (values == null || values.length() == 0) {
-            throw IOException(
+            throw ImageApiException(
                 "Tencent Cloud image translation returned no 'ImageRecord.Value'; " +
-                    "response=${TranslationResponseDiagnostics.responsePreview(body)}"
+                    "response=${TranslationResponseDiagnostics.responsePreview(body)}",
+                stage = "parse",
             )
         }
 
@@ -86,9 +92,10 @@ object TencentImageResponseParser {
             }
         }
         if (text.isBlank() && blocks.isEmpty()) {
-            throw IOException(
+            throw ImageApiException(
                 "Tencent Cloud image translation returned no TargetText; " +
-                    "response=${TranslationResponseDiagnostics.responsePreview(body)}"
+                    "response=${TranslationResponseDiagnostics.responsePreview(body)}",
+                stage = "empty",
             )
         }
         return ImageTranslationPayload(blocks = blocks, text = text)

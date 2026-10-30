@@ -15,9 +15,39 @@
 - 旧键 `Translate_Mode` 只作为兼容镜像：`set()` 会同步写（图片=1，其余=0）；读取时新键缺失且旧键为 1 才迁移成 `IMAGE`。业务代码只读 `isImage` / `isOcrOnly`，不要再读旧键。
 - 图片接口由 `ImageTranslatorFactory` 按 `Pic_API` 创建：百度（`BaiduTranslationImage`）、腾讯云（`TencentTranslationImage`）、自定义（`CustomTranslationImage`）。每个宿主持有自己的实例，接口回调不回收调用方位图；只回收 `ImageUpload` 生成的缩略副本与临时文件。
 - 百度 / 腾讯的响应解析在 `BaiduImageResponseParser` / `TencentImageResponseParser`：坐标是**上传位图空间**，`ImageUpload.scaledToOriginal` 再映射回调用方原图。自定义接口只有 JSON 文本路径，`blocks` 恒为空。
+- 自定义接口的「JSON 响应路径」**支持对象属性 + 数组下标**（`data.translation`、`data.list[0].text`、`a[0][1].b`），实现在 `translationapi/customtranslation/JsonPathParser.kt`，自定义文本与自定义图片**共用这一份**（上游萌译同款语法）。⚠️ 别再写成「按 `.` 切分只认 JSONObject」：把译文放在数组里的接口会直接报 Invalid JSON path（`JsonPathParserTest` 覆盖）。
+- ⚠️ **图片请求在同一个宿主里必须串行**：`TranslationPicAPI.cancelTranslation()` 取消的是**该实例上全部在飞请求**（接口没有单请求句柄）。现有四条路径（手动/自动/增量/章节）都在“准备”阶段发请求且串行，取消只命中自己；若以后要像文本翻译那样并发 N，必须先让每个请求持有自己的接口实例，否则取消会把别人的请求一起掐掉、等待方永久挂起。
 - 图片结果按宿主分派：游戏/视频走既有 `TranslationResultView` 文本结果；漫画悬浮窗和导入阅读器有坐标时复用 `TranslatedBubble` / `OverlayRenderer` 画回原图，无坐标时用文本结果窗口/弹窗；小说插图有坐标时写 `NovelImageTextBlock`，无坐标时写 `NovelImageTranslation.plainText` 并显示文本弹窗。
 - 图片模式的语言表来自 `TranslateTools.getLanguagesList(..., forImage = true)`（百度/腾讯 raw 资源；自定义无表）。文本翻译页与小说正文**必须显式传 `forImage = false`**，图片模式不能改变文本翻译的可选语言。
 - 实际异步请求通过 `TranslationBusyRegistry`（可用 `begin()` 返回幂等 `Token`）登记；模式页在 `OcrLock`、章节任务或图片请求进行中拒绝切换。切换模式/图片接口后，服务按新配置重建翻译器并释放旧实例。
+
+### 图片直传的日志与排障
+
+图片直传的失败**几乎都发生在一次 HTTP 往返里**，而用户能提供的只有「关于 → 日志 → 导出」的 `starflow.log`（300 行滚动）。所以三个接口类（百度/腾讯/自定义）**不再用 `android.util.Log`**，统一走 `LogCollector` 的 `ImageTranslationLog`，tag = **`ImageTranslate`**。
+
+**每条请求恰好两行**（`Session` 负责收尾，`ok/fail/cancelled` 只生效一次）：
+
+```text
+→ provider=baidu ctx=reader page=12 lang=ja->zh src=2100x2970 upload=1240x1754 scale=0.590
+✓ provider=baidu ctx=reader page=12 http=200 blocks=23 textOnly=false chars=412 bytes=412KB 1830ms
+✗ provider=custom#1 ctx=novel image=pic.jpg stage=provider code=54001 http=200 1870ms msg="..."
+⏹ provider=tencent ctx=game 1200ms
+```
+
+| 字段 | 含义 |
+|---|---|
+| `provider` | 稳定 id：`baidu` / `tencent` / `custom#<序号>`（**不随界面语言变**） |
+| `ctx` | 宿主与位置：`reader page=N` / `novel image=<文件名>` / `manga-overlay` / `game` / `factory` |
+| `stage` | 失败层：`config`（没配置）/ `encode`（缩放或编码失败）/ `request`（请求构造）/ `timeout` / `network` / `http`（非 2xx）/ `empty`（空 body 或空结果）/ `parse`（结构不符）/ `provider`（服务商拒绝） |
+| `code` / `http` | 服务商错误码（百度 `error_code`、腾讯 `Error.Code`）与 HTTP 状态；没有就是 `-` |
+| `bytes` / `ms` | 上传 JPEG 字节数（共用 `ImageUpload.encodeJpeg`，质量 95）与本条请求耗时 |
+| `blocks` / `textOnly` / `chars` | 返回坐标块数、是否只有文本、译文长度 —— 用来判断「有坐标却没画出来」这类问题 |
+
+- **凭证与图片内容永不入日志**：错误消息与响应预览统一过 `TranslationResponseDiagnostics`（`api_key`/token/password 等打码，截断 240 字）。改日志文案时不要绕过它。
+- **还没发请求就失败也要留痕**：`ImageTranslationLog.configMissing(...)`（凭据缺失 / 自定义配置缺项）与 `prepareFailed(...)`（位图缩放/编码失败）。⚠️ `configMissing` 按**宿主 + 原因** 30s 节流：未配置时阅读器/小说**每页都会试一次**，不节流会一次整章就刷满 300 行。
+- **取消记 `⏹` 而不是失败**：用户自己点停止不该在日志里长得像接口故障；`CancellationException` 继续向上抛（渲染与落库都靠它判断"别写库"）。
+- **看日志的顺序**：先按 `ImageTranslate` 过滤，再用 `ctx` 定位那一页/那张图；`stage=provider code=...` 直接查服务商错误码文档，`stage=timeout/network` 是网络与代理问题，`stage=parse` 才是「响应格式变了」——需要拿 `msg` 里的响应预览对照接口文档。
+- ⚠️ **字段名是排障契约**，改它要同步 `ImageTranslationLogTest`（断言两行结构与脱敏）和本节。**不要**按像素/文字块打日志：300 行窗口会被一页漫画冲干净，故障现场反而没了。
 
 ## 自动翻译
 

@@ -1,5 +1,6 @@
 package translationapi.baidutranslation
 
+import com.moe.starflow.translate.ImageApiException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
@@ -61,14 +62,16 @@ class BaiduImageResponseParserTest {
     }
 
     @Test
-    fun `api error is surfaced`() {
-        val error = assertThrows(IOException::class.java) {
+    fun `api error is surfaced with provider code and stage`() {
+        val error = assertThrows(ImageApiException::class.java) {
             BaiduImageResponseParser.parse(
                 """{"error_code":"54001","error_msg":"invalid sign"}""",
                 100,
                 100,
             )
         }
+        assertEquals("provider", error.stage)
+        assertEquals("54001", error.providerCode)
         assertTrue(error.message!!.contains("54001"))
     }
 

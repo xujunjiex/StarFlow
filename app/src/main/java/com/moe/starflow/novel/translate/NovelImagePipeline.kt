@@ -20,6 +20,7 @@ import com.moe.starflow.manga.types.TextDirection
 import com.moe.starflow.manga.types.TranslatedBubble
 import com.moe.starflow.mangaimport.translate.TranslationEngineInit
 import com.moe.starflow.translate.ImageTextBlock
+import com.moe.starflow.translate.ImageTranslationLog
 import com.moe.starflow.translate.ImageTranslatorFactory
 import com.moe.starflow.translate.TranslationPicAPI
 import com.moe.starflow.translate.TranslationResult
@@ -182,7 +183,11 @@ class NovelImagePipeline(
                 "当前 OCR 引擎不支持「$sourceLang」（模型管理页里换一组引擎，或把源语言改成支持的语言）",
             )
         }
-        val decoded = decodeForOcr(file) ?: return NovelImageOutcome(null, "插图读不出来（可能已损坏）")
+        val decoded = decodeForOcr(file)
+        if (decoded == null) {
+            LogCollector.w(TAG, "插图解码失败 image=${file.name} bytes=${file.length()}")
+            return NovelImageOutcome(null, "插图读不出来（可能已损坏）")
+        }
         val base = decoded.bitmap
         try {
             val bubbles = try {
@@ -234,18 +239,27 @@ class NovelImagePipeline(
         targetLang: String,
         isCancelled: () -> Boolean,
     ): NovelImageOutcome {
-        val decoded = decodeForOcr(file) ?: return NovelImageOutcome(null, "插图读不出来（可能已损坏）")
+        val decoded = decodeForOcr(file)
+        if (decoded == null) {
+            LogCollector.w(TAG, "插图解码失败 image=${file.name} bytes=${file.length()}")
+            return NovelImageOutcome(null, "插图读不出来（可能已损坏）")
+        }
         val base = decoded.bitmap
+        val ctx = "novel image=${file.name}"
         val api = imageTranslator()
             ?: run {
                 base.recycle()
+                ImageTranslationLog.configMissing(
+                    ImageTranslatorFactory.providerId(customPrefs), ctx,
+                    missing = "factory returned null（见 ImageTranslatorFactory 的同段日志）",
+                )
                 return NovelImageOutcome(null, app.getString(R.string.image_translate_api_not_configured))
             }
         TranslationBusyRegistry.enter()
         try {
             val result = try {
                 suspendCancellableCoroutine<TranslationResult> { cont ->
-                    api.getTranslation(base, sourceLang, targetLang) { outcome ->
+                    api.getTranslation(base, sourceLang, targetLang, ctx) { outcome ->
                         if (cont.isActive) cont.resume(outcome)
                     }
                     cont.invokeOnCancellation { api.cancelTranslation() }
@@ -281,7 +295,7 @@ class NovelImagePipeline(
                     )
                 }
                 is TranslationResult.Error -> {
-                    LogCollector.e(TAG, "插图图片翻译失败: ${file.name}", result.error)
+                    // 失败详情已由 ImageTranslate 的 ✗ 行落盘（ctx 里带文件名），这里不重复刷屏
                     return NovelImageOutcome(
                         null,
                         result.error.message ?: app.getString(R.string.image_translate_empty),

@@ -1,9 +1,9 @@
 package translationapi.baidutranslation
 
+import com.moe.starflow.translate.ImageApiException
 import com.moe.starflow.translate.ImageTextBlock
 import com.moe.starflow.translate.ImageTranslationPayload
 import translationapi.TranslationResponseDiagnostics
-import java.io.IOException
 import org.json.JSONObject
 
 /**
@@ -12,6 +12,9 @@ import org.json.JSONObject
  * `data.content[]` carries one entry per text region:
  * `rect` = "x y w h", `src`, `dst`, `lineCount`.
  * `data.sumDst` is the concatenated translation fallback.
+ *
+ * 失败一律抛 [ImageApiException]（带 `stage` / 服务商错误码），日志由调用方记成
+ * `stage=provider code=54001` 这种可直接 grep 的字段。
  */
 object BaiduImageResponseParser {
 
@@ -24,9 +27,11 @@ object BaiduImageResponseParser {
 
         val errorCode = json.optString("error_code")
         if (errorCode.isNotEmpty() && errorCode != "0") {
-            throw IOException(
+            throw ImageApiException(
                 "Baidu image translation API error $errorCode: " +
-                    TranslationResponseDiagnostics.safeMessage(json.optString("error_msg"))
+                    TranslationResponseDiagnostics.safeMessage(json.optString("error_msg")),
+                stage = "provider",
+                providerCode = errorCode,
             )
         }
 
@@ -34,7 +39,7 @@ object BaiduImageResponseParser {
             ?: throw TranslationResponseDiagnostics.invalidResponse(
                 "Baidu image translation",
                 body,
-                IOException("response is missing 'data'"),
+                IllegalStateException("response is missing 'data'"),
             )
 
         val blocks = buildList {
@@ -72,9 +77,10 @@ object BaiduImageResponseParser {
             blocks.joinToString("\n") { it.translatedText }
         }
         if (merged.isBlank() && blocks.isEmpty()) {
-            throw IOException(
+            throw ImageApiException(
                 "Baidu image translation returned no text; " +
-                    "response=${TranslationResponseDiagnostics.responsePreview(body)}"
+                    "response=${TranslationResponseDiagnostics.responsePreview(body)}",
+                stage = "empty",
             )
         }
         return ImageTranslationPayload(blocks = blocks, text = merged)

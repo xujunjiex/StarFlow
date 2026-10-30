@@ -278,6 +278,11 @@ PP-OCRv5 检测框可能倾斜（QuadBox 4 顶点非正交），全链路处理�
   `TranslationResultView` 文本结果窗口（`showTextResult`），不伪造气泡。
 - 图片请求用 `TranslationBusyRegistry.Token` 登记，取消/迟到回调都能幂等释放；模式/图片接口
   pref 变化时 `rebuildTranslatorForMode()` 停自动、重建接口，切回文本模式再补初始化 OCR。
+- 写历史/缓存时的翻译器名走 `translatorDisplayName()`：图片模式落「图片翻译：<接口名>」，
+  不能套 `TranslateUtils.buildTranslatorDisplayName`（图片模式没有 `translatorText`、det/ocr 也没参与，
+  会写成「Unknown · PP-OCRv6+PP-OCRv6」）。
+- 每次上传在 `starflow.log` 留两条 `ImageTranslate` 日志（`ctx=manga-overlay`）：开始与结束
+  （`✓/✗/⏹`），失败带 `stage`/服务商 `code`/`http`/耗时/上传尺寸与字节数。别在服务里再补一条同义日志。
 - 悬浮窗语言切换在图片模式只循环图片接口语言表 ∩ 常用语言，不经过 `OcrEngineManager`。
 
 ## 漫画翻译（自动翻页）

@@ -22,11 +22,16 @@ interface TranslationPicAPI {
      * [ImageTranslationPayload] (possibly empty `blocks`). On failure it receives
      * [TranslationResult.Error]. Callbacks should arrive on the main thread, matching the
      * existing text engines.
+     *
+     * @param requestContext 诊断上下文（写进 `ImageTranslate` 日志的 `ctx=` 字段），
+     *   由宿主给出：`reader page=N` / `novel image=<file>` / `manga-overlay` / `game`。
+     *   只用于日志，不参与请求；实现方不得把它发给服务商。
      */
     fun getTranslation(
         pic: Bitmap,
         sourceLanguage: String,
         targetLanguage: String,
+        requestContext: String = "",
         callback: (TranslationResult) -> Unit
     )
 

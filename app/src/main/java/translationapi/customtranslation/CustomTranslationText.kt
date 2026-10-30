@@ -179,19 +179,10 @@ class CustomTranslationText(private val config: CustomTextAPIConfig): Translatio
     private fun parseResponse(responseBody: String): String {
         return try {
             val jsonObject = JSONObject(responseBody)
-            // 使用配置的JSON响应路径解析结果
-            val parts = config.jsonResponsePath.split(".")
-            var current: Any = jsonObject
-
-            for (part in parts) {
-                current = when (current) {
-                    is JSONObject -> current.get(part)
-                    else -> throw Exception("Invalid JSON path at: $part")
-                }
-            }
-
-            val translated = current.toString()
-            if (current == JSONObject.NULL || translated.isBlank()) {
+            // 使用配置的 JSON 响应路径解析结果（支持对象属性 + 数组下标，见 JsonPathParser）
+            val value = JsonPathParser.valueOf(jsonObject, config.jsonResponsePath)
+            val translated = value?.toString()
+            if (value == null || value === JSONObject.NULL || translated.isNullOrBlank()) {
                 throw IOException(
                     "Custom text API returned an empty value at response path '${config.jsonResponsePath}'; " +
                         "response=${TranslationResponseDiagnostics.responsePreview(responseBody)}"

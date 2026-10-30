@@ -69,6 +69,7 @@ import com.moe.starflow.translate.screenshot.ScreenshotManager
 import com.moe.starflow.translate.screenshot.MediaProjectionIntentHolder
 import com.moe.starflow.translate.screenshot.ScreenshotProvider
 import com.moe.starflow.translate.screenshot.ScreenCapturePermissionActivity
+import com.moe.starflow.translate.ImageTranslationLog
 import com.moe.starflow.translate.ImageTranslatorFactory
 import com.moe.starflow.translate.ImageTextBlock
 import com.moe.starflow.translate.TranslationPicAPI
@@ -127,6 +128,8 @@ class MangaFloatingService : LifecycleService() {
 
     companion object {
         private const val TAG = "MangaFloatingService"
+        /** 图片直传日志的 `ctx=` 字段（悬浮窗整屏截图；不写页号，因为没有"页"的概念）。 */
+        private const val IMAGE_CTX = "manga-overlay"
         /** 自动翻译下连续多少次 OCR 空才提示（节流） */
         private const val AUTO_EMPTY_NOTICE_AT = 3
         /** 自动翻译下连续多少次 OCR 空就关闭自动翻译（避免一直空转） */
@@ -682,6 +685,11 @@ class MangaFloatingService : LifecycleService() {
         try {
             if (autoTranslateEngine.isAutoTranslating) stopAutoTranslate()
             initTranslator()
+            LogCollector.d(
+                TAG,
+                "翻译器已重建 image=${TranslationExecutionMode.isImage(this)} " +
+                    "provider=${ImageTranslatorFactory.providerId(prefs)}",
+            )
             if (!TranslationExecutionMode.isImage(this)) {
                 config = loadConfig()
                 initOcrEnginesForTextMode()
@@ -691,6 +699,22 @@ class MangaFloatingService : LifecycleService() {
             LogCollector.e(TAG, "执行模式切换后重建翻译器失败", e)
         }
     }
+
+    /**
+     * 缓存/历史里的「翻译器」名。
+     *
+     * 图片直传要显示图片接口名（`图片翻译：百度翻译`）：这条路径没有 `translatorText`，
+     * det/ocr 组合也根本没参与，走 [TranslateUtils.buildTranslatorDisplayName] 会落成
+     * 「Unknown · PP-OCRv6+PP-OCRv6」这种误导性名字。
+     */
+    private fun translatorDisplayName(): String =
+        if (TranslationExecutionMode.isImage(this)) {
+            getString(R.string.engine_status_image, ImageTranslatorFactory.label(this, prefs))
+        } else {
+            TranslateUtils.buildTranslatorDisplayName(
+                translatorText, config.detEngine, config.ocrEngine, prefs.getSharedPreferences()
+            )
+        }
 
     /** 文本模式按当前配置初始化本地 OCR/检测引擎；图片模式调用方不要调。 */
     private fun initOcrEnginesForTextMode() {
@@ -2083,6 +2107,10 @@ class MangaFloatingService : LifecycleService() {
     private suspend fun processMangaImageScreenshot(bitmap: Bitmap) {
         val api = translatorPic
         if (api == null) {
+            ImageTranslationLog.configMissing(
+                ImageTranslatorFactory.providerId(prefs), IMAGE_CTX,
+                missing = "factory returned null（见 ImageTranslatorFactory 的同段日志）",
+            )
             statusOverlay.showError(getString(R.string.image_translate_api_not_configured))
             ballStateManager?.setState(BallStateManager.State.Error)
             return
@@ -2102,7 +2130,7 @@ class MangaFloatingService : LifecycleService() {
         ballStateManager?.setState(BallStateManager.State.Processing)
         val result = try {
             suspendCancellableCoroutine<TranslationResult> { cont ->
-                api.getTranslation(bitmap, config.sourceLang, config.targetLang) { outcome ->
+                api.getTranslation(bitmap, config.sourceLang, config.targetLang, IMAGE_CTX) { outcome ->
                     if (cont.isActive) cont.resume(outcome)
                 }
                 cont.invokeOnCancellation { api.cancelTranslation() }
@@ -2149,7 +2177,7 @@ class MangaFloatingService : LifecycleService() {
                 }
             }
             is TranslationResult.Error -> {
-                LogCollector.e(TAG, "图片翻译失败", result.error)
+                // 失败详情已由 ImageTranslate 的 ✗ 行落盘（ctx=manga-overlay），这里不再重复一条
                 statusOverlay.showError(
                     getString(
                         R.string.translation_failed,
@@ -2177,7 +2205,7 @@ class MangaFloatingService : LifecycleService() {
      */
     private suspend fun saveCacheEntry(allBubbles: List<TranslatedBubble>) {
         try {
-            val translatorName = TranslateUtils.buildTranslatorDisplayName(translatorText, config.detEngine, config.ocrEngine, prefs.getSharedPreferences())
+            val translatorName = translatorDisplayName()
             val ocrTexts = allBubbles.mapIndexed { i, b -> "[${i + 1}] ${b.originalText}" }.joinToString("\n")
             val transTexts = allBubbles.mapIndexed { i, b -> "[${i + 1}] ${b.translatedText}" }.joinToString("\n")
             LogCollector.d(TAG, "saveCacheEntry: ${allBubbles.size} 个气泡")
@@ -2971,7 +2999,7 @@ class MangaFloatingService : LifecycleService() {
         // 保存到缓存和历史（分批翻译时由 finalizeIncremental 统一保存，避免保存中间结果）
         if (saveCache && !translationCancelled) {
             try {
-                val translatorName = TranslateUtils.buildTranslatorDisplayName(translatorText, config.detEngine, config.ocrEngine, prefs.getSharedPreferences())
+                val translatorName = translatorDisplayName()
                 val ocrTexts = newBubbles.mapIndexed { i, b -> "[${i + 1}] ${b.originalText}" }.joinToString("\n")
                 val ocrOnly = TranslationExecutionMode.isOcrOnly(this@MangaFloatingService)
                 val transTexts = if (ocrOnly) null else newBubbles.mapIndexed { i, b -> "[${i + 1}] ${b.translatedText}" }.joinToString("\n")

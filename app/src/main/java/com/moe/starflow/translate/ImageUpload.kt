@@ -17,6 +17,12 @@ object ImageUpload {
     /** Long-edge cap shared by Baidu/Tencent/custom image translation. */
     const val MAX_SIDE = 2048
 
+    /**
+     * JPEG 质量：三个接口**共用这一份**编码（以前百度/腾讯/自定义各自 `compress(95)`，
+     * 质量一改就得改三处，日志里的 `bytes=` 也对不上号）。
+     */
+    const val JPEG_QUALITY = 95
+
     data class Prepared(
         val bitmap: Bitmap,
         val owned: Boolean,
@@ -37,6 +43,13 @@ object ImageUpload {
             scaleToOriginal = source.width.toFloat() / width.toFloat(),
         )
     }
+
+    /** 编码上传副本；三个接口共用（字节数由 [ImageTranslationLog.Session.uploaded] 记账）。 */
+    fun encodeJpeg(bitmap: Bitmap, quality: Int = JPEG_QUALITY): ByteArray =
+        java.io.ByteArrayOutputStream().use { out ->
+            bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)
+            out.toByteArray()
+        }
 
 }
 
