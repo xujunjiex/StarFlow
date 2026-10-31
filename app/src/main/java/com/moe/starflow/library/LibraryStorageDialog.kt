@@ -64,15 +64,30 @@ class LibraryStorageDialog : DialogFragment() {
         view.findViewById<TextView>(R.id.library_retry).visibility =
             if (session.saveState.value.error != null || session.saveState.value.pending > 0) View.VISIBLE else View.GONE
         lifecycleScope.launch {
-            val (bytes, blocked) = withContext(Dispatchers.IO) {
-                session.storage.availableBytes() to LibraryImportAccess.blockedDirectories(session)
+            val (bytes, blocked, rootMissing) = withContext(Dispatchers.IO) {
+                val saf = session.storage as? SafLibraryStorage
+                Triple(
+                    session.storage.availableBytes(),
+                    LibraryImportAccess.blockedDirectories(session),
+                    saf != null && !saf.rootAvailable(),
+                )
             }
             if (content !== view || !isAdded) return@launch
             view.findViewById<TextView>(R.id.library_space).text = getString(R.string.library_space,
                 bytes?.let { Formatter.formatFileSize(requireContext(), it) } ?: getString(R.string.library_space_unknown))
             view.findViewById<TextView>(R.id.library_write_warning).apply {
-                visibility = if (blocked.isEmpty()) View.GONE else View.VISIBLE
-                text = getString(R.string.library_import_readonly, blocked.joinToString { it.name })
+                when {
+                    // 目录被改名/移动/删除：直接说清楚，别等用户去点「覆盖并重建」才看到提供器的原话
+                    rootMissing -> {
+                        visibility = View.VISIBLE
+                        text = getString(R.string.library_root_missing)
+                    }
+                    blocked.isNotEmpty() -> {
+                        visibility = View.VISIBLE
+                        text = getString(R.string.library_import_readonly, blocked.joinToString { it.name })
+                    }
+                    else -> visibility = View.GONE
+                }
             }
         }
         view.findViewById<TextView>(R.id.library_retry).setOnClickListener {

@@ -84,6 +84,9 @@ enum class ImportFailureReason {
     DIRECTORY_INVALID,
     UNREADABLE,
 
+    /** 书库自身的存储结构不可用（管理目录缺失/不可写），与来源文件格式无关。 */
+    LIBRARY_STORAGE_UNAVAILABLE,
+
     /** PDF 需要密码（Android 的 `PdfRenderer` 没有密码接口 → 只能请用户先解密）。 */
     PDF_ENCRYPTED,
 

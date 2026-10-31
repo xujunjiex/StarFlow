@@ -29,6 +29,9 @@ enum class NovelImportFailureReason {
     /** DocumentsProvider 明确拒绝访问所选小说目录。 */
     DIRECTORY_ACCESS_DENIED,
 
+    /** 书库自身的存储结构不可用（管理目录缺失/不可写），与小说文件无关。 */
+    LIBRARY_STORAGE,
+
     /** 解析出来一个可读章节都没有。 */
     NO_TEXT_CHAPTER,
 

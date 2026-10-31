@@ -291,6 +291,7 @@ class NovelShelfFragment : Fragment() {
                     NovelImportFailureReason.DESTINATION_WRITE_FAILED -> R.string.novel_import_reason_destination_write
                     NovelImportFailureReason.DIRECTORY_SCAN_FAILED -> R.string.novel_import_reason_directory_scan
                     NovelImportFailureReason.DIRECTORY_ACCESS_DENIED -> R.string.novel_import_reason_directory_access
+                    NovelImportFailureReason.LIBRARY_STORAGE -> R.string.novel_import_reason_library_storage
                     NovelImportFailureReason.NOT_ARCHIVE -> R.string.novel_import_reason_not_archive
                     NovelImportFailureReason.UNREADABLE -> R.string.novel_import_reason_unreadable
                     NovelImportFailureReason.NO_TEXT_CHAPTER -> R.string.novel_import_reason_no_text_chapter

@@ -658,6 +658,7 @@ class ImportMangaFragment : Fragment() {
                                 ImportFailureReason.DIRECTORY_ACCESS_DENIED -> R.string.import_fail_directory_access_denied
                                 ImportFailureReason.DIRECTORY_SCAN_FAILED -> R.string.import_fail_directory_scan_failed
                                 ImportFailureReason.DIRECTORY_INVALID -> R.string.import_fail_directory_invalid
+                                ImportFailureReason.LIBRARY_STORAGE_UNAVAILABLE -> R.string.import_fail_library_storage
                                 ImportFailureReason.UNREADABLE -> R.string.import_fail_pdf_read_failed
                                 // PDF 打不开要分开说：加密有明确的解法（先解密），损坏只能重下
                                 ImportFailureReason.PDF_ENCRYPTED -> R.string.import_fail_pdf_encrypted

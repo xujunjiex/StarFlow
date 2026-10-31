@@ -1,13 +1,39 @@
 package com.moe.starflow.library
 
+import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
 import android.os.StatFs
 import android.provider.DocumentsContract
+import com.moe.starflow.utils.LogCollector
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+
+private const val SAF_TAG = "LibraryStorage"
+
+/**
+ * SAF 目录关系查询的**容错层**。
+ *
+ * ⚠️ 提供器对"已改名 / 已移动 / 已删除"的目录会抛 `FileNotFoundException`，
+ * `DocumentsContract.isChildDocument` 再包一层 `RuntimeException("Failed to determine if …")`。
+ * 这种「问不出来」**不能**当成「目录不能切换」：用户把 `导入文件` 改名成 `漫画导入` 之后，
+ * 旧树再也解析不了，书库选择会直接卡死并把提供器原话怼到弹窗上（0.12.2 真机反馈）。
+ * 关系未知 = 按「不嵌套」处理，让用户能继续选目录；真正的包含关系在可读目录上照常判定。
+ */
+internal object LibraryDocumentRelation {
+    fun childOf(resolver: ContentResolver, parent: Uri, child: Uri): Boolean =
+        childRelationOrFalse { DocumentsContract.isChildDocument(resolver, parent, child) }
+}
+
+/**
+ * 容错语义的唯一实现（测试直接打这一层）：**关系问不出来 = 不嵌套**，并留一条 W 日志。
+ */
+internal inline fun childRelationOrFalse(crossinline query: () -> Boolean): Boolean =
+    runCatching { query() }
+        .onFailure { LogCollector.w(SAF_TAG, "无法判断书库目录嵌套，按不嵌套处理", it) }
+        .getOrDefault(false)
 
 /** Names are provider display names, never pieces of opaque document IDs. */
 data class LibraryNode(val path: String, val directory: Boolean, val size: Long, val modifiedAt: Long = 0)
@@ -128,20 +154,32 @@ class SafLibraryStorage(private val context: Context, val tree: Uri) : LibrarySt
         }
         return find(importRoot, 0)
     }
+    /** 根目录是否还能被提供器解析：改名/移动/删除后返回 false，而不是抛异常。 */
+    fun rootAvailable(): Boolean = runCatching { nameOf(rootUri) != null }.getOrDefault(false)
+
     fun overlaps(other: SafLibraryStorage): Boolean {
         if (tree.authority != other.tree.authority) return false
         if (locationId == other.locationId) return true
-        return DocumentsContract.isChildDocument(resolver, rootUri, other.rootUri) ||
-            DocumentsContract.isChildDocument(resolver, other.rootUri, rootUri)
+        return LibraryDocumentRelation.childOf(resolver, rootUri, other.rootUri) ||
+            LibraryDocumentRelation.childOf(resolver, other.rootUri, rootUri)
     }
 
     fun requireImportOutsideDestination(sourceTree: Uri, kind: String) {
         if (sourceTree.authority != tree.authority) return
         val source = DocumentsContract.buildDocumentUriUsingTree(sourceTree, DocumentsContract.getTreeDocumentId(sourceTree))
         val destination = uri("${kind}_import")
-        if (DocumentsContract.getDocumentId(source) == DocumentsContract.getDocumentId(destination) ||
-            DocumentsContract.isChildDocument(resolver, source, destination))
+        if (DocumentsContract.getDocumentId(source) == DocumentsContract.getDocumentId(destination)) {
             throw IOException("导入来源包含目标存储目录，已停止递归复制")
+        }
+        // 这里必须「问不出来就停」：放行可能把书库复制进它自己。但错误要能指导用户操作。
+        val inside = runCatching { DocumentsContract.isChildDocument(resolver, source, destination) }
+            .getOrElse {
+                throw IOException(
+                    "无法确认导入来源与书库目录的关系（目录可能已被移动或删除），请重新选择书库目录后重试",
+                    it,
+                )
+            }
+        if (inside) throw IOException("导入来源包含目标存储目录，已停止递归复制")
     }
     private data class Document(val uri: Uri, val name: String, val directory: Boolean, val size: Long, val modifiedAt: Long = 0)
     private fun children(parent: Uri): List<Document> {

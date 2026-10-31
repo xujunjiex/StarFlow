@@ -5,6 +5,7 @@ import android.content.ContextWrapper
 import android.os.Looper
 import androidx.room.withTransaction
 import com.moe.starflow.data.*
+import com.moe.starflow.utils.LogCollector
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.json.JSONArray
@@ -21,8 +22,18 @@ import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
 
 data class LibrarySaveState(val saving: Boolean = false, val pending: Int = 0, val error: String? = null)
 
+private const val TAG = "LibrarySession"
+
 /** Identity failures retain local records until the user explicitly rebuilds the library. */
-class LibraryIdentityException(message: String, cause: Throwable? = null) : IOException(message, cause)
+class LibraryIdentityException(message: String, cause: Throwable? = null) : LibraryStorageException(message, cause)
+
+/**
+ * 书库自身的存储结构问题（管理目录缺失 / 入口不是目录 / 不可写），**不是**来源文件的问题。
+ *
+ * 导入失败分类要看它：否则 `IOException("书库管理目录缺失：.starflow/books")` 会被归成
+ * 「压缩包结构无法解析」，用户拿到完全错误的指引（0.12.2 真机反馈）。
+ */
+open class LibraryStorageException(message: String, cause: Throwable? = null) : IOException(message, cause)
 data class BookRef(val locationId: String, val kind: String, val uuid: String) {
     val key get() = "$locationId:$kind:$uuid"
 }
@@ -132,8 +143,15 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
             if (mode.optInt("format", -1) != 1 || mode.optString("records") != "app-database" ||
                 mode.optString("libraryId") != manifest.getString("libraryId"))
                 throw LibraryIdentityException("书库管理文件不匹配：.starflow/storage.json")
-        } else if (catalog.meta("recordStorage") == "app-database")
-            throw LibraryIdentityException("书库管理文件缺失：.starflow/storage.json")
+        } else if (catalog.meta("recordStorage") == "app-database") {
+            // 身份文件已校验通过、本机库是 app-database：storage.json 只是自描述清单，缺了就补写，
+            // 不能把它当成「来源损坏」阻止所有导入（换目录/拷贝书库后很常见）。
+            LogCollector.w(TAG, "书库管理文件缺失，按当前身份补写：${storage.displayPath}/.starflow/storage.json")
+            storage.writeNew(".starflow/storage.json", "application/json").use {
+                it.write(JSONObject().put("format", 1).put("records", "app-database")
+                    .put("libraryId", manifest.getString("libraryId")).toString().toByteArray(Charsets.UTF_8))
+            }
+        }
         val root = storage.list("")
         listOf("manga_import", "novel_import").forEach { path ->
             val node = root.singleOrNull { it.path == path }
@@ -142,15 +160,21 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
                 // containers; missing books and their processing records remain in the catalog.
                 storage.mkdir(path)
                 if (storage.list("").singleOrNull { it.path == path }?.directory != true)
-                    throw IOException("无法重建书库入口目录：$path")
-            } else if (!node.directory) throw IOException("书库入口不是目录：$path；请重新选择存储目录，原文件保留")
+                    throw LibraryStorageException("无法重建书库入口目录：$path")
+            } else if (!node.directory) throw LibraryStorageException("书库入口不是目录：$path；请重新选择存储目录，原文件保留")
         }
         val books = storage.list(".starflow").singleOrNull { it.path == ".starflow/books" }
-            ?: throw IOException("书库管理目录缺失：.starflow/books")
-        if (!books.directory) throw IOException("书库管理路径不是目录：.starflow/books")
+        if (books == null) {
+            // `.starflow/books` 只是管理容器：身份已校验、书目在 App 内部库，缺了就按空目录补回来。
+            // 以前这里直接抛「书库管理目录缺失」，换过目录或拷贝过书库的用户所有导入都会失败，
+            // 而且被分类成「压缩包结构无法解析」——与真实原因完全无关（真机反馈）。
+            ensureBooksContainer(storage)
+        } else if (!books.directory) {
+            throw LibraryStorageException("书库管理路径不是目录：.starflow/books；请重新选择存储目录，原文件保留")
+        }
     }
 
-    /** Keep scheduled publication out of an explicitly confirmed identity replacement. */
+/** Keep scheduled publication out of an explicitly confirmed identity replacement. */
     internal fun <T> withStorageLock(block: () -> T): T = synchronized(ioLock) { block() }
 
     /** Private historical records and durable page identities; never used as a second live database. */
@@ -764,3 +788,24 @@ private suspend fun invokeSuspend(target: Any, method: Method, values: Array<Any
         try { method.invoke(target, *(values + continuation)) }
         catch (e: InvocationTargetException) { throw e.targetException }
     }
+
+/**
+ * `.starflow/books` 缺失时按空目录重建（唯一实现，测试直接打这一层）。
+ *
+ * 书目与处理记录在 App 内部数据库，这个目录只是管理容器：换过目录、用文件管理器拷贝过书库
+ * （隐藏目录没跟过来）都会缺它。缺失**不能**判书库损坏，否则所有导入都会失败。
+ */
+internal fun ensureBooksContainer(storage: LibraryStorage) {
+    val books = storage.list(".starflow").singleOrNull { it.path == ".starflow/books" }
+    if (books != null) {
+        if (!books.directory) {
+            throw LibraryStorageException("书库管理路径不是目录：.starflow/books；请重新选择存储目录，原文件保留")
+        }
+        return
+    }
+    LogCollector.w(TAG, "书库管理目录缺失，按空目录重建：${storage.displayPath}/.starflow/books")
+    storage.mkdir(".starflow/books")
+    if (storage.list(".starflow").singleOrNull { it.path == ".starflow/books" }?.directory != true) {
+        throw LibraryStorageException("无法重建书库管理目录：.starflow/books")
+    }
+}

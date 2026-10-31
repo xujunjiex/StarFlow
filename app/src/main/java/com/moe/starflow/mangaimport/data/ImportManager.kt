@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.getAndUpdate
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withPermit
+import com.moe.starflow.library.LibraryStorageException
 import com.moe.starflow.library.LibraryWork
 import com.moe.starflow.library.LibraryImportWriteException
 import java.io.File
@@ -287,6 +288,9 @@ object ImportManager {
      * 可见性提到 `internal` 是为了让单测能直接断言这个分类（仓库里 `NovelImportManager.classify` 同款）。
      */
     internal fun classifyArchive(e: Throwable): ImportFailureReason = when (e) {
+        // 书库存储结构问题（管理目录缺失等）不是来源损坏，必须优先归到书库一侧，否则会被说成
+        // 「压缩包结构无法解析」，把用户引到完全错误的方向（真机反馈）。
+        is LibraryStorageException -> ImportFailureReason.LIBRARY_STORAGE_UNAVAILABLE
         // PDF 打不开要单独说清（加密 / 损坏），别混进"不是压缩包"
         is PdfImportException -> e.reason
         is ImportOperationException -> e.reason
@@ -300,6 +304,7 @@ object ImportManager {
     }
 
     private fun classifyDirectory(e: Throwable): ImportFailureReason = when (e) {
+        is LibraryStorageException -> ImportFailureReason.LIBRARY_STORAGE_UNAVAILABLE
         is ImportOperationException -> e.reason
         is SecurityException -> ImportFailureReason.DIRECTORY_ACCESS_DENIED
         is FileNotFoundException, is IOException -> ImportFailureReason.DIRECTORY_SCAN_FAILED

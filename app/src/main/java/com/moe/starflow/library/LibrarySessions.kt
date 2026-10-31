@@ -79,6 +79,14 @@ object LibrarySessions {
         roots += tree.toString()
         check(prefs.edit().putString("knownTrees", org.json.JSONArray(roots).toString()).commit()) { "无法保存书库目录身份" }
     }
+    private fun forgetTree(context: Context, tree: Uri) {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val values = org.json.JSONArray(prefs.getString("knownTrees", "[]"))
+        val roots = (0 until values.length())
+            .mapNotNull { runCatching { values.getString(it) }.getOrNull() }
+            .filter { it != tree.toString() }
+        prefs.edit().putString("knownTrees", org.json.JSONArray(roots).toString()).apply()
+    }
     private fun rejectNestedLibraries(storage: LibraryStorage) {
         val seen = hashSetOf<String>()
         fun walk(path: String) {
@@ -179,9 +187,22 @@ object LibrarySessions {
                 return@synchronized
             }
             if (storage is SafLibraryStorage) {
+                // 选中的目录自己解析不了（被改名/移动/删除）：先给可操作的提示，别把提供器异常抛给用户。
+                if (!storage.rootAvailable()) throw IOException("所选目录无法访问，可能已被移动或删除；请重新选择目录")
                 val known = sessions.values.mapNotNull { it.storage as? SafLibraryStorage } + knownSafRoots(app)
-                known.filter { it.locationId != storage.locationId }.forEach {
-                    if (storage.overlaps(it)) throw IOException("书库目录不能相互嵌套")
+                known.filter { it.locationId != storage.locationId }.forEach { candidate ->
+                    // 旧目录可能已经改名/移动/删除：问不出来就当不存在，并把它从记忆里清掉，
+                    // 否则一次改名就会让「书库目录」永久无法切换（0.12.2 真机反馈）。
+                    if (!candidate.rootAvailable()) {
+                        forgetTree(app, candidate.tree)
+                        return@forEach
+                    }
+                    // 双保险：即使提供器在 rootAvailable 之后又变脸，也不能让「覆盖并重建」被卡住。
+                    if (runCatching { storage.overlaps(candidate) }.getOrDefault(false))
+                        throw IOException("书库目录不能相互嵌套")
+                }
+                runCatching { rejectNestedLibraries(storage) }.onFailure {
+                    throw IOException("无法读取所选目录（可能已被移动、删除或没有权限）：${it.message ?: it.javaClass.simpleName}", it)
                 }
             }
             if (storage is FileLibraryStorage && old.storage is FileLibraryStorage) {

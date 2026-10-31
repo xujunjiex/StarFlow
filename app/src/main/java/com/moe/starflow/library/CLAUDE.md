@@ -10,6 +10,16 @@
 
 `LibrarySession` 捕获位置身份、会话代次、实际后端与独立的 App 内部 Room 数据库。位置身份来自规范路径或提供器树身份；目录 UUID 另存于身份文件并与数据库校验。同 UUID 作品在不同位置使用独立数据库及运行时键；目录身份变化时停止沿用旧记录。提供器 document ID 是定位符，不能解释为文件路径。
 
+⚠️ **目录关系查询必须容错**（0.12.2 真机事故）：提供器对**已改名 / 移动 / 删除**的目录抛 `FileNotFoundException`，`DocumentsContract.isChildDocument` 再包成 `RuntimeException("Failed to determine if …")`。该异常曾直接冒到「覆盖并重建」弹窗，导致**文件夹改名后再也无法切换书库**。
+
+- 判定统一走 `LibraryDocumentRelation.childOf` / `childRelationOrFalse`：**问不出来 = 按「不嵌套」处理**并记 W 日志，不把提供器原话抛给 UI。
+- `LibrarySessions.select` 对读不出根的 `knownTrees` **跳过并遗忘**（`rootAvailable()` + `forgetTree`）；新选目录自身不可读时直接提示「所选目录无法访问，可能已被移动或删除」。
+- 存储窗口（`LibraryStorageDialog`）检测到当前根不可读时显示 `library_root_missing`，不等用户点重建才暴露错误。
+- ⚠️ **方向不同、策略相反**：`requireImportOutsideDestination` 的「导入来源是否包含目标」**问不出来必须中止**（否则可能把书库递归复制进自己），但错误要写成可操作提示。
+- 守卫：`LibraryDocumentRelationTest`（问不出来→不嵌套且留日志 / 可读时真嵌套仍拦截）。
+
+⚠️ **缺失的管理容器要自愈，不要判死**（同一次真机反馈的「一开始的报错」）：身份文件已校验通过时，`.starflow/books` 缺失按空目录重建、`.starflow/storage.json` 缺失按当前 `libraryId` 补写（`validateStructure`，均记 W）；只有身份缺失/不匹配才走 `LibraryIdentityException`。这些结构错误统一抛 `LibraryStorageException`，导入侧必须归类为 `LIBRARY_STORAGE_UNAVAILABLE`，**不能**显示成「压缩包结构无法解析」。守卫：`LibraryBooksContainerTest`（缺失补建 / 已存在不动 / 同名文件报冲突 / 建不出来报书库错误）。
+
 管理信息缺失、损坏、无法读取及扫描错误均提供恢复弹窗，不按身份异常类型限制覆盖入口；存储目录窗口始终提供覆盖重建。权限失效可直接重新选择目录，覆盖失败继续保留操作入口。空目录首次收录提示是普通通知，不触发重建提示。
 
 确认后使用新的数据库和 SAF 暂存代次，重建管理信息后关闭旧会话，清除该位置上一代内部数据库、私有历史归档和暂存。仅替换 `.starflow` 管理项，异常项改名保留；漫画、小说来源目录及其中的原文件不得删除、覆盖或搬移，其他书库保留。管理项中可读的作品身份保留，必要时从旧书目的最小来源资料重建，避免 UUID 目录变成显示书名；不继承处理和阅读记录。私有初始化意图先落盘，写入或清理中断后可重放；新库不重复迁入旧全局记录。同位置换代也通知书架重新扫描，旧捕获会话不能启动新任务。

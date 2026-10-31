@@ -97,6 +97,7 @@
     <string name="import_fail_directory_scan_failed">Could not scan the selected folder contents</string>
     <string name="import_fail_pdf_read_failed">The PDF renderer could not read the local PDF copy</string>
     <string name="import_fail_directory_invalid">The system document provider did not return a valid folder</string>
+    <string name="import_fail_library_storage">Library storage is unavailable (management folder missing or read-only). Choose the library folder again under Library storage; original files are kept.</string>
     <string name="import_fail_detail">System error: %1$s</string>
     <string name="import_fail_unknown">Import processing failed. The system exception is shown below.</string>
     <string name="import_empty_title">No images found</string>
@@ -1740,6 +1741,7 @@
     <string name="novel_import_reason_destination_write">Writing to the app novel storage directory failed.</string>
     <string name="novel_import_reason_directory_scan">The SAF document provider could not enumerate the selected folder.</string>
     <string name="novel_import_reason_directory_access">The system denied access to the selected SAF folder.</string>
+    <string name="novel_import_reason_library_storage">Library storage is unavailable (management folder missing or read-only). Choose the library folder again under Library storage, then retry.</string>
     <string name="novel_import_reason_no_text_chapter">No readable text chapters.</string>
     <string name="novel_import_reason_empty">Empty file.</string>
     <string name="novel_import_reason_too_large">File is too large to import.</string>
@@ -2010,6 +2012,7 @@
     <string name="library_current_path">Current storage location</string>
     <string name="library_space">Available space: %1$s</string>
     <string name="library_space_unknown">Unavailable</string>
+    <string name="library_root_missing">The library folder no longer exists (renamed, moved, or deleted). Choose the folder again and grant access to continue.</string>
     <string name="library_choose_folder">Choose a custom folder</string>
     <string name="library_default_folder">Default app folder</string>
     <string name="library_custom_folder">Custom folder</string>

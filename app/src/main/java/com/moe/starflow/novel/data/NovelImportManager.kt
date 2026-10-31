@@ -312,6 +312,8 @@ object NovelImportManager {
      * 它们直接抛字面量 `"NO_TEXT_CHAPTER"` / `"ENCRYPTED"`（与常量取值一致，见这两个文件）。
      */
     internal fun classify(e: Throwable): NovelImportFailureReason = when {
+        // 书库存储结构问题（管理目录缺失等）不是来源文件的问题，必须先归到书库一侧
+        e is com.moe.starflow.library.LibraryStorageException -> NovelImportFailureReason.LIBRARY_STORAGE
         e is NovelImportIoException && e.kind == NovelImportIoException.Kind.SOURCE_OPEN ->
             NovelImportFailureReason.SOURCE_OPEN_FAILED
         e is NovelImportIoException && e.kind == NovelImportIoException.Kind.SOURCE_READ ->
