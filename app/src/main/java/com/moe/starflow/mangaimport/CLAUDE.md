@@ -175,6 +175,10 @@
 - **阅读器**：顶部胶囊 = `章标题 · 章内第几页/本章共几页`（`reader_page_indicator_chapter`），
   **点它打开章节目录**（`ReaderChapterDialog`，每章带「已译 x/y」徽章）；底部进度条左右箭头 =
   **切章**（到头 toast「当前已是第一/最后一章」；单章漫画也照此 —— 翻页靠滑动/点击分区）。
+  ⚠️ **胶囊必须给两侧圆钮让位**（2026-11 反馈：章名过长压到返回/菜单按钮）：`maxWidth` 由
+  `ReaderPillLayout.maxPillWidthPx` 算（两侧各让 40dp 钮 + 10dp 外边距 + 14dp 间隙 + 胶囊内边距），
+  章名用 `TextUtils.ellipsize` **只截章名**，页码永远完整。小说侧 `top_pill` 同一口径（独立页码 TextView）。
+  守卫：`ReaderPillLayoutTest`。
   **换章必有 app 内提示**（`notifyChapterIfChanged`，2026-10 用户口径）：箭头切章、目录/面板跳章、
   翻页跨章（含 Webtoon 连续滚动）都会用 `notifyUser` 弹一条「已切换到 第N章 · 共 x 页」——
   就是阅读器顶部那条应用内提示（`AppNotice`，位置在胶囊下方），不是系统 Toast。

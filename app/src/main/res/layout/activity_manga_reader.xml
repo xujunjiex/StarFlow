@@ -81,6 +81,8 @@
         android:paddingTop="5dp"
         android:paddingEnd="12dp"
         android:paddingBottom="5dp"
+        android:singleLine="true"
+        android:ellipsize="end"
         android:textColor="#FFFFFF"
         android:textSize="13sp"/>
 

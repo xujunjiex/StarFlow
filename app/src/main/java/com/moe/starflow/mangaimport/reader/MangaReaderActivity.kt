@@ -16,6 +16,7 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.SystemClock
 import android.provider.MediaStore
+import android.text.TextUtils
 import android.view.GestureDetector
 import android.view.LayoutInflater
 import android.view.MotionEvent
@@ -157,6 +158,9 @@ class MangaReaderActivity : AppCompatActivity() {
      * 见 [notifyChapterIfChanged]：进阅读器落点那一章不提示，之后换到别的章才提示。
      */
     private var notifiedChapterIndex = -1
+
+    /** 顶部胶囊允许的最大宽度（px）；屏幕宽度变化时重算，见 [chapterPillText]。 */
+    private var pillMaxWidthPx = 0
 
     /** 上一次切章提示的时刻（elapsedRealtime，节流用，见 [notifyChapterIfChanged]）。 */
     private var lastChapterNoticeMs = 0L
@@ -1063,17 +1067,44 @@ class MangaReaderActivity : AppCompatActivity() {
         lm.startSmoothScroll(scroller)
     }
 
+    /**
+     * 顶部胶囊文案：**章名超宽时只截章名，页码永远完整**。
+     *
+     * 以前直接用 `wrap_content` 拼「章名 · 页/共页」：章名一长（网文/日漫的回目动辄十几个字），
+     * 胶囊横向撑到左右两个圆钮底下，把返回/菜单挡住（用户反馈）。
+     * 宽度预算见 [ReaderPillLayout]；`maxWidth` 兜底，章名再长也只会被省略号截断。
+     */
+    private fun chapterPillText(chapter: MangaChapter): CharSequence {
+        val title = mangaChapterLabel(this, chapter)
+        val page = (currentPage - chapter.startPage + 1).coerceAtLeast(1)
+        val pages = getString(R.string.reader_page_indicator_chapter, "", page, chapter.pageCount)
+        val view = binding.tvPageIndicator
+        val widthPx = resources.displayMetrics.widthPixels
+        val density = resources.displayMetrics.density
+        if (widthPx <= 0 || density <= 0f) {
+            return getString(R.string.reader_page_indicator_chapter, title, page, chapter.pageCount)
+        }
+        val maxPill = ReaderPillLayout.maxPillWidthPx(widthPx, density)
+        if (pillMaxWidthPx != maxPill) {
+            pillMaxWidthPx = maxPill
+            view.maxWidth = maxPill
+        }
+        val budget = ReaderPillLayout.titleBudgetPx(
+            maxPill,
+            view.paint.measureText(pages),
+            view.paddingStart,
+            view.paddingEnd,
+        )
+        val fitted = TextUtils.ellipsize(title, view.paint, budget, TextUtils.TruncateAt.END)
+        return getString(R.string.reader_page_indicator_chapter, fitted, page, chapter.pageCount)
+    }
+
     private fun refreshOverlay() {
         // 顶部胶囊 = 章标题 · 章内第几页/本章共几页（用户口径：页码组件也要有章节信息）。
         // 章标题走 mangaChapterLabel（有文件夹名就显示它），与目录弹窗/翻译面板同一份
         val chapter = currentChapter()
         binding.tvPageIndicator.text = if (chapter != null) {
-            getString(
-                R.string.reader_page_indicator_chapter,
-                mangaChapterLabel(this, chapter),
-                (currentPage - chapter.startPage + 1).coerceAtLeast(1),
-                chapter.pageCount
-            )
+            chapterPillText(chapter)
         } else {
             getString(R.string.reader_page_indicator, currentPage + 1, source.size)
         }
