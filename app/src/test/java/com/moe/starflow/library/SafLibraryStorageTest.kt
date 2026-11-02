@@ -74,6 +74,36 @@ class SafLibraryStorageTest {
         assertFalse(storage.exists("manga_import/第 1 卷"))
     }
 
+    @Test fun reconnectingAnImportedFileWithOpaqueIdsPreservesItsSourceAndChapters() = kotlinx.coroutines.runBlocking {
+        val database = androidx.room.Room.inMemoryDatabaseBuilder(app, LibraryDatabase::class.java)
+            .allowMainThreadQueries().build()
+        try { LibrarySession(app, storage, database, 1).prepare() }
+        finally { database.close() }
+        val uuid = UUID.randomUUID().toString()
+        val source = "novel_import/$uuid/book.txt"
+        storage.writeNew(source).use {
+            it.write("第一章 开始\n这里是开篇的正文内容。\n第二章 继续\n故事继续展开。".toByteArray())
+        }
+        val identity = ".starflow/books/$uuid/source.json"
+        storage.writeNew(identity).use {
+            it.write(org.json.JSONObject().put("format", 1).put("kind", "novel").put("uuid", uuid)
+                .put("source", source).put("sourceName", "Restored").toString().toByteArray())
+        }
+        app.getSharedPreferences("library_locations", 0).edit().putString("tree", storage.tree.toString()).commit()
+        val restored = LibrarySessions.current(app)
+
+        val result = LibraryScanner.scan(restored.context(), "novel")
+
+        assertTrue(result.failures.joinToString(), result.failures.isEmpty())
+        val book = com.moe.starflow.novel.data.NovelStore.load(restored.context()).single()
+        assertEquals(uuid, book.bookUuid)
+        assertEquals(com.moe.starflow.novel.model.NovelFormat.TXT, book.format)
+        assertEquals(2, book.chapterCount)
+        assertEquals(source, restored.books("novel").single().source)
+        assertEquals(source, org.json.JSONObject(restored.storage.read(identity).bufferedReader().use { it.readText() }).getString("source"))
+        assertEquals(0, LibraryScanner.scan(restored.context(), "novel").added)
+    }
+
     @Test fun capacityBelongsOnlyToTheSelectedProviderRoot() {
         assertEquals(1234L, storage.availableBytes())
         val child = storage.apply { mkdir("manga_import") }.uri("manga_import")

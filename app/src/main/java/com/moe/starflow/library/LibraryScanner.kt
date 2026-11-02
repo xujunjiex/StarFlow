@@ -99,15 +99,11 @@ object LibraryScanner {
                     val id = if (kind == "manga") ImportManager.reserveScanId(pinned, null)
                         else NovelImportManager.reserveScanId(pinned, null)
                     if (id == null) return@forEachIndexed
-                    val source = session.local(node.path)
                     var localLease: java.io.Closeable? = null
                     var stage = "读取来源"
                     var emptyDirectory = false
                     try {
-                        if (node.directory && session.storage !is FileLibraryStorage) source.mkdirs()
-                        localLease = LibrarySources.acquire(source)
-                        if (!node.directory) LibrarySources.file(source)
-                        val hintedUuid = source.name.takeIf { LibraryCodec.UUID_PATTERN.matches(it) }
+                        val hintedUuid = node.path.substringAfterLast('/').takeIf { LibraryCodec.UUID_PATTERN.matches(it) }
                         val identityPath = hintedUuid?.let { ".starflow/books/$it/source.json" }
                         val identity = identityPath?.takeIf(session.storage::exists)?.let {
                             org.json.JSONObject(session.storage.read(it).bufferedReader().use { reader -> reader.readText() })
@@ -119,23 +115,35 @@ object LibraryScanner {
                         val indexedUuid = identity?.getString("uuid")
                         if (indexedUuid != null && session.database.catalog().byUuid(indexedUuid) == null)
                             session.database.catalog().meta(LibraryMeta("uuid:$kind:$id", indexedUuid))
+                        // UUID 目录是导入副本的外壳；按已保存的文件/子目录解析，保留原格式和分章。
+                        // 原来源缺失时停止，不能把外壳内的其他内容收录并覆盖 source.json。
+                        val sourcePath = identity?.getString("source")?.let(::safeLibraryPath) ?: node.path
+                        val sourceNode = if (sourcePath == node.path) node else {
+                            val parent = sourcePath.substringBeforeLast('/')
+                            listings.getOrPut(parent) { session.storage.list(parent) }.singleOrNull { it.path == sourcePath }
+                                ?: throw java.io.IOException("原作品来源不存在：$sourcePath；已保留原来源记录")
+                        }
+                        val source = session.local(sourcePath)
+                        if (sourceNode.directory && session.storage !is FileLibraryStorage) source.mkdirs()
+                        localLease = LibrarySources.acquire(source)
+                        if (!sourceNode.directory) LibrarySources.file(source)
                         val title = identity?.optString("sourceName")?.takeIf { it.isNotBlank() }
-                            ?: if (node.directory) source.name else source.nameWithoutExtension.ifBlank { source.name }
+                            ?: if (sourceNode.directory) source.name else source.nameWithoutExtension.ifBlank { source.name }
                         stage = "识别作品"
                         if (kind == "manga") {
-                            if (!node.directory && ArchiveTypes.detect(source) == ArchiveKind.ZIP &&
+                            if (!sourceNode.directory && ArchiveTypes.detect(source) == ArchiveKind.ZIP &&
                                 ZipFile(source).use { it.getEntry("META-INF/container.xml") != null }) return@forEachIndexed
-                            val manga = MangaImporter.inspectLocalSource(pinned, source, id, title, sourceNode = node)
-                            if (manga.pageCount <= 0 && !node.directory) throw java.io.IOException("来源中没有可读漫画图片")
-                            emptyDirectory = node.directory && manga.pageCount == 0
+                            val manga = MangaImporter.inspectLocalSource(pinned, source, id, title, sourceNode = sourceNode)
+                            if (manga.pageCount <= 0 && !sourceNode.directory) throw java.io.IOException("来源中没有可读漫画图片")
+                            emptyDirectory = sourceNode.directory && manga.pageCount == 0
                             added += ImportedMangaStore.mergeScanned(pinned, listOf(manga))
                         } else {
-                            if (node.directory) LibrarySources.file(source, folderTexts = true)
-                            val novel = NovelImporter.inspectLocalSource(pinned, source, id, title, allowEmptyDirectory = node.directory)
-                            emptyDirectory = node.directory && novel.chapterCount == 0
+                            if (sourceNode.directory) LibrarySources.file(source, folderTexts = true)
+                            val novel = NovelImporter.inspectLocalSource(pinned, source, id, title, allowEmptyDirectory = sourceNode.directory)
+                            emptyDirectory = sourceNode.directory && novel.chapterCount == 0
                             added += NovelStore.mergeScanned(pinned, listOf(novel))
                         }
-                        session.sourcePresence[node.path] = true
+                        session.sourcePresence[sourcePath] = true
                         stage = "提交书库"
                         session.flush()
                         if (session.saveState.value.pending != 0) throw java.io.IOException("未保存到书库：${session.saveState.value.error}")

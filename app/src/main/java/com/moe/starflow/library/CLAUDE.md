@@ -28,7 +28,7 @@
 
 默认书库位于应用专属外部目录，卸载或清除数据时由系统删除；自定义 SAF 目录中的原文件和产物保留，但持久授权、内部数据库和偏好会丢失。存储窗口在位置卡片下标注该差异，默认选中项仍是应用默认目录。
 
-重装后重新选择原自定义目录时，若本机数据库为空且目录身份有效，`LibrarySession.prepare()` 按目录身份接回并保留 `.starflow`，随后扫描重建书目；App 导入副本从 `.starflow/books/<UUID>/source.json` 恢复原 UUID。只有本机数据库已有书目、待写记录或日志时才以 `LibraryIdentityException` 停止，避免空库覆盖已有记录。阅读进度、译文、OCR 与超分记录保存在内部数据库，卸载后不能从目录恢复，仍需提前导出。
+重装后重新选择原自定义目录时，若本机数据库为空且目录身份有效，`LibrarySession.prepare()` 按目录身份接回并保留 `.starflow`，随后扫描重建书目；App 导入副本从 `.starflow/books/<UUID>/source.json` 恢复原 UUID，并按其中的实际文件或子目录恢复格式与章节，不把 UUID 外层目录当作作品。原来源缺失时报告错误并保留来源身份，不能改收录外层目录中的其他文件。只有本机数据库已有书目、待写记录或日志时才以 `LibraryIdentityException` 停止，避免空库覆盖已有记录。阅读进度、译文、OCR 与超分记录保存在内部数据库，卸载后不能从目录恢复，仍需提前导出。
 
 选择自定义目录时，标准外部存储提供器（`com.android.externalstorage.documents`）的 `Android/data`、`Android/obb`、`Android/media` 会被拒绝（`LibraryLocationUnsafeException`），因为系统卸载时会删除这些目录；已经选中的旧目录在授权仍有效时可通过已保存的树身份打开，`knownTrees` 中记录过的旧目录也可切回，避免老用户失去访问；新选或未记录过的这类目录会被拒绝，当前仍在使用时存储窗口显示红色卸载警告。Android 11+ 的选择器已隐藏它们，Android 10 仍可能返回。第三方提供器的 document ID 不透明，不做路径猜测。
 
