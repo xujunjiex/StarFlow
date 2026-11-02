@@ -178,6 +178,7 @@
   ⚠️ **胶囊必须给两侧圆钮让位**（2026-11 反馈：章名过长压到返回/菜单按钮）：`maxWidth` 由
   `ReaderPillLayout.maxPillWidthPx` 算（两侧各让 40dp 钮 + 10dp 外边距 + 14dp 间隙 + 胶囊内边距），
   章名用 `TextUtils.ellipsize` **只截章名**，页码永远完整。
+  漫画宿主监听根布局实际宽度，首次布局及旋转、分屏缩放后重新计算宽度和文案；分页与 Webtoon 当前页未变化时同样刷新胶囊，不触发切章提示。
   **小说阅读器共用同一份宽度预算**（`NovelReaderActivity.applyPillWidthBudget()` → `titleBudgetPx`），
   但**截断方式不同、必须分别维护**：漫画是单个 TextView 拼「章名 · 页」，只能手工 `ellipsize`；
   小说是「章名 + 页码」两个 TextView，给章名设 `maxWidth` 即可，页码天然不被截断。

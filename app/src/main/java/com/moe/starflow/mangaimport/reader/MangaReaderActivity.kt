@@ -921,6 +921,11 @@ class MangaReaderActivity : AppCompatActivity() {
         binding.btnMenu.setOnClickListener { showMenu() }
         // 顶部页码胶囊带章节信息，点它打开章节目录（与小说阅读器的顶部章名同一个入口语义）
         binding.tvPageIndicator.setOnClickListener { openChapterDialog() }
+        // 首次布局、旋转和分屏缩放后按实际窗口宽度重排；当前页不变时也必须更新。
+        // 监听根布局，同时覆盖分页与 Webtoon，且只刷新胶囊，不触发切章提示或进度计算。
+        binding.root.addOnLayoutChangeListener { _, l, _, r, _, ol, _, or_, _ ->
+            if (r - l > 0 && r - l != or_ - ol) refreshPageIndicator()
+        }
         // ⚠️ 提示条要**紧贴**胶囊下沿 → 按**实测**的胶囊下沿推给浮层，不猜固定 dp
         //    （猜的在小字号下留一条缝、在大字号下把胶囊压住）。胶囊自己高度变了（换章、标题换行）
         //    也要重推 —— 只在 `bottom` 真的变了时才推，避免每帧刷窗口布局。
@@ -1101,7 +1106,7 @@ class MangaReaderActivity : AppCompatActivity() {
         return getString(R.string.reader_page_indicator_chapter, fitted, page, chapter.pageCount)
     }
 
-    private fun refreshOverlay() {
+    private fun refreshPageIndicator() {
         // 顶部胶囊 = 章标题 · 章内第几页/本章共几页（用户口径：页码组件也要有章节信息）。
         // 章标题走 mangaChapterLabel（有文件夹名就显示它），与目录弹窗/翻译面板同一份
         val chapter = currentChapter()
@@ -1110,6 +1115,10 @@ class MangaReaderActivity : AppCompatActivity() {
         } else {
             getString(R.string.reader_page_indicator, currentPage + 1, source.size)
         }
+    }
+
+    private fun refreshOverlay() {
+        refreshPageIndicator()
         // 进度条 = **当前章**口径（拖拽寻页 / 绿条 / 紫条都只表达本章），与胶囊的
         // 「章内第几页 / 本章共几页」同一个坐标系。整本口径下几百页挤在一条线上，一像素好几页，
         // 拖起来落不准（用户口径：按当前章节选择移动跳转，不是所有章节）。
