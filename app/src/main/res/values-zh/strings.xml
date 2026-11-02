@@ -2014,6 +2014,11 @@
     <string name="library_default_folder">默认 app 目录</string>
     <string name="library_custom_folder">自定义目录</string>
     <string name="library_custom_folder_hint">点击选择文件夹</string>
+    <string name="library_uninstall_warning">默认 app 目录位于应用专属空间：卸载或清除数据会删除手动导入的原文件和图片产物。需要长期保留，建议选择自定义目录。</string>
+    <string name="library_reinstall_hint">重装后重新选择原自定义目录可接回书目和文件；阅读进度、译文等记录保存在 App 内部，卸载后无法恢复，请提前导出。</string>
+    <string name="library_location_unsafe_title">无法使用此目录</string>
+    <string name="library_location_unsafe_message">所选目录位于应用专属空间（Android/data、Android/obb 或 Android/media），卸载应用时会被系统删除，不能作为书库。请选择“文档”等公共目录下的文件夹。</string>
+    <string name="library_current_unsafe">当前书库位于应用专属空间，卸载应用时会被系统删除。请把书库迁移到其他目录后重新选择。</string>
     <string name="library_menu">书库菜单</string>
     <string name="library_storage_intro">选择漫画、小说和图片产物的保存位置</string>
     <string name="library_choose_location">存储位置</string>

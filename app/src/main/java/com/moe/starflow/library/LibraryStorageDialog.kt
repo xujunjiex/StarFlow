@@ -63,6 +63,9 @@ class LibraryStorageDialog : DialogFragment() {
         }
         view.findViewById<TextView>(R.id.library_retry).visibility =
             if (session.saveState.value.error != null || session.saveState.value.pending > 0) View.VISIBLE else View.GONE
+        // A pre-update choice may still live in app-specific storage; it remains reachable but must warn.
+        val unsafeCurrent = (session.storage as? SafLibraryStorage)
+            ?.let { LibraryLocationSafety.unsafeTreeReason(it.tree) } != null
         lifecycleScope.launch {
             val (bytes, blocked, rootMissing) = withContext(Dispatchers.IO) {
                 val saf = session.storage as? SafLibraryStorage
@@ -81,6 +84,10 @@ class LibraryStorageDialog : DialogFragment() {
                     rootMissing -> {
                         visibility = View.VISIBLE
                         text = getString(R.string.library_root_missing)
+                    }
+                    unsafeCurrent -> {
+                        visibility = View.VISIBLE
+                        text = getString(R.string.library_current_unsafe)
                     }
                     blocked.isNotEmpty() -> {
                         visibility = View.VISIBLE
@@ -150,6 +157,10 @@ class LibraryStorageDialog : DialogFragment() {
         lifecycleScope.launch {
             try { LibrarySessions.select(requireContext(), tree, reinitialize); dismiss() }
             catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: LibraryLocationUnsafeException) {
+                // Use the activity context so the dialog follows the in-app language, not the app context.
+                if (isAdded) showUnsafeLocation(getString(R.string.library_location_unsafe_message))
+            }
             catch (e: Exception) {
                 if (isAdded) {
                     syncLocationChoice()
@@ -162,6 +173,20 @@ class LibraryStorageDialog : DialogFragment() {
                 isCancelable = true
             }
         }
+    }
+
+    /** The system deletes app-specific roots on uninstall; offer a normal re-pick instead of "覆盖重建". */
+    private fun showUnsafeLocation(message: String) {
+        recoveryDialog?.dismiss()
+        recoveryDialog = android.app.AlertDialog.Builder(requireContext())
+            .setTitle(R.string.library_location_unsafe_title)
+            .setMessage(message)
+            .setNegativeButton(R.string.cancel, null)
+            .setPositiveButton(R.string.library_recovery_choose) { _, _ -> picker.launch(null) }
+            .create().also {
+                it.show()
+                it.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
+            }
     }
 
     private fun confirmReinitialization(tree: android.net.Uri?, error: String) {

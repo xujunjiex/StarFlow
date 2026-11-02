@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.room.Room
+import com.moe.starflow.R
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.io.Closeable
@@ -179,6 +180,14 @@ object LibrarySessions {
             val app = context.applicationContext
             val storage = if (tree == null) defaultStorage(app) else SafLibraryStorage(app, tree)
             val old = current(app)
+            val knownTree = storage is SafLibraryStorage && runCatching {
+                knownSafRoots(app).any { it.locationId == storage.locationId }
+            }.getOrDefault(false)
+            // Keep an already-active or previously remembered app-specific library reachable (e.g. a
+            // pre-update choice), but never let a new selection create one: uninstall deletes these roots.
+            if (storage is SafLibraryStorage && !knownTree && old.locationId != storage.locationId &&
+                LibraryLocationSafety.unsafeTreeReason(storage.tree) != null)
+                throw LibraryLocationUnsafeException(app.getString(R.string.library_location_unsafe_message))
             if (tree != null) app.contentResolver.takePersistableUriPermission(tree,
                 Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             if (old.locationId == storage.locationId && !reinitialize) {

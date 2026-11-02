@@ -98,8 +98,15 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
                 storage.writeNew(".starflow/library.json", "application/json").use { it.write(manifest.toString().toByteArray()) }
             }
             val manifest = readManifest()
-            if (catalog.meta("manifestId") == null && storage.exists(".starflow/storage.json"))
-                throw LibraryIdentityException("本机书库记录缺失，目录中仍有书库管理信息；可覆盖重建并重新扫描原文件")
+            if (catalog.meta("manifestId") == null && storage.exists(".starflow/storage.json")) {
+                // 卸载或清除数据后本机数据库是空的，但目录身份仍在：按目录身份接回，
+                // 保留 .starflow 和来源文件，由扫描重建书目。只有本机库已有内容时才停止，
+                // 避免用空库覆盖已有记录。
+                val hasLocalState = catalog.meta("head") != null || catalog.books("manga").isNotEmpty() ||
+                    catalog.books("novel").isNotEmpty() || catalog.pending().isNotEmpty()
+                if (hasLocalState) throw LibraryIdentityException("本机书库记录缺失，目录中仍有书库管理信息；已停止覆盖，本地资料保留")
+                LogCollector.w(TAG, "本机书库记录缺失，按目录身份接回：${storage.displayPath}")
+            }
             validateManifest(manifest)
             validateStructure(manifest)
             LibraryReinitialization.finish(app, storage, storageGeneration)

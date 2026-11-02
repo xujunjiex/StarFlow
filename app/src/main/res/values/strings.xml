@@ -2017,6 +2017,11 @@
     <string name="library_default_folder">Default app folder</string>
     <string name="library_custom_folder">Custom folder</string>
     <string name="library_custom_folder_hint">Tap to choose a folder</string>
+    <string name="library_uninstall_warning">The default app folder is app-specific storage: uninstalling or clearing app data deletes manually imported originals and image artifacts. Choose a custom folder to keep them.</string>
+    <string name="library_reinstall_hint">After reinstalling, choose the original custom folder again to reconnect books and files. Reading progress and translation records are stored inside the app and cannot be restored after uninstall; export them first.</string>
+    <string name="library_location_unsafe_title">Cannot use this folder</string>
+    <string name="library_location_unsafe_message">This folder is inside app-specific storage (Android/data, Android/obb, or Android/media), which the system deletes when the app is uninstalled. Choose a folder under Documents or another public location.</string>
+    <string name="library_current_unsafe">This library is inside app-specific storage and will be deleted when the app is uninstalled. Move it to another folder and select it again.</string>
     <string name="library_menu">Library menu</string>
     <string name="library_storage_intro">Choose where originals and image artifacts are stored</string>
     <string name="library_choose_location">Storage location</string>
