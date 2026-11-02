@@ -56,6 +56,8 @@ Robolectric 的文本引擎是**桩**：`Paint.breakText` 不按宽度换行、�
 - **章节读取和分页等待态**：启动解析章节目录与 `loadChapter` 共用居中不确定进度动画；延迟 180ms 显示以避免短任务闪屏，只有对应的最新加载结束后才隐藏。
 - **阅读模式取值迁移**（`novel_reader_mode_version`）：旧 `1`=滚动，新 `1`=上下翻页、滚动挪到 `2`
 - **两个阅读器共用一套约定**：背景/翻页动画/旋转的 prefs 键与漫画共用（`manga_reader`），字号与排版是 `novel_*` 独立；`CurlPageView`、四个 transformer、`ReaderProgressBar` 直接复用 `mangaimport/reader`
+- **顶部胶囊宽度与漫画共用预算**（`mangaimport/reader/ReaderPillLayout`）：`applyPillWidthBudget()` 用 `maxPillWidthPx` + `titleBudgetPx` 给章名设 `maxWidth`，两侧圆钮与间隙始终留出，页码不受影响。
+  ⚠️ **截断方式与漫画不同、必须各自维护**：漫画是单个 TextView 拼「章名 · 页」→ 手工 `TextUtils.ellipsize`；小说是章名/页码两个 TextView → 章名 `maxWidth` 自动省略。改 `ReaderPillLayout` 常量要同时核对两份布局与 `ReaderPillLayoutTest`。
 - **面板是打开那一刻的快照**（`NovelPanelState` 全是 `val`），宿主改了值必须显式回推，两个方向都只留**一个出口**：
   - 面板内部派生 UI → `refreshDerivedUi`；排版参数 → `bindTypography`（初始填充与「恢复默认」后的回读共用）
   - 宿主 → 面板 → `NovelPanelSheet.notifyHostState(当前章 / 目录标签 / 章状态)`，挂在 `updateChapterTocLabel()` 上（换章、翻页、译文到达、重算统计都会走到）。

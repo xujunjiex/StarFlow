@@ -37,6 +37,7 @@ import com.moe.starflow.mangaimport.reader.CoverTransformer
 import com.moe.starflow.mangaimport.reader.CurlPageView
 import com.moe.starflow.mangaimport.reader.NoneTransformer
 import com.moe.starflow.mangaimport.reader.ReaderAnimationState
+import com.moe.starflow.mangaimport.reader.ReaderPillLayout
 import com.moe.starflow.mangaimport.reader.SimulationTransformer
 import com.moe.starflow.me.settings.SettingPageActivity
 import com.moe.starflow.novel.data.ImportedNovel
@@ -2581,7 +2582,32 @@ class NovelReaderActivity : AppCompatActivity() {
         // 而滚动回调是每帧一次的（还会牵动 [setupOverlays] 里的 layout listener）
         if (binding.tvPageIndicator.text.toString() != label) binding.tvPageIndicator.text = label
         if (binding.tvPageCounter.text.toString() != counter) binding.tvPageCounter.text = counter
+        applyPillWidthBudget()
         pushPanelState()
+    }
+
+    /**
+     * 顶部胶囊宽度预算：与漫画阅读器共用 [ReaderPillLayout] 的口径 —— 两侧圆钮与间隙必须
+     * 留出来，章名只吃剩余宽度，页码永远完整。
+     *
+     * ⚠️ 两侧的差别只在「怎么截」：漫画是单个 TextView 拼「章名 · 页」，必须手工
+     * `TextUtils.ellipsize` 只截章名；这里是两个 TextView，给章名设 `maxWidth` 即可，
+     * 由 TextView 自己省略。**宽度口径必须同源**：改 [ReaderPillLayout] 的常量要同时看
+     * 两个阅读器、两份布局和 `ReaderPillLayoutTest`。
+     */
+    private fun applyPillWidthBudget() {
+        val windowWidth = binding.root.width.takeIf { it > 0 }
+            ?: resources.displayMetrics.widthPixels
+        val density = resources.displayMetrics.density
+        if (windowWidth <= 0 || density <= 0f) return
+        val maxPill = ReaderPillLayout.maxPillWidthPx(windowWidth, density)
+        val budget = ReaderPillLayout.titleBudgetPx(
+            maxPill,
+            binding.tvPageCounter.paint.measureText(binding.tvPageCounter.text.toString()),
+            binding.topPill.paddingStart,
+            binding.topPill.paddingEnd,
+        ).toInt()
+        if (binding.tvPageIndicator.maxWidth != budget) binding.tvPageIndicator.maxWidth = budget
     }
 
     private fun refreshOverlay() {

@@ -177,7 +177,11 @@
   **切章**（到头 toast「当前已是第一/最后一章」；单章漫画也照此 —— 翻页靠滑动/点击分区）。
   ⚠️ **胶囊必须给两侧圆钮让位**（2026-11 反馈：章名过长压到返回/菜单按钮）：`maxWidth` 由
   `ReaderPillLayout.maxPillWidthPx` 算（两侧各让 40dp 钮 + 10dp 外边距 + 14dp 间隙 + 胶囊内边距），
-  章名用 `TextUtils.ellipsize` **只截章名**，页码永远完整。小说侧 `top_pill` 同一口径（独立页码 TextView）。
+  章名用 `TextUtils.ellipsize` **只截章名**，页码永远完整。
+  **小说阅读器共用同一份宽度预算**（`NovelReaderActivity.applyPillWidthBudget()` → `titleBudgetPx`），
+  但**截断方式不同、必须分别维护**：漫画是单个 TextView 拼「章名 · 页」，只能手工 `ellipsize`；
+  小说是「章名 + 页码」两个 TextView，给章名设 `maxWidth` 即可，页码天然不被截断。
+  改 `ReaderPillLayout` 常量要同时核对两份布局与 `ReaderPillLayoutTest`。
   守卫：`ReaderPillLayoutTest`。
   **换章必有 app 内提示**（`notifyChapterIfChanged`，2026-10 用户口径）：箭头切章、目录/面板跳章、
   翻页跨章（含 Webtoon 连续滚动）都会用 `notifyUser` 弹一条「已切换到 第N章 · 共 x 页」——

@@ -1079,7 +1079,9 @@ class MangaReaderActivity : AppCompatActivity() {
         val page = (currentPage - chapter.startPage + 1).coerceAtLeast(1)
         val pages = getString(R.string.reader_page_indicator_chapter, "", page, chapter.pageCount)
         val view = binding.tvPageIndicator
-        val widthPx = resources.displayMetrics.widthPixels
+        // 优先用窗口实际宽度：分屏/小窗下 displayMetrics 未必等于本窗口的可用宽度，
+        // 取错会让 maxWidth 偏大，章名仍可能压到两侧按钮底下。
+        val widthPx = binding.root.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
         val density = resources.displayMetrics.density
         if (widthPx <= 0 || density <= 0f) {
             return getString(R.string.reader_page_indicator_chapter, title, page, chapter.pageCount)

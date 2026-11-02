@@ -138,9 +138,9 @@
         android:clickable="true"
         android:contentDescription="@string/novel_toc">
 
-        <!-- 章名。maxWidth 是给「页码不被挤掉」兜底的：15 个字（≈150dp @13sp）以内不截断，
-             再长走省略号。行情上这一格可用宽 = 375dp - 64×2 = 247dp，
-             章名 150 + 页码(含分隔号)≈50 + 内边距 24 = 224dp，还留 23dp 余量。 -->
+        <!-- 章名。运行时由 NovelReaderActivity.applyPillWidthBudget() 按 ReaderPillLayout 的
+             预算覆盖 maxWidth（与漫画阅读器同一口径）；这里的 150dp 只是首帧默认值：
+             15 个字（≈150dp @13sp）以内不截断，再长走省略号。 -->
         <TextView
             android:id="@+id/tv_page_indicator"
             android:layout_width="wrap_content"

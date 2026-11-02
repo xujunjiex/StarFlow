@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.room.Room
 import com.moe.starflow.R
+import com.moe.starflow.utils.LogCollector
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.io.Closeable
@@ -15,6 +16,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 object LibrarySessions {
     private const val PREFS = "library_locations"
+    private const val TAG = "LibrarySessions"
     private val sessions = ConcurrentHashMap<String, LibrarySession>()
     @Volatile private var active: LibrarySession? = null
     private val uses = AtomicInteger()
@@ -182,6 +184,10 @@ object LibrarySessions {
             val old = current(app)
             val knownTree = storage is SafLibraryStorage && runCatching {
                 knownSafRoots(app).any { it.locationId == storage.locationId }
+            }.onFailure {
+                // 读取历史目录失败时按「未知目录」处理（拒绝），但必须留痕：
+                // 否则用户看到的是「没法选这个目录」，排查时分不清是权限问题还是读取失败。
+                LogCollector.w(TAG, "读取已知书库目录失败，按未知目录处理", it)
             }.getOrDefault(false)
             // Keep an already-active or previously remembered app-specific library reachable (e.g. a
             // pre-update choice), but never let a new selection create one: uninstall deletes these roots.
