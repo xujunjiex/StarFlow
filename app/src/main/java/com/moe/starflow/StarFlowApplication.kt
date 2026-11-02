@@ -21,6 +21,13 @@ class StarFlowApplication : Application() {
 
         // 日志文件落盘（native 崩溃后日志仍保留）——必须最先初始化
         LogCollector.init(this)
+        // 设备信息只记一行：HarmonyOS / EMUI 的兼容问题必须靠 SDK + 厂商 + 型号定位，
+        // 缺了这行，用户报「点了没反应」时无法判断底层到底是 API 29 还是 31。
+        LogCollector.i(
+            "Device",
+            "SDK=${Build.VERSION.SDK_INT} release=${Build.VERSION.RELEASE} " +
+                "manufacturer=${Build.MANUFACTURER} model=${Build.MODEL}",
+        )
         com.moe.starflow.manga.TranslateUtils.init(this)
 
         // 超分/增强的运行期上下文（阅读器「先超分再翻译」用）。

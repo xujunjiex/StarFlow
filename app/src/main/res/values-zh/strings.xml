@@ -118,8 +118,9 @@
     <string name="api_name">API：%s</string>
     <string name="tencent_cloud">腾讯云</string>
     <string name="baidu_translate">百度翻译</string>
-    <string name="android_sdk_old_title">安卓版本过低</string>
-    <string name="android_sdk_old_content">看起来您的安卓版本小于Android 11（API 30）或Harmony OS版本低于3.0，这意味着您无法使用本软件的翻译功能，但您仍然可以使用除翻译功能外的其他功能。若您想体验本软件的全部功能，请升级系统或更换设备。</string>
+    <string name="screenshot_accessibility_unsupported_title">当前系统不支持无障碍截图</string>
+    <string name="screenshot_accessibility_unsupported_content">无障碍截图需要 Android 11（API 30）及以上，当前系统版本较低。请到「设置 → 翻译模式 → 截图方式」切换为录屏后重试。</string>
+    <string name="go_to_settings">去设置</string>
     <string name="user_known">我知道了</string>
     <string name="find_new_version">发现新版本</string>
     <string name="version_name">版本号：</string>
@@ -473,8 +474,8 @@
     <string name="tutorial_screenshot_intro">截图授权方式\n\n星译支持两种截图方式，可在设置中随时切换：\n\n录屏授权（推荐，默认）\n点击翻译后，系统弹出授权窗口，选择「全屏共享」\n或仅共享某个应用。开箱即用，无需配置系统设置。\n翻页时自感应触发翻译，每次启动需弹窗授权，\n状态栏会显示录制中的通知。\n\n无障碍服务\n需前往系统设置中手动开启无障碍权限。\n一次授权永久有效，状态栏干净无通知。</string>
     <string name="tutorial_model_switch">模型介绍\n\nML Kit\n速度最快，日文中文等识别精度较低，\n适合识别英文漫画翻译或者简单的各语言游戏和字幕翻译。\n\nPP-OCR 系列（v5/v6）\n多语言文字检测与识别。\nv5：速度和精度均衡，支持倾斜文字。\nv6：精度更高，small 模型内置，可选下载 medium 模型。\n\nmanga-ocr\n专门处理竖排日文，日文识别精度最高，\n需从模型管理页面下载。漫画模式中通过 RT-DETR-V2 配合使用；选择 RT-MANGA 组时，游戏/视频仍使用 ML Kit。</string>
     <string name="tutorial_manga_download">manga-ocr 下载指南\n\n需从模型管理页面下载 2 个模型（国内需开启代理）：\n\n1. RT-DETR-V2 检测器（~11MB）\n   用于检测气泡和文字区域\n\n2. manga-ocr 模型（~135MB）\n   竖排日文识别，精度最高\n\n前往设置 → 模型管理，分别下载即可。\nGitHub/HuggingFace 无法直连，请开启代理。</string>
-    <string name="faq_q1">为什么我的HarmonyOS版本大于等于3.0，但还是提示安卓版本过低？</string>
-    <string name="faq_a1">这是由于华为更新HarmonyOS后（注意并不是HarmonyOS NEXT），其底层的Android API不再能被用户直观地看出。对于<b><u>大部分较新款</u></b>的华为手机，HarmonyOS 2.0对应Android 10 (API 29)；HarmonyOS 3.0对应Android 12 (API 31)。但对于部分较旧的华为机型，虽然更新了HarmonyOS 3.0，但实际上并未更新底层的Android API，一些机型底层的Android版本仍为Android 10。因此<b><u>系统仍没有达到本软件要求</u></b>的Android 11 (API 30)。下面是一些已知的型号：\n\n搭载麒麟980及以下的机型，如mate20，P30，Nova5等机型，HarmonyOS 3.0对应的Android版本是10 (API 29)。这些机型的HarmonyOS 3.0其实并不是真正的3.0，功能缺失比较多，主要升级是：更新了版本号，使用了3.0的新主题，增加了一些不依赖Android 12的小功能。</string>
+    <string name="faq_q1">软件支持哪些 Android 版本？</string>
+    <string name="faq_a1">支持 Android 10（API 29）及以上、64 位 ARM 设备。\n\n<b><u>几点说明</u></b>\n• 无障碍截图需要 Android 11（API 30）及以上；更低版本请使用录屏授权（MediaProjection）。\n• 本地 OCR、本地大模型与超分对性能和内存要求较高，较旧的设备上可能偏慢，可改用在线翻译接口。\n• 不同系统版本与厂商定制可能影响个别功能，具体以设备实际表现为准。</string>
     <string name="faq_q2">为什么我已经授予了无障碍权限，但软件依旧提示没有获取到无障碍权限？</string>
     <string name="faq_a2">这是由于<b><u>无障碍权限被系统回收</u></b>导致的；在安卓系统中，无障碍是一个非常重要的权限。大部分基于安卓的系统在您退出软件或者关机重启时就会将无障碍权限回收，这也是出于安全考虑（当然，本软件是开源的，不会收集您的任何信息）。\n\n明白了原因，解决起来也非常方便。只要软件首页点击右上角的"？"->找到授予无障碍权限的那一步->点击"去授予该权限"->找到本软件，然后<b><u>关闭软件的无障碍权限，重新授予</u></b>即可。</string>
     <string name="more_api">在【设置】页面的"翻译设置"和"翻译模型配置"中调整该选项</string>

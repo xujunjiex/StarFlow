@@ -482,18 +482,33 @@ class MangaFloatingService : LifecycleService() {
         }
 
         createNotificationChannel()
-        // 先用 specialUse 启动（兼容无障碍模式），需要 MediaProjection 时再升级
+        // 先初始化截图提供者：前台服务类型要按它选，权限检查也在 UI 初始化之前。
+        initScreenshotProvider()
+
+        // Android 10+ 前台服务必须带类型，且 getMediaProjection() 要求 mediaProjection
+        // 类型先就位 —— 录屏模式直接上报它。无障碍模式没有投影，Android 10–13 用无类型的
+        // 2 参重载即可；只有 API 34+（强制要求类型）才退回 specialUse 占位。
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, buildNotification(), android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            when {
+                screenshotProvider is MediaProjectionProvider -> startForeground(
+                    NOTIFICATION_ID,
+                    buildNotification(),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION,
+                )
+
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> startForeground(
+                    NOTIFICATION_ID,
+                    buildNotification(),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
+                )
+
+                else -> startForeground(NOTIFICATION_ID, buildNotification())
+            }
         } else {
             startForeground(NOTIFICATION_ID, buildNotification())
         }
 
-        // 先初始化截图提供者，权限检查在 UI 初始化之前
-        initScreenshotProvider()
-
         if (screenshotProvider is MediaProjectionProvider) {
-            updateForegroundTypeForMediaProjection()
             if (!(screenshotProvider as MediaProjectionProvider).ensureInitialized()) {
                 LogCollector.d(TAG, "MediaProjection needs permission, deferring UI init")
                 ScreenCapturePermissionActivity.start(this, "manga")

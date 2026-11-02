@@ -283,6 +283,8 @@ IDLE（跳过OCR）──像素变化──→ CHANGED ──稳定1帧──→
 - **MediaProjection（默认）**：弹窗授权，门槛低，每次启动都要授权
 - **AccessibilityService**：需要手动开启无障碍服务，永久有效
 
+⚠️ **无障碍截图依赖 API 30**：`AccessibilityService.takeScreenshot()` 从 Android 11 才有。Android 10 机型（含底层仍是 API 29 的 HarmonyOS 3.0 老机型）只有录屏一条路：`checkScreenshotMethod()` 在低版本遇到 `Screenshot_Method=1` 时弹窗拦截并引导用户自己切到录屏，**不做静默回落**（偏好值不改写，服务仍按存储值创建 provider）。
+
 截图、框选与漫画结果使用默认显示屏的同一物理像素空间。Android 14+ 请求整屏 MediaProjection，`Shooter` 在每次取帧时核对真实旋转角度、尺寸、密度和投影内容尺寸；180° 翻转同样重建缓冲并清除旧帧。调整失败不能返回旧帧。
 
 截图结果携带唯一请求编号和不可变裁剪映射，游戏／漫画使用独立流。无障碍截图在请求和回调之间再次检查几何；旧请求不进入新任务。裁剪越界或帧尺寸不符时，不回退成另一种坐标空间。
@@ -303,7 +305,7 @@ ScreenshotManager（单例）
 
 ### 前台服务
 
-MediaProjection 截图需要前台服务与有效投影授权。按各服务在 Manifest 中声明的类型启动：`MangaFloatingService` 常驻阶段先使用 `SPECIAL_USE`，获得投影授权后升级为 `MEDIA_PROJECTION`；`FloatingBallService` 按自身截图授权路径启动 `mediaProjection` 服务。不能把漫画常驻服务的类型策略无条件复制到其他服务，也不能在未满足投影授权条件时直接启动投影类型。
+MediaProjection 截图需要前台服务与有效投影授权。按各服务在 Manifest 中声明的类型启动：`MangaFloatingService` 按截图方式选类型 —— 录屏模式直接上报 `MEDIA_PROJECTION`（`getMediaProjection()` 要求该类型先就位），无障碍模式没有投影，Android 10–13 用无类型的 2 参 `startForeground`，只有 API 34+ 才用 `SPECIAL_USE` 占位（该类型 API 34 才存在，低版本不得上报）。`FloatingBallService` 按自身截图授权路径启动 `mediaProjection` 服务。不能把漫画常驻服务的类型策略无条件复制到其他服务，也不能在未满足投影授权条件时直接启动投影类型。
 FloatingBallService 和 MangaFloatingService 在 MediaProjection 模式下自动启动前台服务。
 
 ## 章节翻译与超分共用的后台基础设施

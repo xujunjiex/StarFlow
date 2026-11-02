@@ -54,6 +54,7 @@ import com.moe.starflow.R
 import com.moe.starflow.databinding.FragmentTranslateBinding
 import com.moe.starflow.me.apiconfig.ConfigurationStorage
 import com.moe.starflow.me.ManageActivity
+import com.moe.starflow.me.settings.SettingPageActivity
 import com.moe.starflow.download.ModelDownloadRepository
 import com.moe.starflow.download.ModelKey
 import com.moe.starflow.utils.Constants
@@ -190,7 +191,7 @@ class TranslateFragment : Fragment() {
                 }
                 // checkScreenshotMethod 放最后，因为它会弹出授权窗口并返回 false，
                 // 授权成功后由 ScreenCapturePermissionActivity 自动启动服务
-                if (checkAndroidSDK() && checkFloatingBall() && checkNotify() && checkTranslateAPI() && checkCombination() && checkScreenshotMethod("game")) {
+                if (checkFloatingBall() && checkNotify() && checkTranslateAPI() && checkCombination() && checkScreenshotMethod("game")) {
                     if (!TranslationExecutionMode.isImage(requireContext()) &&
                         prefs.getInt("Text_API", Constants.TextApi.BING.id) == Constants.TextApi.AI.id &&
                         prefs.getInt("Text_AI", Constants.TextAI.NLLB.id) == Constants.TextAI.NLLB.id
@@ -213,7 +214,7 @@ class TranslateFragment : Fragment() {
                 }
                 // checkScreenshotMethod 放最后，因为它会弹出授权窗口并返回 false，
                 // 授权成功后由 ScreenCapturePermissionActivity 自动启动服务
-                if (checkAndroidSDK() && checkFloatingBall() && checkScreenshotMethod("manga")) {
+                if (checkFloatingBall() && checkScreenshotMethod("manga")) {
                     MangaFloatingService.start(requireContext())
                     UiUtils.showToast(requireContext(), getString(R.string.manga_started), isShort = false)
                     setMangaButtonState(true)
@@ -381,22 +382,6 @@ class TranslateFragment : Fragment() {
             binding.mangaButton.text = getString(R.string.manga_button)
             binding.mangaButton.backgroundTintList =
                 ColorStateList.valueOf(Color.parseColor("#6200EE"))
-        }
-    }
-
-    private fun checkAndroidSDK(): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-            val dialog = AlertDialog.Builder(requireContext())
-                .setTitle(R.string.android_sdk_old_title)
-                .setMessage(R.string.android_sdk_old_content)
-                .setCancelable(false)
-                .setPositiveButton(R.string.user_known, null)
-                .create()
-            dialog.show()
-            dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
-            return false
-        } else {
-            return true
         }
     }
 
@@ -846,11 +831,40 @@ class TranslateFragment : Fragment() {
                 false  // 异步处理，授权结果由 ScreenCapturePermissionActivity.onActivityResult 处理
             }
             1 -> {
-                // AccessibilityService 模式：检查服务是否开启
-                checkAccessibilityService()
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                    // 无障碍截图依赖 AccessibilityService.takeScreenshot()（API 30+）。
+                    // 这里不静默降级成录屏，由用户自己在设置里切换。
+                    showAccessibilityScreenshotUnsupported()
+                    false
+                } else {
+                    // AccessibilityService 模式：检查服务是否开启
+                    checkAccessibilityService()
+                }
             }
             else -> false
         }
+    }
+
+    /** 低版本仍选着「无障碍截图」时的阻塞提示。切换方式交给用户，不自动改写偏好。 */
+    private fun showAccessibilityScreenshotUnsupported() {
+        val dialog = AlertDialog.Builder(requireContext())
+            .setTitle(R.string.screenshot_accessibility_unsupported_title)
+            .setMessage(R.string.screenshot_accessibility_unsupported_content)
+            .setCancelable(false)
+            .setPositiveButton(R.string.go_to_settings) { _, _ ->
+                startActivity(
+                    Intent(requireContext(), SettingPageActivity::class.java).apply {
+                        putExtra(
+                            SettingPageActivity.EXTRA_FRAGMENT_TYPE,
+                            SettingPageActivity.TYPE_FRAGMENT_TRANSLATE_MODE,
+                        )
+                    }
+                )
+            }
+            .setNegativeButton(R.string.user_cancel, null)
+            .create()
+        dialog.show()
+        dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
     }
 
     private fun checkFloatingBall(): Boolean {
