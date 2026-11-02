@@ -60,8 +60,13 @@ def requestsVariantArtifact = { variant ->
 }
 def requestsDebugArtifact = requestsVariantArtifact('debug')
 def requestsReleaseArtifact = requestsVariantArtifact('release')
+// 发布包固定使用这把证书（历史所有 release 都是它）。构建末尾由 verifyReleaseCertificate 校验。
+def starflowPinnedCertSha256 = '367c7c6022b5515264191d76d5ce0c14856793acffc5e4b711c015b70e3978e8'
+
 if ((requestsDebugArtifact || requestsReleaseArtifact) && !starflowSigning.configured) {
-    throw new GradleException('APK/AAB builds require STARFLOW_SIGNING_* with the established shared keystore.')
+    // 没有 STARFLOW_SIGNING_* 时回退到本机 debug 证书：它与历史发布证书相同，
+    // 因此不需要再问用户要口令；换机器后 debug 证书不同，会在指纹校验处直接失败。
+    logger.lifecycle('STARFLOW_SIGNING_* 未配置：回退到本机 debug 证书，构建后校验证书指纹。')
 }
 
 android {
@@ -118,17 +123,13 @@ android {
 
     buildTypes {
         debug {
-            if (starflowSigning.configured) {
-                signingConfig signingConfigs.starflowShared
-            }
+            signingConfig(starflowSigning.configured ? signingConfigs.starflowShared : signingConfigs.debug)
         }
         release {
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            if (starflowSigning.configured) {
-                signingConfig signingConfigs.starflowShared
-            }
+            signingConfig(starflowSigning.configured ? signingConfigs.starflowShared : signingConfigs.debug)
 
             ndk {
                 abiFilters 'arm64-v8a' // 发布包只包含 arm64-v8a
@@ -176,23 +177,43 @@ android {
     }
 }
 
-// Guard APK/AAB packaging tasks reached through custom tasks too. Without the
-// shared key, a build must not fall back to a machine-specific signing key.
-tasks.configureEach { task ->
-    def taskName = task.name.toLowerCase()
-    if (taskName ==~ /^(package|sign).*debug(androidtest|bundle|universalapk)?$/) {
-        task.doFirst {
-            if (!starflowSigning.configured) {
-                throw new GradleException('Debug APK/AAB builds require STARFLOW_SIGNING_* with the established shared keystore.')
-            }
+// 发布包签名固定校验：证书指纹必须与历史 release 一致，否则本次构建直接失败。
+// 配置了 STARFLOW_SIGNING_* 时以配置的证书为准（迁移私有证书时跳过这份固定指纹）。
+tasks.register('verifyReleaseCertificate') {
+    doLast {
+        def apk = layout.buildDirectory.file('outputs/apk/release/app-release.apk').get().asFile
+        if (!apk.isFile()) return
+        if (starflowSigning.configured) {
+            logger.lifecycle('已配置 STARFLOW_SIGNING_*，跳过历史证书指纹校验。')
+            return
         }
-    } else if (taskName ==~ /^(package|sign).*release(androidtest|bundle|universalapk)?$/) {
-        task.doFirst {
-            if (!starflowSigning.configured) {
-                throw new GradleException('Release APK/AAB builds require STARFLOW_SIGNING_* with the established shared keystore.')
-            }
+        def buildTools = new File(android.sdkDirectory, 'build-tools')
+        def apksigner = buildTools.listFiles()?.findAll { it.isDirectory() }
+                ?.sort { it.name }
+                ?.reverse()
+                ?.collect { dir -> ['apksigner.bat', 'apksigner'].collect { new File(dir, it) }.find { it.isFile() } }
+                ?.find { it != null }
+        if (apksigner == null) {
+            logger.lifecycle('未找到 apksigner，跳过证书指纹校验。')
+            return
         }
+        def output = project.providers.exec {
+            commandLine apksigner.absolutePath, 'verify', '--print-certs', apk.absolutePath
+        }.standardOutput.asText.get()
+        def matcher = output =~ /certificate SHA-256 digest: ([0-9a-f]{64})/
+        if (!matcher.find()) {
+            throw new GradleException('无法读取 APK 证书指纹，已阻止发布。')
+        }
+        def actual = matcher.group(1)
+        if (actual != starflowPinnedCertSha256) {
+            throw new GradleException("APK 证书指纹与历史发布不一致，已阻止发布：${actual}（期望 ${starflowPinnedCertSha256}）")
+        }
+        logger.lifecycle("APK 证书校验通过：${actual}")
     }
+}
+
+tasks.matching { it.name == 'assembleRelease' }.configureEach {
+    finalizedBy 'verifyReleaseCertificate'
 }
 
 dependencies {

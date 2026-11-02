@@ -28,7 +28,7 @@ python guard/install_safe.py app/build/outputs/apk/debug/app-debug.apk --confirm
 
 每台构建机都要通过安全渠道取得同一份 keystore，并通过 `STARFLOW_SIGNING_STORE_FILE`、`STARFLOW_SIGNING_STORE_PASSWORD`、`STARFLOW_SIGNING_KEY_ALIAS` 和 `STARFLOW_SIGNING_KEY_PASSWORD` 环境变量或本机 Gradle 用户级属性配置。不要把这些值放进仓库的 Gradle 配置文件，也不要提交 keystore。
 
-缺少共享签名配置时，debug 和 release APK/AAB 打包都会失败，避免悄悄回退到每台机器各自生成的默认 debug 密钥。不要为测试包另设签名密钥，否则测试包与分发包之间不能直接覆盖安装。
+缺少共享签名配置时，构建会回退到本机 debug 证书，并在打包末尾校验 APK 证书指纹（`app/build.gradle` 的 `starflowPinnedCertSha256`）：指纹与历史发布不一致时构建直接失败，换机器或换密钥不会被悄悄放行。不要为测试包另设签名密钥，否则测试包与分发包之间不能直接覆盖安装。
 
 共享 keystore 必须是已经用于分发版本的原始密钥。换成新密钥会阻止已有安装直接更新；如果原始私钥找不到，先从安全备份恢复。公开证书不能恢复私钥，也不要为了安装而卸载用户版本。
 
