@@ -2586,7 +2586,8 @@ class MangaReaderActivity : AppCompatActivity() {
                 onRotate = { updateRotateMode((rotateMode + 1) % 3, persist = true) },
                 onDownload = { showDownloadDialog() },
                 onBookData = { com.moe.starflow.library.BookDataActivity.open(this@MangaReaderActivity,
-                    com.moe.starflow.library.BookRef(manga.libraryLocationId, "manga", manga.bookUuid)) },
+                    com.moe.starflow.library.BookRef(manga.libraryLocationId, "manga", manga.bookUuid),
+                    chapterNumber = manga.chapterOfPage(currentPage)?.number ?: -1) },
                 onSettings = {
                     // 从个性化设置返回后重建阅读器（配置项要重新读取才生效，见 onStart）。
                     // 顺带记下翻译模式：控制器随 Activity 一起重建，不恢复的话自动/增量会退回手动。
