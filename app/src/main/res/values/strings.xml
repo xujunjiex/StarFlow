@@ -2129,4 +2129,7 @@
     <string name="book_tag_copied">Tag copied</string>
     <string name="book_chapter_prev">Previous chapter</string>
     <string name="book_chapter_next">Next chapter</string>
+    <string name="book_tags_more">+%1$d more</string>
+    <string name="book_tags_collapse">Show less</string>
+    <string name="book_open_folder">Open folder</string>
 </resources>

@@ -62,6 +62,29 @@ object BookMetadataChips {
             .forEach { value -> container.addView(chipView(context, value, onCopy)) }
     }
 
+    /** 单个标签在卡片上的最大字符数：超了截断（完整内容去作品数据页看）。 */
+    const val MAX_TAG_CHARS = 12
+
+    /** 卡片用的截断版 chips：只显示前 [limit] 个，末尾给「+N」按钮。 */
+    fun fillFoldedChips(
+        container: ViewGroup,
+        values: List<String>,
+        expanded: Boolean,
+        limit: Int,
+        onCopy: (String) -> Unit,
+        onToggle: () -> Unit,
+    ) {
+        container.removeAllViews()
+        val context = container.context
+        val clean = values.map { it.trim() }.filter { it.isNotEmpty() }
+        val shown = if (expanded) clean else clean.take(limit)
+        shown.forEach { value -> container.addView(chipView(context, value, onCopy)) }
+        if (clean.size <= limit) return
+        val label = if (expanded) container.context.getString(R.string.book_tags_collapse)
+        else container.context.getString(R.string.book_tags_more, clean.size - limit)
+        container.addView(actionChip(context, label, onToggle))
+    }
+
     private fun labelView(context: Context, label: String) = TextView(context).apply {
         text = label
         textSize = 12f
@@ -73,8 +96,25 @@ object BookMetadataChips {
         ).apply { marginEnd = dp(context, 4) }
     }
 
+    private fun actionChip(context: Context, label: String, action: () -> Unit) = TextView(context).apply {
+        text = label
+        textSize = 12f
+        setTextColor(ContextCompat.getColor(context, R.color.primary))
+        setBackgroundResource(R.drawable.bg_metadata_chip)
+        setPadding(dp(context, 6), dp(context, 3), dp(context, 6), dp(context, 3))
+        isClickable = true
+        setOnClickListener { action() }
+        layoutParams = ViewGroup.MarginLayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+        ).apply {
+            marginEnd = dp(context, 6)
+            topMargin = dp(context, 4)
+        }
+    }
+
     private fun chipView(context: Context, value: String, onCopy: (String) -> Unit) = TextView(context).apply {
-        text = value
+        text = if (value.length > MAX_TAG_CHARS) value.take(MAX_TAG_CHARS).trimEnd() + "…" else value
         textSize = 12f
         setTextColor(ContextCompat.getColor(context, R.color.chip_text))
         setBackgroundResource(R.drawable.bg_metadata_chip)

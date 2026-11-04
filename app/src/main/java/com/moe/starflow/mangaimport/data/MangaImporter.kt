@@ -804,8 +804,7 @@ object MangaImporter {
      * （否则永远只显示最浅那份 = 第一章）。标签不再拼进简介，改由书架/数据页的 chips 展示。
      */
     private fun bookMetadata(context: Context, source: File, chapters: List<MangaChapter>): Pair<String, List<String>> {
-        val titles = chapters.mapNotNull { it.title.takeIf(String::isNotBlank) }.toSet()
-        val root = BookMetadataReader.splitMetadata(source, titles).first
+        val root = BookMetadataReader.bookRootTexts(source)
         val meta = ComicMetadataParser.parse(root) ?: return "" to emptyList()
         return ComicMetadataParser.buildDescription(context, meta, includeTags = false) to
             ComicMetadataParser.bookTags(meta)

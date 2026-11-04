@@ -92,30 +92,99 @@ object BookMetadataReader {
     }
 
     /**
-     * 按**已知章标题**把来源里的元数据分成「书级 / 章级」。
+     * **书级元数据 = 书根**，严格按路径层级判定（不再靠章标题猜）：
+     * - 目录：只取 dir 的**直接子文件**；
+     * - 压缩包：条目剥掉「所有条目共有的最外层目录」后，仍然**没有子目录**的才算书根。
      *
-     * 章标题来自 `MangaChapter.title`（= 章节子目录名）。路径里出现某个章标题目录段 → 该章，
-     * 否则算书级（包括「包了一层书名目录」的 `Book/ComicInfo.xml`）。
-     *
-     * ⚠️ 书级只取这一份 —— 章节的 json **不能**并进书简介，否则多章书永远只显示最浅那份。
+     * ⚠️ 这条必须严格：以前用「路径里出现章标题才算章」，单章书/标题对不上时，
+     * 子目录里的 json 会被当成书级 → 表现就是「根目录没有 json 却显示了子目录/包内的 json」。
      */
-    fun splitMetadata(
-        source: File,
-        chapterTitles: Set<String>,
-    ): Pair<List<Pair<String, String>>, Map<String, List<Pair<String, String>>>> =
-        ComicMetadataParser.splitByChapter(sourceTexts(source), chapterTitles)
+    fun bookRootTexts(source: File): List<Pair<String, String>> {
+        if (source.isDirectory) {
+            return source.listFiles().orEmpty()
+                .filter { it.isFile && ComicMetadataParser.isMetadataEntry(it.name) && it.length() <= ComicMetadataParser.MAX_METADATA_BYTES }
+                .mapNotNull { file -> optional(file.path) { file.inputStream().use { readText(it, file.length()) }?.let { file.name to it } } }
+        }
+        val names = archiveNames(source) ?: return emptyList()
+        val wrapper = commonWrapper(names)
+        val candidates = names.filter { name ->
+            val relative = stripWrapper(name, wrapper)
+            relative.isNotEmpty() && '/' !in relative && ComicMetadataParser.isMetadataEntry(relative)
+        }
+        if (candidates.isEmpty()) return emptyList()
+        return readArchiveEntries(source, candidates)
+    }
 
-    /** 章标题 → 解析后的元数据（作品数据页按需调用；源不可读时返回空表）。 */
+    /** 章级元数据：章目录/… 里最浅的那份（按首段目录名分组；根散图章为空名，不参与）。 */
     fun chapterMetadata(source: File, chapters: List<MangaChapter>): Map<String, ComicMetadata> {
         val titles = chapters.mapNotNull { it.title.takeIf(String::isNotBlank) }.toSet()
         if (titles.isEmpty()) return emptyMap()
-        return optional(source.path) {
-            ComicMetadataParser.splitByChapter(sourceTexts(source), titles).second
-                .mapNotNull { (title, texts) -> ComicMetadataParser.parse(texts)?.let { title to it } }
-                .toMap()
-        }.orEmpty()
+        val names = if (source.isDirectory) {
+            source.walkTopDown().filter { it.isFile && ComicMetadataParser.isMetadataEntry(it.name) }
+                .map { it.relativeTo(source).invariantSeparatorsPath }.toList()
+        } else archiveNames(source).orEmpty()
+        val wrapper = commonWrapper(names)
+        val grouped = names.mapNotNull { name ->
+            val relative = stripWrapper(name, wrapper)
+            val index = relative.indexOf('/')
+            if (index <= 0) return@mapNotNull null
+            val key = relative.substring(0, index)
+            if (key !in titles) return@mapNotNull null
+            key to name
+        }.groupBy({ it.first }, { it.second })
+        return grouped.mapNotNull { (title, entries) ->
+            val shallowest = entries.minByOrNull { stripWrapper(it, wrapper).count { c -> c == '/' } } ?: return@mapNotNull null
+            val texts = if (source.isDirectory) {
+                optional(shallowest) { File(source, shallowest).inputStream().use { readText(it) }?.let { listOf(shallowest to it) } }.orEmpty()
+            } else readArchiveEntries(source, listOf(shallowest))
+            ComicMetadataParser.parse(texts)?.let { title to it }
+        }.toMap()
     }
 
+    /** 归档里所有条目名（zip / rar / 7z）；目录或打不开时返回 null。 */
+    private fun archiveNames(source: File): List<String>? = optional(source.path) {
+        when (ArchiveTypes.detect(source)) {
+            ArchiveKind.ZIP -> java.util.zip.ZipFile(source).use { zip ->
+                zip.entries().asSequence().filter { !it.isDirectory }.map { it.name.replace('\\', '/') }.toList()
+            }
+            ArchiveKind.RAR, ArchiveKind.SEVEN_ZIP -> LibraryArchiveReader.acquire(source).use { lease ->
+                lease.reader.entries.filter { !it.endsWith("/") }.map { it.replace('\\', '/') }
+            }
+            else -> null
+        }
+    }
+
+    /** 所有条目共有的最外层目录（Book/…），没有则 null。 */
+    private fun commonWrapper(names: List<String>): String? {
+        if (names.isEmpty()) return null
+        val first = names.first().substringBefore('/')
+        if (first.isEmpty() || names.any { it.substringBefore('/') != first || '/' !in it }) return null
+        return first
+    }
+
+    private fun stripWrapper(name: String, wrapper: String?): String =
+        if (wrapper != null && name.startsWith("$wrapper/")) name.removePrefix("$wrapper/") else name
+
+    /** 按名读取归档里的元数据条目（带上限）。 */
+    private fun readArchiveEntries(source: File, names: List<String>): List<Pair<String, String>> = optional(source.path) {
+        when (ArchiveTypes.detect(source)) {
+            ArchiveKind.ZIP -> java.util.zip.ZipFile(source).use { zip ->
+                names.mapNotNull { name ->
+                    val entry = zip.getEntry(name) ?: return@mapNotNull null
+                    if (entry.size > ComicMetadataParser.MAX_METADATA_BYTES) return@mapNotNull null
+                    zip.getInputStream(entry).use { readText(it, entry.size)?.let { text -> name to text } }
+                }
+            }
+            ArchiveKind.RAR, ArchiveKind.SEVEN_ZIP -> LibraryArchiveReader.acquire(source).use { lease ->
+                names.mapNotNull { name ->
+                    optional(name) {
+                        lease.reader.openEntry(name, ComicMetadataParser.MAX_METADATA_BYTES).use { readText(it)?.let { text -> name to text } }
+                    }
+                }
+            }
+            else -> emptyList()
+        }
+    }.orEmpty()
     fun sourceTexts(source: File): List<Pair<String, String>> {
         if (source.isDirectory) return directoryTexts(source)
         val embedded = optional(source.path) {

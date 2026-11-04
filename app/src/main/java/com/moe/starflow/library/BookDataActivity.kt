@@ -27,6 +27,8 @@ import com.moe.starflow.mangaimport.data.MangaChapter
 import com.moe.starflow.mangaimport.data.mangaChapterLabel
 import com.moe.starflow.mangaimport.data.MangaSourceIndex
 import com.moe.starflow.utils.AppNotice
+import android.net.Uri
+import android.provider.DocumentsContract
 import java.io.File
 import kotlinx.coroutines.*
 import org.json.JSONArray
@@ -56,6 +58,8 @@ class BookDataActivity : BaseActivity() {
     /** 从阅读器进来时带过来的章节号；切换章节只影响本页展示。 */
     private var selectedChapter = Int.MIN_VALUE
     private var chapterJob: kotlinx.coroutines.Job? = null
+    /** 当前展示的章（详细信息里的「本章页数/进度」用它，随阅读器带来的章变化）。 */
+    private var currentChapter: MangaChapter? = null
     private var offset = 0
     private var overview = JSONObject()
     private var refreshJob: Job? = null
@@ -155,12 +159,19 @@ class BookDataActivity : BaseActivity() {
         card(summary) { body ->
             val chapters = if (book.has("chapterCount")) book.optInt("chapterCount") else MangaChapter.listFromJson(book.optString("chapters")).size
             field(body, fieldLabel("chapterCount"), chapters.toString())
-            if (ref.kind == "manga") field(body, fieldLabel("pageCount"), value(book, "pageCount"))
+            if (ref.kind == "manga") {
+                val chapter = currentChapter
+                val pages = if (chapter != null) "${chapter.pageCount} / ${book.optInt("pageCount")}" else value(book, "pageCount")
+                field(body, getString(R.string.book_meta_pages_label), pages)
+            }
             else field(body, getString(R.string.book_data_layout_pages), intent.getIntExtra("runtimePages", -1)
                 .takeIf { it >= 0 }?.toString() ?: getString(R.string.book_data_unknown))
             val readAt = book.optLong("lastReadAt")
             field(body, getString(R.string.book_data_progress), if (readAt <= 0) getString(R.string.book_data_not_read)
-                else if (ref.kind == "manga") getString(R.string.book_data_manga_progress, book.optInt("lastReadChapter") + 1, book.optInt("lastReadPage") + 1)
+                else if (ref.kind == "manga") currentChapter?.let { chapter ->
+                    getString(R.string.import_read_progress_chapter, mangaChapterLabel(this, chapter),
+                        (book.optInt("lastReadPage") - chapter.startPage + 1).coerceAtLeast(1), chapter.pageCount)
+                } ?: getString(R.string.book_data_manga_progress, book.optInt("lastReadChapter") + 1, book.optInt("lastReadPage") + 1)
                 else getString(R.string.book_data_novel_progress, book.optInt("lastReadChapter") + 1, book.optInt("lastReadParaIndex") + 1))
             if (readAt > 0) field(body, fieldLabel("lastReadAt"), date(readAt))
             field(body, fieldLabel("addedAt"), date(book.optLong("addedAt")))
@@ -286,24 +297,58 @@ class BookDataActivity : BaseActivity() {
         if (index < 0) index = 0
         selectedChapter = list[index].number
         val chapter = list[index]
+        currentChapter = chapter
         card(summary) { body ->
             body.addView(text(getString(R.string.book_chapter_meta_title) + " · " + mangaChapterLabel(this, chapter), 16f))
-            val switcher = LinearLayout(this@BookDataActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-            }
-            switcher.addView(smallButton(R.string.book_chapter_prev) {
-                if (index > 0) { selectedChapter = list[index - 1].number; renderSummary() }
+            body.addView(text(getString(R.string.book_meta_pages_label) + " · " + chapter.pageCount, 12f).apply {
+                setTextColor(color(R.color.text_secondary))
             })
-            switcher.addView(smallButton(R.string.book_chapter_next) {
-                if (index < list.lastIndex) { selectedChapter = list[index + 1].number; renderSummary() }
-            })
-            body.addView(switcher)
+            body.addView(smallButton(R.string.book_open_folder) { openFolderLocation() })
             val content = column().also(body::addView)
             loadChapterMetadata(content, list, chapter)
         }
     }
 
+    /**
+     * 打开作品所在文件夹：**交给系统文件管理器**，不经书库去读。
+     * SAF 书库用 tree 文档 URI；本地路径换成 ExternalStorageProvider 的文档 URI（避免 file:// 暴露）。
+     * 都打不开时把路径提示出来，用户可手动粘到文件管理器。
+     */
+    private fun openFolderLocation() {
+        val source = overview.optString("source")
+        if (source.isBlank()) return
+        fun launch(uri: Uri): Boolean = runCatching {
+            startActivity(Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, DocumentsContract.Document.MIME_TYPE_DIR)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            })
+            true
+        }.getOrDefault(false)
+        val session = runCatching { LibrarySessions.current(this) }.getOrNull()
+        val storageUri = session?.let { runCatching { it.storage.uri(source) }.getOrNull() }
+        val localDir = session?.let { runCatching { it.local(source).let { f -> if (f.isFile) f.parentFile else f } }.getOrNull() }
+        val opened = (storageUri?.takeIf { it.scheme == "content" }?.let(::launch) ?: false) ||
+            (localDir?.let(::externalDocumentsUri)?.let(::launch) ?: false)
+        if (!opened) AppNotice.show(this, source)
+    }
+
+    /** /storage/emulated/0/a/b → content://com.android.externalstorage.documents/document/primary:a/b。 */
+    private fun externalDocumentsUri(file: File): Uri? {
+        val path = file.absolutePath
+        val primary = "/storage/emulated/0/"
+        return when {
+            path.startsWith(primary) -> DocumentsContract.buildDocumentUri(
+                "com.android.externalstorage.documents", "primary:" + path.removePrefix(primary),
+            )
+            path.startsWith("/storage/") -> {
+                val volume = path.removePrefix("/storage/").substringBefore('/')
+                if (volume.isBlank()) null else DocumentsContract.buildDocumentUri(
+                    "com.android.externalstorage.documents", volume + ":" + path.substringAfter("/storage/" + volume + "/"),
+                )
+            }
+            else -> null
+        }
+    }
     private fun loadChapterMetadata(container: LinearLayout, list: List<MangaChapter>, chapter: MangaChapter) {
         val source = overview.optString("source").takeIf { it.isNotBlank() } ?: return
         container.addView(text(getString(R.string.loading), 12f))

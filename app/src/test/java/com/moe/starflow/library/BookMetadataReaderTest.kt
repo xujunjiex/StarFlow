@@ -61,4 +61,63 @@ class BookMetadataReaderTest {
         assertEquals(5, book.lastReadPage)
         assertEquals(BookMetadataReader.VERSION, book.metadataVersion)
     }
+
+    // ===== 书根判定：只认书根，不拿章节/子目录的 json 顶替 =====
+
+    @Test
+    fun bookRootTexts_takesOnlyDirectChildren() {
+        val dir = temp.newFolder("book")
+        File(dir, "meta.json").writeText("""{"title":"root"}""")
+        File(dir, "ch1").mkdirs()
+        File(dir, "ch1/meta.json").writeText("""{"title":"chapter-1"}""")
+        File(dir, "ch2").mkdirs()
+        File(dir, "ch2/ComicInfo.xml").writeText("<ComicInfo><Title>chapter-2</Title></ComicInfo>")
+
+        val texts = BookMetadataReader.bookRootTexts(dir)
+        assertEquals(listOf("meta.json"), texts.map { it.first })
+    }
+
+    @Test
+    fun bookRootTexts_emptyWhenOnlyChaptersHaveMetadata() {
+        val dir = temp.newFolder("no-root")
+        File(dir, "ch1").mkdirs()
+        File(dir, "ch1/meta.json").writeText("""{"title":"chapter-1"}""")
+        File(dir, "001.jpg").writeText("x")
+
+        assertTrue(BookMetadataReader.bookRootTexts(dir).isEmpty())
+    }
+
+    @Test
+    fun bookRootTexts_zipStripsSharedWrapperButNotChapters() {
+        val zip = temp.newFile("book.cbz")
+        java.util.zip.ZipOutputStream(java.io.FileOutputStream(zip)).use { out ->
+            out.putNextEntry(java.util.zip.ZipEntry("Book/ComicInfo.xml"))
+            out.write("<ComicInfo><Title>root</Title></ComicInfo>".toByteArray())
+            out.closeEntry()
+            out.putNextEntry(java.util.zip.ZipEntry("Book/ch1/meta.json"))
+            out.write("""{"title":"chapter-1"}""".toByteArray())
+            out.closeEntry()
+            out.putNextEntry(java.util.zip.ZipEntry("Book/001.jpg"))
+            out.write(ByteArray(8))
+            out.closeEntry()
+        }
+
+        val texts = BookMetadataReader.bookRootTexts(zip)
+        assertEquals(listOf("Book/ComicInfo.xml"), texts.map { it.first })
+    }
+
+    @Test
+    fun bookRootTexts_zipWithoutRootMetadataIsEmpty() {
+        val zip = temp.newFile("chapters-only.cbz")
+        java.util.zip.ZipOutputStream(java.io.FileOutputStream(zip)).use { out ->
+            out.putNextEntry(java.util.zip.ZipEntry("Book/ch1/meta.json"))
+            out.write("""{"title":"chapter-1"}""".toByteArray())
+            out.closeEntry()
+            out.putNextEntry(java.util.zip.ZipEntry("Book/001.jpg"))
+            out.write(ByteArray(8))
+            out.closeEntry()
+        }
+
+        assertTrue(BookMetadataReader.bookRootTexts(zip).isEmpty())
+    }
 }

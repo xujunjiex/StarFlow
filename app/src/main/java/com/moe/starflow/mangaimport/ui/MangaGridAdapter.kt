@@ -39,6 +39,8 @@ enum class DisplayMode { DETAILED_LIST, GRID }
  * @param onSelectionChanged 选中态变化回调（selectionMode, 已选数量），驱动顶部栏
  * @param onCancelImport 点击占位卡上的 ✕：请求取消该次导入
  */
+private const val TAG_PREVIEW_LIMIT = 6
+
 class MangaGridAdapter(
     displayMode: DisplayMode,
     private val onItemClick: (ImportedManga) -> Unit,
@@ -172,7 +174,7 @@ class MangaGridAdapter(
         }
         when (holder) {
             is CardVH -> bindCard(holder, item)
-            is RowVH -> bindRow(holder, item)
+            is RowVH -> bindRow(holder, item, position)
         }
     }
 
@@ -205,7 +207,7 @@ class MangaGridAdapter(
         )
     }
 
-    private fun bindRow(h: RowVH, item: ImportedManga) {
+    private fun bindRow(h: RowVH, item: ImportedManga, position: Int) {
         val ctx = h.itemView.context
         h.binding.tvTitle.text = item.title
         UiUtils.marqueeTitle(h.binding.tvTitle)
@@ -258,7 +260,18 @@ class MangaGridAdapter(
             h.binding.tagFlow.visibility = View.GONE
         } else {
             h.binding.tagFlow.visibility = View.VISIBLE
-            BookMetadataChips.fillChips(h.binding.tagFlow, tags) { value -> copyTag(ctx, value) }
+            val expanded = item.id in expandedTagItems
+            BookMetadataChips.fillFoldedChips(
+                container = h.binding.tagFlow,
+                values = tags,
+                expanded = expanded,
+                limit = TAG_PREVIEW_LIMIT,
+                onCopy = { value -> copyTag(ctx, value) },
+                onToggle = {
+                    if (expanded) expandedTagItems.remove(item.id) else expandedTagItems.add(item.id)
+                    if (position != RecyclerView.NO_POSITION) notifyItemChanged(position)
+                },
+            )
         }
         // 多选时让位给选中逻辑（与 btn_book_data 的 gating 一致）
         if (!selectionMode && !item.deleting && !item.lost) {
@@ -285,6 +298,9 @@ class MangaGridAdapter(
             item = item
         )
     }
+
+    /** 卡片上默认只展示前几个标签（其余折叠成「+N」，完整内容在作品数据页）。 */
+    private val expandedTagItems = mutableSetOf<Long>()
 
     /** 复制一个标签（chips 点击）。 */
     private fun copyTag(context: Context, value: String) {

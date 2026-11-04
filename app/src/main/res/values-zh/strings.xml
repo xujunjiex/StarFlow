@@ -2126,4 +2126,7 @@
     <string name="book_tag_copied">已复制标签</string>
     <string name="book_chapter_prev">上一章</string>
     <string name="book_chapter_next">下一章</string>
+    <string name="book_tags_more">+%1$d 个</string>
+    <string name="book_tags_collapse">收起</string>
+    <string name="book_open_folder">打开所在文件夹</string>
 </resources>
