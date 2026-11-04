@@ -75,7 +75,7 @@
   - 每页请求在 `starflow.log` 留两条 `ImageTranslate` 日志（`ctx=reader page=N`）：开始一条、结束一条（`✓/✗/⏹`），失败带 `stage`/服务商 `code`/`http`/耗时；不要在这里再加按页的第三行日志（300 行窗口会被冲干净）。
 - ⚠️ **在阅读器里跳「个性化设置」返回后必须 `recreate()`**：那一批参数（字号/颜色/字距行距/竖排方向/合并开关）是创建时读进缓存并被已渲染的译图固化的，就地刷新既漏项又容易只改一半。现场经 `onSaveInstanceState` 带过去（当前页 / 翻译模式 / 「这次是从设置返回」标记）。⚠️ 恢复模式的判据必须是 `restoredTranslateMode >= 0`（-1 = 不是从设置返回触发的重建）；写成 `!= MODE_MANUAL` 会把 -1 当模式塞进控制器 → **一进阅读器就自动开翻**（踩过，`ReaderMenuSheetTranslateTest` 有源码级守卫）
 - ⚠️ **阅读器面板（`ReaderMenuSheet`）新增任何控件必须做两件事**：① 接 `applyPanelTheme` —— 面板**不随全局主题**，按 `darkPanel`（跟阅读背景）翻转；「标签」进 `labelColor` 组、「值」进 `subColor` 组，**两组都要登记**（漏登记的控件在深色面板下保持布局默认深色字 → 压在同色背景上看不见）；② 字号与同面板邻居一致（说明行 12sp、正文行 14sp），**谨慎挂浅色背景 drawable**（如 `bg_preview_cell`，深色面板下就是一块白底）。文案一律双语（`values/` + `values-zh/`）。回归守卫：`ReaderMenuSheetTranslateTest`（面板底色 vs 文字色亮度差、与 OCR模型行字号相等）
-- **译文字号只有一个来源**：`utils/MangaFontSize.kt`（`PRESET_SIZES` 档位 / 自动 / 上下限都在它）。三个入口**都必须调它**：个性化设置页「字体大小」（**最初始的位置**）、悬浮窗菜单「字体大小」、阅读器翻译面板该行。直接写 `Manga_Font_Size`/`Manga_Auto_Font_Size` 的旧写法已收敛（游戏那套是独立的 `utils/CustomFontSize.kt`，两套**不要混用**——游戏是浮层 TextView 的 sp，漫画字号参与排版计算）。服务侧 `watchedKeys` 已含这两个键，改完实时生效
+- **译文字号只有一个来源**：`utils/MangaFontSize.kt`（`PRESET_SIZES` 档位 / 自动 / 自动上下限 `Manga_Auto_Min`/`Manga_Auto_Max` 都在它）。三个入口**都必须调它**：个性化设置页「字体大小」（**最初始的位置**）、悬浮窗菜单「字体大小」、阅读器翻译面板该行。直接写 `Manga_Font_Size`/`Manga_Auto_Font_Size` 的旧写法已收敛（游戏那套是独立的 `utils/CustomFontSize.kt`，两套**不要混用**——游戏是浮层 TextView 的 sp，漫画字号参与排版计算）。服务侧 `watchedKeys` 已含这四个键，改完实时生效
 - **三种翻译模式**（`ReaderTranslationController`）：`translateMode` = 0 手动 / 1 自动 / 2 增量。**每次进阅读器默认手动**，不持久化。自动与增量**共用同一个串行队列引擎**，只有窗口大小不同（自动 = 1 页；增量 = `[当前页, 当前页+N)`，N=1-10）
 - **队列引擎**：每轮 `delay(debounceMs)`（默认 500ms，面板可调 200-2000ms）→ 重读当前页 → 重算窗口 → 取窗口内第一个 `IDLE` 页 → 串行翻译。**翻页不重启队列**（窗口自动跟上）；正在翻的那页不被打断。⚠️ **跳过 `SUCCESS` 与 `FAILED`，只翻 `IDLE`** —— 不跳失败页会让内容性失败（空白页 OCR 为空）被每轮重挑 → 无限重试
 - 队列与按钮读取 `OcrLock.isRunning` 时同步检查已结束的持有者；原生调用未退出的取消任务保持互斥并显示“正在结束”。获取锁必须登记执行 `Job` 和来源，日志输出实际页号与持有者。
@@ -713,16 +713,32 @@
 
 ### 压缩包元数据
 
-- **只做一件事**：导入时读包里的 `ComicInfo.xml`（ComicRack 标准）与 `meta.json`（nhentai 等下载器），
-  生成简介写进 `ImportedManga.description`。⚠️ **不改书名**（书名仍取文件名）、不改阅读方向、
-  不往书架行加字段。旧条目仅在简介为空且元数据版本落后时补齐，之后照旧在「编辑简介」里改；同版本重新扫描不覆盖手动简介，也不恢复已手动清空的简介。
-- **两种格式都在时 ComicInfo 优先、meta.json 只补空**，且**同一格式内浅层目录优先**。
-  ⚠️ 优先级**不能只按目录深度排**：两者常常都在根目录（深度都是 0），只比深度就成了
-  「谁在列表里靠前谁说了算」—— 调用方换个遍历顺序，作者/系列就换了个来源（单测抓到过）。
-- 字段映射：`Writer`/`artist 标签` → 作者；`Translator`/`group 标签` → 社团·译者；
-  `Series`/`parody 标签` → 系列；`Tags`（csv）/`type=tag` → 标签；`Web` → 来源
-  （meta.json 没有 Web 时用 `id` 拼 `https://nhentai.net/g/<id>/`）。
-  ⚠️ meta.json 的 `language` 标签是 `japanese` 这种**名字**，不是 ISO 码，不能塞进 `languageIso`。
+- **只做一件事**：导入时读包里的元数据，生成简介写进 `ImportedManga.description`。
+  ⚠️ **不改书名**（书名仍取文件名）、不改阅读方向、不往书架行加字段。旧条目仅在简介为空且元数据版本落后时补齐，之后照旧在「编辑简介」里改；同版本重新扫描不覆盖手动简介，也不恢复已手动清空的简介。
+- **认的是公开格式，不是某一家**（`ComicMetadataParser`）：
+
+  | 格式 | 形状 | 谁写它 |
+  |---|---|---|
+  | ComicInfo.xml | XML，根 `<ComicInfo>` | ComicRack 的事实标准（ComicTagger / Kavita / Komga / Mylar） |
+  | CoMet | XML，根 `<comet>` | 较早的通用标准，字段少但跨工具 |
+  | ComicBookInfo | JSON，根键 `ComicBookInfo/1.0` | ComicRack 的 JSON 导出，**常写在 zip 注释里** |
+  | 通用 JSON | 任意对象 | 各家下载器自拍的键名，按通用别名 + booru 角色标签读 |
+
+- **格式按内容嗅探，不看文件名**：叫 `meta.json` 的可以是 CoMet，叫 `ComicInfo.xml` 的可以是
+  ComicBookInfo —— 工具写错名字、`BookMetadataReader` 给侧车换标签都不影响解析；白名单
+  （`isMetadataEntry`）只决定「要不要读」。
+- **优先级** ComicInfo > CoMet > ComicBookInfo > 通用 JSON，合并**逐字段**（高优先级为空才由低优先级补），
+  同一格式内**浅层目录优先**。⚠️ 优先级**不能只按目录深度排**：多种格式常在根目录（深度都是 0），
+  只比深度就成了「谁在列表里靠前谁说了算」—— 调用方换个遍历顺序，作者/系列就换了个来源（单测抓到过）。
+- 字段映射：`Writer`/`artist 角色` → 作者（没有 Writer 才退到画师/上色/嵌字）；`Translator`/`group 角色`/
+  `credits[role=Translator]` → 社团·译者；`Series`/`parody 角色` → 系列；`Tags`/`type=tag` → 标签；
+  `Year/Month/Day`、`publicationYear/Month` → 发布日期（按有几位拼 `YYYY`/`YYYY-MM`/`YYYY-MM-DD`）。
+  ⚠️ `language` 常是 `japanese`/`English` 这种**名字**，不是 ISO 码，不能塞进 `languageIso`。
+- ⚠️ **来源字段已从模型里删除**（`ComicMetadata` 没有 `web`，简介没有「来源」行）：
+  曾经的实现用 `id` 拼第三方站点 URL，字面量进 dex 后被安装器/商店按域名黑名单静态扫描报
+  「含色情内容」（2026-11 真机安装提示即此事）。**禁止再引入任何来源推导**，链接一律不进简介。
+  历史简介里的来源行由 `LibraryScanner` 一次性清理（按本地化前缀匹配，**不能用域名关键字**，
+  否则等于把字面量写回 dex）。
 - ⚠️ **坏数据绝不能让导入失败**：解析异常/截断一律返回 null，只影响「少填一段简介」。
   特别地：被截断的 XML（`<ComicInfo><Title>oops`）在 KXmlParser 下**不一定抛**，
   会走完事件循环留下一个全 null 的对象 → 所以解析结果必须过 `isMeaningful()`

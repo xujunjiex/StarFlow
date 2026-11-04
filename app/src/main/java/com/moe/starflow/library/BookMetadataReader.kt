@@ -11,8 +11,11 @@ import java.io.InputStream
 
 /** Bounded optional metadata reads. Directory sources are read from their actual backend. */
 object BookMetadataReader {
-    const val VERSION = 3
+    const val VERSION = 4
     private val BOOK_EXTENSIONS = setOf("zip", "cbz", "rar", "cbr", "7z", "pdf", "epub", "txt", "html", "htm", "xhtml")
+
+    /** 与来源同名的侧车元数据后缀：`book.meta.json` / `book.ComicInfo.xml` / `book.comet.xml` … */
+    private val SIDECAR_SUFFIXES = listOf("meta.json", "ComicInfo.xml", "comet.xml", "ComicBookInfo.json")
 
     /** Reuse an existing library grant; a single-file grant never grants arbitrary siblings. */
     fun copyAuthorizedSidecars(context: android.content.Context, document: android.net.Uri, destination: File, kind: String) {
@@ -30,7 +33,11 @@ object BookMetadataReader {
 
     internal fun namedSidecar(sourceName: String, name: String): Boolean {
         val stem = sourceName.substringBeforeLast('.', sourceName)
-        return name.lowercase() in setOf("$stem.meta.json", "$sourceName.meta.json", "$stem.ComicInfo.xml", "$sourceName.ComicInfo.xml").map { it.lowercase() }
+        val lower = name.lowercase()
+        return SIDECAR_SUFFIXES.any { suffix ->
+            val tail = suffix.lowercase()
+            lower == "$stem.$tail".lowercase() || lower == "$sourceName.$tail".lowercase()
+        }
     }
 
     internal fun sidecarNodes(nodes: List<LibraryNode>, source: String, allowGeneric: Boolean): List<LibraryNode> {
@@ -104,7 +111,7 @@ object BookMetadataReader {
         val local = sidecarNodes(localNodes, source.invariantSeparatorsPath, parent.name !in setOf("manga_import", "novel_import"))
             .mapNotNull { node -> optional(node.path) {
                 File(node.path).inputStream().use { readText(it, node.size) }?.let {
-                    (if (node.path.endsWith(".xml", true)) "ComicInfo.xml" else "meta.json") to it
+                    ComicMetadataParser.basename(node.path) to it
                 }
             } }
         if (local.isNotEmpty()) return local // A SAF import has not published its staged source yet.
@@ -120,7 +127,7 @@ object BookMetadataReader {
             .mapNotNull { node -> optional(node.path) {
                 val input = if (located != null) located.first.storage.read(node.path) else File(node.path).inputStream()
                 input.use { readText(it, node.size) }?.let {
-                    (if (node.path.endsWith(".xml", true)) "ComicInfo.xml" else "meta.json") to it
+                    ComicMetadataParser.basename(node.path) to it
                 }
             } }
     }

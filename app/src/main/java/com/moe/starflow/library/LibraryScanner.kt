@@ -77,6 +77,20 @@ object LibraryScanner {
                     try { session.sourcePresence[book.source] = sourceExists(book.source) }
                     catch (e: Exception) { failures += "${session.storage.displayPath}/${book.source}：[检查来源] ${e.message}" }
                 }
+                // 老版本写进简介的「来源」行可能指向第三方站点：一次性清掉，之后条件不再命中。
+                val sourcePrefix = pinned.getString(com.moe.starflow.R.string.comic_meta_source, "").trim()
+                val staleSources = known.filter { book ->
+                    val description = org.json.JSONObject(book.body).optString("description")
+                    !book.deleting && description.isNotBlank() &&
+                        ComicMetadataParser.stripSourceLines(description, sourcePrefix) != description
+                }.mapTo(mutableSetOf()) { it.uuid }
+                if (staleSources.isNotEmpty()) {
+                    coroutineContext.ensureActive()
+                    try {
+                        stripSourceLines(pinned, kind, staleSources, sourcePrefix)
+                    } catch (e: CancellationException) { throw e }
+                    catch (e: Exception) { failures += "[清理简介] ${e.message}" }
+                }
                 // Repair descriptions missed by the previous importer once; never replace edits.
                 val repairs = known.filter {
                     val body = org.json.JSONObject(it.body)
@@ -198,6 +212,25 @@ object LibraryScanner {
             catch (e: Exception) {
                 if (e !is IllegalStateException || e.message != NovelImporter.ERROR_NO_TEXT_CHAPTER)
                     failures += "${session.storage.displayPath}/${book.source}: ${e.message}"
+            }
+        }
+    }
+
+    /**
+     * 批量清掉简介里的「来源」行（老版本导入的书库还留着这些行，来源当时可能是拼出来的链接）。
+     *
+     * 判据是**本地化前缀**，不是域名关键字 —— 用域名匹配会把刚删掉的字面量重新写回 dex。
+     * 只处理 [uuids] 命中的书，整表只读一次（书架上可能有几百本）。
+     */
+    private fun stripSourceLines(context: Context, kind: String, uuids: Set<String>, prefix: String) {
+        val clean = { text: String -> ComicMetadataParser.stripSourceLines(text, prefix) }
+        if (kind == "manga") {
+            ImportedMangaStore.load(context).filter { it.bookUuid in uuids }.forEach { value ->
+                ImportedMangaStore.patch(context, value) { latest -> latest.copy(description = clean(latest.description)) }
+            }
+        } else {
+            NovelStore.load(context).filter { it.bookUuid in uuids }.forEach { value ->
+                NovelStore.patch(context, value) { latest -> latest.copy(description = clean(latest.description)) }
             }
         }
     }

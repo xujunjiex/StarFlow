@@ -780,6 +780,8 @@ object MangaImporter {
                     val text = zip.getInputStream(e).use { readTextCapped(it, e.size) } ?: continue
                     out.add(e.name to text)
                 }
+                // ComicRack 的 ComicBookInfo 导出放在 zip **注释**里（没有条目名），是常见写法
+                zip.comment?.let { comicBookInfoComment(it) }?.let { out.add("ComicBookInfo" to it) }
             }
         } catch (ex: Exception) {
             LogCollector.w(TAG, "读取压缩包元数据失败（忽略）: ${ex.message}")
@@ -789,6 +791,21 @@ object MangaImporter {
 
     /** 读取图片文件夹内的元数据文本。 */
     internal fun readDirMetadataTexts(dir: File): List<Pair<String, String>> = BookMetadataReader.directoryTexts(dir)
+
+    /**
+     * 从 zip 注释里取 ComicBookInfo。
+     *
+     * 注释常带前后杂讯（打包器写说明、工具写前缀），所以从第一个 `{` 截到最后一个 `}`；
+     * 只认提到 `ComicBookInfo` 的注释，别的注释一律忽略（不能把普通说明当元数据）。
+     */
+    private fun comicBookInfoComment(comment: String): String? {
+        if (comment.length > ComicMetadataParser.MAX_METADATA_BYTES) return null
+        if (!comment.contains("ComicBookInfo")) return null
+        val start = comment.indexOf('{')
+        val end = comment.lastIndexOf('}')
+        if (start < 0 || end <= start) return null
+        return comment.substring(start, end + 1)
+    }
 
     /**
      * 按上限读文本（UTF-8）。超过 [ComicMetadataParser.MAX_METADATA_BYTES] 返回 null ——
