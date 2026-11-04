@@ -834,4 +834,75 @@ class LayoutEngineTest {
         assertEquals(10f, line.baseline, 0.01f)
         assertEquals(10f, layout.totalHeight, 0.01f)
     }
+
+    @Test
+    fun cjkBreakGuard_movesClosingPunctuationOffLineStart() {
+        assertEquals(4, CjkLineBreak.adjustBreak("あいうえお、かき", 0, 5))
+    }
+
+    @Test
+    fun cjkBreakGuard_movesOpeningBracketOffLineEnd() {
+        assertEquals(4, CjkLineBreak.adjustBreak("あいうえ（かき", 0, 5))
+    }
+
+    @Test
+    fun cjkBreakGuard_allowsSingleCharacterFallback() {
+        assertEquals(1, CjkLineBreak.adjustBreak("あ、い", 0, 1))
+        assertTrue(!CjkLineBreak.hasCjk("hello world"))
+    }
+
+    @Test
+    fun horizontalCjk_closingPunctuationNeverStartsLine() {
+        val text = "あいうえお、かきくけこ"
+        val layout = LayoutEngine.plan(
+            measurer = measurer(),
+            text = text,
+            region = Box(0f, 0f, 50f, 200f),
+            direction = TextDirection.HORIZONTAL,
+            requestedFontSize = 10f,
+            autoFit = false,
+            align = TextAlign.LEFT,
+            trackingRatio = 0f,
+            leadingRatio = 0f
+        )
+        val lines = layout.lines.map { it.text }
+        assertEquals(text, lines.joinToString(""))
+        assertTrue("行首不能是闭标点：$lines", lines.none { it.startsWith("、") })
+    }
+
+    @Test
+    fun verticalCjk_closingPunctuationNeverStartsColumn() {
+        val text = "あいうえお、かき"
+        val layout = LayoutEngine.plan(
+            measurer = measurer(),
+            text = text,
+            region = Box(0f, 0f, 200f, 50f),
+            direction = TextDirection.VERTICAL_RL,
+            requestedFontSize = 10f,
+            autoFit = false,
+            align = TextAlign.LEFT,
+            trackingRatio = 0f,
+            leadingRatio = 0f
+        )
+        val columns = layout.lines.map { it.text }
+        assertEquals(text, columns.joinToString(""))
+        assertTrue("列首不能是闭标点：$columns", columns.none { it.startsWith("、") })
+    }
+
+    @Test
+    fun latinLastLine_movesOneWordToAvoidOrphan() {
+        val layout = LayoutEngine.plan(
+            measurer = LatinMeasurer(),
+            text = "aa bb cc dd",
+            region = Box(0f, 0f, 100f, 200f),
+            direction = TextDirection.HORIZONTAL,
+            requestedFontSize = 10f,
+            autoFit = false,
+            align = TextAlign.LEFT,
+            trackingRatio = 0f,
+            leadingRatio = 0f
+        )
+        val lines = layout.lines.map { it.text }
+        assertEquals(listOf("aa bb", "cc dd"), lines)
+    }
 }
