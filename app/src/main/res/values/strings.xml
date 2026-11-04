@@ -2132,4 +2132,5 @@
     <string name="book_tags_more">+%1$d more</string>
     <string name="book_tags_collapse">Show less</string>
     <string name="book_open_folder">Open folder</string>
+    <string name="book_meta_book_label">Book info</string>
 </resources>

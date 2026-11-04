@@ -3,6 +3,7 @@ package com.moe.starflow.library
 import com.moe.starflow.mangaimport.data.ComicMetadataParser
 import com.moe.starflow.mangaimport.data.ImportedManga
 import com.moe.starflow.mangaimport.data.ImportedMangaStore
+import com.moe.starflow.mangaimport.data.MangaChapter
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Rule
@@ -119,5 +120,85 @@ class BookMetadataReaderTest {
         }
 
         assertTrue(BookMetadataReader.bookRootTexts(zip).isEmpty())
+    }
+
+    @Test
+    fun chapterMetadata_readsChaptersThatAreArchives() {
+        val dir = temp.newFolder("archive-chapters")
+        writeZip(File(dir, "ch1.cbz"), "first")
+        writeZip(File(dir, "ch2.cbz"), "second")
+        val chapters = listOf(
+            MangaChapter(number = 1, title = "ch1.cbz", startPage = 0, pageCount = 2),
+            MangaChapter(number = 2, title = "ch2.cbz", startPage = 2, pageCount = 2),
+        )
+        val meta = BookMetadataReader.chapterMetadata(dir, chapters)
+        // 章 = 压缩包时，必须读**包内**元数据（不是书根，也不是别的包）
+        assertEquals("first", meta["ch1.cbz"]?.title)
+        assertEquals("second", meta["ch2.cbz"]?.title)
+    }
+
+    @Test
+    fun chapterMetadata_fallsBackToArchiveOrderWhenTitleDiffers() {
+        val dir = temp.newFolder("archive-order")
+        writeZip(File(dir, "a-001.cbz"), "alpha")
+        writeZip(File(dir, "a-002.cbz"), "beta")
+        val chapters = listOf(
+            MangaChapter(number = 1, title = "第一章", startPage = 0, pageCount = 2),
+            MangaChapter(number = 2, title = "第二章", startPage = 2, pageCount = 2),
+        )
+        val meta = BookMetadataReader.chapterMetadata(dir, chapters)
+        // 章名与文件名完全对不上时，按章序 ↔ 压缩包自然序兜底
+        assertEquals("alpha", meta["第一章"]?.title)
+        assertEquals("beta", meta["第二章"]?.title)
+    }
+
+    @Test
+    fun chapterMetadata_readsChaptersInsideOneArchive() {
+        val zip = temp.newFile("one-book.cbz")
+        java.util.zip.ZipOutputStream(java.io.FileOutputStream(zip)).use { out ->
+            listOf("ch1" to "first", "ch2" to "second").forEach { (dir, title) ->
+                out.putNextEntry(java.util.zip.ZipEntry("$dir/ComicInfo.xml"))
+                out.write("<ComicInfo><Title>$title</Title></ComicInfo>".toByteArray())
+                out.closeEntry()
+                out.putNextEntry(java.util.zip.ZipEntry("$dir/001.jpg"))
+                out.write(ByteArray(4))
+                out.closeEntry()
+            }
+        }
+        val chapters = listOf(
+            MangaChapter(number = 1, title = "ch1", startPage = 0, pageCount = 2),
+            MangaChapter(number = 2, title = "ch2", startPage = 2, pageCount = 2),
+        )
+        val meta = BookMetadataReader.chapterMetadata(zip, chapters)
+        assertEquals("first", meta["ch1"]?.title)
+        assertEquals("second", meta["ch2"]?.title)
+    }
+
+    @Test
+    fun chapterMetadata_archiveFallsBackToDirectoryOrder() {
+        val zip = temp.newFile("one-book-mismatch.cbz")
+        java.util.zip.ZipOutputStream(java.io.FileOutputStream(zip)).use { out ->
+            listOf("a" to "alpha", "b" to "beta").forEach { (dir, title) ->
+                out.putNextEntry(java.util.zip.ZipEntry("$dir/ComicInfo.xml"))
+                out.write("<ComicInfo><Title>$title</Title></ComicInfo>".toByteArray())
+                out.closeEntry()
+            }
+        }
+        val chapters = listOf(
+            MangaChapter(number = 1, title = "第一章", startPage = 0, pageCount = 2),
+            MangaChapter(number = 2, title = "第二章", startPage = 2, pageCount = 2),
+        )
+        val meta = BookMetadataReader.chapterMetadata(zip, chapters)
+        // 章名与包内目录名完全对不上时，按章序 ↔ 目录顺序兜底
+        assertEquals("alpha", meta["第一章"]?.title)
+        assertEquals("beta", meta["第二章"]?.title)
+    }
+
+    private fun writeZip(target: File, title: String) {
+        java.util.zip.ZipOutputStream(java.io.FileOutputStream(target)).use { out ->
+            out.putNextEntry(java.util.zip.ZipEntry("ComicInfo.xml"))
+            out.write("<ComicInfo><Title>$title</Title></ComicInfo>".toByteArray())
+            out.closeEntry()
+        }
     }
 }

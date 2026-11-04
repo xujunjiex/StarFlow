@@ -123,22 +123,23 @@ object MangaImporter {
     private fun inspectRawArchive(
         context: Context, source: File, id: Long, title: String, coverPathOverride: String? = null,
     ): ImportedManga {
-        LibraryArchiveReader.acquire(source).use { lease ->
+        val (split, cover) = LibraryArchiveReader.acquire(source).use { lease ->
             val reader = lease.reader
             val split = MangaChapterSplitter.split(reader.entries.filter(ArchivedMangaReader::isImageFile))
             val cover = coverPathOverride ?: split.keys.firstOrNull()?.let { entry ->
                 decodeCover { reader.openEntry(entry) }
             }?.let { bitmap -> try { extractThumbnail(context, bitmap, id) } finally { bitmap.recycle() } }
-            val metadata = reader.entries.filter(ComicMetadataParser::isMetadataEntry).mapNotNull { name ->
-                runCatching { reader.openEntry(name, ComicMetadataParser.MAX_METADATA_BYTES.toLong()).use {
-                    readTextCapped(it, -1)?.let { text -> name to text }
-                } }.getOrNull()
-            }
-            return ImportedManga(id = id, title = title, localRoot = source.path, isArchive = true,
-                coverPath = cover, pageCount = split.keys.size, addedAt = freshAddedAt(context),
-                sizeBytes = source.length(), chapters = split.chapters,
-                description = ComicMetadataParser.descriptionOf(context, metadata + BookMetadataReader.sidecarTexts(source)), metadataVersion = BookMetadataReader.VERSION)
+            split to cover
         }
+        // ⚠️ 只读书根（不是全包条目）：章目录里的 json 属于各章，不能顶成书简介
+        val root = BookMetadataReader.bookRootTexts(source) + BookMetadataReader.sidecarTexts(source)
+        val metadata = ComicMetadataParser.parse(root)
+        return ImportedManga(id = id, title = title, localRoot = source.path, isArchive = true,
+            coverPath = cover, pageCount = split.keys.size, addedAt = freshAddedAt(context),
+            sizeBytes = source.length(), chapters = split.chapters,
+            description = metadata?.let { ComicMetadataParser.buildDescription(context, it, includeTags = false) }.orEmpty(),
+            tags = metadata?.let(ComicMetadataParser::bookTags).orEmpty(),
+            metadataVersion = BookMetadataReader.VERSION)
     }
 
     /** 某次导入的本地目录（也是取消/失败时的清理对象）。 */

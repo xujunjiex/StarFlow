@@ -2129,4 +2129,5 @@
     <string name="book_tags_more">+%1$d 个</string>
     <string name="book_tags_collapse">收起</string>
     <string name="book_open_folder">打开所在文件夹</string>
+    <string name="book_meta_book_label">书籍信息</string>
 </resources>

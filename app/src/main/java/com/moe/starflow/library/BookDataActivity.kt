@@ -23,6 +23,7 @@ import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.moe.starflow.BaseActivity
 import com.moe.starflow.R
 import com.moe.starflow.library.ui.BookMetadataChips
+import com.moe.starflow.mangaimport.data.ComicMetadataParser
 import com.moe.starflow.mangaimport.data.MangaChapter
 import com.moe.starflow.mangaimport.data.mangaChapterLabel
 import com.moe.starflow.mangaimport.data.MangaSourceIndex
@@ -58,6 +59,7 @@ class BookDataActivity : BaseActivity() {
     /** 从阅读器进来时带过来的章节号；切换章节只影响本页展示。 */
     private var selectedChapter = Int.MIN_VALUE
     private var chapterJob: kotlinx.coroutines.Job? = null
+    private var bookLevelJob: kotlinx.coroutines.Job? = null
     /** 当前展示的章（详细信息里的「本章页数/进度」用它，随阅读器带来的章变化）。 */
     private var currentChapter: MangaChapter? = null
     private var offset = 0
@@ -145,36 +147,30 @@ class BookDataActivity : BaseActivity() {
         summary.addView(text(getString(R.string.book_data_source_state, availabilityLabel()), 14f).apply {
             setTextColor(color(if (overview.optString("availability") == "AVAILABLE") R.color.text_secondary else R.color.red))
         })
-        book.optString("description").takeIf { it.isNotBlank() && it != "null" }?.let { description ->
-            summary.addView(text(description))
-        }
-        // 标签 chips（与书架行同源，点击复制）：不再拼进简介正文
-        book.optJSONArray("tags")?.takeIf { it.length() > 0 }?.let { array ->
-            val values = (0 until array.length()).mapNotNull { index ->
-                array.optString(index).takeIf(String::isNotBlank)
+        val chapter = resolveCurrentChapter(book)
+        currentChapter = chapter
+        if (ref.kind == "manga") {
+            // 三块各自隔离：任何一块失败都不能把整页清空（曾经一次异常导致只剩「来源检查」一行）
+            runCatching { renderBookLevel(book) }
+                .onFailure { com.moe.starflow.utils.LogCollector.e("BookData", "书级块失败: ${it.message}") }
+            val chapterCount = runCatching { MangaChapter.listFromJson(book.optString("chapters")).size }.getOrDefault(0)
+            if (chapter != null && chapterCount > 1) {
+                runCatching { renderChapterCard(book, chapter) }
+                    .onFailure { com.moe.starflow.utils.LogCollector.e("BookData", "章节块失败: ${it.message}") }
             }
-            BookMetadataChips.addRow(summary, getString(R.string.book_meta_tags_label), values) { copyTag(it) }
-        }
-        renderChapterSection(book)
-        card(summary) { body ->
-            val chapters = if (book.has("chapterCount")) book.optInt("chapterCount") else MangaChapter.listFromJson(book.optString("chapters")).size
-            field(body, fieldLabel("chapterCount"), chapters.toString())
-            if (ref.kind == "manga") {
-                val chapter = currentChapter
-                val pages = if (chapter != null) "${chapter.pageCount} / ${book.optInt("pageCount")}" else value(book, "pageCount")
-                field(body, getString(R.string.book_meta_pages_label), pages)
+            runCatching { card(summary) { body -> bookFacts(body, book) } }
+                .onFailure { com.moe.starflow.utils.LogCollector.e("BookData", "事实块失败: ${it.message}") }
+        } else {
+            book.optString("description").takeIf { it.isNotBlank() && it != "null" }?.let { description ->
+                summary.addView(text(description))
             }
-            else field(body, getString(R.string.book_data_layout_pages), intent.getIntExtra("runtimePages", -1)
-                .takeIf { it >= 0 }?.toString() ?: getString(R.string.book_data_unknown))
-            val readAt = book.optLong("lastReadAt")
-            field(body, getString(R.string.book_data_progress), if (readAt <= 0) getString(R.string.book_data_not_read)
-                else if (ref.kind == "manga") currentChapter?.let { chapter ->
-                    getString(R.string.import_read_progress_chapter, mangaChapterLabel(this, chapter),
-                        (book.optInt("lastReadPage") - chapter.startPage + 1).coerceAtLeast(1), chapter.pageCount)
-                } ?: getString(R.string.book_data_manga_progress, book.optInt("lastReadChapter") + 1, book.optInt("lastReadPage") + 1)
-                else getString(R.string.book_data_novel_progress, book.optInt("lastReadChapter") + 1, book.optInt("lastReadParaIndex") + 1))
-            if (readAt > 0) field(body, fieldLabel("lastReadAt"), date(readAt))
-            field(body, fieldLabel("addedAt"), date(book.optLong("addedAt")))
+            book.optJSONArray("tags")?.takeIf { it.length() > 0 }?.let { array ->
+                val values = (0 until array.length()).mapNotNull { index ->
+                    array.optString(index).takeIf(String::isNotBlank)
+                }
+                BookMetadataChips.addRow(summary, getString(R.string.book_meta_tags_label), values) { copyTag(it) }
+            }
+            card(summary) { body -> bookFacts(body, book) }
         }
         val pending = overview.optJSONArray("pendingWrites")?.length() ?: 0
         summary.addView(text(getString(if (pending == 0) R.string.book_data_saved else R.string.book_data_pending_files, pending)).apply {
@@ -283,37 +279,107 @@ class BookDataActivity : BaseActivity() {
         }
     }
 
-    /**
-     * 「当前章节」卡：显示阅读器带过来的那一章（书架进入取最近阅读章），可切上一章/下一章。
-     * 元数据按需读源；读不到只降级提示，不影响其它区。
-     */
-    private fun renderChapterSection(book: JSONObject) {
-        if (ref.kind != "manga") return
+    /** 当前要展示的章：优先阅读器带来的章号，其次最近阅读位置，最后第一章。 */
+    private fun resolveCurrentChapter(book: JSONObject): MangaChapter? {
+        if (ref.kind != "manga") return null
         val list = MangaChapter.listFromJson(book.optString("chapters"))
-        if (list.isEmpty()) return
+        if (list.isEmpty()) return null
         val preferred = if (selectedChapter != Int.MIN_VALUE) selectedChapter else intent.getIntExtra("chapterNumber", -1)
-        var index = list.indexOfFirst { it.number == preferred }
-        if (index < 0) index = list.indexOfFirst { it.containsPage(book.optInt("lastReadPage", -1)) }
-        if (index < 0) index = 0
-        selectedChapter = list[index].number
-        val chapter = list[index]
-        currentChapter = chapter
-        card(summary) { body ->
-            body.addView(text(getString(R.string.book_chapter_meta_title) + " · " + mangaChapterLabel(this, chapter), 16f))
-            body.addView(text(getString(R.string.book_meta_pages_label) + " · " + chapter.pageCount, 12f).apply {
-                setTextColor(color(R.color.text_secondary))
-            })
-            body.addView(smallButton(R.string.book_open_folder) { openFolderLocation() })
-            val content = column().also(body::addView)
-            loadChapterMetadata(content, list, chapter)
-        }
+        return list.firstOrNull { it.number == preferred }
+            ?: list.firstOrNull { it.containsPage(book.optInt("lastReadPage", -1)) }
+            ?: list.first()
     }
 
+    /** 顶部章节块：章名 + 本章元数据（标题/作者/社团/系列/页数/标签）+ 打开文件夹。 */
     /**
-     * 打开作品所在文件夹：**交给系统文件管理器**，不经书库去读。
-     * SAF 书库用 tree 文档 URI；本地路径换成 ExternalStorageProvider 的文档 URI（避免 file:// 暴露）。
-     * 都打不开时把路径提示出来，用户可手动粘到文件管理器。
+     * 书级块：**直接解析书根 json**（不依赖数据库里可能被旧版本拼脏的 description）。
+     * - 根目录有元数据 → 显示书级字段
+     * - 根目录没有、且整本只有一章 → 用那一章的元数据顶上（整本=那一章）
+     * - 根目录没有且多章 → 整块不出现
      */
+    private fun renderBookLevel(book: JSONObject) {
+        val source = overview.optString("source").takeIf { it.isNotBlank() } ?: return
+        val holder = column()
+        summary.addView(holder)
+        bookLevelJob?.cancel()
+        bookLevelJob = lifecycleScope.launch {
+            val meta = withContext(Dispatchers.IO) {
+                runCatching {
+                    val local = LibrarySessions.current(this@BookDataActivity).local(source)
+                    val chapters = MangaChapter.listFromJson(book.optString("chapters"))
+                    ComicMetadataParser.parse(BookMetadataReader.bookRootTexts(local))
+                        ?: chapters.singleOrNull()?.let {
+                            // 单章 = 整本：包内任意深度的元数据都归它
+                            ComicMetadataParser.parse(BookMetadataReader.sourceTexts(local))
+                        }
+                }.getOrNull()
+            }
+            if (!isActive) return@launch
+            if (meta == null) { holder.visibility = View.GONE; return@launch }
+            card(holder) { body ->
+                body.addView(text(getString(R.string.book_meta_book_label), 16f))
+                BookMetadataChips.addRows(body, meta) { copyTag(it) }
+            }
+        }
+    }
+    /** 「当前章节 · 第N章」卡：只放**该章 json**（标题/作者/社团/系列/页数/标签）+ 打开文件夹。 */
+    private fun renderChapterCard(book: JSONObject, chapter: MangaChapter) {
+        card(summary) { body ->
+            body.addView(text(getString(R.string.book_chapter_meta_title) + " · " + mangaChapterLabel(this, chapter), 16f))
+            val rows = column().also(body::addView)
+            rows.addView(text(getString(R.string.loading), 12f))
+            loadChapterRows(rows, book, chapter)
+            body.addView(smallButton(R.string.book_open_folder) { openFolderLocation() })
+        }
+    }
+    /** 书级事实：章节数 / 页数（本章 / 全书）/ 进度（本章）/ 导入时间。 */
+    private fun bookFacts(body: LinearLayout, book: JSONObject) {
+        val chapters = if (book.has("chapterCount")) book.optInt("chapterCount")
+        else MangaChapter.listFromJson(book.optString("chapters")).size
+        field(body, fieldLabel("chapterCount"), chapters.toString())
+        if (ref.kind == "manga") {
+            val chapter = currentChapter
+            val pages = if (chapter != null) "${chapter.pageCount} / ${book.optInt("pageCount")}" else value(book, "pageCount")
+            field(body, getString(R.string.book_meta_pages_label), pages)
+        } else {
+            field(body, getString(R.string.book_data_layout_pages), intent.getIntExtra("runtimePages", -1)
+                .takeIf { it >= 0 }?.toString() ?: getString(R.string.book_data_unknown))
+        }
+        val readAt = book.optLong("lastReadAt")
+        field(body, getString(R.string.book_data_progress), if (readAt <= 0) getString(R.string.book_data_not_read)
+            else if (ref.kind == "manga") currentChapter?.let { chapter ->
+                getString(R.string.import_read_progress_chapter, mangaChapterLabel(this, chapter),
+                    (book.optInt("lastReadPage") - chapter.startPage + 1).coerceAtLeast(1), chapter.pageCount)
+            } ?: getString(R.string.book_data_manga_progress, book.optInt("lastReadChapter") + 1, book.optInt("lastReadPage") + 1)
+            else getString(R.string.book_data_novel_progress, book.optInt("lastReadChapter") + 1, book.optInt("lastReadParaIndex") + 1))
+        if (readAt > 0) field(body, fieldLabel("lastReadAt"), date(readAt))
+        field(body, fieldLabel("addedAt"), date(book.optLong("addedAt")))
+    }
+    private fun loadChapterRows(container: LinearLayout, book: JSONObject, chapter: MangaChapter) {
+        val source = overview.optString("source").takeIf { it.isNotBlank() } ?: return
+        val list = MangaChapter.listFromJson(book.optString("chapters"))
+        chapterJob?.cancel()
+        chapterJob = lifecycleScope.launch {
+            val metadata = withContext(Dispatchers.IO) {
+                runCatching {
+                    // source 是书库相对路径，先解析成实际文件（SAF/File 各自后端）
+                    val local = LibrarySessions.current(this@BookDataActivity).local(source)
+                    BookMetadataReader.chapterMetadata(local, list)
+                }.getOrNull()
+            }
+            if (!isActive) return@launch
+            container.removeAllViews()
+            val value = metadata?.get(chapter.title)
+            if (value == null) {
+                container.addView(text(getString(R.string.book_chapter_meta_unreadable), 12f).apply {
+                    setTextColor(color(R.color.text_secondary))
+                })
+            } else {
+                BookMetadataChips.addRows(container, value) { copyTag(it) }
+            }
+        }
+    }
+    /** 打开作品所在文件夹：**交给系统文件管理器**（SAF 用 tree 文档 URI；本地路径用 ExternalStorageProvider）。 */
     private fun openFolderLocation() {
         val source = overview.optString("source")
         if (source.isBlank()) return
@@ -332,7 +398,6 @@ class BookDataActivity : BaseActivity() {
         if (!opened) AppNotice.show(this, source)
     }
 
-    /** /storage/emulated/0/a/b → content://com.android.externalstorage.documents/document/primary:a/b。 */
     private fun externalDocumentsUri(file: File): Uri? {
         val path = file.absolutePath
         val primary = "/storage/emulated/0/"
@@ -349,27 +414,6 @@ class BookDataActivity : BaseActivity() {
             else -> null
         }
     }
-    private fun loadChapterMetadata(container: LinearLayout, list: List<MangaChapter>, chapter: MangaChapter) {
-        val source = overview.optString("source").takeIf { it.isNotBlank() } ?: return
-        container.addView(text(getString(R.string.loading), 12f))
-        chapterJob?.cancel()
-        chapterJob = lifecycleScope.launch {
-            val metadata = withContext(Dispatchers.IO) {
-                runCatching { BookMetadataReader.chapterMetadata(File(source), list) }.getOrNull()
-            }
-            if (!isActive) return@launch
-            container.removeAllViews()
-            val value = metadata?.get(chapter.title)
-            if (value == null) {
-                container.addView(text(getString(R.string.book_chapter_meta_unreadable), 12f).apply {
-                    setTextColor(color(R.color.text_secondary))
-                })
-            } else {
-                BookMetadataChips.addRows(container, value) { copyTag(it) }
-            }
-        }
-    }
-
     private fun recordTitle(key: String, row: JSONObject, position: Int): String {
         val address = if (key == "paragraph") getString(R.string.book_data_novel_progress, row.optInt("chapterIndex") + 1, row.optInt("paraIndex") + 1)
             else getString(R.string.book_data_page_number, if (key == "source") position + 1 else row.optInt("pageIndex") + 1)

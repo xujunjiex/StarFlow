@@ -51,7 +51,7 @@ object BookMetadataChips {
         container.removeAllViews()
         val context = container.context
         container.addView(labelView(context, label))
-        clean.forEach { value -> container.addView(chipView(context, value, onCopy)) }
+        clean.forEach { value -> container.addView(chipView(context, value, onCopy, maxChars = null)) }
     }
 
     /** 只有 chips、没有字段名的版本（书架行空间紧）。 */
@@ -113,8 +113,13 @@ object BookMetadataChips {
         }
     }
 
-    private fun chipView(context: Context, value: String, onCopy: (String) -> Unit) = TextView(context).apply {
-        text = if (value.length > MAX_TAG_CHARS) value.take(MAX_TAG_CHARS).trimEnd() + "…" else value
+    private fun chipView(
+        context: Context,
+        value: String,
+        onCopy: (String) -> Unit,
+        maxChars: Int? = MAX_TAG_CHARS,
+    ) = TextView(context).apply {
+        text = if (maxChars != null && value.length > maxChars) value.take(maxChars).trimEnd() + "…" else value
         textSize = 12f
         setTextColor(ContextCompat.getColor(context, R.color.chip_text))
         setBackgroundResource(R.drawable.bg_metadata_chip)

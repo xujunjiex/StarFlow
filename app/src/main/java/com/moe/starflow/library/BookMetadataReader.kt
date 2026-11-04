@@ -13,7 +13,7 @@ import java.io.InputStream
 
 /** Bounded optional metadata reads. Directory sources are read from their actual backend. */
 object BookMetadataReader {
-    const val VERSION = 5
+    const val VERSION = 8
     private val BOOK_EXTENSIONS = setOf("zip", "cbz", "rar", "cbr", "7z", "pdf", "epub", "txt", "html", "htm", "xhtml")
 
     /** 与来源同名的侧车元数据后缀：`book.meta.json` / `book.ComicInfo.xml` / `book.comet.xml` … */
@@ -116,31 +116,116 @@ object BookMetadataReader {
     }
 
     /** 章级元数据：章目录/… 里最浅的那份（按首段目录名分组；根散图章为空名，不参与）。 */
+    /**
+     * 章级元数据：章可能是**图片子目录**，也可能是**压缩包文件**（文件夹里一堆 cbz）。
+     * 两种都支持；读不到返回空表（调用方据此显示「来源不可读」）。
+     */
     fun chapterMetadata(source: File, chapters: List<MangaChapter>): Map<String, ComicMetadata> {
         val titles = chapters.mapNotNull { it.title.takeIf(String::isNotBlank) }.toSet()
         if (titles.isEmpty()) return emptyMap()
-        val names = if (source.isDirectory) {
-            source.walkTopDown().filter { it.isFile && ComicMetadataParser.isMetadataEntry(it.name) }
-                .map { it.relativeTo(source).invariantSeparatorsPath }.toList()
-        } else archiveNames(source).orEmpty()
-        val wrapper = commonWrapper(names)
-        val grouped = names.mapNotNull { name ->
-            val relative = stripWrapper(name, wrapper)
-            val index = relative.indexOf('/')
-            if (index <= 0) return@mapNotNull null
-            val key = relative.substring(0, index)
-            if (key !in titles) return@mapNotNull null
-            key to name
-        }.groupBy({ it.first }, { it.second })
-        return grouped.mapNotNull { (title, entries) ->
-            val shallowest = entries.minByOrNull { stripWrapper(it, wrapper).count { c -> c == '/' } } ?: return@mapNotNull null
-            val texts = if (source.isDirectory) {
-                optional(shallowest) { File(source, shallowest).inputStream().use { readText(it) }?.let { listOf(shallowest to it) } }.orEmpty()
-            } else readArchiveEntries(source, listOf(shallowest))
-            ComicMetadataParser.parse(texts)?.let { title to it }
-        }.toMap()
+        val result = LinkedHashMap<String, ComicMetadata>()
+        if (source.isDirectory) {
+            var files: List<File> = emptyList()
+            val listed = optional(source.path) {
+                source.walkTopDown().filter { it.isFile && ComicMetadataParser.isMetadataEntry(it.name) }.toList()
+            }.orEmpty()
+            files = listed
+            titles.forEach { title ->
+                val inChapter = files.filter { file ->
+                    val segments = file.relativeTo(source).invariantSeparatorsPath.split('/')
+                    segments.size >= 2 && segments.dropLast(1).contains(title)
+                }
+                val shallowest = inChapter.minByOrNull { file ->
+                    file.relativeTo(source).invariantSeparatorsPath.count { c -> c == '/' }
+                }
+                if (shallowest != null) {
+                    optional(shallowest.path) {
+                        shallowest.inputStream().use { readText(it) }?.let { text ->
+                            ComicMetadataParser.parse(listOf(shallowest.name to text))
+                        }
+                    }?.let { result[title] = it }
+                }
+            }
+        } else {
+            val names = archiveNames(source).orEmpty()
+            val wrapper = commonWrapper(names)
+            titles.forEach { title ->
+                val inChapter = names.filter { name ->
+                    val segments = stripWrapper(name, wrapper).split('/')
+                    segments.size >= 2 && segments.dropLast(1).contains(title)
+                }
+                val shallowest = inChapter.minByOrNull { stripWrapper(it, wrapper).count { c -> c == '/' } }
+                if (shallowest != null) {
+                    readArchiveEntries(source, listOf(shallowest)).firstOrNull()?.let { (_, text) ->
+                        ComicMetadataParser.parse(listOf(shallowest to text))?.let { result[title] = it }
+                    }
+                }
+            }
+        }
+        // 书 = **单个压缩包**：章是包内子目录。标题对不上目录名时按章序 ↔ 目录顺序对应
+        if (!source.isDirectory) {
+            val names = archiveNames(source).orEmpty()
+            val wrapper = commonWrapper(names)
+            val dirs = names.mapNotNull { name ->
+                val relative = stripWrapper(name, wrapper)
+                val index = relative.indexOf('/')
+                if (index <= 0) null else relative.substring(0, index)
+            }.distinct()
+            if (dirs.size > 1) {
+                chapters.sortedBy { it.startPage }.forEachIndexed { index, chapter ->
+                    val title = chapter.title.takeIf { it.isNotBlank() } ?: return@forEachIndexed
+                    if (result.containsKey(title)) return@forEachIndexed
+                    val dir = dirs.getOrNull(index) ?: return@forEachIndexed
+                    val candidates = names.filter { name ->
+                        val relative = stripWrapper(name, wrapper)
+                        relative.startsWith("$dir/") && ComicMetadataParser.isMetadataEntry(relative.substringAfterLast('/'))
+                    }.sortedBy { name -> stripWrapper(name, wrapper).count { c -> c == '/' } }
+                    if (candidates.isEmpty()) return@forEachIndexed
+                    ComicMetadataParser.parse(readArchiveEntries(source, candidates.take(2)))?.let { result[title] = it }
+                }
+            }
+        }        // 章 = 压缩包文件本身：名字对不上就按章序与压缩包列表对应
+        val ordered = chapters.sortedBy { it.startPage }
+        ordered.forEachIndexed { index, chapter ->
+            val title = chapter.title.takeIf { it.isNotBlank() } ?: return@forEachIndexed
+            if (result.containsKey(title)) return@forEachIndexed
+            val file = chapterFile(source, title) ?: archiveByIndex(source, index) ?: return@forEachIndexed
+            // ⚠️ 章是**这一章自己的包**：包内任意深度的元数据都归它（书根才要求 depth 0）。
+            // 常见 cbz：`书名/ComicInfo.xml` 与根目录图片混放，用书根规则会永远读不到。
+            ComicMetadataParser.parse(sourceTexts(file))?.let { result[title] = it }
+        }
+        return result
     }
 
+    /** 章标题 → 实际文件：直接子文件优先，其次递归，最后按章序与压缩包列表对应。 */
+    private fun chapterFile(source: File, title: String): File? {
+        if (!source.isDirectory) return null
+        fun isArchive(file: File): Boolean =
+            ArchiveTypes.detect(file) == ArchiveKind.ZIP ||
+                ArchiveTypes.detect(file) == ArchiveKind.RAR ||
+                ArchiveTypes.detect(file) == ArchiveKind.SEVEN_ZIP
+        fun pick(files: List<File>): File? {
+            val exact = files.firstOrNull { it.name == title }
+            val extended = files.firstOrNull { it.nameWithoutExtension == title }
+            val loose = files.firstOrNull { it.name.equals(title, ignoreCase = true) }
+            return exact ?: extended ?: loose
+        }
+        pick(source.listFiles().orEmpty().filter { it.isFile })?.let { return it }
+        val all = runCatching { source.walkTopDown().filter { it.isFile }.toList() }.getOrDefault(emptyList())
+        pick(all)?.let { return it }
+        return null
+    }
+
+    /** 章序 → 压缩包列表（章标题对不上文件名时的兜底，按文件名自然序）。 */
+    private fun archiveByIndex(source: File, index: Int): File? {
+        if (!source.isDirectory || index < 0) return null
+        val archives = runCatching {
+            source.listFiles().orEmpty().filter { it.isFile }
+                .filter { name -> name.name.substringAfterLast('.', "").lowercase() in setOf("cbz", "zip", "cbr", "rar", "7z") }
+                .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.name })
+        }.getOrDefault(emptyList())
+        return archives.getOrNull(index)
+    }
     /** 归档里所有条目名（zip / rar / 7z）；目录或打不开时返回 null。 */
     private fun archiveNames(source: File): List<String>? = optional(source.path) {
         when (ArchiveTypes.detect(source)) {
