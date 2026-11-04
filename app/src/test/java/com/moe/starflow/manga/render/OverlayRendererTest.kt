@@ -22,6 +22,16 @@ class OverlayRendererTest {
     private fun solidBitmap(w: Int, h: Int, color: Int): Bitmap =
         Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { it.eraseColor(color) }
 
+    /** 与字号等宽的假字体，用于面积预检；不依赖 Robolectric 的字体度量。 */
+    private class WidthMeasurer : TextMeasurer {
+        override var fontSize: Float = 16f
+        override fun measure(text: String): Float = text.length * fontSize
+        override fun breakText(text: String, maxWidth: Float): Int =
+            (maxWidth / fontSize).toInt().coerceAtLeast(1).coerceAtMost(text.length)
+        override fun glyphWidth(): Float = fontSize
+        override fun glyphHeight(): Float = fontSize
+    }
+
     @Test
     fun largeFontNonAuto_overlappingBubbles_mergeWithSeparator() {
         // 原图绿色背景，两个水平相邻气泡（间隙 x∈(80,90)），大字号 + VERTICAL_LR。
@@ -476,7 +486,9 @@ class OverlayRendererTest {
     @Test
     fun autoExpand_longTranslation_expandsTenPercentAroundCenter() {
         val rect = Rect(100, 100, 200, 180) // 100x80, center 150,140
-        val out = OverlayRenderer.expandedAutoRect(rect, "あ".repeat(10), "a".repeat(12), 400, 300)
+        val out = OverlayRenderer.expandedAutoRect(
+            rect, "あ".repeat(10), "a".repeat(12), 16f, 0f, WidthMeasurer(), 400, 300
+        )
         assertEquals("宽度 +10%", 110, out.width())
         assertEquals("高度 +10%", 88, out.height())
         assertEquals("仍以原中心为中心", 150, out.centerX())
@@ -485,29 +497,47 @@ class OverlayRendererTest {
     }
 
     @Test
+    fun autoExpand_wideGlyphsThatOverflowArea_expandEvenWhenCharCountIsEqual() {
+        val rect = Rect(100, 100, 200, 120) // 100x20, ref 16 → 只容得下 1 行
+        val out = OverlayRenderer.expandedAutoRect(
+            rect, "a".repeat(10), "中".repeat(10), 16f, 0f, WidthMeasurer(), 400, 300
+        )
+        assertEquals("面积压力也要扩宽", 110, out.width())
+        assertEquals("面积压力也要扩高", 22, out.height())
+    }
+
+    @Test
     fun autoExpand_shortOrEqualTranslation_doesNothing() {
         val rect = Rect(100, 100, 200, 180)
         assertEquals(
             "等长译文不扩",
             rect,
-            OverlayRenderer.expandedAutoRect(rect, "あ".repeat(10), "a".repeat(10), 400, 300)
+            OverlayRenderer.expandedAutoRect(
+                rect, "あ".repeat(10), "a".repeat(10), 16f, 0f, WidthMeasurer(), 400, 300
+            )
         )
         assertEquals(
             "短译不扩",
             rect,
-            OverlayRenderer.expandedAutoRect(rect, "あ".repeat(10), "a".repeat(8), 400, 300)
+            OverlayRenderer.expandedAutoRect(
+                rect, "あ".repeat(10), "a".repeat(8), 16f, 0f, WidthMeasurer(), 400, 300
+            )
         )
         assertEquals(
             "原文为空不扩",
             rect,
-            OverlayRenderer.expandedAutoRect(rect, "", "a".repeat(20), 400, 300)
+            OverlayRenderer.expandedAutoRect(
+                rect, "", "a".repeat(20), 16f, 0f, WidthMeasurer(), 400, 300
+            )
         )
     }
 
     @Test
     fun autoExpand_clampsToScreen() {
         val rect = Rect(0, 0, 100, 80)
-        val out = OverlayRenderer.expandedAutoRect(rect, "あ".repeat(10), "a".repeat(20), 100, 80)
+        val out = OverlayRenderer.expandedAutoRect(
+            rect, "あ".repeat(10), "a".repeat(20), 16f, 0f, WidthMeasurer(), 100, 80
+        )
         assertEquals("不能超出屏幕宽（已顶满时不扩）", 100, out.width())
         assertEquals("不能超出屏幕高（已顶满时不扩）", 80, out.height())
         assertEquals(0, out.left)
