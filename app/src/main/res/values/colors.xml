@@ -27,4 +27,6 @@
     <color name="success">#4CAF50</color>
     <color name="library_location_selected">#E8F5FD</color>
 
+    <color name="chip_bg">#1F000000</color>
+    <color name="chip_text">#FF333333</color>
 </resources>

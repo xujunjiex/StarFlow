@@ -2116,4 +2116,15 @@
     <string name="chapter_queue_notify_progress">%1$d/%2$d chapter tasks finished</string>
     <string name="task_notifications_disabled_title">Enable notifications</string>
     <string name="task_notifications_disabled_message">System notifications are disabled, so task progress cannot be displayed. Allow StarFlow notifications in system settings. Lock screen visibility follows the system notification settings for this app.</string>
+    <string name="book_meta_series_label">Series</string>
+    <string name="book_meta_tags_label">Tags</string>
+    <string name="book_meta_author_label">Author</string>
+    <string name="book_meta_circle_label">Circle</string>
+    <string name="book_meta_language_label">Language</string>
+    <string name="book_meta_category_label">Category</string>
+    <string name="book_meta_pages_label">Pages</string>
+    <string name="book_meta_date_label">Published</string>
+    <string name="book_chapter_meta_title">Current chapter</string>
+    <string name="book_chapter_meta_unreadable">Source unavailable: chapter info cannot be read</string>
+    <string name="book_tag_copied">Tag copied</string>
 </resources>

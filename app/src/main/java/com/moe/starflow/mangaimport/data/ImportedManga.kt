@@ -73,6 +73,8 @@ data class ImportedManga(
     val sourceNoticeSeen: String = "",
     val missingRecordKeys: String = "[]",
     val ignoredMissingRecordKeys: String = "[]",
+    /** 书级标签（不再拼进简介正文；书架行与作品数据页用 chips 展示、点击复制）。 */
+    val tags: List<String> = emptyList(),
 ) {
     /** 章数（至少 1：单章漫画也算一章）。 */
     val chapterCount: Int get() = chapters.size.coerceAtLeast(1)

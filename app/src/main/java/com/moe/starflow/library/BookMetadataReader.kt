@@ -2,8 +2,10 @@ package com.moe.starflow.library
 
 import com.moe.starflow.mangaimport.data.ArchiveKind
 import com.moe.starflow.mangaimport.data.ArchiveTypes
+import com.moe.starflow.mangaimport.data.ComicMetadata
 import com.moe.starflow.mangaimport.data.ComicMetadataParser
 import com.moe.starflow.mangaimport.data.LibraryArchiveReader
+import com.moe.starflow.mangaimport.data.MangaChapter
 import com.moe.starflow.mangaimport.data.MangaImporter
 import com.moe.starflow.utils.LogCollector
 import java.io.File
@@ -11,7 +13,7 @@ import java.io.InputStream
 
 /** Bounded optional metadata reads. Directory sources are read from their actual backend. */
 object BookMetadataReader {
-    const val VERSION = 4
+    const val VERSION = 5
     private val BOOK_EXTENSIONS = setOf("zip", "cbz", "rar", "cbr", "7z", "pdf", "epub", "txt", "html", "htm", "xhtml")
 
     /** 与来源同名的侧车元数据后缀：`book.meta.json` / `book.ComicInfo.xml` / `book.comet.xml` … */
@@ -87,6 +89,31 @@ object BookMetadataReader {
             file.inputStream().use { readText(it, file.length()) }
                 ?.let { file.relativeTo(directory).invariantSeparatorsPath to it }
         } }.toList()
+    }
+
+    /**
+     * 按**已知章标题**把来源里的元数据分成「书级 / 章级」。
+     *
+     * 章标题来自 `MangaChapter.title`（= 章节子目录名）。路径里出现某个章标题目录段 → 该章，
+     * 否则算书级（包括「包了一层书名目录」的 `Book/ComicInfo.xml`）。
+     *
+     * ⚠️ 书级只取这一份 —— 章节的 json **不能**并进书简介，否则多章书永远只显示最浅那份。
+     */
+    fun splitMetadata(
+        source: File,
+        chapterTitles: Set<String>,
+    ): Pair<List<Pair<String, String>>, Map<String, List<Pair<String, String>>>> =
+        ComicMetadataParser.splitByChapter(sourceTexts(source), chapterTitles)
+
+    /** 章标题 → 解析后的元数据（作品数据页按需调用；源不可读时返回空表）。 */
+    fun chapterMetadata(source: File, chapters: List<MangaChapter>): Map<String, ComicMetadata> {
+        val titles = chapters.mapNotNull { it.title.takeIf(String::isNotBlank) }.toSet()
+        if (titles.isEmpty()) return emptyMap()
+        return optional(source.path) {
+            ComicMetadataParser.splitByChapter(sourceTexts(source), titles).second
+                .mapNotNull { (title, texts) -> ComicMetadataParser.parse(texts)?.let { title to it } }
+                .toMap()
+        }.orEmpty()
     }
 
     fun sourceTexts(source: File): List<Pair<String, String>> {

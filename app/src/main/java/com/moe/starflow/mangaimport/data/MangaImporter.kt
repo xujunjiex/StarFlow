@@ -111,11 +111,11 @@ object MangaImporter {
                 } finally { bitmap.recycle() }
             } } finally { source.close() }
         }
+        val (description, tags) = bookMetadata(context, dir, index.chapters)
         return ImportedManga(id = id, title = title, localRoot = dir.canonicalPath, isArchive = false,
             coverPath = cover, pageCount = index.pages.size, addedAt = freshAddedAt(context),
             sizeBytes = index.pages.distinctBy { it.path }.sumOf { it.bytes.coerceAtLeast(0) },
-            description = ComicMetadataParser.descriptionOf(context, BookMetadataReader.directoryTexts(dir) + index.pages.distinctBy { it.path }
-                .filter { MangaSourceIndex.supported(it.path) }.flatMap { BookMetadataReader.sourceTexts(File(dir, it.path)) }),
+            description = description, tags = tags,
             metadataVersion = BookMetadataReader.VERSION, chapters = index.chapters,
             sourceIndexPath = indexPath, sourceName = title)
     }
@@ -285,6 +285,7 @@ object MangaImporter {
             val coverPath = coverPathOverride ?: renderer.renderCanonical(0)
                 ?.let { bmp -> try { extractThumbnail(context, bmp, id) } finally { bmp.recycle() } }
             LogCollector.i(TAG, "导入 PDF 完成: $title（$pageCount 页，按需栅格化）")
+            val (description, tags) = bookMetadata(context, pdfFile, emptyList())
             return ImportedManga(
                 id = id,
                 title = title,
@@ -295,7 +296,8 @@ object MangaImporter {
                 pageCount = pageCount,
                 addedAt = freshAddedAt(context),
                 sizeBytes = pdfFile.length(),
-                description = ComicMetadataParser.descriptionOf(context, BookMetadataReader.sourceTexts(pdfFile)),
+                description = description,
+                tags = tags,
                 metadataVersion = BookMetadataReader.VERSION,
                 // 整本一章：章标题留空 → 显示「第1章」（与单章漫画一致的显示规则）
                 chapters = listOf(
@@ -319,6 +321,7 @@ object MangaImporter {
     ): ImportedManga {
         val split = MangaChapterSplitter.split(listZipImageEntries(archiveFile))
         val coverPath = coverPathOverride ?: extractCoverFromZipFile(context, archiveFile, split.keys, id)
+        val (description, tags) = bookMetadata(context, archiveFile, split.chapters)
         return ImportedManga(
             id = id,
             title = title,
@@ -328,8 +331,10 @@ object MangaImporter {
             pageCount = split.keys.size,
             addedAt = freshAddedAt(context),
             sizeBytes = archiveFile.length(),
-            // 包内的 ComicInfo.xml / meta.json → 自动填简介（只填这一次，之后用户可手改）
-            description = ComicMetadataParser.descriptionOf(context, BookMetadataReader.sourceTexts(archiveFile)),
+            // 包内**书根**的 ComicInfo.xml / meta.json → 自动填简介（只填这一次，之后用户可手改）；
+            // 章节自己的元数据不并入书简介，由数据页按章读取（见 BookMetadataReader.chapterMetadata）
+            description = description,
+            tags = tags,
             metadataVersion = BookMetadataReader.VERSION,
             chapters = split.chapters
         )
@@ -791,6 +796,20 @@ object MangaImporter {
 
     /** 读取图片文件夹内的元数据文本。 */
     internal fun readDirMetadataTexts(dir: File): List<Pair<String, String>> = BookMetadataReader.directoryTexts(dir)
+
+    /**
+     * **书级**元数据 → （简介, 标签）。
+     *
+     * ⚠️ 只取书根：多章文件夹里 `ch1/meta.json`、`ch2/meta.json` 属于各章，**不能**合并进书简介
+     * （否则永远只显示最浅那份 = 第一章）。标签不再拼进简介，改由书架/数据页的 chips 展示。
+     */
+    private fun bookMetadata(context: Context, source: File, chapters: List<MangaChapter>): Pair<String, List<String>> {
+        val titles = chapters.mapNotNull { it.title.takeIf(String::isNotBlank) }.toSet()
+        val root = BookMetadataReader.splitMetadata(source, titles).first
+        val meta = ComicMetadataParser.parse(root) ?: return "" to emptyList()
+        return ComicMetadataParser.buildDescription(context, meta, includeTags = false) to
+            ComicMetadataParser.bookTags(meta)
+    }
 
     /**
      * 从 zip 注释里取 ComicBookInfo。

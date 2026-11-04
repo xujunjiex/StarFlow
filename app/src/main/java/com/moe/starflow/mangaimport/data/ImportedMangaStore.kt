@@ -147,6 +147,8 @@ object ImportedMangaStore {
         put("addedAt", addedAt)
         put("sizeBytes", sizeBytes)
         put("description", description)
+        // 标签是 chips 的数据源（不再拼进简介正文）。空表也写，保持清单自解释。
+        put("tags", JSONArray(tags))
         put("metadataVersion", metadataVersion)
         put("sourceIndexPath", sourceIndexPath)
         put("titleOrigin", titleOrigin)
@@ -194,6 +196,10 @@ object ImportedMangaStore {
         sourceNoticeSeen = optString("sourceNoticeSeen"),
         missingRecordKeys = optString("missingRecordKeys", "[]"),
         ignoredMissingRecordKeys = optString("ignoredMissingRecordKeys", "[]"),
+        // 老清单没有 tags 键 → 空表（随后由扫描迁移从旧简介的「标签：」行回填）
+        tags = optJSONArray("tags")?.let { arr ->
+            (0 until arr.length()).mapNotNull { index -> arr.optString(index).takeIf(String::isNotBlank) }
+        }.orEmpty(),
         translatedPath = if (isNull("translatedPath")) null else getString("translatedPath"),
         lastReadPage = optInt("lastReadPage", 0),
         // 缺失 = 0 = 还没迁移（老条目语义），与 toJson 的「非 0 才写」配对

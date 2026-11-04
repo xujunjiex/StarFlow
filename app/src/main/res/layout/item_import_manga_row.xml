@@ -167,7 +167,19 @@
             app:layout_constraintStart_toEndOf="@id/thumb_frame"
             app:layout_constraintTop_toBottomOf="@id/tv_info_line"/>
 
-        <!-- 简介（仅详细信息模式显示） -->
+        <!-- 标签 chips：换行铺开、点一下复制（数据源与作品数据页同一个） -->
+        <com.moe.starflow.library.ui.WrapLayout
+            android:id="@+id/tag_flow"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_marginTop="2dp"
+            android:visibility="gone"
+            app:layout_constraintEnd_toStartOf="@id/btn_export_records"
+            app:layout_constraintStart_toEndOf="@id/thumb_frame"
+            app:layout_constraintTop_toBottomOf="@id/tv_progress"/>
+
+        <!-- 简介摘要（仅详细信息模式显示；全文进作品数据页） -->
         <TextView
             android:id="@+id/tv_description"
             android:layout_width="0dp"
@@ -181,7 +193,7 @@
             android:visibility="gone"
             app:layout_constraintEnd_toStartOf="@id/btn_export_records"
             app:layout_constraintStart_toEndOf="@id/thumb_frame"
-            app:layout_constraintTop_toBottomOf="@id/tv_progress"/>
+            app:layout_constraintTop_toBottomOf="@id/tag_flow"/>
 
         <androidx.appcompat.widget.AppCompatImageButton android:id="@+id/btn_export_records"
             android:layout_width="48dp" android:layout_height="48dp" android:visibility="gone"

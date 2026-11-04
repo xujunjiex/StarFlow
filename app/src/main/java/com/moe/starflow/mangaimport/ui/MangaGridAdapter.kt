@@ -11,6 +11,7 @@ import com.bumptech.glide.Glide
 import com.moe.starflow.R
 import com.moe.starflow.databinding.ItemImportMangaCardBinding
 import com.moe.starflow.databinding.ItemImportMangaRowBinding
+import com.moe.starflow.library.ui.BookMetadataChips
 import com.moe.starflow.mangaimport.data.ImportPhase
 import com.moe.starflow.mangaimport.data.ImportedManga
 import com.moe.starflow.mangaimport.data.mangaChapterLabel
@@ -245,12 +246,28 @@ class MangaGridAdapter(
             h.binding.tvProgress.visibility = View.GONE
         }
 
-        // 简介（非空显示）
+        // 简介摘要 + 标签 chips：chips 与作品数据页同源；点 chip 复制，点简介块进作品数据页
         if (!item.importing && item.description.isNotBlank()) {
             h.binding.tvDescription.visibility = View.VISIBLE
             h.binding.tvDescription.text = item.description
         } else {
             h.binding.tvDescription.visibility = View.GONE
+        }
+        val tags = if (item.importing) emptyList() else item.tags
+        if (tags.isEmpty()) {
+            h.binding.tagFlow.visibility = View.GONE
+        } else {
+            h.binding.tagFlow.visibility = View.VISIBLE
+            BookMetadataChips.fillChips(h.binding.tagFlow, tags) { value -> copyTag(ctx, value) }
+        }
+        // 多选时让位给选中逻辑（与 btn_book_data 的 gating 一致）
+        if (!selectionMode && !item.deleting && !item.lost) {
+            val open = View.OnClickListener { onBookData(item) }
+            h.binding.tvDescription.setOnClickListener(open)
+            h.binding.tagFlow.setOnClickListener(open)
+        } else {
+            h.binding.tvDescription.setOnClickListener(null)
+            h.binding.tagFlow.setOnClickListener(null)
         }
 
         bindCover(
@@ -267,6 +284,13 @@ class MangaGridAdapter(
             titleView = h.binding.tvTitle,
             item = item
         )
+    }
+
+    /** 复制一个标签（chips 点击）。 */
+    private fun copyTag(context: Context, value: String) {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+        clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("tag", value))
+        UiUtils.showToast(context, context.getString(R.string.book_tag_copied))
     }
 
     /** 占位的进度文案：优先百分比，其次阶段名。 */

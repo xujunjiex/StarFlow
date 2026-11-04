@@ -494,9 +494,11 @@ object ComicMetadataParser {
      *
      * 列出可用的简介正文、标题、章节、作者、系列、页数、发布日期和标签；空字段不占行。
      * ⚠️ **没有「来源」行**（来源字段已从模型里删除，见类注释）。
-     * 标签按 [MAX_TAGS_CHARS] 截断 —— 简介行只有两行可见，几十个标签拼进去等于什么都看不见。
+     *
+     * @param includeTags 是否把标签拼成一行文本。**漫画传 false**：标签改成书架/数据页的
+     *   chips（见 [bookTags]），正文里不再混标签；小说仍用默认 `true`（输出与历史一致）。
      */
-    fun buildDescription(context: Context, meta: ComicMetadata): String {
+    fun buildDescription(context: Context, meta: ComicMetadata, includeTags: Boolean = true): String {
         val lines = mutableListOf<String>()
         meta.summary?.takeIf(String::isNotBlank)?.let {
             lines += android.text.Html.fromHtml(it, android.text.Html.FROM_HTML_MODE_LEGACY).toString().trim()
@@ -511,7 +513,7 @@ object ComicMetadataParser {
             ?.let { lines += context.getString(R.string.comic_meta_series, it) }
         meta.pageCount?.let { lines += context.getString(R.string.book_meta_pages, it) }
         meta.publishedAt?.takeIf(String::isNotBlank)?.let { lines += context.getString(R.string.book_meta_published, it) }
-        if (meta.tags.isNotEmpty()) {
+        if (includeTags && meta.tags.isNotEmpty()) {
             val joined = meta.tags.joinToString(", ")
             val text = if (joined.length > MAX_TAGS_CHARS) {
                 joined.take(MAX_TAGS_CHARS).trimEnd().trimEnd(',') + "…"
@@ -523,10 +525,68 @@ object ComicMetadataParser {
         return lines.joinToString("\n")
     }
 
+    /** 标签（chips 数据源）：原样、去重、**不截断**。 */
+    fun bookTags(meta: ComicMetadata): List<String> = meta.tags.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+
+    /**
+     * 按**已知章节标题**把元数据条目分成「书级」与「章级」。
+     *
+     * 判据：路径里出现某个已知章标题的目录段 → 该章；否则算书级。
+     * ⚠️ 不能用「最外层目录一律剥掉」：`Book/ComicInfo.xml`（包了一层书名目录）要算书级，
+     * 而 `ch1/meta.json` 有的章才是章级 —— 只有章标题本身能区分这两者。
+     *
+     * @param titles 已知章标题（`MangaChapter.title`，根散图章/单章为空串，不参与匹配）
+     * @return 书级条目 to (章标题 → 章级条目)
+     */
+    fun splitByChapter(
+        texts: List<Pair<String, String>>,
+        titles: Set<String>,
+    ): Pair<List<Pair<String, String>>, Map<String, List<Pair<String, String>>>> {
+        val known = titles.filter { it.isNotBlank() }.toSet()
+        val root = mutableListOf<Pair<String, String>>()
+        val chapters = LinkedHashMap<String, MutableList<Pair<String, String>>>()
+        texts.forEach { entry ->
+            val title = chapterTitleOf(entry.first, known)
+            if (title == null) root += entry else chapters.getOrPut(title) { mutableListOf() } += entry
+        }
+        return root to chapters
+    }
+
+    /** 路径里第一个与已知章标题相同的目录段；没有则 null（= 书级）。 */
+    private fun chapterTitleOf(name: String, titles: Set<String>): String? {
+        if (titles.isEmpty()) return null
+        val segments = name.replace('\\', '/').split('/')
+        for (index in 0 until segments.size - 1) {
+            val segment = segments[index].trim()
+            if (segment in titles) return segment
+        }
+        return null
+    }
+
+    /**
+     * 从历史简介里抽出「标签：…」那一行（老版本把标签拼进了正文）。
+     *
+     * @param prefix 当前语言的标签前缀（`R.string.comic_meta_tags` 格式化空串的结果）
+     * @return 标签表 to 去掉标签行后的简介；没有该行时标签为空、简介原样返回
+     */
+    fun extractTagsLine(description: String, prefix: String): Pair<List<String>, String> {
+        if (description.isEmpty()) return emptyList<String>() to description
+        val keys = listOf(prefix, "标签：", "标签:", "Tags:", "Tags").map { it.trim() }.filter { it.isNotEmpty() }
+        var tags = emptyList<String>()
+        val kept = description.lines().filterNot { line ->
+            val trimmed = line.trimStart()
+            val key = keys.firstOrNull { trimmed.startsWith(it) } ?: return@filterNot false
+            val value = trimmed.substring(key.length).trim().trimEnd('…').trim()
+            tags = value.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+            true
+        }
+        return tags to kept.joinToString("\n")
+    }
+
     /** 解析压缩包/目录里的元数据条目并生成简介；没有元数据返回空串（简介留空）。 */
-    fun descriptionOf(context: Context, texts: List<Pair<String, String>>): String {
+    fun descriptionOf(context: Context, texts: List<Pair<String, String>>, includeTags: Boolean = true): String {
         val meta = parse(texts) ?: return ""
-        return buildDescription(context, meta)
+        return buildDescription(context, meta, includeTags)
     }
 
     /**

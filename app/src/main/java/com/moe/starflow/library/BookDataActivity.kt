@@ -22,6 +22,7 @@ import com.google.android.material.chip.ChipGroup
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.moe.starflow.BaseActivity
 import com.moe.starflow.R
+import com.moe.starflow.library.ui.BookMetadataChips
 import com.moe.starflow.mangaimport.data.MangaChapter
 import com.moe.starflow.mangaimport.data.MangaSourceIndex
 import com.moe.starflow.utils.AppNotice
@@ -33,9 +34,10 @@ import org.json.JSONObject
 class BookDataActivity : BaseActivity() {
     companion object {
         private const val PAGE_SIZE = 100
-        fun open(context: Context, ref: BookRef, runtimePages: Int? = null) {
+        fun open(context: Context, ref: BookRef, runtimePages: Int? = null, chapterNumber: Int = -1) {
             context.startActivity(Intent(context, BookDataActivity::class.java).putExtra("location", ref.locationId)
-                .putExtra("kind", ref.kind).putExtra("uuid", ref.uuid).putExtra("runtimePages", runtimePages ?: -1))
+                .putExtra("kind", ref.kind).putExtra("uuid", ref.uuid).putExtra("runtimePages", runtimePages ?: -1)
+                .putExtra("chapterNumber", chapterNumber))
         }
     }
     private lateinit var ref: BookRef
@@ -136,6 +138,13 @@ class BookDataActivity : BaseActivity() {
         })
         book.optString("description").takeIf { it.isNotBlank() && it != "null" }?.let { description ->
             summary.addView(text(description))
+        }
+        // 标签 chips（与书架行同源，点击复制）：不再拼进简介正文
+        book.optJSONArray("tags")?.takeIf { it.length() > 0 }?.let { array ->
+            val values = (0 until array.length()).mapNotNull { index ->
+                array.optString(index).takeIf(String::isNotBlank)
+            }
+            BookMetadataChips.addRow(summary, getString(R.string.book_meta_tags_label), values) { copyTag(it) }
         }
         card(summary) { body ->
             val chapters = if (book.has("chapterCount")) book.optInt("chapterCount") else MangaChapter.listFromJson(book.optString("chapters")).size
@@ -264,6 +273,12 @@ class BookDataActivity : BaseActivity() {
         }), value(row, "failMessage", "")).filter { it.isNotBlank() }.joinToString(" · ")
         else -> sequenceOf("failMessage", "translatedText", "sourceText").map { value(row, it, "").trim() }
             .firstOrNull { it.isNotBlank() }?.take(300) ?: getString(R.string.book_data_no_text)
+    }
+
+    private fun copyTag(value: String) {
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+        clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("tag", value))
+        AppNotice.show(this, getString(R.string.book_tag_copied))
     }
 
     private fun showRecord(type: String, title: String, row: JSONObject) {

@@ -2113,4 +2113,15 @@
     <string name="chapter_queue_notify_progress">已结束 %1$d/%2$d 个章节任务</string>
     <string name="task_notifications_disabled_title">开启通知</string>
     <string name="task_notifications_disabled_message">系统通知已关闭，无法显示任务进度。请在系统设置中允许星译通知；锁屏显示沿用系统的应用锁屏通知设置。</string>
+    <string name="book_meta_series_label">系列</string>
+    <string name="book_meta_tags_label">标签</string>
+    <string name="book_meta_author_label">作者</string>
+    <string name="book_meta_circle_label">社团</string>
+    <string name="book_meta_language_label">语言</string>
+    <string name="book_meta_category_label">类型</string>
+    <string name="book_meta_pages_label">页数</string>
+    <string name="book_meta_date_label">发布日期</string>
+    <string name="book_chapter_meta_title">当前章节</string>
+    <string name="book_chapter_meta_unreadable">来源不可读，无法读取章节信息</string>
+    <string name="book_tag_copied">已复制标签</string>
 </resources>

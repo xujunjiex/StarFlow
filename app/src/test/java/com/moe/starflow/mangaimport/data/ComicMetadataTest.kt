@@ -470,4 +470,63 @@ class ComicMetadataTest {
         assertEquals("超大 meta.json 必须被跳过，只留 ComicInfo", 1, texts.size)
         assertEquals("ComicInfo.xml", texts.single().first)
     }
+
+    // ===== 书级 / 章级拆分与标签 =====
+
+    @Test
+    fun splitByChapter_separatesRootFromChapters() {
+        val texts = listOf(
+            "Book/ComicInfo.xml" to comicInfo,
+            "Book/ch1/meta.json" to """{"title":"c1"}""",
+            "Book/ch2/meta.json" to """{"title":"c2"}""",
+        )
+        val (root, chapters) = ComicMetadataParser.splitByChapter(texts, setOf("ch1", "ch2"))
+        // 包了一层书名目录也算书级（路径里出现的是章标题才算章）
+        assertEquals(listOf("Book/ComicInfo.xml"), root.map { it.first })
+        assertEquals(setOf("ch1", "ch2"), chapters.keys)
+        // 没有任何书根元数据时书级为空 —— 不能拿章节顶替
+        val (emptyRoot, onlyChapters) = ComicMetadataParser.splitByChapter(
+            listOf("ch1/meta.json" to "{}", "ch2/meta.json" to "{}"), setOf("ch1", "ch2"),
+        )
+        assertTrue(emptyRoot.isEmpty())
+        assertEquals(2, onlyChapters.size)
+    }
+
+    @Test
+    fun splitByChapter_withoutKnownTitlesTreatsEverythingAsRoot() {
+        val (root, chapters) = ComicMetadataParser.splitByChapter(listOf("ch1/meta.json" to "{}"), emptySet())
+        assertEquals(1, root.size)
+        assertTrue(chapters.isEmpty())
+    }
+
+    @Test
+    fun bookTags_keepsAllTagsUnTruncated() {
+        val tags = (1..60).map { "tag-$it" }
+        assertEquals(tags, ComicMetadataParser.bookTags(ComicMetadata(tags = tags)))
+    }
+
+    @Test
+    fun description_includeTagsFalseHasNoTagLine() {
+        val meta = ComicMetadata(writer = "x", tags = listOf("action", "fantasy"))
+        val withTags = ComicMetadataParser.buildDescription(ctx, meta)
+        val without = ComicMetadataParser.buildDescription(ctx, meta, includeTags = false)
+        assertTrue(withTags.contains("action, fantasy"))
+        assertFalse(without.contains("action, fantasy"))
+        assertEquals(1, without.lines().size)
+    }
+
+    @Test
+    fun extractTagsLine_movesLegacyTagLineOut() {
+        val prefix = ctx.getString(R.string.comic_meta_tags, "").trim()
+        val (tags, text) = ComicMetadataParser.extractTagsLine("Sample\n标签：action, fantasy\nPages: 22", prefix)
+        assertEquals(listOf("action", "fantasy"), tags)
+        assertEquals("Sample\nPages: 22", text)
+        // 旧版本截断留下的省略号要一起丢掉
+        val (truncated, _) = ComicMetadataParser.extractTagsLine("标签：a, b…", prefix)
+        assertEquals(listOf("a", "b"), truncated)
+        // 没有标签行：原样返回
+        val (none, same) = ComicMetadataParser.extractTagsLine("Sample\nPages: 22", prefix)
+        assertTrue(none.isEmpty())
+        assertEquals("Sample\nPages: 22", same)
+    }
 }

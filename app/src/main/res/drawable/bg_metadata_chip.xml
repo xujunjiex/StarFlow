@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 标签 chip：小圆角胶囊，点击复制。颜色走 values / values-night 的语义色 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/chip_bg" />
+    <corners android:radius="6dp" />
+</shape>

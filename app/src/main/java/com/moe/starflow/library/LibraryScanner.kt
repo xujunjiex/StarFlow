@@ -77,17 +77,22 @@ object LibraryScanner {
                     try { session.sourcePresence[book.source] = sourceExists(book.source) }
                     catch (e: Exception) { failures += "${session.storage.displayPath}/${book.source}：[检查来源] ${e.message}" }
                 }
-                // 老版本写进简介的「来源」行可能指向第三方站点：一次性清掉，之后条件不再命中。
+                // 老简介里残留的「来源」行（第三方链接）与「标签」行：一次性迁移 —— 来源删除，
+                // 标签搬进 `tags` 供 chips 展示；迁移后条件不再命中，不会每趟扫描重复写库。
                 val sourcePrefix = pinned.getString(com.moe.starflow.R.string.comic_meta_source, "").trim()
-                val staleSources = known.filter { book ->
-                    val description = org.json.JSONObject(book.body).optString("description")
-                    !book.deleting && description.isNotBlank() &&
-                        ComicMetadataParser.stripSourceLines(description, sourcePrefix) != description
+                val tagsPrefix = pinned.getString(com.moe.starflow.R.string.comic_meta_tags, "").trim()
+                val staleDescriptions = known.filter { book ->
+                    val body = org.json.JSONObject(book.body)
+                    val description = body.optString("description")
+                    if (book.deleting || description.isBlank()) return@filter false
+                    if (ComicMetadataParser.stripSourceLines(description, sourcePrefix) != description) return@filter true
+                    kind == "manga" && (body.optJSONArray("tags")?.length() ?: 0) == 0 &&
+                        ComicMetadataParser.extractTagsLine(description, tagsPrefix).first.isNotEmpty()
                 }.mapTo(mutableSetOf()) { it.uuid }
-                if (staleSources.isNotEmpty()) {
+                if (staleDescriptions.isNotEmpty()) {
                     coroutineContext.ensureActive()
                     try {
-                        stripSourceLines(pinned, kind, staleSources, sourcePrefix)
+                        normalizeDescriptions(pinned, kind, staleDescriptions, sourcePrefix, tagsPrefix)
                     } catch (e: CancellationException) { throw e }
                     catch (e: Exception) { failures += "[清理简介] ${e.message}" }
                 }
@@ -217,20 +222,37 @@ object LibraryScanner {
     }
 
     /**
-     * 批量清掉简介里的「来源」行（老版本导入的书库还留着这些行，来源当时可能是拼出来的链接）。
+     * 迁移历史简介：删「来源」行、把「标签」行搬进 `tags`。
      *
      * 判据是**本地化前缀**，不是域名关键字 —— 用域名匹配会把刚删掉的字面量重新写回 dex。
      * 只处理 [uuids] 命中的书，整表只读一次（书架上可能有几百本）。
      */
-    private fun stripSourceLines(context: Context, kind: String, uuids: Set<String>, prefix: String) {
-        val clean = { text: String -> ComicMetadataParser.stripSourceLines(text, prefix) }
+    private fun normalizeDescriptions(
+        context: Context,
+        kind: String,
+        uuids: Set<String>,
+        sourcePrefix: String,
+        tagsPrefix: String,
+    ) {
         if (kind == "manga") {
             ImportedMangaStore.load(context).filter { it.bookUuid in uuids }.forEach { value ->
-                ImportedMangaStore.patch(context, value) { latest -> latest.copy(description = clean(latest.description)) }
+                ImportedMangaStore.patch(context, value) { latest ->
+                    val (extracted, text) = ComicMetadataParser.extractTagsLine(latest.description, tagsPrefix)
+                    latest.copy(
+                        description = ComicMetadataParser.stripSourceLines(text, sourcePrefix),
+                        tags = latest.tags.ifEmpty { extracted },
+                        metadataVersion = BookMetadataReader.VERSION,
+                    )
+                }
             }
         } else {
             NovelStore.load(context).filter { it.bookUuid in uuids }.forEach { value ->
-                NovelStore.patch(context, value) { latest -> latest.copy(description = clean(latest.description)) }
+                NovelStore.patch(context, value) { latest ->
+                    latest.copy(
+                        description = ComicMetadataParser.stripSourceLines(latest.description, sourcePrefix),
+                        metadataVersion = BookMetadataReader.VERSION,
+                    )
+                }
             }
         }
     }
