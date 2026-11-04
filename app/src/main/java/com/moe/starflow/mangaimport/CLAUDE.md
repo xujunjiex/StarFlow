@@ -89,6 +89,7 @@
 - **状态浮层带批次与页码**：分批时用管线传来的文案「识别中（1/2）…」「翻译中（2/2）…」（与截屏翻译对齐），后面拼 `· P%2$d`。批次判定靠 `onBatchResult` 置 `batchIndex=2`（管线回调只给 resId，不带批次）。队列页的**检测/翻译阶段照常上报**，只有成功/失败静音（否则连翻 10 页会弹 10 次"翻译完成"）
 - **管线复用**：分批走 `manga/pipeline/IncrementalBatchPipeline`（与截屏翻译同一套）；非分批走 `TranslationEngineInit.ensureReady` → `DetectionBridge.runOCR → ocrToBubbleRegions` → `TranslateUtils.translateBubbles`
 - **`ReaderTranslationController`**：翻译模式、每页翻译记录和译图缓存（~100MB）；缓存 key 包含页号、显示模式和底图签名。超分职责见下方「阅读器超分职责与所有权」
+- ⚠️ **渲染期参数变化要作废译图，但不重翻**：`refreshIfRenderParamsChanged()` 用 `OverlayConfig`（字号/自动/颜色/方向/字距/行距/对齐/合并/结果字体）的稳定指纹检测变化，复用 `invalidateRenders()` 清 `renderLru`/`webtoonLru` 并取消在途渲染；`MangaReaderActivity.onStart` 与 `refreshIfRulesChanged()` 任一为 true 就重渲染当前页（Webtoon 走 prewarm）。替换表仍由 `refreshIfRulesChanged()` 单独负责，指纹不重复包含它。
 - ⚠️ **半成品必须用独立 key `page:<i>:PARTIAL`**：首批/流式结果上屏时本页状态还是 `TRANSLATING`，而 `cachedDisplayBitmap` 对 `TRANSLATING` **只查 PARTIAL**。写成 `renderKey` 会让首批结果**根本显示不出来**（分批形同虚设）；最终结果 `renderInto` 时 `remove(partialKey)`
 - ⚠️ **`TRANSLATING` 会永久卡死该页**：该状态在翻译**开始时**写库，只有跑完才改 `SUCCESS`。退出阅读器/崩溃会让记录永久停在「翻译中」→ 该页既不显示译文也再也翻不了。三层治理：①进阅读器 `dao.resetTranslating()` 清残留；②取消时用 `withContext(NonCancellable)` 退回 `IDLE`（普通 catch 里写库会被取消打断而写不进）；③`runTranslate` 开翻时先 `renderLru.remove(partialKey)`
 - ⚠️ **`rows` 必须用 `update{}` 原子更新，`fail()` 要 upsert 局部变量**：`rows.value = rows.value + x` 是读-改-写，与取消清理协程并发会丢更新；`dao.upsert(rows.value.getValue(i))` 还会因并发替换 map 而抛 `NoSuchElementException`
