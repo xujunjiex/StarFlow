@@ -421,11 +421,13 @@ class MangaReaderActivity : AppCompatActivity() {
             recreate()
             return
         }
-        // 「译文替换表」可能在设置页被改过（从**主设置页**进来时不会走上面的 recreate）：
-        // 替换表是在**渲染时**套用的（overlay 后期才画），所以作废已渲染译图后重渲染当前页即可 ——
-        // 译文从数据库行重建，**不调翻译 API、不需要重翻**。
+        // 「译文替换表」或字号/字距/对齐等**渲染期参数**可能在设置页被改过
+        // （从**主设置页**进来时不会走上面的 recreate）：译文只存文本，作废已渲染译图后
+        // 重渲染当前页即可 —— 从数据库行重建，**不调翻译 API、不需要重翻**。
         translationController?.let { controller ->
-            if (controller.refreshIfRulesChanged()) {
+            val rulesChanged = controller.refreshIfRulesChanged()
+            val renderParamsChanged = controller.refreshIfRenderParamsChanged()
+            if (rulesChanged || renderParamsChanged) {
                 if (mode == 3) {
                     // Webtoon：译图由 prewarmWebtoon 逐页重渲染，每渲染完一页自己会经 onVisual 重绑。
                     // ⚠️ 这里若先 applyPageVisual（rebind），缓存已清空 → 适配器回落到 source.loadWebtoon

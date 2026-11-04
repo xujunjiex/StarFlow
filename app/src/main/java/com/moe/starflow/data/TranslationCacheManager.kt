@@ -29,6 +29,22 @@ class TranslationCacheManager(private val context: Context) {
         const val MODE_MANGA = 1
         private const val DEFAULT_CACHE_COUNT = 100
 
+        /** 用户「译文替换表」由 `refreshIfRulesChanged` / `rulesFingerprint` 单独负责。 */
+        fun overlayRenderFingerprint(config: OverlayConfig, fontName: String = ""): String =
+            buildString {
+                append(config.fontSize).append('|')
+                append(config.autoFit).append('|')
+                append(config.textColor).append('|')
+                append(config.bgColor).append('|')
+                append(config.textDirection.name).append('|')
+                append(config.showCacheMarker).append('|')
+                append(config.horizontalAlign.name).append('|')
+                append(config.trackingRatio).append('|')
+                append(config.leadingRatio).append('|')
+                append(config.mergeOverlap).append('|')
+                append(fontName)
+            }
+
         /** 缓存命中标记（⚡）开关 key，共享给 About 页与渲染配置 */
         const val KEY_CACHE_MARKER = "cache_hit_marker"
 
