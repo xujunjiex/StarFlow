@@ -472,4 +472,45 @@ class OverlayRendererTest {
         }
         assertTrue("2 倍输出里必须画出了气泡白块", white > 0)
     }
+
+    @Test
+    fun autoExpand_longTranslation_expandsTenPercentAroundCenter() {
+        val rect = Rect(100, 100, 200, 180) // 100x80, center 150,140
+        val out = OverlayRenderer.expandedAutoRect(rect, "あ".repeat(10), "a".repeat(12), 400, 300)
+        assertEquals("宽度 +10%", 110, out.width())
+        assertEquals("高度 +10%", 88, out.height())
+        assertEquals("仍以原中心为中心", 150, out.centerX())
+        assertEquals("仍以原中心为中心", 140, out.centerY())
+        assertTrue("必须落在屏幕内", out.left >= 0 && out.top >= 0 && out.right <= 400 && out.bottom <= 300)
+    }
+
+    @Test
+    fun autoExpand_shortOrEqualTranslation_doesNothing() {
+        val rect = Rect(100, 100, 200, 180)
+        assertEquals(
+            "等长译文不扩",
+            rect,
+            OverlayRenderer.expandedAutoRect(rect, "あ".repeat(10), "a".repeat(10), 400, 300)
+        )
+        assertEquals(
+            "短译不扩",
+            rect,
+            OverlayRenderer.expandedAutoRect(rect, "あ".repeat(10), "a".repeat(8), 400, 300)
+        )
+        assertEquals(
+            "原文为空不扩",
+            rect,
+            OverlayRenderer.expandedAutoRect(rect, "", "a".repeat(20), 400, 300)
+        )
+    }
+
+    @Test
+    fun autoExpand_clampsToScreen() {
+        val rect = Rect(0, 0, 100, 80)
+        val out = OverlayRenderer.expandedAutoRect(rect, "あ".repeat(10), "a".repeat(20), 100, 80)
+        assertEquals("不能超出屏幕宽（已顶满时不扩）", 100, out.width())
+        assertEquals("不能超出屏幕高（已顶满时不扩）", 80, out.height())
+        assertEquals(0, out.left)
+        assertEquals(0, out.top)
+    }
 }

@@ -17,6 +17,18 @@ interface TextMeasurer {
     fun measure(text: String): Float
     fun breakText(text: String, maxWidth: Float): Int
 
+    /**
+     * 基线以上高度（负数，沿用 Android `Paint.FontMetrics` 约定）。
+     *
+     * 默认值保持旧实现口径（`-fontSize`），让只关心断行的纯 JVM 假字体不必实现字体度量；
+     * 生产实现 [PaintTextMeasurer] 返回真实 ascent。横排行高与基线都从这里来，
+     * 不能再用「字号」冒充行高 —— 否则 `g/p/y` 的下沿会画到框外。
+     */
+    fun ascent(): Float = -fontSize
+
+    /** 基线以下高度（正数）。默认 0，保持旧布局测试口径。 */
+    fun descent(): Float = 0f
+
     /** 竖排字框宽（= 字号）。 */
     fun glyphWidth(): Float
 
@@ -35,6 +47,9 @@ class PaintTextMeasurer(
     override fun measure(text: String): Float = paint.measureText(text)
     override fun breakText(text: String, maxWidth: Float): Int =
         paint.breakText(text, true, maxWidth, null)
+
+    override fun ascent(): Float = paint.fontMetrics.ascent
+    override fun descent(): Float = paint.fontMetrics.descent
 
     override fun glyphWidth(): Float = paint.textSize
     override fun glyphHeight(): Float = paint.textSize
@@ -153,7 +168,9 @@ object LayoutEngine {
             return TextLayout(0f, emptyList(), 0f, 0f, 0f, 0f, 0f)
         }
         val font = if (autoFit) {
-            searchFitFontSize(measurer, text, region, direction, trackingRatio, leadingRatio, minPaddingPx)
+            searchFitFontSize(
+                measurer, text, region, direction, trackingRatio, leadingRatio, minPaddingPx
+            )
         } else {
             requestedFontSize
         }
@@ -189,7 +206,7 @@ object LayoutEngine {
         minPaddingPx: Float
     ): Float {
         // 上限只由最终内容区决定。OCR 合并结果可能携带最小成员字号，
-        // 用它封顶会让整段译文停在小字号，即使区域内还有大量空白。
+        // 用它封顶会让整段译文停在小字号，即使区域内还有空白。
         val pad = resolvePadding(region, minPaddingPx)
         val availW = region.width - 2 * pad
         val availH = region.height - 2 * pad
@@ -277,7 +294,7 @@ object LayoutEngine {
     }
 
     private fun buildHorizontal(
-        @Suppress("UNUSED_PARAMETER") measurer: TextMeasurer,
+        measurer: TextMeasurer,
         text: String,
         region: Box,
         font: Float,
@@ -305,13 +322,25 @@ object LayoutEngine {
         }
         val totalWidth = lineWidths.maxOrNull() ?: 0f
 
-        // 行步距只包含一个字框和用户设置的间距：20% = 1.2×字号，0% = 1×字号。
+        // 行高来自真实字体度量（ascent/descent），但只对拉丁文为主的段落生效：
+        // CJK 字形基本落在 em 框内，用字号当行高不会裁字；若也套 1.16× 行高，
+        // 中文页会整体缩水约 12%，与本次目标相反。拉丁文的 g/p/y 才需要真实下沿。
+        val latinMetrics = isLatinDominant(text)
+        val lineHeight = if (latinMetrics) {
+            (measurer.descent() - measurer.ascent()).coerceAtLeast(font)
+        } else {
+            font
+        }
+        // 行步距 = 字体自然行高与用户间距的较大者：0% 时不再让上下行字面重叠，
+        // 20% 时仍是 1.2×字号（与旧行为一致）。
+        val leading = maxOf(lineHeight, font * (1f + leadingRatio.coerceAtLeast(0f)))
         val n = lines.size
-        val leading = font * (1f + leadingRatio.coerceAtLeast(0f))
-        val totalHeight = if (n <= 1) font else (n - 1) * leading + font
+        val totalHeight = if (n <= 1) lineHeight else (n - 1) * leading + lineHeight
 
         // 余量居中（间距固定在预算内，余量一般很小；触底/触顶时给 0）
         val topPad = ((availH - totalHeight) / 2f).coerceAtLeast(0f)
+        val baselineOffset = if (latinMetrics) -measurer.ascent() else font
+        val firstBaseline = region.top + pad + topPad + baselineOffset
 
         val out = lines.mapIndexed { i, line ->
             val lineW = lineWidths[i]
@@ -323,9 +352,9 @@ object LayoutEngine {
             TextLine(
                 text = line,
                 width = lineW,
-                height = font,
+                height = lineHeight,
                 x = x,
-                baseline = region.top + pad + topPad + font + i * leading
+                baseline = firstBaseline + i * leading
             )
         }
         return TextLayout(font, out, tracking, leading, 0f, totalWidth, totalHeight)
@@ -431,7 +460,7 @@ object LayoutEngine {
     }
 
     /**
-     * 按 \n 分段 + breakText 换行。空段保留为空行（占一行高）。
+     * 按 \n 分段；拉丁段落按词断，中日韩段落按字断。空段保留为空行（占一行高）。
      *
      * [tracking] 为行内字距（px），**必须纳入断行预算**：k 个字的行实际占
      * `naturalWidth(k) + (k-1)×tracking`。`breakText` 只知道自然宽度，所以先按自然宽
@@ -452,26 +481,110 @@ object LayoutEngine {
                 lines.add("")
                 continue
             }
-            var remaining = paragraph
-            while (remaining.isNotEmpty()) {
-                // 放不下一个字时仍保留该字，让 fits() 按真实行宽拒绝当前字号。
-                // 直接 break 会丢掉后续正文，产生「缺字但装得下」的假布局。
-                var count = measurer.breakText(remaining, maxWidth).coerceAtLeast(1)
-                if (tracking > 0f) {
-                    // 自然宽 ≤ maxWidth 只保证不含字距时放得下；加上 (k-1) 个字距后可能超出
-                    while (count > 1 &&
-                        measurer.measure(remaining.substring(0, count)) + (count - 1) * tracking > maxWidth
-                    ) {
-                        count--
-                    }
+            lines.addAll(
+                if (shouldWrapByWord(paragraph)) {
+                    wrapByWord(measurer, paragraph, maxWidth, tracking)
+                } else {
+                    wrapByChar(measurer, paragraph, maxWidth, tracking)
                 }
-                // 点串不可断：`...` 被拆成「每行一个点」是最主要的用户反馈（见 TranslationTextRules）。
-                // 只前移切点 → 行更短，必然仍装得下，不影响上面的预算判定。
-                count = pullBackToDotRunStart(remaining, 0, count)
-                if (count <= 0) break
-                lines.add(remaining.substring(0, count))
-                remaining = remaining.substring(count)
+            )
+        }
+        return lines
+    }
+
+    /**
+     * 是否按词断行。只对「拉丁字母为主、且含空格」的段落生效：
+     * 中日韩译文仍逐字断（中文没有词间空格，逐字才是正确行为）。
+     */
+    private fun shouldWrapByWord(paragraph: String): Boolean =
+        paragraph.contains(' ') && isLatinDominant(paragraph)
+
+    /** 拉丁字母是否多于中日韩宽字符。用于决定按词断行和是否采用字体度量。 */
+    private fun isLatinDominant(text: String): Boolean {
+        var latin = 0
+        var wide = 0
+        for (ch in text) {
+            if (ch.isWhitespace()) continue
+            if (isWideChar(ch)) wide++ else if (ch.isLetter()) latin++
+        }
+        return latin > 0 && latin >= wide
+    }
+
+    private fun isWideChar(ch: Char): Boolean {
+        val c = ch.code
+        return c in 0x2E80..0x9FFF || c in 0xF900..0xFAFF || c in 0xFF00..0xFFEF ||
+            c in 0x3040..0x30FF || c in 0xAC00..0xD7AF
+    }
+
+    private fun lineWidth(measurer: TextMeasurer, text: String, tracking: Float): Float =
+        measurer.measure(text) + tracking * (text.length - 1).coerceAtLeast(0)
+
+    /**
+     * 拉丁按词断：优先把整个单词放到下一行；只有单词本身比整行还宽时才退回逐字符断。
+     * 这里不再让 `Paint.breakText` 在单词中间切（用户反馈的 `transla / tion`）。
+     */
+    private fun wrapByWord(
+        measurer: TextMeasurer,
+        paragraph: String,
+        maxWidth: Float,
+        tracking: Float
+    ): List<String> {
+        val words = paragraph.split(' ').filter { it.isNotEmpty() }
+        if (words.isEmpty()) return listOf("")
+        val out = mutableListOf<String>()
+        var line = ""
+        for (word in words) {
+            val candidate = if (line.isEmpty()) word else "$line $word"
+            if (lineWidth(measurer, candidate, tracking) <= maxWidth) {
+                line = candidate
+                continue
             }
+            if (line.isNotEmpty()) {
+                out.add(line)
+                line = ""
+            }
+            if (lineWidth(measurer, word, tracking) <= maxWidth) {
+                line = word
+            } else {
+                // 单词本身超过整行：只能逐字符断，保证不丢字。
+                val pieces = wrapByChar(measurer, word, maxWidth, tracking)
+                if (pieces.isNotEmpty()) {
+                    out.addAll(pieces.dropLast(1))
+                    line = pieces.last()
+                }
+            }
+        }
+        if (line.isNotEmpty()) out.add(line)
+        return out
+    }
+
+    /** 逐字符断行（CJK、长单词兜底）。 */
+    private fun wrapByChar(
+        measurer: TextMeasurer,
+        paragraph: String,
+        maxWidth: Float,
+        tracking: Float
+    ): List<String> {
+        val lines = mutableListOf<String>()
+        var remaining = paragraph
+        while (remaining.isNotEmpty()) {
+            // 放不下一个字时仍保留该字，让 fits() 按真实行宽拒绝当前字号。
+            // 直接 break 会丢掉后续正文，产生「缺字但装得下」的假布局。
+            var count = measurer.breakText(remaining, maxWidth).coerceAtLeast(1)
+            if (tracking > 0f) {
+                // 自然宽 ≤ maxWidth 只保证不含字距时放得下；加上 (k-1) 个字距后可能超出
+                while (count > 1 &&
+                    measurer.measure(remaining.substring(0, count)) + (count - 1) * tracking > maxWidth
+                ) {
+                    count--
+                }
+            }
+            // 点串不可断：`...` 被拆成「每行一个点」是最主要的用户反馈（见 TranslationTextRules）。
+            // 只前移切点 → 行更短，必然仍装得下，不影响上面的预算判定。
+            count = pullBackToDotRunStart(remaining, 0, count)
+            if (count <= 0) break
+            lines.add(remaining.substring(0, count))
+            remaining = remaining.substring(count)
         }
         return lines
     }

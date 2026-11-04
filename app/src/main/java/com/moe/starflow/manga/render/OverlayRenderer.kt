@@ -120,6 +120,42 @@ object OverlayRenderer {
     private const val VERTICAL_SEPARATOR = "◇"
     private const val HORIZONTAL_SEPARATOR = "──"
 
+    /**
+     * 自动模式的「长译扩框」：译文比原文长到 [AUTO_EXPAND_TEXT_GROWTH] 倍以上时，
+     * 把单气泡的绘制区最多放大 [AUTO_EXPAND_RATIO]，给长译文多一行/一列的空间。
+     *
+     * 只放大，不缩小；只对单气泡生效（[renderOverlay] 在 `mergeOverlap` 开时跳过），
+     * 因此「合并块 = 成员矩形并集」的硬约束不被破坏。短译/等长译原样返回。
+     */
+    private const val AUTO_EXPAND_RATIO = 1.10f
+    private const val AUTO_EXPAND_TEXT_GROWTH = 1.15f
+
+    internal fun expandedAutoRect(
+        rect: Rect,
+        sourceText: String,
+        translatedText: String,
+        spaceW: Int,
+        spaceH: Int
+    ): Rect {
+        val source = countTextUnits(sourceText)
+        val target = countTextUnits(translatedText)
+        if (source <= 0 || target <= 0 || target <= source * AUTO_EXPAND_TEXT_GROWTH) return Rect(rect)
+        return expandRectBy(rect, AUTO_EXPAND_RATIO, spaceW, spaceH)
+    }
+
+    /** 以原中心为中心按 [ratio] 放大，夹在坐标空间内；顶满时返回原矩形。 */
+    internal fun expandRectBy(rect: Rect, ratio: Float, spaceW: Int, spaceH: Int): Rect {
+        if (rect.width() <= 0 || rect.height() <= 0 || spaceW <= 0 || spaceH <= 0) return Rect(rect)
+        val w = (rect.width() * ratio).toInt().coerceAtMost(spaceW).coerceAtLeast(rect.width())
+        val h = (rect.height() * ratio).toInt().coerceAtMost(spaceH).coerceAtLeast(rect.height())
+        val left = (rect.centerX() - w / 2).coerceIn(0, maxOf(0, spaceW - w))
+        val top = (rect.centerY() - h / 2).coerceIn(0, maxOf(0, spaceH - h))
+        return Rect(left, top, left + w, top + h)
+    }
+
+    private fun countTextUnits(text: String): Int =
+        text.count { !it.isWhitespace() && it != '⚡' }
+
     /** 单气泡的绘制参数（Phase 1 产物） */
     private data class Param(
         val region: TranslatedBubble,
@@ -224,6 +260,8 @@ object OverlayRenderer {
         // 保证历史/缓存命中的气泡（方向可能是旧设置时存的）也按当前设置实时渲染。
         // ⚠️ 与字号模式（自动/非自动）**无关**：覆盖发生在排版之前，两条路径吃的是同一份 direction。
         val effectiveRegions = applyVerticalDirectionOverride(regions, verticalDirection)
+        // Phase 3 的绘制度量器；字体/字号由 LayoutEngine 每次设置。
+        val textMeasurer = PaintTextMeasurer(Paint().apply { isAntiAlias = true; typeface = fontTypeface })
 
         // Phase 1: 每气泡的绘制参数（文字、字号、所需矩形）
         val params = effectiveRegions.map { region ->
@@ -254,9 +292,15 @@ object OverlayRenderer {
                 fontSize
             }
             // 自动模式：drawRect 用原始气泡；内核按最终区域选最大可容纳字号，不受 OCR 字号限制。
+            // 长译（译文比原文长 15% 以上）给单气泡多 10% 空间，避免长句被压得过小；
+            // 短译/等长译不动。mergeOverlap 开时跳过 —— 合并块必须严格等于成员矩形并集。
             // 非自动模式：drawRect 贴合文字（收缩居中/平衡扩展）
-            val neededRect = if (autoFit) {
-                region.rect
+            val drawRect = if (autoFit) {
+                if (!mergeOverlap && !useOriginalText && displayText.isNotEmpty()) {
+                    expandedAutoRect(region.rect, region.originalText, displayText, g.spaceW, g.spaceH)
+                } else {
+                    region.rect
+                }
             } else {
                 // 非自动模式：字号由用户定，矩形随文字实际尺寸扩展/收缩（见 calculateCompactRect）
                 calculateCompactRect(
@@ -264,7 +308,7 @@ object OverlayRenderer {
                     trackingRatio, leadingRatio, LayoutEngine.MIN_PADDING_DP * density, align
                 )
             }
-            Param(region, displayText, fitFontSize, neededRect)
+            Param(region, displayText, fitFontSize, drawRect)
         }
 
         // Phase 2: neededRect 重叠的气泡合并成组（union-find 传递闭包）
@@ -343,7 +387,7 @@ object OverlayRenderer {
             // 统一排版内核：字号选择 + 断行/分列 + 字距行距分配一次算完，产物保证不越出 drawRect。
             // 自动模式由内核二分选字号；非自动模式字号原样、间距不拉伸（见三态行为矩阵）。
             val layout = LayoutEngine.plan(
-                measurer = PaintTextMeasurer(Paint().apply { isAntiAlias = true; typeface = fontTypeface }),
+                measurer = textMeasurer,
                 text = text,
                 region = Box.from(item.drawRect),
                 direction = item.direction,

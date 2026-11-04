@@ -58,6 +58,28 @@ class LayoutEngineTest {
 
     private fun measurer(charRatio: Float = 1f, lineRatio: Float = 1f) = FakeMeasurer(charRatio, lineRatio)
 
+    /** 拉丁字体：每字符宽 = 字号；用于验证按词断行。 */
+    private class LatinMeasurer : TextMeasurer {
+        override var fontSize: Float = 10f
+        override fun measure(text: String): Float = text.length * fontSize
+        override fun breakText(text: String, maxWidth: Float): Int =
+            (maxWidth / fontSize).toInt().coerceAtLeast(1).coerceAtMost(text.length)
+        override fun glyphWidth(): Float = fontSize
+        override fun glyphHeight(): Float = fontSize
+    }
+
+    /** 带真实 ascent/descent 的度量：用于验证行高与基线。 */
+    private class MetricMeasurer : TextMeasurer {
+        override var fontSize: Float = 10f
+        override fun measure(text: String): Float = text.length * fontSize
+        override fun breakText(text: String, maxWidth: Float): Int =
+            (maxWidth / fontSize).toInt().coerceAtLeast(1).coerceAtMost(text.length)
+        override fun ascent(): Float = -fontSize
+        override fun descent(): Float = fontSize * 0.3f
+        override fun glyphWidth(): Float = fontSize
+        override fun glyphHeight(): Float = fontSize
+    }
+
     /** 把 layout 里所有行的文本拼回，用于验证「不截断」。 */
     private fun TextLayout.reassembled(): String =
         lines.joinToString("\n") { it.text }
@@ -761,5 +783,55 @@ class LayoutEngineTest {
         assertEquals("每列一个点（硬切）", listOf(".", ".", "."), layout.lines.map { it.text })
         assertEquals("不丢字", "...", layout.lines.joinToString("") { it.text })
         assertNoOverflow(layout, region)
+    }
+
+    // ---------------- P0：拉丁按词断 + 字体度量 ----------------
+
+    @Test
+    fun horizontalLatin_wrapsAtWordBoundaries() {
+        // 可用宽 94、字号 10、每字符 10px：每行最多 9 个字符。
+        // `alpha beta` 占 10 个字符 100px 放不下 → 必须整体换行，不能切成 `alpha bet`。
+        val layout = LayoutEngine.plan(
+            measurer = LatinMeasurer(),
+            text = "alpha beta gamma",
+            region = Box(0f, 0f, 94f, 200f), direction = TextDirection.HORIZONTAL,
+            requestedFontSize = 10f, autoFit = false,
+            align = TextAlign.LEFT, trackingRatio = 0f, leadingRatio = 0f
+        )
+        assertEquals(listOf("alpha", "beta", "gamma"), layout.lines.map { it.text })
+    }
+
+    @Test
+    fun horizontal_usesRealLineHeightAndBaseline() {
+        // ascent=-10、descent=3 → 行高 13；禁用居中余量后基线应在 top+10，
+        // 字底 top+13，不能再用「字号 10」当行高。
+        val layout = LayoutEngine.plan(
+            measurer = MetricMeasurer(),
+            text = "A",
+            region = Box(0f, 0f, 200f, 13f), direction = TextDirection.HORIZONTAL,
+            requestedFontSize = 10f, autoFit = false,
+            align = TextAlign.LEFT, trackingRatio = 0f, leadingRatio = 0f
+        )
+        val line = layout.lines.single()
+        assertEquals(13f, line.height, 0.01f)
+        assertEquals(10f, line.baseline, 0.01f)
+        assertEquals(13f, layout.totalHeight, 0.01f)
+    }
+
+    @Test
+    fun cjkIgnoresLatinFontMetrics() {
+        // 同一套 ascent/descent 落在中文上必须被忽略：行高仍是字号，基线仍是 top+字号，
+        // 否则中文页会因为 1.16× 自然行高整体缩水。
+        val layout = LayoutEngine.plan(
+            measurer = MetricMeasurer(),
+            text = "中文",
+            region = Box(0f, 0f, 200f, 10f), direction = TextDirection.HORIZONTAL,
+            requestedFontSize = 10f, autoFit = false,
+            align = TextAlign.LEFT, trackingRatio = 0f, leadingRatio = 0f
+        )
+        val line = layout.lines.single()
+        assertEquals(10f, line.height, 0.01f)
+        assertEquals(10f, line.baseline, 0.01f)
+        assertEquals(10f, layout.totalHeight, 0.01f)
     }
 }
