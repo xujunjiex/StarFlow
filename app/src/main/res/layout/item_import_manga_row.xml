@@ -167,7 +167,7 @@
             app:layout_constraintStart_toEndOf="@id/thumb_frame"
             app:layout_constraintTop_toBottomOf="@id/tv_info_line"/>
 
-        <!-- 标签 chips：换行铺开、点一下复制（数据源与作品数据页同一个） -->
+        <!-- 标签 chips：换行铺开、长按复制（数据源与作品数据页同一个） -->
         <com.moe.starflow.library.ui.WrapLayout
             android:id="@+id/tag_flow"
             android:layout_width="0dp"

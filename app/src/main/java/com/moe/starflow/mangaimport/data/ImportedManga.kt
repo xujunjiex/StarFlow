@@ -73,7 +73,7 @@ data class ImportedManga(
     val sourceNoticeSeen: String = "",
     val missingRecordKeys: String = "[]",
     val ignoredMissingRecordKeys: String = "[]",
-    /** 书级标签（不再拼进简介正文；书架行与作品数据页用 chips 展示、点击复制）。 */
+    /** 书级标签（不再拼进简介正文；书架行与作品数据页用 chips 展示、长按复制）。 */
     val tags: List<String> = emptyList(),
     /** null adopts the source/legacy description; empty explicitly hides it. */
     val descriptionOverride: String? = null,

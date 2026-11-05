@@ -256,7 +256,7 @@ class MangaGridAdapter(
             h.binding.tvProgress.visibility = View.GONE
         }
 
-        // 简介摘要 + 标签 chips：chips 与作品数据页同源；点 chip 复制，点简介块进作品数据页
+        // 简介摘要 + 标签 chips：chips 与作品数据页同源；**长按** chip 复制，短按/点简介块进作品数据页
         if (!item.importing && item.effectiveDescription.isNotBlank()) {
             h.binding.tvDescription.visibility = View.VISIBLE
             h.binding.tvDescription.text = item.effectiveDescription
