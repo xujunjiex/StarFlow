@@ -19,6 +19,22 @@ object BookMetadataChips {
     /** 把一份元数据按「系列 / 标签 / 作者 / 社团 / 语言 / 类型 / 页数 / 发布日期」铺开（空值整行省略）。 */
     fun addRows(parent: LinearLayout, meta: ComicMetadata, onCopy: (String) -> Unit) {
         val context = parent.context
+        meta.title?.takeIf(String::isNotBlank)?.let { title ->
+            parent.addView(TextView(context).apply {
+                text = context.getString(R.string.book_meta_title, title)
+                setTextColor(ContextCompat.getColor(context, R.color.text_primary))
+                setTextIsSelectable(true)
+                com.moe.starflow.utils.FontSync.apply(this)
+            })
+        }
+        meta.summary?.takeIf(String::isNotBlank)?.let { summary ->
+            parent.addView(TextView(context).apply {
+                text = android.text.Html.fromHtml(summary, android.text.Html.FROM_HTML_MODE_LEGACY)
+                setTextColor(ContextCompat.getColor(context, R.color.text_primary))
+                setTextIsSelectable(true)
+                com.moe.starflow.utils.FontSync.apply(this)
+            })
+        }
         addRow(parent, context.getString(R.string.book_meta_series_label), listOfNotNull(meta.series), onCopy)
         addRow(parent, context.getString(R.string.book_meta_tags_label), meta.tags, onCopy)
         addRow(parent, context.getString(R.string.book_meta_author_label), listOfNotNull(meta.writer), onCopy)

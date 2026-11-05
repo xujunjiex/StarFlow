@@ -2122,6 +2122,7 @@
     <string name="book_meta_pages_label">页数</string>
     <string name="book_meta_date_label">发布日期</string>
     <string name="book_chapter_meta_title">当前章节</string>
+    <string name="book_chapter_meta_empty">本章没有元数据</string>
     <string name="book_chapter_meta_unreadable">来源不可读，无法读取章节信息</string>
     <string name="book_tag_copied">已复制标签</string>
     <string name="book_chapter_prev">上一章</string>
@@ -2130,4 +2131,8 @@
     <string name="book_tags_collapse">收起</string>
     <string name="book_open_folder">打开所在文件夹</string>
     <string name="book_meta_book_label">书籍信息</string>
+    <string name="import_desc_restore">恢复原始简介</string>
+    <string name="import_desc_saved">简介已保存</string>
+    <string name="import_desc_saved_pending">简介已保存在应用内，配套文件待写入，可在作品数据或书库存储中重试。</string>
+    <string name="import_desc_too_long">简介过长，无法保存。</string>
 </resources>

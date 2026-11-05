@@ -111,7 +111,7 @@ object MangaImporter {
                 } finally { bitmap.recycle() }
             } } finally { source.close() }
         }
-        val (description, tags) = bookMetadata(context, dir, index.chapters)
+        val (description, tags) = bookMetadata(context, dir, index.chapters, index)
         return ImportedManga(id = id, title = title, localRoot = dir.canonicalPath, isArchive = false,
             coverPath = cover, pageCount = index.pages.size, addedAt = freshAddedAt(context),
             sizeBytes = index.pages.distinctBy { it.path }.sumOf { it.bytes.coerceAtLeast(0) },
@@ -132,12 +132,11 @@ object MangaImporter {
             split to cover
         }
         // ⚠️ 只读书根（不是全包条目）：章目录里的 json 属于各章，不能顶成书简介
-        val root = BookMetadataReader.bookRootTexts(source) + BookMetadataReader.sidecarTexts(source)
-        val metadata = ComicMetadataParser.parse(root)
+        val metadata = optionalBookMetadata(source, split.chapters)
         return ImportedManga(id = id, title = title, localRoot = source.path, isArchive = true,
             coverPath = cover, pageCount = split.keys.size, addedAt = freshAddedAt(context),
             sizeBytes = source.length(), chapters = split.chapters,
-            description = metadata?.let { ComicMetadataParser.buildDescription(context, it, includeTags = false) }.orEmpty(),
+            description = ComicMetadataParser.summaryText(metadata),
             tags = metadata?.let(ComicMetadataParser::bookTags).orEmpty(),
             metadataVersion = BookMetadataReader.VERSION)
     }
@@ -533,7 +532,7 @@ object MangaImporter {
                     else "image_${(index + 1).toString().padStart(5, '0')}.$imageExtension"
                     val name = safeSegment(suggestedName) ?: continue
                     out.add(child.uri to "${current.prefix}$name")
-                } else if (ComicMetadataParser.isMetadataEntry(providerName)) {
+                } else if (ComicMetadataParser.isMetadataEntry(providerName) || providerName == "starflow.json" || providerName.endsWith(".starflow.json")) {
                     val name = safeSegment(providerName) ?: continue
                     metadata.add(child.uri to "${current.prefix}$name")
                 }
@@ -804,12 +803,16 @@ object MangaImporter {
      * ⚠️ 只取书根：多章文件夹里 `ch1/meta.json`、`ch2/meta.json` 属于各章，**不能**合并进书简介
      * （否则永远只显示最浅那份 = 第一章）。标签不再拼进简介，改由书架/数据页的 chips 展示。
      */
-    private fun bookMetadata(context: Context, source: File, chapters: List<MangaChapter>): Pair<String, List<String>> {
-        val root = BookMetadataReader.bookRootTexts(source)
-        val meta = ComicMetadataParser.parse(root) ?: return "" to emptyList()
-        return ComicMetadataParser.buildDescription(context, meta, includeTags = false) to
+    private fun bookMetadata(context: Context, source: File, chapters: List<MangaChapter>, index: MangaSourceIndex? = null): Pair<String, List<String>> {
+        val meta = optionalBookMetadata(source, chapters, index) ?: return "" to emptyList()
+        return ComicMetadataParser.summaryText(meta) to
             ComicMetadataParser.bookTags(meta)
     }
+
+    private fun optionalBookMetadata(source: File, chapters: List<MangaChapter>, index: MangaSourceIndex? = null): ComicMetadata? = try {
+        BookMetadataReader.bookMetadata(source, chapters, index)
+    } catch (e: CancellationException) { throw e }
+    catch (e: Exception) { LogCollector.w(TAG, "读取作品资料失败：${source.name}", e); null }
 
     /**
      * 从 zip 注释里取 ComicBookInfo。
@@ -817,7 +820,7 @@ object MangaImporter {
      * 注释常带前后杂讯（打包器写说明、工具写前缀），所以从第一个 `{` 截到最后一个 `}`；
      * 只认提到 `ComicBookInfo` 的注释，别的注释一律忽略（不能把普通说明当元数据）。
      */
-    private fun comicBookInfoComment(comment: String): String? {
+    internal fun comicBookInfoComment(comment: String): String? {
         if (comment.length > ComicMetadataParser.MAX_METADATA_BYTES) return null
         if (!comment.contains("ComicBookInfo")) return null
         val start = comment.indexOf('{')

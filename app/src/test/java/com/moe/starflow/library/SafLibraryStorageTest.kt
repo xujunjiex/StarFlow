@@ -190,7 +190,7 @@ class SafLibraryStorageTest {
         assertEquals(result.failures.joinToString(), 1, result.added)
         val manga = com.moe.starflow.mangaimport.data.ImportedMangaStore.load(app).single()
         assertTrue(manga.description.contains("SAF summary"))
-        assertTrue(manga.description.contains("SAF author"))
+        assertEquals("SAF summary", manga.description)
         assertTrue(manga.sizeBytes >= png.size * 2)
         assertFalse(File(manga.localRoot, "002.png").exists())
     }
@@ -218,15 +218,164 @@ class SafLibraryStorageTest {
         val zip = File(app.cacheDir, "source.cbz")
         com.moe.starflow.utils.LibraryScanFixtures.zip(zip, "001.png" to com.moe.starflow.utils.LibraryScanFixtures.png())
         storage.writeNew("manga_import/My original name/original.cbz").use { it.write(zip.readBytes()) }
-        storage.writeNew("manga_import/My original name/meta.json").use { it.write("""{"series_title":"SPY×FAMILY","episode_label":"139話 前編"}""".toByteArray()) }
+        storage.writeNew("manga_import/My original name/meta.json").use { it.write("""{"series_title":"SPY×FAMILY","episode_label":"139話 前編","summary":"Imported summary"}""".toByteArray()) }
         val source = storage.uri("manga_import/My original name/original.cbz")
         val document = DocumentsContract.buildDocumentUri(AUTHORITY, DocumentsContract.getDocumentId(source))
         assertEquals("manga_import/My original name/original.cbz", (session.storage as SafLibraryStorage).pathForDocument(document, "manga_import"))
         val result = com.moe.starflow.mangaimport.data.MangaImporter.importArchive(session.context(), document, 12)
-        assertTrue(com.moe.starflow.utils.LogCollector.getFormattedLogs(), result.description.contains("SPY×FAMILY"))
+        assertTrue(com.moe.starflow.utils.LogCollector.getFormattedLogs(), result.description == "Imported summary")
         assertTrue(File(File(result.localRoot).parentFile, "meta.json").isFile)
         assertTrue(storage.exists("manga_import/My original name/original.cbz"))
         assertTrue(storage.exists("manga_import/My original name/meta.json"))
+    }
+
+    @Test fun safDescriptionReplacementNeedsNoRenameAndSurvivesPermissionFailure() = kotlinx.coroutines.runBlocking {
+        app.getSharedPreferences("library_locations", 0).edit().putString("tree", storage.tree.toString()).commit()
+        val session = LibrarySessions.current(app)
+        session.prepare()
+        storage.mkdir("manga_import/Work")
+        com.moe.starflow.mangaimport.data.ImportedMangaStore.add(app,
+            com.moe.starflow.mangaimport.data.ImportedManga(1, "Work", session.local("manga_import/Work").path,
+                false, coverPath = null, pageCount = 0, addedAt = 1))
+        session.flush()
+        val book = com.moe.starflow.mangaimport.data.ImportedMangaStore.load(app).single()
+        com.moe.starflow.mangaimport.data.ImportedMangaStore.editDescription(app, book, "First")
+        session.flush()
+        com.moe.starflow.mangaimport.data.ImportedMangaStore.editDescription(app, book, "Second")
+        session.flush()
+        val path = "manga_import/Work/starflow.json"
+        assertEquals("Second", org.json.JSONObject(storage.read(path).bufferedReader().use { it.readText() }).getString("descriptionOverride"))
+        assertFalse(session.local(path).isFile)
+        provider.accessible = false
+        com.moe.starflow.mangaimport.data.ImportedMangaStore.editDescription(app, book, "Offline edit")
+        runCatching { session.flush() }
+        assertEquals("Offline edit", com.moe.starflow.mangaimport.data.ImportedMangaStore.load(app).single().effectiveDescription)
+        assertTrue(session.database.catalog().pending().isNotEmpty())
+        provider.accessible = true
+        storage.invalidateLookups()
+        session.flush()
+        assertEquals("Offline edit", org.json.JSONObject(storage.read(path).bufferedReader().use { it.readText() }).getString("descriptionOverride"))
+        assertTrue(session.database.catalog().pending().isEmpty())
+    }
+
+    @Test fun safChapterSourcesUseTheCurrentIndexedContainer() = kotlinx.coroutines.runBlocking {
+        app.getSharedPreferences("library_locations", 0).edit().putString("tree", storage.tree.toString()).commit()
+        val session = LibrarySessions.current(app)
+        session.prepare()
+        storage.mkdir("manga_import/Collection")
+        val png = com.moe.starflow.utils.LibraryScanFixtures.png()
+        listOf("1", "2", "3").forEach { number ->
+            val file = File(app.cacheDir, "chapter-$number.cbz")
+            com.moe.starflow.utils.LibraryScanFixtures.zip(file, "001.png" to png,
+                "ComicInfo.xml" to "<ComicInfo><Summary>Chapter $number</Summary></ComicInfo>".toByteArray())
+            storage.writeNew("manga_import/Collection/$number.cbz").use { it.write(file.readBytes()) }
+        }
+        val result = LibraryScanner.scan(app, "manga")
+        assertTrue(result.failures.joinToString(), result.failures.isEmpty())
+        val book = com.moe.starflow.mangaimport.data.ImportedMangaStore.load(app).single()
+        val index = com.moe.starflow.mangaimport.data.MangaSourceIndex.load(session, book.sourceIndexPath)!!
+        val root = File(book.localRoot)
+        LibrarySources.acquire(root).use {
+            assertNull(BookMetadataReader.bookMetadata(root, index.chapters, index))
+            assertEquals("Chapter 3", BookMetadataReader.chapterMetadata(root, index.chapters[2], index)?.summary)
+        }
+        assertEquals("", book.effectiveDescription)
+    }
+
+    @Test fun interruptedSafReplacementCanPublishANewerRevision() = kotlinx.coroutines.runBlocking {
+        app.getSharedPreferences("library_locations", 0).edit().putString("tree", storage.tree.toString()).commit()
+        val session = LibrarySessions.current(app)
+        session.prepare()
+        storage.mkdir("manga_import/Work")
+        com.moe.starflow.mangaimport.data.ImportedMangaStore.add(app,
+            com.moe.starflow.mangaimport.data.ImportedManga(1, "Work", session.local("manga_import/Work").path,
+                false, coverPath = null, pageCount = 0, addedAt = 1))
+        session.flush()
+        val book = com.moe.starflow.mangaimport.data.ImportedMangaStore.load(app).single()
+        provider.failFinalWrites = true
+        com.moe.starflow.mangaimport.data.ImportedMangaStore.editDescription(app, book, "Interrupted")
+        session.flush()
+        val path = "manga_import/Work/starflow.json"
+        assertEquals(path, session.database.catalog().meta("metadataReplacing:${book.bookUuid}"))
+        assertTrue(session.database.catalog().pending().isNotEmpty())
+        com.moe.starflow.mangaimport.data.ImportedMangaStore.editDescription(app, book, "Newer edit")
+        session.flush()
+        assertEquals("Newer edit", com.moe.starflow.mangaimport.data.ImportedMangaStore.load(app).single().effectiveDescription)
+        provider.failFinalWrites = false
+        session.flush()
+        assertEquals("Newer edit", org.json.JSONObject(session.storage.read(path).bufferedReader().use { it.readText() }).getString("descriptionOverride"))
+        assertTrue(session.database.catalog().pending().isEmpty())
+        assertTrue(session.database.catalog().meta("metadataReplacing:${book.bookUuid}").isNullOrBlank())
+    }
+
+    @Test fun lateChapterReadCannotOverwriteNewChapterAndUnreadableMetadataIsDistinctFromAbsence() = kotlinx.coroutines.runBlocking {
+        app.getSharedPreferences("library_locations", 0).edit().putString("tree", storage.tree.toString()).commit()
+        val session = LibrarySessions.current(app)
+        session.prepare()
+        val source = "manga_import/Reading"
+        storage.mkdir(source)
+        (1..2).forEach { n ->
+            storage.mkdir("$source/$n")
+            storage.writeNew("$source/$n/001.png").use { it.write(com.moe.starflow.utils.LibraryScanFixtures.png()) }
+            storage.writeNew("$source/$n/meta.json").use { it.write("""{"summary":"Chapter $n"}""".toByteArray()) }
+        }
+        LibraryScanner.scan(app, "manga")
+        val book = com.moe.starflow.mangaimport.data.ImportedMangaStore.load(app).single()
+        val entered = java.util.concurrent.CountDownLatch(1)
+        val release = java.util.concurrent.CountDownLatch(1)
+        val finished = java.util.concurrent.CountDownLatch(1)
+        provider.beforeOpen = { file, mode ->
+            if (mode == "r" && file.replace('\\', '/').endsWith("/Reading/1/meta.json")) {
+                entered.countDown()
+                check(release.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                finished.countDown()
+            }
+        }
+        val intent = android.content.Intent(app, BookDataActivity::class.java).putExtra("location", session.locationId)
+            .putExtra("kind", "manga").putExtra("uuid", book.bookUuid)
+        val controller = org.robolectric.Robolectric.buildActivity(BookDataActivity::class.java, intent).setup()
+        val activity = controller.get()
+        fun texts(view: android.view.View = activity.window.decorView): List<String> = when (view) {
+            is android.widget.TextView -> listOf(view.text.toString())
+            is android.view.ViewGroup -> (0 until view.childCount).flatMap { texts(view.getChildAt(it)) }
+            else -> emptyList()
+        }
+        fun awaitCondition(condition: () -> Boolean) {
+            val deadline = System.nanoTime() + 8_000_000_000L
+            while (System.nanoTime() < deadline) {
+                org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+                if (condition()) return
+                Thread.sleep(10)
+            }
+            fail("Condition not reached; text=${texts()}")
+        }
+        try {
+            awaitCondition { entered.count == 0L }
+            com.moe.starflow.mangaimport.data.ImportedMangaStore.patch(app, book) { it.copy(lastReadPage = 1, lastReadAt = 100) }
+            awaitCondition { "Chapter 2" in texts() }
+            release.countDown()
+            awaitCondition { finished.count == 0L }
+            // Drain the late result after allowing the blocked provider read to return.
+            repeat(20) {
+                org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+                Thread.sleep(10)
+            }
+            assertTrue("Chapter 2" in texts())
+            assertFalse("Chapter 1" in texts())
+        } finally {
+            release.countDown(); provider.beforeOpen = null
+            controller.pause().stop().destroy()
+        }
+        provider.beforeOpen = { file, mode ->
+            if (mode == "r" && file.endsWith("meta.json")) throw FileNotFoundException("metadata unreadable")
+        }
+        val index = com.moe.starflow.mangaimport.data.MangaSourceIndex.load(session, book.sourceIndexPath)!!
+        LibrarySources.acquire(File(book.localRoot)).use {
+            assertThrows(Exception::class.java) { BookMetadataReader.chapterMetadata(File(book.localRoot), index.chapters[1], index) }
+            provider.beforeOpen = null
+            storage.delete("$source/2/meta.json")
+            assertNull(BookMetadataReader.chapterMetadata(File(book.localRoot), index.chapters[1], index))
+        }
     }
 
     private class OpaqueProvider(private val directory: File) : DocumentsProvider() {
@@ -235,7 +384,9 @@ class SafLibraryStorageTest {
             "token-a" to Node("token-a", "Chosen", null, File(directory, "a").apply { mkdirs() }, true),
             "token-b" to Node("token-b", "Other", null, File(directory, "b").apply { mkdirs() }, true),
         )
-        var accessible = true
+        @Volatile var accessible = true
+        @Volatile var failFinalWrites = false
+        @Volatile var beforeOpen: ((String, String) -> Unit)? = null
         var space: Long? = 1234
         var childQueries = 0
         override fun onCreate() = true
@@ -278,7 +429,13 @@ class SafLibraryStorageTest {
         }
         override fun openDocument(documentId: String, mode: String, signal: CancellationSignal?): ParcelFileDescriptor {
             checkAccess()
-            return ParcelFileDescriptor.open(nodes.getValue(documentId).file, ParcelFileDescriptor.parseMode(mode))
+            val file = nodes.getValue(documentId).file
+            beforeOpen?.invoke(file.path, mode)
+            if (failFinalWrites && file.name == "starflow.json" && 'w' in mode) {
+                file.writeText("partial")
+                throw FileNotFoundException("Interrupted final write")
+            }
+            return ParcelFileDescriptor.open(file, ParcelFileDescriptor.parseMode(mode))
         }
         override fun deleteDocument(documentId: String) {
             checkAccess()

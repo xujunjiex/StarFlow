@@ -10,7 +10,7 @@ package com.moe.starflow.mangaimport.data
  *              分辨率口径收在 `PdfRasterPolicy`（那两处是 PDF 的读取真值，别在别处另算一套）
  * @param coverPath 封面缩略图绝对路径 filesDir/covers/<id>_<ts>.jpg，可为 null
  * @param sizeBytes 本地副本总大小（zip=文件大小，目录=图片总大小）
- * @param description 用户添加的简介/备注，可为空
+ * @param description 源资料或旧版本生成的简介；人工编辑保存在 descriptionOverride
  * @param translatedPath 译文缓存路径（三态切换「译文」态用），阶段一恒为 null
  * @param lastReadPage 断点续读的阅读进度，阶段一仅保存/恢复页号
  * @param lost 该条目本地文件是否已丢失（被手动删除等）。**瞬态标记，不入库**——由书架刷新时
@@ -75,7 +75,12 @@ data class ImportedManga(
     val ignoredMissingRecordKeys: String = "[]",
     /** 书级标签（不再拼进简介正文；书架行与作品数据页用 chips 展示、点击复制）。 */
     val tags: List<String> = emptyList(),
+    /** null adopts the source/legacy description; empty explicitly hides it. */
+    val descriptionOverride: String? = null,
+    val descriptionRevision: String = "",
+    val lastReadAt: Long = 0,
 ) {
+    val effectiveDescription: String get() = descriptionOverride ?: description
     /** 章数（至少 1：单章漫画也算一章）。 */
     val chapterCount: Int get() = chapters.size.coerceAtLeast(1)
 

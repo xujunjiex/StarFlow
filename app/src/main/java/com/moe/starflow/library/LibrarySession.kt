@@ -20,7 +20,8 @@ import kotlin.coroutines.Continuation
 import kotlin.coroutines.intrinsics.startCoroutineUninterceptedOrReturn
 import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
 
-data class LibrarySaveState(val saving: Boolean = false, val pending: Int = 0, val error: String? = null)
+data class LibrarySaveState(val saving: Boolean = false, val pending: Int = 0, val error: String? = null,
+    val metadataOnlyError: Boolean = false)
 
 private const val TAG = "LibrarySession"
 
@@ -429,7 +430,7 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
         if (closed) emptyList() else try { catalog.books(kind) }
         catch (e: Exception) {
             readOnly = true
-            saveState.value = saveState.value.copy(error = e.message ?: e.javaClass.simpleName)
+            saveState.value = saveState.value.copy(error = e.message ?: e.javaClass.simpleName, metadataOnlyError = false)
             emptyList()
         }
     }
@@ -442,7 +443,7 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
             enqueue(JSONObject().put("component", "asset").put("path", path).put("revision", revision))
         }
         flush()
-        if (saveState.value.error != null) throw IOException(saveState.value.error)
+        if (hasPendingSourceFiles()) throw IOException(saveState.value.error)
     }
     fun publishRevision(logical: File, pending: File, cleanupAssets: List<File> = emptyList()) {
         val path = relative(logical)
@@ -453,7 +454,7 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
                 .put("cleanupAssets", JSONArray(cleanupAssets.map(::relative))))
         }
         flush()
-        if (saveState.value.pending != 0) throw IOException("未保存到书库：${saveState.value.error}")
+        if (hasPendingSourceFiles()) throw IOException("未保存到书库：${saveState.value.error}")
     }
     fun deleteArtifact(file: File) {
         val path = relative(file)
@@ -462,7 +463,7 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
             enqueue(JSONObject().put("component", "asset").put("path", path).put("remove", true).put("cleanup", actual))
         }
         flush()
-        if (saveState.value.pending != 0) throw IOException("未保存到书库")
+        if (hasPendingSourceFiles()) throw IOException("未保存到书库")
     }
 
     fun uuid(kind: String, id: Long): String = synchronized(this) {
@@ -535,6 +536,7 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
     }
     private fun discardBookFileOperations(uuid: String) {
         catalog.pending().filter { it.body.contains(uuid) }.forEach { catalog.acknowledge(it.sequence) }
+        catalog.meta(LibraryMeta("metadataError:$uuid", ""))
     }
     fun removeBook(kind: String, id: Long) {
         database.runInTransaction {
@@ -570,6 +572,9 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
         saveState.value = saveState.value.copy(saving = true, pending = pending)
         scope.launch { runCatching { flush() } }
     }
+    internal fun hasPendingSourceFiles(): Boolean = catalog.pending().any {
+        JSONObject(it.body).optString("component") != "metadata"
+    }
     fun flush() = synchronized(ioLock) {
         if (readOnly) throw IOException(saveState.value.error ?: "书库记录不可写；已停止覆盖")
         if (!prepared) return@synchronized
@@ -577,6 +582,7 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
             validateManifest(readManifest())
             saveState.value = LibrarySaveState(saving = catalog.pending().isNotEmpty(), pending = catalog.pending().size)
             if (catalog.meta("legacyDirectoryCleanup") == "pending") migrateDirectoryRecords()
+            var metadataError: String? = null
             catalog.pending().forEach { write ->
                 val operation = JSONObject(write.body)
                 val component = operation.optString("component")
@@ -603,6 +609,17 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
                     if (path.isNotBlank() && latest != null && !latest.deleting && JSONObject(latest.body).optString("sourceIndexPath") == path) publishTree(path)
                 }
                 if (component == "asset" && !operation.optBoolean("remove")) publishTree(operation.getString("revision"))
+                if (component == "metadata") try {
+                    MangaDescriptions.publish(this, operation)
+                    catalog.meta(LibraryMeta("metadataError:${operation.getString("uuid")}", ""))
+                }
+                catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    metadataError = e.message ?: e.javaClass.simpleName
+                    catalog.meta(LibraryMeta("metadataError:${operation.getString("uuid")}", metadataError!!))
+                    LogCollector.w(TAG, "简介文件副本等待重试：$metadataError")
+                    return@forEach
+                }
                 // Existing outbox rows are already applied to the authoritative local records.
                 // Only asset references and old deferred removals need their final local commit.
                 database.runInTransaction {
@@ -636,7 +653,8 @@ class LibrarySession internal constructor(val app: Context, val storage: Library
                 local(path).delete()
                 catalog.meta(LibraryMeta(item.name, "complete"))
             }
-            saveState.value = LibrarySaveState(pending = catalog.pending().size)
+            saveState.value = LibrarySaveState(pending = catalog.pending().size, error = metadataError,
+                metadataOnlyError = metadataError != null)
         } catch (e: Exception) {
             readOnly = e is LibraryIdentityException || e is org.json.JSONException || e.message?.contains("停止覆盖") == true
             saveState.value = LibrarySaveState(pending = runCatching { catalog.pending().size }.getOrDefault(saveState.value.pending), error = e.message ?: e.javaClass.simpleName)

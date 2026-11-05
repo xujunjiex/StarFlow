@@ -51,7 +51,10 @@ object ImportedMangaStore {
     private fun persist(context: Context, value: ImportedManga) {
         val session = com.moe.starflow.library.LibrarySessions.forLocation(context, value.libraryLocationId)
         val uuid = value.bookUuid.ifEmpty { session.uuid("manga", value.id) }
-        val json = value.toJson().put("bookUuid", uuid)
+        val existing = session.database.catalog().book("manga", value.id)
+        val restored = if (existing == null && value.descriptionRevision.isEmpty())
+            com.moe.starflow.library.MangaDescriptions.restore(value) else value
+        val json = restored.toJson().put("bookUuid", uuid)
             .put("localRoot", session.relative(File(value.localRoot)))
         val old = session.database.catalog().book("manga", value.id)?.let { JSONObject(it.body) }
         val cover = value.coverPath
@@ -77,8 +80,47 @@ object ImportedMangaStore {
     fun patch(context: Context, value: ImportedManga, change: (ImportedManga) -> ImportedManga) {
         val session = com.moe.starflow.library.LibrarySessions.forLocation(context, value.libraryLocationId)
         val pinned = session.context()
-        val latest = load(pinned).firstOrNull { it.id == value.id && (value.bookUuid.isEmpty() || it.bookUuid == value.bookUuid) } ?: return
-        persist(pinned, change(latest))
+        session.database.runInTransaction {
+            val row = (if (value.bookUuid.isEmpty()) session.database.catalog().book("manga", value.id)
+                else session.database.catalog().byUuid(value.bookUuid))?.takeIf { it.kind == "manga" && it.id == value.id }
+                ?: return@runInTransaction
+            // Do not acquire catalogReadLock while holding Room's transaction lock.
+            val stored = JSONObject(row.body).toManga()
+            val latest = stored.copy(bookUuid = row.uuid, libraryLocationId = session.locationId,
+                localRoot = session.local(row.source).path, coverPath = stored.coverPath?.let(session::cover))
+            persist(pinned, change(latest))
+        }
+    }
+
+    /** The catalog and portable-file intent commit together; source I/O never holds the store monitor. */
+    fun editDescription(context: Context, value: ImportedManga, text: String?) {
+        require(JSONObject().put("descriptionOverride", text ?: JSONObject.NULL).toString().toByteArray(Charsets.UTF_8).size <
+            ComicMetadataParser.MAX_METADATA_BYTES - 1024) { context.getString(com.moe.starflow.R.string.import_desc_too_long) }
+        val session = com.moe.starflow.library.LibrarySessions.forLocation(context, value.libraryLocationId)
+        val expected = session.database.catalog().byUuid(value.bookUuid)?.takeIf { it.kind == "manga" && it.id == value.id }
+            ?: throw java.io.IOException(context.getString(com.moe.starflow.R.string.book_reference_expired))
+        val before = JSONObject(expected.body)
+        val original = if (text == null) try {
+            com.moe.starflow.library.MangaDescriptions.original(session, before.toManga().copy(localRoot = session.local(expected.source).path))
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            com.moe.starflow.utils.LogCollector.w("MangaDescriptions", "源简介不可读，恢复已缓存的原始简介：${e.message}")
+            null
+        } else null
+        val revision = java.util.UUID.randomUUID().toString()
+        synchronized(this) { session.database.runInTransaction {
+            session.assertWritable(com.moe.starflow.library.BookRef(session.locationId, "manga", value.bookUuid).key)
+            val current = session.database.catalog().byUuid(value.bookUuid)!!
+            val body = JSONObject(current.body)
+            if (original != null && current.source == expected.source &&
+                body.optString("sourceIndexPath") == before.optString("sourceIndexPath") &&
+                body.optString("description") == before.optString("description")) body.put("description", original)
+            body.put("descriptionOverride", text ?: JSONObject.NULL).put("descriptionRevision", revision)
+            session.putBook("manga", current.id, body)
+            com.moe.starflow.library.MangaDescriptions.enqueue(session, current.uuid, revision)
+        } }
+        com.moe.starflow.library.LibrarySessions.changes.value += 1
+        session.scheduleFlush()
     }
 
     @Synchronized
@@ -147,6 +189,8 @@ object ImportedMangaStore {
         put("addedAt", addedAt)
         put("sizeBytes", sizeBytes)
         put("description", description)
+        put("descriptionOverride", descriptionOverride ?: JSONObject.NULL)
+        put("descriptionRevision", descriptionRevision)
         // 标签是 chips 的数据源（不再拼进简介正文）。空表也写，保持清单自解释。
         put("tags", JSONArray(tags))
         put("metadataVersion", metadataVersion)
@@ -162,6 +206,7 @@ object ImportedMangaStore {
         put("ignoredMissingRecordKeys", ignoredMissingRecordKeys)
         put("translatedPath", translatedPath ?: JSONObject.NULL)
         put("lastReadPage", lastReadPage)
+        put("lastReadAt", lastReadAt)
         // ⚠️ 页序迁移标记**必须持久化**：不写的话读回恒为默认 0，`MangaPageOrderMigrator`
         // 的 "已经迁过就跳过" 判据永远为假 → **每次打开阅读器都再跑一次页序置换**
         // （置换不是幂等的，译文会被一次次挪到别的图上）。
@@ -185,6 +230,8 @@ object ImportedMangaStore {
         addedAt = getLong("addedAt"),
         sizeBytes = optLong("sizeBytes", 0),
         description = optString("description", ""),
+        descriptionOverride = if (isNull("descriptionOverride")) null else getString("descriptionOverride"),
+        descriptionRevision = optString("descriptionRevision"),
         metadataVersion = optInt("metadataVersion", 0),
         sourceIndexPath = optString("sourceIndexPath"),
         titleOrigin = optString("titleOrigin", "user"),
@@ -196,12 +243,13 @@ object ImportedMangaStore {
         sourceNoticeSeen = optString("sourceNoticeSeen"),
         missingRecordKeys = optString("missingRecordKeys", "[]"),
         ignoredMissingRecordKeys = optString("ignoredMissingRecordKeys", "[]"),
-        // 老清单没有 tags 键 → 空表（随后由扫描迁移从旧简介的「标签：」行回填）
+        // 老清单没有 tags 键 → 空表；扫描读取并核实作品元数据后回填
         tags = optJSONArray("tags")?.let { arr ->
             (0 until arr.length()).mapNotNull { index -> arr.optString(index).takeIf(String::isNotBlank) }
         }.orEmpty(),
         translatedPath = if (isNull("translatedPath")) null else getString("translatedPath"),
         lastReadPage = optInt("lastReadPage", 0),
+        lastReadAt = optLong("lastReadAt"),
         // 缺失 = 0 = 还没迁移（老条目语义），与 toJson 的「非 0 才写」配对
         pageOrderVersion = optInt("pageOrderVersion", 0),
         pageOrderPlan = optString("pageOrderPlan", ""),

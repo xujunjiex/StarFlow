@@ -20,6 +20,7 @@ interface LibraryCatalogDao {
     @Query("SELECT COALESCE(MAX(id), 0) FROM library_book WHERE kind = :kind") fun maxId(kind: String): Long
     @Query("SELECT * FROM library_book WHERE kind = :kind AND id = :id") fun book(kind: String, id: Long): LibraryBook?
     @Query("SELECT * FROM library_book WHERE uuid = :uuid LIMIT 1") fun byUuid(uuid: String): LibraryBook?
+    @Query("SELECT * FROM library_book WHERE uuid = :uuid LIMIT 1") fun observeBook(uuid: String): kotlinx.coroutines.flow.Flow<LibraryBook?>
     @Insert(onConflict = OnConflictStrategy.REPLACE) fun put(book: LibraryBook)
     @Query("DELETE FROM library_book WHERE kind = :kind AND id = :id") fun remove(kind: String, id: Long)
     @Query("SELECT * FROM library_outbox ORDER BY sequence") fun pending(): List<LibraryWrite>

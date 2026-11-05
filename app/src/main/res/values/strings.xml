@@ -2125,6 +2125,7 @@
     <string name="book_meta_pages_label">Pages</string>
     <string name="book_meta_date_label">Published</string>
     <string name="book_chapter_meta_title">Current chapter</string>
+    <string name="book_chapter_meta_empty">No chapter metadata</string>
     <string name="book_chapter_meta_unreadable">Source unavailable: chapter info cannot be read</string>
     <string name="book_tag_copied">Tag copied</string>
     <string name="book_chapter_prev">Previous chapter</string>
@@ -2133,4 +2134,8 @@
     <string name="book_tags_collapse">Show less</string>
     <string name="book_open_folder">Open folder</string>
     <string name="book_meta_book_label">Book info</string>
+    <string name="import_desc_restore">Restore original</string>
+    <string name="import_desc_saved">Description saved</string>
+    <string name="import_desc_saved_pending">Description saved in app. The companion file is pending; retry in work data or library storage.</string>
+    <string name="import_desc_too_long">Description is too long to save.</string>
 </resources>

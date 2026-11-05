@@ -56,7 +56,7 @@ object LibraryShelfBinding {
         scope.launch {
             fragment.viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
                 if (isActive()) {
-                    LibrarySessions.current(fragment.requireContext()).saveState.value.error?.let {
+                    LibrarySessions.current(fragment.requireContext()).saveState.value.takeIf { !it.metadataOnlyError }?.error?.let {
                         LibraryStorageDialog.offerRecovery(fragment, it)
                     }
                     LibraryScanner.consumeReport(LibrarySessions.current(fragment.requireContext()).locationId, kind)?.let(::scanReport)

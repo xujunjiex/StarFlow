@@ -71,7 +71,10 @@ object BookData {
         }.also { data ->
             val book = resolve(context, ref).second
             data.put("availability", runCatching { availability(session, book).name }.getOrDefault(SourceAvailability.UNREADABLE.name))
-            data.put("saveError", session.saveState.value.error ?: JSONObject.NULL)
+            val ownPending = data.getJSONArray("pendingWrites")
+            val pendingSourceFiles = (0 until ownPending.length()).any { ownPending.getJSONObject(it).optString("component") != "metadata" }
+            data.put("saveError", session.database.catalog().meta("metadataError:${ref.uuid}")?.takeIf(String::isNotBlank)
+                ?: session.saveState.value.error?.takeIf { pendingSourceFiles } ?: JSONObject.NULL)
             data.put("sourceIssue", session.sourceIssues[book.source] ?: JSONObject.NULL)
             runCatching { com.moe.starflow.mangaimport.data.MangaSourceIndex.load(session, JSONObject(book.body).optString("sourceIndexPath")) }.getOrNull()?.let { index ->
                 data.put("sourceSummary", JSONObject().put("knownPages", index.pages.size)

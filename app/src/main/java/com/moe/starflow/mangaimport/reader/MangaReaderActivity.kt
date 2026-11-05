@@ -311,6 +311,9 @@ class MangaReaderActivity : AppCompatActivity() {
                 else -> manga.lastReadPage
             }
             goToPage(startPage.coerceIn(0, (source.size - 1).coerceAtLeast(0)))
+            if (source.size > 0) ImportedMangaStore.patch(applicationContext, manga) {
+                it.copy(lastReadPage = startPage.coerceIn(0, source.size - 1), lastReadAt = System.currentTimeMillis())
+            }
             com.moe.starflow.library.BookSourceChangeDialog.show(this@MangaReaderActivity, manga)
 
             // 阅读器内嵌翻译：载入每页记录（含失败/成功态），接右下角翻译按钮与进度条。
@@ -659,7 +662,7 @@ class MangaReaderActivity : AppCompatActivity() {
             currentPage = target
             if (animationMode == 0) animState.anchorPage = target
             lastTranslateClickMs = 0L
-            ImportedMangaStore.patch(applicationContext, manga) { it.copy(lastReadPage = target) }
+            ImportedMangaStore.patch(applicationContext, manga) { it.copy(lastReadPage = target, lastReadAt = System.currentTimeMillis()) }
             translationController?.onCurrentPageChanged()
             refreshOverlay()
         }
@@ -766,7 +769,7 @@ class MangaReaderActivity : AppCompatActivity() {
             currentPage = position.coerceIn(0, (source.size - 1).coerceAtLeast(0))
             // 无动画模式：选中后锚点同步到新页，避免下次拖拽时还把上一页钉在中心
             if (animationMode == 0) animState.anchorPage = currentPage
-            ImportedMangaStore.patch(applicationContext, manga) { it.copy(lastReadPage = currentPage) }
+            ImportedMangaStore.patch(applicationContext, manga) { it.copy(lastReadPage = currentPage, lastReadAt = System.currentTimeMillis()) }
             // 翻页后重置双击判定窗口：否则「单击 → 翻页 → 300ms 内再单击」会被当成双击，
             // 直接取消翻译（连击状态在 Activity 这侧，controller 的 onCurrentPageChanged 管不到）
             cancelPendingManualTranslateClick()
@@ -905,7 +908,7 @@ class MangaReaderActivity : AppCompatActivity() {
             // Webtoon：定位到顶部（scrollToPosition 不保证贴顶）
             (binding.webtoonList.layoutManager as? LinearLayoutManager)?.scrollToPositionWithOffset(p, 0)
             currentPage = p
-            ImportedMangaStore.patch(applicationContext, manga) { it.copy(lastReadPage = p) }
+            ImportedMangaStore.patch(applicationContext, manga) { it.copy(lastReadPage = p, lastReadAt = System.currentTimeMillis()) }
             refreshOverlay()
             return
         }
@@ -1019,7 +1022,7 @@ class MangaReaderActivity : AppCompatActivity() {
         val page = first.coerceIn(0, (source.size - 1).coerceAtLeast(0))
         if (page == currentPage) return
         currentPage = page
-        ImportedMangaStore.patch(applicationContext, manga) { it.copy(lastReadPage = currentPage) }
+        ImportedMangaStore.patch(applicationContext, manga) { it.copy(lastReadPage = currentPage, lastReadAt = System.currentTimeMillis()) }
         refreshOverlay()
         // 只预热当前位置上下几页：Webtoon 可能上百页，一次渲染全部会爆内存
         translationController?.prewarmWebtoon(currentPage)
@@ -2589,7 +2592,7 @@ class MangaReaderActivity : AppCompatActivity() {
                 onDownload = { showDownloadDialog() },
                 onBookData = { com.moe.starflow.library.BookDataActivity.open(this@MangaReaderActivity,
                     com.moe.starflow.library.BookRef(manga.libraryLocationId, "manga", manga.bookUuid),
-                    chapterNumber = manga.chapterOfPage(currentPage)?.number ?: -1) },
+                    currentPage = currentPage) },
                 onSettings = {
                     // 从个性化设置返回后重建阅读器（配置项要重新读取才生效，见 onStart）。
                     // 顺带记下翻译模式：控制器随 Activity 一起重建，不恢复的话自动/增量会退回手动。

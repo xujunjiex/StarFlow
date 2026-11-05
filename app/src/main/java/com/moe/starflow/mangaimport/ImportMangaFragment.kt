@@ -454,15 +454,15 @@ class ImportMangaFragment : Fragment() {
         }
     }
 
-    /** 编辑简介（单选）：弹多行输入框设置 description。 */
+    /** 编辑整部简介（单选）：设置人工覆盖或恢复原始简介。 */
     private fun editDesc() {
         val id = adapter.selectedIds().firstOrNull() ?: return
         val manga = ImportedMangaStore.load(requireContext()).firstOrNull { it.id == id } ?: return
 
         val editText = EditText(requireContext()).apply {
             hint = getString(R.string.import_desc_hint)
-            setText(manga.description)
-            setSelection(manga.description.length)
+            setText(manga.effectiveDescription)
+            setSelection(manga.effectiveDescription.length)
             gravity = android.view.Gravity.TOP or android.view.Gravity.START
             minLines = 3
         }
@@ -471,19 +471,46 @@ class ImportMangaFragment : Fragment() {
             setPadding(pad, pad / 2, pad, 0)
             addView(editText)
         }
+        val pinned = com.moe.starflow.library.LibrarySessions.forLocation(requireContext(), manga.libraryLocationId).context()
         val dialog = AlertDialog.Builder(requireContext())
             .setTitle(R.string.import_desc_title)
             .setView(container)
-            .setPositiveButton(R.string.confirm, null) // 在 show 后再绑定，避免自动关闭
+            .setPositiveButton(R.string.confirm, null)
+            .setNeutralButton(R.string.import_desc_restore, null)
             .setNegativeButton(R.string.cancel, null)
             .create()
         dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                ImportedMangaStore.patch(requireContext(), manga) { it.copy(description = editText.text.toString().trim()) }
-                dialog.dismiss()
-                // 确认后再刷新，简介立即更新到详情列表
-                refresh()
+            fun save(text: String?) {
+                listOf(AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEUTRAL, AlertDialog.BUTTON_NEGATIVE)
+                    .forEach { dialog.getButton(it).isEnabled = false }
+                dialog.setCancelable(false)
+                val saveJob = com.moe.starflow.library.LibrarySessions.launch(pinned, viewLifecycleOwner.lifecycleScope) {
+                    try {
+                        val pending = withContext(Dispatchers.IO) {
+                            ImportedMangaStore.editDescription(pinned, manga, text)
+                            val session = com.moe.starflow.library.LibrarySessions.current(pinned)
+                            session.database.catalog().pending().any {
+                                org.json.JSONObject(it.body).let { op -> op.optString("component") == "metadata" && op.optString("uuid") == manga.bookUuid }
+                            }
+                        }
+                        dialog.dismiss()
+                        context?.let { AppNotice.show(it, getString(if (pending) R.string.import_desc_saved_pending else R.string.import_desc_saved)) }
+                        refresh()
+                    } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                    catch (e: Exception) {
+                        editText.error = e.message ?: getString(R.string.book_data_load_failed)
+                    } finally {
+                        listOf(AlertDialog.BUTTON_POSITIVE, AlertDialog.BUTTON_NEUTRAL, AlertDialog.BUTTON_NEGATIVE)
+                            .forEach { dialog.getButton(it).isEnabled = true }
+                        dialog.setCancelable(true)
+                    }
+                }
+                saveJob.invokeOnCompletion { cause ->
+                    if (cause is kotlinx.coroutines.CancellationException) activity?.runOnUiThread { dialog.dismiss() }
+                }
             }
+            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { save(editText.text.toString().trim()) }
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener { save(null) }
         }
         dialog.show()
         dialog.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
@@ -499,8 +526,8 @@ class ImportMangaFragment : Fragment() {
         ids.forEach { id ->
             val m = list.firstOrNull { it.id == id } ?: return@forEach
             val target = if (read) (m.pageCount - 1).coerceAtLeast(0) else 0
-            if (target != m.lastReadPage) {
-                ImportedMangaStore.patch(requireContext(), m) { it.copy(lastReadPage = target) }
+            if (target != m.lastReadPage || read != (m.lastReadAt > 0)) {
+                ImportedMangaStore.patch(requireContext(), m) { it.copy(lastReadPage = target, lastReadAt = if (read) System.currentTimeMillis() else 0) }
             }
         }
         adapter.exitSelection()

@@ -78,32 +78,41 @@ object LibraryScanner {
                     try { session.sourcePresence[book.source] = sourceExists(book.source) }
                     catch (e: Exception) { failures += "${session.storage.displayPath}/${book.source}：[检查来源] ${e.message}" }
                 }
-                // 老简介里残留的「来源」行（第三方链接）与「标签」行：一次性迁移 —— 来源删除，
-                // 标签搬进 `tags` 供 chips 展示；迁移后条件不再命中，不会每趟扫描重复写库。
+                // Novel legacy formatting is unchanged. Manga text requires full metadata verification below.
                 val sourcePrefix = pinned.getString(com.moe.starflow.R.string.comic_meta_source, "").trim()
-                val tagsPrefix = pinned.getString(com.moe.starflow.R.string.comic_meta_tags, "").trim()
                 val staleDescriptions = known.filter { book ->
                     val body = org.json.JSONObject(book.body)
                     val description = body.optString("description")
-                    if (book.deleting || description.isBlank()) return@filter false
-                    if (ComicMetadataParser.stripSourceLines(description, sourcePrefix) != description) return@filter true
-                    kind == "manga" && (body.optJSONArray("tags")?.length() ?: 0) == 0 &&
-                        ComicMetadataParser.extractTagsLine(description, tagsPrefix).first.isNotEmpty()
+                    if (kind == "manga" || book.deleting || description.isBlank()) return@filter false
+                    ComicMetadataParser.stripSourceLines(description, sourcePrefix) != description
                 }.mapTo(mutableSetOf()) { it.uuid }
                 if (staleDescriptions.isNotEmpty()) {
                     coroutineContext.ensureActive()
                     try {
-                        normalizeDescriptions(pinned, kind, staleDescriptions, sourcePrefix, tagsPrefix)
+                        normalizeDescriptions(pinned, staleDescriptions, sourcePrefix)
                     } catch (e: CancellationException) { throw e }
                     catch (e: Exception) { failures += "[清理简介] ${e.message}" }
                 }
-                // Repair descriptions missed by the previous importer once; never replace edits.
-                val repairs = known.filter {
-                    val body = org.json.JSONObject(it.body)
-                    !it.deleting && !(kind == "novel" && body.optInt("chapterCount") == 0) && session.sourcePresence[it.source] == true && body.optString("description").isBlank() && body.optInt("metadataVersion") < BookMetadataReader.VERSION
-                }
                 if (kind == "manga") MangaDirectoryUpdates.refresh(pinned, session, known, failures, listings)
                 else refreshEmptyNovels(pinned, session, known, failures)
+                // Metadata-only changes refresh source fields without touching overrides or page layout.
+                val repairs = known.mapNotNull { previous ->
+                    val book = session.database.catalog().byUuid(previous.uuid) ?: return@mapNotNull null
+                    val body = org.json.JSONObject(book.body)
+                    if (book.deleting || session.sourcePresence[book.source] != true) return@mapNotNull null
+                    if (kind == "novel") return@mapNotNull book.takeIf {
+                        body.optInt("chapterCount") != 0 && body.optString("description").isBlank() &&
+                            body.optInt("metadataVersion") < BookMetadataReader.VERSION
+                    }
+                    try {
+                        book.takeIf { session.database.catalog().meta("metadataRead${BookMetadataReader.VERSION}:${book.uuid}") !=
+                            metadataFingerprint(session, book) }
+                    } catch (e: CancellationException) { throw e }
+                    catch (e: Exception) {
+                        LogCollector.w("LibraryScanner", "作品元数据检查跳过：${book.source}; ${e.message}")
+                        null
+                    }
+                }
                 val candidates = discover(session, root, known, kind, failures, listings)
                 val total = repairs.size + candidates.size
                 state.value = state.value.copy(total = total)
@@ -112,14 +121,13 @@ object LibraryScanner {
                     try {
                         backfillDescription(pinned, session, book)
                     } catch (e: CancellationException) { throw e }
-                    catch (e: Exception) { failures += "${session.storage.displayPath}/${book.source}：[读取元数据] ${e.message}" }
+                    catch (e: Exception) { LogCollector.w("LibraryScanner", "作品元数据暂未更新：${book.source}; ${e.message}") }
                     state.value = state.value.copy(done = index + 1, failures = failures.toList())
                 }
                 // 一次性清理：根目录没有元数据的漫画，清掉旧版本从章节/包内拼进书简介的文字。
                 // ⚠️ 失败必须静音（不写 failures）——扫描错误会触发书库恢复/重建提示。
                 if (kind == "manga") {
-                    runCatching { clearStaleMangaDescriptions(pinned, session, known) }
-                        .onFailure { LogCollector.i("LibraryScanner", "清理旧简介跳过: ${it.message}") }
+                    clearStaleMangaDescriptions(pinned, session, known)
                 }
                 candidates.forEachIndexed { index, node ->
                     val id = if (kind == "manga") ImportManager.reserveScanId(pinned, null)
@@ -172,7 +180,7 @@ object LibraryScanner {
                         session.sourcePresence[sourcePath] = true
                         stage = "提交书库"
                         session.flush()
-                        if (session.saveState.value.pending != 0) throw java.io.IOException("未保存到书库：${session.saveState.value.error}")
+                        if (session.hasPendingSourceFiles()) throw java.io.IOException("未保存到书库：${session.saveState.value.error}")
                         if (emptyDirectory) {
                             val notice = pinned.getString(com.moe.starflow.R.string.library_empty_directory_added, node.path)
                             informational += notice; failures += notice
@@ -228,69 +236,41 @@ object LibraryScanner {
         }
     }
 
-    /**
-     * 迁移历史简介：删「来源」行、把「标签」行搬进 `tags`。
-     *
-     * 判据是**本地化前缀**，不是域名关键字 —— 用域名匹配会把刚删掉的字面量重新写回 dex。
-     * 只处理 [uuids] 命中的书，整表只读一次（书架上可能有几百本）。
-     */
+    /** Existing novel-only legacy source-line migration. */
     private fun normalizeDescriptions(
         context: Context,
-        kind: String,
         uuids: Set<String>,
         sourcePrefix: String,
-        tagsPrefix: String,
     ) {
-        if (kind == "manga") {
-            ImportedMangaStore.load(context).filter { it.bookUuid in uuids }.forEach { value ->
-                ImportedMangaStore.patch(context, value) { latest ->
-                    val (extracted, text) = ComicMetadataParser.extractTagsLine(latest.description, tagsPrefix)
-                    latest.copy(
-                        description = ComicMetadataParser.stripSourceLines(text, sourcePrefix),
-                        tags = latest.tags.ifEmpty { extracted },
-                        metadataVersion = BookMetadataReader.VERSION,
-                    )
-                }
-            }
-        } else {
-            NovelStore.load(context).filter { it.bookUuid in uuids }.forEach { value ->
-                NovelStore.patch(context, value) { latest ->
-                    latest.copy(
-                        description = ComicMetadataParser.stripSourceLines(latest.description, sourcePrefix),
-                        metadataVersion = BookMetadataReader.VERSION,
-                    )
-                }
+        NovelStore.load(context).filter { it.bookUuid in uuids }.forEach { value ->
+            NovelStore.patch(context, value) { latest ->
+                latest.copy(description = ComicMetadataParser.stripSourceLines(latest.description, sourcePrefix),
+                    metadataVersion = BookMetadataReader.VERSION)
             }
         }
     }
 
+    private fun metadataFingerprint(session: LibrarySession, book: LibraryBook): String =
+        LibraryCodec.digest((org.json.JSONObject(book.body).optString("sourceIndexPath") +
+            BookMetadataReader.reviewFingerprint(session.local(book.source))).toByteArray(Charsets.UTF_8))
+
     private suspend fun backfillDescription(context: Context, session: LibrarySession, book: LibraryBook) {
         val source = session.local(book.source)
-        val body = org.json.JSONObject(book.body)
+        val body = org.json.JSONObject(session.database.catalog().byUuid(book.uuid)?.body ?: book.body)
         val directory = if (book.kind == "manga") !body.optBoolean("isArchive") && !body.optBoolean("isPdf")
             else body.optString("format") == NovelFormat.FOLDER.name
         if (directory && session.storage !is FileLibraryStorage) source.mkdirs()
+        val fingerprint = if (book.kind == "manga") metadataFingerprint(session, book.copy(body = body.toString())) else null
         LibrarySources.acquire(source).use {
             if (!directory) LibrarySources.file(source)
-            // ⚠️ 漫画只读书根：子目录/包内章节的 json 不能顶成书简介（否则删掉根 json 也会显示别人的）
-            val texts = if (book.kind == "manga") {
-                BookMetadataReader.bookRootTexts(source) + BookMetadataReader.sidecarTexts(source)
-            } else {
-                BookMetadataReader.sourceTexts(source)
-            }
-            val metadata = ComicMetadataParser.parse(texts)
+            val metadata = if (book.kind == "manga") BookMetadataReader.bookMetadata(
+                source, MangaChapter.listFromJson(body.optString("chapters")),
+                MangaSourceIndex.load(session, body.optString("sourceIndexPath"))
+            ) else ComicMetadataParser.parse(BookMetadataReader.sourceTexts(source))
             if (book.kind == "manga") {
-                val description = metadata?.let { ComicMetadataParser.buildDescription(context, it, includeTags = false) }.orEmpty()
-                val tags = metadata?.let(ComicMetadataParser::bookTags).orEmpty()
-                ImportedMangaStore.load(context).firstOrNull { it.bookUuid == book.uuid }?.let { value ->
-                    ImportedMangaStore.patch(context, value) { latest ->
-                        latest.copy(
-                            description = latest.description.ifBlank { description },
-                            tags = latest.tags.ifEmpty { tags },
-                            metadataVersion = BookMetadataReader.VERSION,
-                        )
-                    }
-                }
+                MangaDescriptions.cacheSource(session, book.copy(body = body.toString()), metadata)
+                // The pre-read facts are captured before I/O; a change during reading is retried next scan.
+                session.database.catalog().meta(LibraryMeta("metadataRead${BookMetadataReader.VERSION}:${book.uuid}", fingerprint!!))
             } else {
                 val value = NovelStore.load(context).firstOrNull { it.bookUuid == book.uuid } ?: return
                 val embedded = if (value.format != NovelFormat.TXT) {
@@ -306,46 +286,51 @@ object LibraryScanner {
             }
         }
     }
-    /** 简介是不是我们自动生成的（老版本把整棵树的 json 拼进来了，需要能识别出来重算/清空）。 */
-    /**
-     * 漫画一次性清理：书根**没有**元数据，且简介/标签是旧版本自动拼进来的 → 清空。
-     * 只处理 metadataVersion < VERSION 的书；根目录有元数据的一律不动（不覆盖用户编辑）。
-     */
-    private fun clearStaleMangaDescriptions(context: Context, session: LibrarySession, known: List<LibraryBook>) {
-        val records = runCatching { ImportedMangaStore.load(context) }.getOrNull() ?: return
-        val byUuid = records.associateBy { it.bookUuid }
-        known.forEach { book ->
-            val body = org.json.JSONObject(book.body)
-            if (book.deleting || body.optInt("metadataVersion") >= BookMetadataReader.VERSION) return@forEach
-            runCatching {
-                val record = byUuid[book.uuid] ?: return@runCatching
-                val local = session.local(book.source)
-                val hasRoot = BookMetadataReader.bookRootTexts(local).isNotEmpty()
-                val stale = !hasRoot && (autoGenerated(context, record.description) || record.tags.isNotEmpty())
-                ImportedMangaStore.patch(context, record) { latest ->
-                    latest.copy(
-                        description = if (stale) "" else latest.description,
-                        tags = if (stale) emptyList() else latest.tags,
-                        metadataVersion = BookMetadataReader.VERSION,
-                    )
+    /** Correct verified chapter metadata leaked into book fields, including records already at VERSION. */
+    private suspend fun clearStaleMangaDescriptions(context: Context, session: LibrarySession, known: List<LibraryBook>) {
+        val records = ImportedMangaStore.load(context).associateBy { it.bookUuid }
+        known.filter { !it.deleting && session.sourcePresence[it.source] == true }.forEach { book ->
+            coroutineContext.ensureActive()
+            val record = records[book.uuid] ?: return@forEach
+            if (record.chapters.size <= 1 || record.descriptionOverride != null || record.descriptionRevision.isNotEmpty() ||
+                record.description.isBlank() && record.tags.isEmpty()) return@forEach
+            val reviewKey = "metadataReview9:${book.uuid}"
+            try {
+                val source = session.local(book.source)
+                val fingerprint = LibraryCodec.digest((listOf(record.sourceIndexPath, record.descriptionRevision,
+                    record.description, record.tags).toString() + BookMetadataReader.reviewFingerprint(source)).toByteArray(Charsets.UTF_8))
+                if (session.database.catalog().meta(reviewKey) == fingerprint) return@forEach
+                LibrarySources.acquire(source).use {
+                    // Even malformed work-level data is evidence of ownership: don't clear on parse failure.
+                    if (BookMetadataReader.bookRootTexts(source).isNotEmpty() ||
+                        BookMetadataReader.sidecarTexts(source).isNotEmpty()) return@use
+                    val index = MangaSourceIndex.load(session, record.sourceIndexPath)
+                    val metadata = record.chapters.mapNotNull { chapter ->
+                        coroutineContext.ensureActive()
+                        BookMetadataReader.chapterMetadata(source, chapter, index)
+                    }
+                    val descriptions = metadata.flatMap { MangaDescriptions.legacyDescriptions(context, it) }
+                        .filter(String::isNotBlank).toSet()
+                    val tagSets = metadata.map { ComicMetadataParser.bookTags(it).toSet() }.filter { it.isNotEmpty() }
+                    val clearDescription = record.descriptionRevision.isEmpty() && record.description.trim() in descriptions
+                    val clearTags = record.tags.isNotEmpty() && record.tags.toSet() in tagSets
+                    if (metadata.isNotEmpty()) ImportedMangaStore.patch(context, record) { latest ->
+                        if (latest.descriptionOverride != null || latest.descriptionRevision.isNotEmpty()) return@patch latest
+                        latest.copy(
+                            metadataVersion = BookMetadataReader.VERSION,
+                            descriptionOverride = if (!clearDescription && latest.description.isNotBlank() && latest.description == record.description)
+                                latest.description else latest.descriptionOverride,
+                            descriptionRevision = if (!clearDescription && latest.description.isNotBlank() && latest.description == record.description)
+                                "legacy-preserved" else latest.descriptionRevision,
+                            description = if (clearDescription && latest.descriptionRevision.isEmpty() && latest.description == record.description) "" else latest.description,
+                            tags = if (clearTags && latest.tags == record.tags) emptyList() else latest.tags,
+                        )
+                    }
                 }
-            }
+                session.database.catalog().meta(LibraryMeta(reviewKey, fingerprint))
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { LogCollector.w("LibraryScanner", "旧简介核对跳过: ${book.source}; ${e.message}") }
         }
-    }
-
-    private fun autoGenerated(context: Context, description: String): Boolean {
-        val lines = description.lineSequence().map { it.trimStart() }.filter { it.isNotBlank() }.toList()
-        if (lines.isEmpty()) return false
-        val prefixes = listOf(
-            com.moe.starflow.R.string.book_meta_title,
-            com.moe.starflow.R.string.comic_meta_author,
-            com.moe.starflow.R.string.comic_meta_circle,
-            com.moe.starflow.R.string.comic_meta_series,
-            com.moe.starflow.R.string.book_meta_pages,
-            com.moe.starflow.R.string.book_meta_published,
-            com.moe.starflow.R.string.comic_meta_tags,
-        ).map { context.getString(it, "").trim() }
-        return lines.any { line -> prefixes.any { line.startsWith(it) } }
     }
 
     private fun discover(session: LibrarySession, root: String, known: List<LibraryBook>, kind: String, failures: MutableList<String>, listings: MutableMap<String, List<LibraryNode>>): List<LibraryNode> {

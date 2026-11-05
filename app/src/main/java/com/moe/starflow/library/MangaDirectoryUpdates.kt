@@ -109,6 +109,9 @@ object BookRecordLocks {
         return true
     }
     @Synchronized fun endExclusive(ref: BookRef) { exclusive.remove(ref.key); (this as java.lang.Object).notifyAll() }
+    /** File outbox writers must not wait while holding the session IO lock. */
+    @Synchronized fun tryAcquire(ref: BookRef): java.io.Closeable? =
+        if (ref.key in exclusive) null else acquire(ref)
     @Synchronized fun acquire(ref: BookRef, source: Boolean = false): java.io.Closeable {
         while (ref.key in exclusive) (this as java.lang.Object).wait(100)
         val readers = if (source) sources else counts

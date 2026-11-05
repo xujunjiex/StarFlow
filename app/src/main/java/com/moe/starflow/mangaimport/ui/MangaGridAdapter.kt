@@ -231,8 +231,9 @@ class MangaGridAdapter(
 
         // 阅读进度（已开始阅读时显示；导入中的占位不算已读）
         // 章节化后显示「第3章 · 5/20」：只给全书页号的话，几百页的多章本根本看不出读到哪一章
-        val chapter = if (item.lastReadPage > 0) item.chapterOfPage(item.lastReadPage) else null
-        if (!item.importing && item.lastReadPage > 0) {
+        val hasRead = item.lastReadAt > 0 || item.lastReadPage > 0
+        val chapter = if (hasRead) item.chapterOfPage(item.lastReadPage) else null
+        if (!item.importing && hasRead) {
             h.binding.tvProgress.visibility = View.VISIBLE
             h.binding.tvProgress.text = if (chapter != null) {
                 ctx.getString(
@@ -249,9 +250,9 @@ class MangaGridAdapter(
         }
 
         // 简介摘要 + 标签 chips：chips 与作品数据页同源；点 chip 复制，点简介块进作品数据页
-        if (!item.importing && item.description.isNotBlank()) {
+        if (!item.importing && item.effectiveDescription.isNotBlank()) {
             h.binding.tvDescription.visibility = View.VISIBLE
-            h.binding.tvDescription.text = item.description
+            h.binding.tvDescription.text = item.effectiveDescription
         } else {
             h.binding.tvDescription.visibility = View.GONE
         }
@@ -339,7 +340,8 @@ class MangaGridAdapter(
         val importing = item.importing
         // 占位没有本地路径，绝不能被判成「文件丢失」
         val lost = item.lost && !importing
-        val isRead = !importing && !lost && item.missingPages == 0 && item.changedPages == 0 && item.pageCount > 0 && item.lastReadPage >= item.pageCount - 1
+        val isRead = !importing && !lost && item.missingPages == 0 && item.changedPages == 0 && item.pageCount > 0 &&
+            (item.lastReadAt > 0 || item.lastReadPage > 0) && item.lastReadPage >= item.pageCount - 1
         readBadge.visibility = if (isRead) View.VISIBLE else View.GONE
         lostBadge.visibility = if (lost || item.missingPages > 0 || item.changedPages > 0 || item.deleting || item.deletionError != null) View.VISIBLE else View.GONE
         (lostBadge as? android.widget.TextView)?.setText(when {

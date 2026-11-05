@@ -3,6 +3,8 @@ package com.moe.starflow.library
 import com.moe.starflow.mangaimport.data.ComicMetadataParser
 import com.moe.starflow.mangaimport.data.ImportedManga
 import com.moe.starflow.mangaimport.data.ImportedMangaStore
+import com.moe.starflow.mangaimport.data.MangaSourceIndex
+import com.moe.starflow.mangaimport.data.MangaPageRef
 import com.moe.starflow.mangaimport.data.MangaChapter
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
@@ -19,7 +21,7 @@ import java.io.File
 @Config(sdk = [34])
 class BookMetadataReaderTest {
     @get:Rule val temp = TemporaryFolder()
-    private val json = """{"series_title":"SPY×FAMILY","episode_label":"139話 前編","page_title":"139話 前編","page_count":17,"permalink":"https://example.test/episode/139"}"""
+    private val json = """{"series_title":"SPY×FAMILY","episode_label":"139話 前編","page_title":"139話 前編","page_count":17,"summary":"Original summary","permalink":"https://example.test/episode/139"}"""
 
     @Test fun singlePdfAndGenericMetaInNamedFolderAreReadWithoutModifyingThePdf() {
         val folder = temp.newFolder("139話 前編")
@@ -56,7 +58,7 @@ class BookMetadataReaderTest {
         val uuid = ImportedMangaStore.load(app).single().bookUuid
         assertEquals(0, LibraryScanner.scan(app, "manga").added)
         val book = ImportedMangaStore.load(app).single()
-        assertTrue(book.description.contains("SPY×FAMILY"))
+        assertEquals("Original summary", book.description)
         assertEquals("My name", book.title)
         assertEquals(uuid, book.bookUuid)
         assertEquals(5, book.lastReadPage)
@@ -131,25 +133,20 @@ class BookMetadataReaderTest {
             MangaChapter(number = 1, title = "ch1.cbz", startPage = 0, pageCount = 2),
             MangaChapter(number = 2, title = "ch2.cbz", startPage = 2, pageCount = 2),
         )
-        val meta = BookMetadataReader.chapterMetadata(dir, chapters)
-        // 章 = 压缩包时，必须读**包内**元数据（不是书根，也不是别的包）
-        assertEquals("first", meta["ch1.cbz"]?.title)
-        assertEquals("second", meta["ch2.cbz"]?.title)
+        assertEquals("first", BookMetadataReader.chapterMetadata(dir, chapters[0], null)?.title)
+        assertEquals("second", BookMetadataReader.chapterMetadata(dir, chapters[1], null)?.title)
     }
 
-    @Test
-    fun chapterMetadata_fallsBackToArchiveOrderWhenTitleDiffers() {
-        val dir = temp.newFolder("archive-order")
-        writeZip(File(dir, "a-001.cbz"), "alpha")
-        writeZip(File(dir, "a-002.cbz"), "beta")
-        val chapters = listOf(
-            MangaChapter(number = 1, title = "第一章", startPage = 0, pageCount = 2),
-            MangaChapter(number = 2, title = "第二章", startPage = 2, pageCount = 2),
-        )
-        val meta = BookMetadataReader.chapterMetadata(dir, chapters)
-        // 章名与文件名完全对不上时，按章序 ↔ 压缩包自然序兜底
-        assertEquals("alpha", meta["第一章"]?.title)
-        assertEquals("beta", meta["第二章"]?.title)
+    @Test fun chapterMetadataUsesIndexedPathsEvenWhenDisplayTitlesAreIdentical() {
+        val dir = temp.newFolder("indexed-chapters")
+        writeZip(File(dir, "10.cbz"), "ten")
+        writeZip(File(dir, "2.cbz"), "two")
+        val index = MangaSourceIndex(listOf(
+            MangaPageRef("10.cbz", "ZIP", "001.jpg", "10.cbz", 0),
+            MangaPageRef("2.cbz", "ZIP", "001.jpg", "2.cbz", 0),
+        ))
+        assertEquals("ten", BookMetadataReader.chapterMetadata(dir, MangaChapter(1, "Same title", 0, 1), index)?.title)
+        assertEquals("two", BookMetadataReader.chapterMetadata(dir, MangaChapter(2, "Same title", 1, 1), index)?.title)
     }
 
     @Test
@@ -166,32 +163,64 @@ class BookMetadataReaderTest {
             }
         }
         val chapters = listOf(
-            MangaChapter(number = 1, title = "ch1", startPage = 0, pageCount = 2),
-            MangaChapter(number = 2, title = "ch2", startPage = 2, pageCount = 2),
+            MangaChapter(number = 1, title = "ch1", startPage = 0, pageCount = 1),
+            MangaChapter(number = 2, title = "ch2", startPage = 1, pageCount = 1),
         )
-        val meta = BookMetadataReader.chapterMetadata(zip, chapters)
-        assertEquals("first", meta["ch1"]?.title)
-        assertEquals("second", meta["ch2"]?.title)
+        assertEquals("first", BookMetadataReader.chapterMetadata(zip, chapters[0], null)?.title)
+        assertEquals("second", BookMetadataReader.chapterMetadata(zip, chapters[1], null)?.title)
     }
 
-    @Test
-    fun chapterMetadata_archiveFallsBackToDirectoryOrder() {
-        val zip = temp.newFile("one-book-mismatch.cbz")
-        java.util.zip.ZipOutputStream(java.io.FileOutputStream(zip)).use { out ->
-            listOf("a" to "alpha", "b" to "beta").forEach { (dir, title) ->
-                out.putNextEntry(java.util.zip.ZipEntry("$dir/ComicInfo.xml"))
-                out.write("<ComicInfo><Title>$title</Title></ComicInfo>".toByteArray())
-                out.closeEntry()
-            }
+    @Test fun singleChapterReadsInnerMetadataButMultipleChaptersDoNotPromoteIt() {
+        val dir = temp.newFolder("single-inner")
+        writeZip(File(dir, "chapter.cbz"), "inner")
+        val index = MangaSourceIndex(listOf(MangaPageRef("chapter.cbz", "ZIP", "001.jpg", "chapter.cbz", 0)))
+        assertEquals("inner", BookMetadataReader.bookMetadata(dir, index.chapters, index)?.title)
+        writeZip(File(dir, "second.cbz"), "second")
+        val multiple = index.copy(pages = index.pages + MangaPageRef("second.cbz", "ZIP", "001.jpg", "second.cbz", 0))
+        assertNull(BookMetadataReader.bookMetadata(dir, multiple.chapters, multiple))
+        assertNull(BookMetadataReader.bookMetadata(dir, index.chapters, multiple))
+    }
+
+    @Test fun archiveRootIncludesComicBookInfoCommentWithoutMetadataEntries() {
+        val zip = temp.newFile("comment.cbz")
+        java.util.zip.ZipOutputStream(zip.outputStream()).use { out ->
+            out.setComment("""{"ComicBookInfo/1.0":{"title":"Comment title"}}""")
+            out.putNextEntry(java.util.zip.ZipEntry("001.jpg")); out.write(byteArrayOf(1)); out.closeEntry()
         }
-        val chapters = listOf(
-            MangaChapter(number = 1, title = "第一章", startPage = 0, pageCount = 2),
-            MangaChapter(number = 2, title = "第二章", startPage = 2, pageCount = 2),
-        )
-        val meta = BookMetadataReader.chapterMetadata(zip, chapters)
-        // 章名与包内目录名完全对不上时，按章序 ↔ 目录顺序兜底
-        assertEquals("alpha", meta["第一章"]?.title)
-        assertEquals("beta", meta["第二章"]?.title)
+        assertEquals("Comment title", ComicMetadataParser.parse(BookMetadataReader.bookRootTexts(zip))?.title)
+    }
+
+    @Test fun singleChapterMergesMissingRootFieldsFromTheInnerChapter() {
+        val dir = temp.newFolder("single-fields")
+        File(dir, "ComicInfo.xml").writeText("<ComicInfo><Title>Whole title</Title></ComicInfo>")
+        File(dir, "chapter").mkdirs()
+        File(dir, "chapter/meta.json").writeText("""{"summary":"Inner summary","author":"Inner author"}""")
+        val index = MangaSourceIndex(listOf(MangaPageRef("chapter/001.jpg", "IMAGE", "", "chapter", 0)))
+        val result = BookMetadataReader.bookMetadata(dir, index.chapters, index)!!
+        assertEquals("Whole title", result.title)
+        assertEquals("Inner summary", result.summary)
+        assertEquals("Inner author", result.writer)
+    }
+
+    @Test fun looseRootChapterDoesNotUseTheNextChaptersMetadata() {
+        val dir = temp.newFolder("loose-root")
+        File(dir, "chapter").mkdirs()
+        File(dir, "chapter/meta.json").writeText("""{"summary":"Chapter only"}""")
+        val index = MangaSourceIndex(listOf(
+            MangaPageRef("001.jpg", "IMAGE", "", "", 0),
+            MangaPageRef("chapter/001.jpg", "IMAGE", "", "chapter", 0)))
+        assertNull(BookMetadataReader.chapterMetadata(dir, index.chapters.first(), index))
+        assertNull(BookMetadataReader.bookMetadata(dir, index.chapters, index))
+    }
+
+    @Test fun nestedArchiveWrappersAndBackslashEntryNamesResolveCorrectly() {
+        val zip = temp.newFile("wrapped.cbz")
+        java.util.zip.ZipOutputStream(zip.outputStream()).use { out ->
+            out.putNextEntry(java.util.zip.ZipEntry("Outer\\Book\\ComicInfo.xml"))
+            out.write("<ComicInfo><Summary>Wrapped</Summary></ComicInfo>".toByteArray()); out.closeEntry()
+            out.putNextEntry(java.util.zip.ZipEntry("Outer\\Book\\001.jpg")); out.write(byteArrayOf(1)); out.closeEntry()
+        }
+        assertEquals("Wrapped", ComicMetadataParser.parse(BookMetadataReader.bookRootTexts(zip))?.summary)
     }
 
     private fun writeZip(target: File, title: String) {
@@ -199,6 +228,31 @@ class BookMetadataReaderTest {
             out.putNextEntry(java.util.zip.ZipEntry("ComicInfo.xml"))
             out.write("<ComicInfo><Title>$title</Title></ComicInfo>".toByteArray())
             out.closeEntry()
+            out.putNextEntry(java.util.zip.ZipEntry("001.jpg")); out.write(byteArrayOf(1)); out.closeEntry()
         }
+    }
+
+    @Test fun backslashEntriesUseTheIndexedChapterRatherThanTheFirstMetadataFile() {
+        val zip = temp.newFile("chapters.cbz")
+        java.util.zip.ZipOutputStream(zip.outputStream()).use { out ->
+            (1..2).forEach { n ->
+                out.putNextEntry(java.util.zip.ZipEntry("Outer\\Book\\$n\\001.jpg")); out.write(byteArrayOf(1)); out.closeEntry()
+                out.putNextEntry(java.util.zip.ZipEntry("Outer\\Book\\$n\\meta.json"))
+                out.write("""{"summary":"Chapter $n"}""".toByteArray()); out.closeEntry()
+            }
+        }
+        val index = MangaSourceIndex((1..2).map { n ->
+            MangaPageRef(zip.name, "ZIP", "Outer\\Book\\$n\\001.jpg", "", 0)
+        }, standalone = true)
+        assertNull(BookMetadataReader.bookMetadata(zip, index.chapters, index))
+        assertEquals("Chapter 2", BookMetadataReader.chapterMetadata(zip, index.chapters[1], index)?.summary)
+    }
+
+    @Test fun unreadableArchiveIsDifferentFromAnArchiveWithoutMetadata() {
+        val zip = temp.newFile("empty.cbz")
+        java.util.zip.ZipOutputStream(zip.outputStream()).close()
+        assertNull(BookMetadataReader.bookMetadata(zip, emptyList()))
+        zip.writeText("corrupt archive")
+        assertThrows(java.io.IOException::class.java) { BookMetadataReader.bookMetadata(zip, emptyList()) }
     }
 }

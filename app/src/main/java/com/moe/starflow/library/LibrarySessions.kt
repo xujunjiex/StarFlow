@@ -136,7 +136,7 @@ object LibrarySessions {
                     session.sourcePresence[book.source] = session.storage.exists(book.source)
                 }
             } catch (e: Exception) {
-                session.saveState.value = session.saveState.value.copy(error = e.message ?: e.javaClass.simpleName)
+                session.saveState.value = session.saveState.value.copy(error = e.message ?: e.javaClass.simpleName, metadataOnlyError = false)
             }
             changes.value += 1
         }
@@ -246,7 +246,7 @@ object LibrarySessions {
             target.prepare()
             LibraryMigration.migrate(app, target)
             runCatching { target.flush() }
-            if (target.saveState.value.error == null) (target.books("manga") + target.books("novel")).forEach {
+            if (target.saveState.value.error == null || target.saveState.value.metadataOnlyError) (target.books("manga") + target.books("novel")).forEach {
                 target.sourcePresence[it.source] = target.storage.exists(it.source)
             }
             val probe = ".starflow/probe-${java.util.UUID.randomUUID()}"
@@ -285,7 +285,7 @@ object LibrarySessions {
         if (located == null) file.exists() else {
             val (session, path) = located
             // Root errors must not turn every entry into a missing-file placeholder.
-            if (session.saveState.value.error != null) true
+            if (session.saveState.value.error != null && !session.saveState.value.metadataOnlyError) true
             else if (session.storage is FileLibraryStorage) file.exists()
             else session.sourcePresence[path] ?: true
         }
@@ -294,7 +294,7 @@ object LibrarySessions {
         sessions.values.filter { runCatching {
             libraryRelativePath(it.workingRoot.absolutePath, file.absolutePath) != null
         }.getOrDefault(false) }
-            .forEach { it.saveState.value = it.saveState.value.copy(error = e.message ?: e.javaClass.simpleName) }
+            .forEach { it.saveState.value = it.saveState.value.copy(error = e.message ?: e.javaClass.simpleName, metadataOnlyError = false) }
         true
     }
     fun checkReaderIntent(context: Context, intent: Intent, kind: String, id: Long) {

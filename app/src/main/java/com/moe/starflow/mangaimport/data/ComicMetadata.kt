@@ -10,34 +10,7 @@ import org.xmlpull.v1.XmlPullParser
 import java.io.ByteArrayInputStream
 import java.util.Locale
 
-/**
- * 漫画包里的**元数据**（只用来自动填简介）。
- *
- * 认的是公开格式，**不看文件名、按内容嗅探**（工具把 `comet.xml` 命名成 `ComicInfo.xml`、
- * 把 ComicBookInfo 塞进 zip 注释，都能认出来）：
- *
- * | 格式 | 形状 | 谁写它 |
- * |---|---|---|
- * | ComicInfo.xml | XML，根 `<ComicInfo>` | ComicRack 的事实标准（ComicTagger / Kavita / Komga / Mylar） |
- * | CoMet | XML，根 `<comet>` | 较早的通用标准，字段少但跨工具 |
- * | ComicBookInfo | JSON，根键 `ComicBookInfo/1.0` | ComicRack 的 JSON 导出，常写在 **zip 注释**里 |
- * | 通用 JSON | 任意对象 | 各家下载器自拍的键名，按通用别名 + booru 角色标签读 |
- *
- * 优先级（同名字段谁赢）：ComicInfo > CoMet > ComicBookInfo > 通用 JSON。
- * 合并是**逐字段**的：高优先级为空的字段由低优先级补上（见 [merge]）。
- *
- * ⚠️ **来源不参与任何环节**：模型里没有 `web`/`id` 字段，简介里也没有「来源」行。
- * 曾经拿 `id` 拼第三方站点 URL —— 那个字面量会跟着 dex 进安装包，安装器/商店按域名黑名单
- * 静态扫描就报「含色情内容」（2026-11 真机安装提示即此事）。Mihon 的做法是 `Web` 解析了也不给
- * 用户看；这里更彻底：字段不保留，就没有地方能把它接回来。
- *
- * ⚠️ **只填简介，不做别的**（用户口径）：不改书名（书名仍取文件名）、不改阅读方向、
- * 不往书架行加字段。简介写进 `ImportedManga.description`，用户可以照旧在「编辑简介」里手改
- * —— 我们**只在导入那一次**生成它，之后不再覆盖任何东西。
- *
- * ⚠️ **别把标签拼成几百字的简介**：标签数量没有上限，简介行只有两行可见，
- * 这里对标签做了长度截断（[MAX_TAGS_CHARS]）。
- */
+/** Parsed public-format metadata; source URLs are deliberately excluded. */
 data class ComicMetadata(
     val title: String? = null,
     val series: String? = null,
@@ -489,8 +462,13 @@ object ComicMetadataParser {
 
     // ===== 简介文案 =====
 
+    /** Plain description text, separate from the other metadata fields. */
+    fun summaryText(meta: ComicMetadata?): String = meta?.summary?.let {
+        android.text.Html.fromHtml(it, android.text.Html.FROM_HTML_MODE_LEGACY).toString().trim()
+    }.orEmpty()
+
     /**
-     * 生成简介（导入时写进 `ImportedManga.description`，用户之后可自行编辑）。
+     * 生成旧版字段拼接文案，供兼容核对和小说资料使用；新漫画简介使用 summaryText。
      *
      * 列出可用的简介正文、标题、章节、作者、系列、页数、发布日期和标签；空字段不占行。
      * ⚠️ **没有「来源」行**（来源字段已从模型里删除，见类注释）。

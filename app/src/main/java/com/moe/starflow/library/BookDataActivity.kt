@@ -15,6 +15,12 @@ import androidx.appcompat.widget.AppCompatImageButton
 import androidx.appcompat.widget.PopupMenu
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
+import com.moe.starflow.mangaimport.data.ComicMetadata
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
 import com.google.android.material.chip.Chip
@@ -39,10 +45,10 @@ import org.json.JSONObject
 class BookDataActivity : BaseActivity() {
     companion object {
         private const val PAGE_SIZE = 100
-        fun open(context: Context, ref: BookRef, runtimePages: Int? = null, chapterNumber: Int = -1) {
+        fun open(context: Context, ref: BookRef, runtimePages: Int? = null, chapterNumber: Int = -1, currentPage: Int = -1) {
             context.startActivity(Intent(context, BookDataActivity::class.java).putExtra("location", ref.locationId)
                 .putExtra("kind", ref.kind).putExtra("uuid", ref.uuid).putExtra("runtimePages", runtimePages ?: -1)
-                .putExtra("chapterNumber", chapterNumber))
+                .putExtra("chapterNumber", chapterNumber).putExtra("currentPage", currentPage))
         }
     }
     private lateinit var ref: BookRef
@@ -56,12 +62,16 @@ class BookDataActivity : BaseActivity() {
     private lateinit var next: MaterialButton
     private lateinit var categories: List<Pair<String, Int>>
     private var type = "translation"
-    /** 从阅读器进来时带过来的章节号；切换章节只影响本页展示。 */
-    private var selectedChapter = Int.MIN_VALUE
-    private var chapterJob: kotlinx.coroutines.Job? = null
-    private var bookLevelJob: kotlinx.coroutines.Job? = null
-    /** 当前展示的章（详细信息里的「本章页数/进度」用它，随阅读器带来的章变化）。 */
-    private var currentChapter: MangaChapter? = null
+    /** Owned by this Activity; refresh and destruction cancel the source read. */
+    private var metadataJob: Job? = null
+    private data class MetadataResult(val work: Result<ComicMetadata?>, val chapter: Result<ComicMetadata?>)
+    private var metadataKey: String? = null
+    private var metadataResult: MetadataResult? = null
+    private var metadataRenderer: ((MetadataResult) -> Unit)? = null
+    private var initialPage = -1
+    private var initialStoredPage: Int? = null
+    private var initialReadAt: Long? = null
+    private lateinit var scroll: ScrollView
     private var offset = 0
     private var overview = JSONObject()
     private var refreshJob: Job? = null
@@ -72,6 +82,9 @@ class BookDataActivity : BaseActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        initialPage = savedInstanceState?.getInt("initialPage", -1) ?: intent.getIntExtra("currentPage", -1)
+        initialStoredPage = savedInstanceState?.getInt("initialStoredPage", -1)?.takeIf { it >= 0 }
+        initialReadAt = savedInstanceState?.getLong("initialReadAt", -1)?.takeIf { it >= 0 }
         ref = BookRef(intent.getStringExtra("location").orEmpty(), intent.getStringExtra("kind").orEmpty(), intent.getStringExtra("uuid").orEmpty())
         categories = if (ref.kind == "manga") listOf("translation" to R.string.book_record_translation_ocr,
             "sr" to R.string.book_data_sr, "source" to R.string.book_data_sources)
@@ -85,7 +98,7 @@ class BookDataActivity : BaseActivity() {
         toolbar.addView(icon(R.drawable.ic_reader_more, R.string.book_data_actions) { showActions(it) })
         root.addView(toolbar)
         val content = column().apply { setPadding(dp(16), dp(8), dp(16), dp(24)) }
-        root.addView(ScrollView(this).apply { isFillViewport = true; addView(content) }, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(ScrollView(this).apply { isFillViewport = true; addView(content); scroll = this }, LinearLayout.LayoutParams(-1, 0, 1f))
         summary = column().also(content::addView)
         recordHeading = text(getString(R.string.book_data_records), 18f).apply { setPadding(0, dp(20), 0, dp(4)) }.also(content::addView)
         selector = ChipGroup(this).apply { isSingleSelection = true; isSelectionRequired = true }
@@ -100,12 +113,45 @@ class BookDataActivity : BaseActivity() {
         content.addView(pager)
         setContentView(root); applySystemBarsPadding(root, true, true)
         summary.addView(text(getString(R.string.loading)))
-        updateSelector(); refresh()
+        updateSelector()
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                try {
+                    val (session, _) = withContext(Dispatchers.IO) { BookData.resolve(this@BookDataActivity, ref) }
+                    combine(session.database.catalog().observeBook(ref.uuid).distinctUntilChanged(), session.saveState) { row, _ -> row }
+                        .collectLatest {
+                        if (it == null || it.deleting) {
+                            metadataJob?.cancel(); refreshJob?.cancel(); pageJob?.cancel()
+                            metadataKey = null; metadataResult = null; metadataRenderer = null
+                            overview = JSONObject(); summary.removeAllViews(); records.removeAllViews()
+                            summary.addView(text(getString(R.string.book_reference_expired)))
+                            return@collectLatest
+                        }
+                        refresh(resetRecords = !overview.has("book"), forceMetadata = false)
+                    }
+                } catch (e: CancellationException) { throw e }
+                catch (e: Exception) { report(e) }
+            }
+        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
+        outState.putInt("initialPage", initialPage)
+        outState.putInt("initialStoredPage", initialStoredPage ?: -1)
+        outState.putLong("initialReadAt", initialReadAt ?: -1)
         outState.putString("type", type); outState.putBoolean("sourceExpanded", sourceExpanded)
         super.onSaveInstanceState(outState)
+    }
+
+    override fun onStop() {
+        metadataJob?.cancel(); refreshJob?.cancel(); pageJob?.cancel()
+        metadataKey = null; metadataResult = null; metadataRenderer = null
+        super.onStop()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (overview.has("book")) refresh(forceMetadata = true)
     }
 
     private fun showActions(anchor: View) {
@@ -114,26 +160,56 @@ class BookDataActivity : BaseActivity() {
             menu.add(0, 2, 1, R.string.book_records_export).isEnabled = overview.has("book")
             menu.add(0, 3, 2, R.string.book_data_raw).isEnabled = overview.has("book")
             menu.add(0, 4, 3, R.string.book_data_storage_help)
+            menu.add(0, 5, 4, R.string.library_retry_save)
             setOnMenuItemClickListener {
                 when (it.itemId) {
                     1 -> refresh()
                     2 -> try { BookRecordExport.start(this@BookDataActivity, ref) } catch (e: Exception) { report(e) }
                     3 -> showJson(overview.toString(2))
                     4 -> showText(getString(R.string.book_data_storage_help), getString(R.string.library_record_storage_hint))
+                    5 -> lifecycleScope.launch {
+                        try {
+                            withContext(Dispatchers.IO) { BookData.resolve(this@BookDataActivity, ref).first.flush() }
+                            refresh(resetRecords = false, forceMetadata = false)
+                        } catch (e: CancellationException) { throw e }
+                        catch (e: Exception) { report(e) }
+                    }
                 }; true
             }
             show()
         }
     }
 
-    private fun refresh() {
-        refreshJob?.cancel(); pageJob?.cancel()
+    private fun refresh(resetRecords: Boolean = false, forceMetadata: Boolean = true) {
+        refreshJob?.cancel()
+        if (forceMetadata) { metadataJob?.cancel(); metadataKey = null; metadataResult = null }
+        if (resetRecords) pageJob?.cancel()
         refreshJob = lifecycleScope.launch {
             var lease: java.io.Closeable? = null
             try {
                 lease = LibrarySessions.inspectionLease()
+                val previousIndex = overview.optJSONObject("book")?.optString("sourceIndexPath")
                 overview = BookData.snapshot(this@BookDataActivity, ref, false)
-                renderSummary(); updateSelector(); offset = 0; page()
+                val book = overview.getJSONObject("book")
+                val storedPage = book.optInt("lastReadPage")
+                val readAt = book.optLong("lastReadAt")
+                if (initialStoredPage == null) { initialStoredPage = storedPage; initialReadAt = readAt }
+                else if (initialStoredPage != storedPage || initialReadAt != readAt) initialPage = -1
+                if (ref.kind == "manga") withContext(Dispatchers.IO) {
+                    val (session, _) = BookData.resolve(this@BookDataActivity, ref)
+                    try {
+                        MangaSourceIndex.load(session, book.optString("sourceIndexPath"))?.let {
+                            book.put("chapters", MangaChapter.listToJson(it.chapters))
+                        }
+                    } catch (e: CancellationException) { throw e }
+                    catch (e: Exception) { com.moe.starflow.utils.LogCollector.w("BookData", "章节索引暂不可读：${e.message}") }
+                }
+                ensureActive()
+                val y = scroll.scrollY
+                renderSummary(); updateSelector()
+                scroll.post { scroll.scrollTo(0, y) }
+                if (resetRecords) { offset = 0; page() }
+                else if (forceMetadata || previousIndex != book.optString("sourceIndexPath")) page()
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { report(e) }
             finally { lease?.close() }
@@ -148,18 +224,9 @@ class BookDataActivity : BaseActivity() {
             setTextColor(color(if (overview.optString("availability") == "AVAILABLE") R.color.text_secondary else R.color.red))
         })
         val chapter = resolveCurrentChapter(book)
-        currentChapter = chapter
         if (ref.kind == "manga") {
-            // 三块各自隔离：任何一块失败都不能把整页清空（曾经一次异常导致只剩「来源检查」一行）
-            runCatching { renderBookLevel(book) }
-                .onFailure { com.moe.starflow.utils.LogCollector.e("BookData", "书级块失败: ${it.message}") }
-            val chapterCount = runCatching { MangaChapter.listFromJson(book.optString("chapters")).size }.getOrDefault(0)
-            if (chapter != null && chapterCount > 1) {
-                runCatching { renderChapterCard(book, chapter) }
-                    .onFailure { com.moe.starflow.utils.LogCollector.e("BookData", "章节块失败: ${it.message}") }
-            }
-            runCatching { card(summary) { body -> bookFacts(body, book) } }
-                .onFailure { com.moe.starflow.utils.LogCollector.e("BookData", "事实块失败: ${it.message}") }
+            renderMetadata(book, chapter)
+            card(summary) { body -> bookFacts(body, book) }
         } else {
             book.optString("description").takeIf { it.isNotBlank() && it != "null" }?.let { description ->
                 summary.addView(text(description))
@@ -196,6 +263,7 @@ class BookDataActivity : BaseActivity() {
             field(details, "UUID", ref.uuid)
             field(details, getString(R.string.book_data_library_label), value(overview, "library"))
             field(details, getString(R.string.book_data_path_label), value(overview, "source"))
+            details.addView(smallButton(R.string.book_open_folder) { openFolderLocation() })
             value(book, "format", "").takeIf { it.isNotBlank() }?.let { field(details, fieldLabel("format"), it) }
             if (ref.kind == "manga") {
                 val source = overview.optJSONObject("sourceSummary")
@@ -279,108 +347,131 @@ class BookDataActivity : BaseActivity() {
         }
     }
 
-    /** 当前要展示的章：优先阅读器带来的章号，其次最近阅读位置，最后第一章。 */
+    /** Actual reader page, then persisted progress, then the first chapter. */
     private fun resolveCurrentChapter(book: JSONObject): MangaChapter? {
         if (ref.kind != "manga") return null
         val list = MangaChapter.listFromJson(book.optString("chapters"))
         if (list.isEmpty()) return null
-        val preferred = if (selectedChapter != Int.MIN_VALUE) selectedChapter else intent.getIntExtra("chapterNumber", -1)
-        return list.firstOrNull { it.number == preferred }
+        val preferred = if (initialStoredPage == book.optInt("lastReadPage")) intent.getIntExtra("chapterNumber", -1) else -1
+        return list.firstOrNull { initialPage >= 0 && it.containsPage(initialPage) }
+            ?: list.firstOrNull { initialPage < 0 && !intent.hasExtra("currentPage") && it.number == preferred }
             ?: list.firstOrNull { it.containsPage(book.optInt("lastReadPage", -1)) }
             ?: list.first()
     }
 
-    /** 顶部章节块：章名 + 本章元数据（标题/作者/社团/系列/页数/标签）+ 打开文件夹。 */
-    /**
-     * 书级块：**直接解析书根 json**（不依赖数据库里可能被旧版本拼脏的 description）。
-     * - 根目录有元数据 → 显示书级字段
-     * - 根目录没有、且整本只有一章 → 用那一章的元数据顶上（整本=那一章）
-     * - 根目录没有且多章 → 整块不出现
-     */
-    private fun renderBookLevel(book: JSONObject) {
-        val source = overview.optString("source").takeIf { it.isNotBlank() } ?: return
-        val holder = column()
-        summary.addView(holder)
-        bookLevelJob?.cancel()
-        bookLevelJob = lifecycleScope.launch {
-            val meta = withContext(Dispatchers.IO) {
-                runCatching {
-                    val local = LibrarySessions.current(this@BookDataActivity).local(source)
-                    val chapters = MangaChapter.listFromJson(book.optString("chapters"))
-                    ComicMetadataParser.parse(BookMetadataReader.bookRootTexts(local))
-                        ?: chapters.singleOrNull()?.let {
-                            // 单章 = 整本：包内任意深度的元数据都归它
-                            ComicMetadataParser.parse(BookMetadataReader.sourceTexts(local))
-                        }
-                }.getOrNull()
+    private fun renderMetadata(book: JSONObject, chapter: MangaChapter?) {
+        val bookHolder = column().also(summary::addView)
+        val chapters = MangaChapter.listFromJson(book.optString("chapters"))
+        val chapterRows = if (chapter != null && chapters.size > 1) {
+            var rows: LinearLayout? = null
+            card(summary) { body ->
+                body.addView(text(getString(R.string.book_chapter_meta_title) + " · " + mangaChapterLabel(this, chapter), 16f))
+                rows = column().also(body::addView)
+                rows!!.addView(text(getString(R.string.loading), 12f))
+                field(body, getString(R.string.book_meta_pages_label), chapter.pageCount.toString())
+                body.addView(smallButton(R.string.book_open_folder) { openFolderLocation(chapter) })
             }
-            if (!isActive) return@launch
-            if (meta == null) { holder.visibility = View.GONE; return@launch }
-            card(holder) { body ->
+            rows
+        } else null
+        val key = listOf(ref.key, overview.optString("source"), book.optString("sourceIndexPath"), chapter).toString()
+        fun render(result: MetadataResult) {
+            bookHolder.removeAllViews()
+            val sourceMeta = result.work.getOrNull()
+            val description = if (!book.isNull("descriptionOverride")) book.optString("descriptionOverride") else book.optString("description")
+            val meta = (sourceMeta ?: ComicMetadata()).copy(summary = null,
+                tags = sourceMeta?.tags?.ifEmpty { storedTags(book) } ?: storedTags(book))
+            if (sourceMeta != null || description.isNotBlank() || meta.tags.isNotEmpty()) card(bookHolder) { body ->
                 body.addView(text(getString(R.string.book_meta_book_label), 16f))
+                if (description.isNotBlank()) body.addView(text(description))
                 BookMetadataChips.addRows(body, meta) { copyTag(it) }
             }
+            if (result.work.isFailure) bookHolder.addView(text(getString(R.string.book_chapter_meta_unreadable), 12f))
+            chapterRows?.let { rows ->
+                rows.removeAllViews()
+                val chapterMeta = result.chapter.getOrNull()
+                if (chapterMeta != null) BookMetadataChips.addRows(rows, chapterMeta.copy(pageCount = null)) { copyTag(it) }
+                else rows.addView(text(getString(if (result.chapter.isFailure) R.string.book_chapter_meta_unreadable else R.string.book_chapter_meta_empty), 12f))
+            }
+        }
+        metadataRenderer = ::render
+        if (key == metadataKey) {
+            render(metadataResult ?: MetadataResult(Result.success(null), Result.success(null)))
+            if (metadataResult == null) chapterRows?.apply { removeAllViews(); addView(text(getString(R.string.loading), 12f)) }
+            return
+        }
+        metadataJob?.cancel()
+        metadataKey = key
+        metadataResult = null
+        // The stored effective description is available even while the source is loading/missing.
+        render(MetadataResult(Result.success(null), Result.success(null)))
+        chapterRows?.apply { removeAllViews(); addView(text(getString(R.string.loading), 12f)) }
+        metadataJob = lifecycleScope.launch {
+            var lease: java.io.Closeable? = null
+            try {
+                lease = LibrarySessions.inspectionLease()
+                var readRecord: Pair<LibrarySession, LibraryBook>? = null
+                val result = withContext(Dispatchers.IO) {
+                    val (session, record) = BookData.resolve(this@BookDataActivity, ref)
+                    if (record.source != overview.optString("source") ||
+                        JSONObject(record.body).optString("sourceIndexPath") != book.optString("sourceIndexPath"))
+                        throw CancellationException("Metadata source changed")
+                    readRecord = session to record
+                    val source = session.local(record.source)
+                    LibrarySources.acquire(source).use {
+                        val index = MangaSourceIndex.load(session, book.optString("sourceIndexPath"))
+                        fun read(block: () -> ComicMetadata?): Result<ComicMetadata?> = try { Result.success(block()) }
+                            catch (e: CancellationException) { throw e }
+                            catch (e: Exception) { Result.failure(e) }
+                        MetadataResult(read { BookMetadataReader.bookMetadata(source, chapters, index) },
+                            read { if (chapterRows != null && chapter != null) BookMetadataReader.chapterMetadata(source, chapter, index) else null })
+                    }
+                }
+                ensureActive()
+                if (metadataKey != key) return@launch
+                if (result.work.isSuccess) readRecord?.let { (session, record) ->
+                    withContext(Dispatchers.IO) { MangaDescriptions.cacheSource(session, record, result.work.getOrNull()) }
+                }
+                ensureActive()
+                if (metadataKey == key) { metadataResult = result; metadataRenderer?.invoke(result) }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                if (metadataKey == key) {
+                    val result = MetadataResult(Result.failure(e), Result.failure(e))
+                    metadataResult = result; metadataRenderer?.invoke(result)
+                }
+            } finally { lease?.close() }
         }
     }
-    /** 「当前章节 · 第N章」卡：只放**该章 json**（标题/作者/社团/系列/页数/标签）+ 打开文件夹。 */
-    private fun renderChapterCard(book: JSONObject, chapter: MangaChapter) {
-        card(summary) { body ->
-            body.addView(text(getString(R.string.book_chapter_meta_title) + " · " + mangaChapterLabel(this, chapter), 16f))
-            val rows = column().also(body::addView)
-            rows.addView(text(getString(R.string.loading), 12f))
-            loadChapterRows(rows, book, chapter)
-            body.addView(smallButton(R.string.book_open_folder) { openFolderLocation() })
-        }
-    }
+
+    private fun storedTags(book: JSONObject): List<String> = book.optJSONArray("tags")?.let { array ->
+        (0 until array.length()).map { array.optString(it) }.filter(String::isNotBlank)
+    }.orEmpty()
+
     /** 书级事实：章节数 / 页数（本章 / 全书）/ 进度（本章）/ 导入时间。 */
     private fun bookFacts(body: LinearLayout, book: JSONObject) {
         val chapters = if (book.has("chapterCount")) book.optInt("chapterCount")
         else MangaChapter.listFromJson(book.optString("chapters")).size
         field(body, fieldLabel("chapterCount"), chapters.toString())
         if (ref.kind == "manga") {
-            val chapter = currentChapter
-            val pages = if (chapter != null) "${chapter.pageCount} / ${book.optInt("pageCount")}" else value(book, "pageCount")
-            field(body, getString(R.string.book_meta_pages_label), pages)
+            field(body, getString(R.string.book_meta_pages_label), value(book, "pageCount"))
         } else {
             field(body, getString(R.string.book_data_layout_pages), intent.getIntExtra("runtimePages", -1)
                 .takeIf { it >= 0 }?.toString() ?: getString(R.string.book_data_unknown))
         }
         val readAt = book.optLong("lastReadAt")
-        field(body, getString(R.string.book_data_progress), if (readAt <= 0) getString(R.string.book_data_not_read)
-            else if (ref.kind == "manga") currentChapter?.let { chapter ->
+        val readingPage = initialPage.takeIf { it >= 0 } ?: book.optInt("lastReadPage")
+        field(body, getString(R.string.book_data_progress), if (readAt <= 0 && (ref.kind != "manga" || readingPage <= 0 && initialPage < 0)) getString(R.string.book_data_not_read)
+            else if (ref.kind == "manga") MangaChapter.listFromJson(book.optString("chapters"))
+                .firstOrNull { it.containsPage(readingPage) }?.let { chapter ->
                 getString(R.string.import_read_progress_chapter, mangaChapterLabel(this, chapter),
-                    (book.optInt("lastReadPage") - chapter.startPage + 1).coerceAtLeast(1), chapter.pageCount)
-            } ?: getString(R.string.book_data_manga_progress, book.optInt("lastReadChapter") + 1, book.optInt("lastReadPage") + 1)
+                    (readingPage - chapter.startPage + 1).coerceAtLeast(1), chapter.pageCount)
+            } ?: getString(R.string.book_data_manga_progress, book.optInt("lastReadChapter") + 1, readingPage + 1)
             else getString(R.string.book_data_novel_progress, book.optInt("lastReadChapter") + 1, book.optInt("lastReadParaIndex") + 1))
         if (readAt > 0) field(body, fieldLabel("lastReadAt"), date(readAt))
         field(body, fieldLabel("addedAt"), date(book.optLong("addedAt")))
     }
-    private fun loadChapterRows(container: LinearLayout, book: JSONObject, chapter: MangaChapter) {
-        val source = overview.optString("source").takeIf { it.isNotBlank() } ?: return
-        val list = MangaChapter.listFromJson(book.optString("chapters"))
-        chapterJob?.cancel()
-        chapterJob = lifecycleScope.launch {
-            val metadata = withContext(Dispatchers.IO) {
-                runCatching {
-                    // source 是书库相对路径，先解析成实际文件（SAF/File 各自后端）
-                    val local = LibrarySessions.current(this@BookDataActivity).local(source)
-                    BookMetadataReader.chapterMetadata(local, list)
-                }.getOrNull()
-            }
-            if (!isActive) return@launch
-            container.removeAllViews()
-            val value = metadata?.get(chapter.title)
-            if (value == null) {
-                container.addView(text(getString(R.string.book_chapter_meta_unreadable), 12f).apply {
-                    setTextColor(color(R.color.text_secondary))
-                })
-            } else {
-                BookMetadataChips.addRows(container, value) { copyTag(it) }
-            }
-        }
-    }
     /** 打开作品所在文件夹：**交给系统文件管理器**（SAF 用 tree 文档 URI；本地路径用 ExternalStorageProvider）。 */
-    private fun openFolderLocation() {
+    private fun openFolderLocation(chapter: MangaChapter? = null) {
         val source = overview.optString("source")
         if (source.isBlank()) return
         fun launch(uri: Uri): Boolean = runCatching {
@@ -390,12 +481,27 @@ class BookDataActivity : BaseActivity() {
             })
             true
         }.getOrDefault(false)
-        val session = runCatching { LibrarySessions.current(this) }.getOrNull()
-        val storageUri = session?.let { runCatching { it.storage.uri(source) }.getOrNull() }
-        val localDir = session?.let { runCatching { it.local(source).let { f -> if (f.isFile) f.parentFile else f } }.getOrNull() }
-        val opened = (storageUri?.takeIf { it.scheme == "content" }?.let(::launch) ?: false) ||
-            (localDir?.let(::externalDocumentsUri)?.let(::launch) ?: false)
-        if (!opened) AppNotice.show(this, source)
+        val book = overview.optJSONObject("book") ?: return
+        lifecycleScope.launch {
+            try {
+                val uris = withContext(Dispatchers.IO) {
+                    LibrarySessions.inspectionLease().use {
+                        val session = BookData.resolve(this@BookDataActivity, ref).first
+                        val index = MangaSourceIndex.load(session, book.optString("sourceIndexPath"))
+                        val target = chapter?.let { BookMetadataReader.chapterSource(session.local(source), it, index) }
+                            ?: session.local(source)
+                        val path = session.relative(target)
+                        val parent = path.substringBeforeLast('/', "")
+                        val node = session.storage.list(parent).firstOrNull { it.path == path }
+                        val directory = if (node?.directory == true) path else parent
+                        listOfNotNull(session.storage.uri(directory).takeIf { it.scheme == "content" },
+                            externalDocumentsUri(session.local(directory)))
+                    }
+                }
+                if (uris.none(::launch)) AppNotice.show(this@BookDataActivity, source)
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { report(e) }
+        }
     }
 
     private fun externalDocumentsUri(file: File): Uri? {
@@ -490,6 +596,7 @@ class BookDataActivity : BaseActivity() {
     private fun text(value: String, size: Float = 14f) = TextView(this).apply {
         text = value; textSize = size; setTextColor(color(R.color.text_primary)); setPadding(0, dp(4), 0, dp(4))
         setTextIsSelectable(true)
+        com.moe.starflow.utils.FontSync.apply(this)
     }
     private fun value(data: JSONObject, key: String, fallback: String = getString(R.string.book_data_unknown)): String =
         if (!data.has(key) || data.isNull(key)) fallback else data.get(key).toString().ifBlank { fallback }
