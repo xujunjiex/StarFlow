@@ -2137,6 +2137,5 @@
     <string name="book_meta_book_label">Book info</string>
     <string name="import_desc_restore">Restore original</string>
     <string name="import_desc_saved">Description saved</string>
-    <string name="import_desc_saved_pending">Description saved in app. The companion file is pending; retry in work data or library storage.</string>
     <string name="import_desc_too_long">Description is too long to save.</string>
 </resources>

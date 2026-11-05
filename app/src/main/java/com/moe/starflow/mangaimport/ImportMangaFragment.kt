@@ -486,15 +486,11 @@ class ImportMangaFragment : Fragment() {
                 dialog.setCancelable(false)
                 val saveJob = com.moe.starflow.library.LibrarySessions.launch(pinned, viewLifecycleOwner.lifecycleScope) {
                     try {
-                        val pending = withContext(Dispatchers.IO) {
+                        withContext(Dispatchers.IO) {
                             ImportedMangaStore.editDescription(pinned, manga, text)
-                            val session = com.moe.starflow.library.LibrarySessions.current(pinned)
-                            session.database.catalog().pending().any {
-                                org.json.JSONObject(it.body).let { op -> op.optString("component") == "metadata" && op.optString("uuid") == manga.bookUuid }
-                            }
                         }
                         dialog.dismiss()
-                        context?.let { AppNotice.show(it, getString(if (pending) R.string.import_desc_saved_pending else R.string.import_desc_saved)) }
+                        context?.let { AppNotice.show(it, getString(R.string.import_desc_saved)) }
                         refresh()
                     } catch (e: kotlinx.coroutines.CancellationException) { throw e }
                     catch (e: Exception) {

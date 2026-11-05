@@ -2134,6 +2134,5 @@
     <string name="book_meta_book_label">书籍信息</string>
     <string name="import_desc_restore">恢复原始简介</string>
     <string name="import_desc_saved">简介已保存</string>
-    <string name="import_desc_saved_pending">简介已保存在应用内，配套文件待写入，可在作品数据或书库存储中重试。</string>
     <string name="import_desc_too_long">简介过长，无法保存。</string>
 </resources>
