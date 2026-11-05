@@ -2455,8 +2455,19 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     private fun openPagePreview() {
+        // 预览网格 = **当前章**口径（与进度条/胶囊同一个 scope）：长按的是本章的进度条，
+        // 网格里就不该混进整本书别的章（用户口径 2026-11：「长按应该是选择当前章节的预览，
+        // 而不是整部书所有的章节」）。章表缺失/过期时 scope 已退回整本，这里不用再判。
+        val scope = progressScope()
         // dark = 阅读背景深浅（缩略图预览弹窗也要适配，不再恒白底）
-        ReaderPagePreviewDialog(this, source, currentPage, isDarkBackground()) { page ->
+        ReaderPagePreviewDialog(
+            context = this,
+            source = source,
+            pages = scope.pageRange(source.size),
+            currentPage = currentPage,
+            chapterLabel = currentChapter()?.let { mangaChapterLabel(this, it) },
+            dark = isDarkBackground(),
+        ) { page ->
             goToPage(page)
             refreshOverlay()
         }.show()

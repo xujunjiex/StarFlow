@@ -9,6 +9,9 @@ import com.moe.starflow.mangaimport.data.MangaChapter
  * 「章内第几页 / 本章共几页」是同一个坐标系（小说阅读器早就是这个取舍：全书进度由目录弹窗承载）。
  * 整本口径下几百页挤在一条约 900px 的线上，一像素代表好几页，拖拽根本落不准。
  *
+ * 长按进度条打开的缩略图预览网格也用同一个域（[pageRange]）：既然长按的是「本章的进度条」，
+ * 网格里就不该混进别的章 —— 整本口径下几百页的网格还要靠滑很久才能找到本章那一页。
+ *
  * 章表与当前页对不上时（旧书、章表过期）退回整本 —— 宁可按整条线走，也不能把拇指指到别的章上。
  */
 internal data class ReaderProgressScope(val startPage: Int, val pageCount: Int) {
@@ -27,6 +30,19 @@ internal data class ReaderProgressScope(val startPage: Int, val pageCount: Int) 
             .filter { it in startPage until end }
             .map { it - startPage }
             .toSet()
+    }
+
+    /**
+     * 本章在整本里的页区间（**全书页号**，闭区间）—— 长按预览网格的取页范围。
+     *
+     * 夹进 `0 until totalPages`：章表与当前数据源理论同源，但旧书/外部改动可能让
+     * `startPage + pageCount` 越界，越界格会去读不存在的页（缩略图恒空）。空来源给空区间。
+     */
+    fun pageRange(totalPages: Int): IntRange {
+        if (totalPages <= 0) return IntRange.EMPTY
+        val first = startPage.coerceIn(0, totalPages - 1)
+        val last = (startPage + pageCount - 1).coerceIn(first, totalPages - 1)
+        return first..last
     }
 
     companion object {

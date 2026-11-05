@@ -2,6 +2,7 @@ package com.moe.starflow.mangaimport.reader
 
 import com.moe.starflow.mangaimport.data.MangaChapter
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -67,5 +68,26 @@ class ReaderProgressScopeTest {
         // 拖到进度条最右 = 本章最后一页（69），不会滑进下一章
         assertEquals(69, scope.globalPage(scope.pageCount - 1))
         assertEquals(scope.pageCount - 1, scope.localPage(69))
+    }
+
+    @Test
+    fun previewRangeCoversOnlyTheCurrentChapter() {
+        // 长按预览网格与拖拽寻页同源：只列本章 40..69，不是整本 0..99
+        val scope = ReaderProgressScope.of(ch2, currentPage = 45, totalPages = 100)
+        assertEquals(40..69, scope.pageRange(100))
+    }
+
+    @Test
+    fun previewRangeFallsBackToTheWholeBookWithUnknownChapter() {
+        assertEquals(0..49, ReaderProgressScope.of(null, currentPage = 12, totalPages = 50).pageRange(50))
+        assertEquals(0..99, ReaderProgressScope.of(ch2, currentPage = 3, totalPages = 100).pageRange(100))
+    }
+
+    @Test
+    fun previewRangeIsClampedToTheAvailablePages() {
+        // 章表比数据源长（旧书 / 外部改动）时不能去读不存在的页：越界格缩略图恒空
+        assertEquals(40..99, ReaderProgressScope(40, 100).pageRange(100))
+        assertEquals(0..9, ReaderProgressScope(0, 30).pageRange(10))
+        assertTrue(ReaderProgressScope(0, 10).pageRange(0).isEmpty())
     }
 }
