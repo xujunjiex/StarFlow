@@ -1040,6 +1040,12 @@ class PageGroupAdapter(
         // （"显示框选范围"，不显示原图其它区域）
         val cacheKey = overlayCacheKey(cacheManager, prefs, entry.id, mode)
 
+        // 设置变化后的同条目、同模式仍会重绑；交付时现读指纹，拒绝重绑前的在途结果。
+        // 不保存另一份参数状态，正常渲染和异常回退共用同一判据。
+        fun isCurrentRequest(): Boolean =
+            holder.boundEntryId == entry.id && holder.boundMode == mode &&
+                cacheKey == overlayCacheKey(cacheManager, prefs, entry.id, mode)
+
         // 防御性释放：先清空 ImageView 旧 bitmap 引用，避免外部 recycle 后
         // 残留 dangling reference 在 rebind 之间的 draw cycle 中触发崩溃。
         // 配合 onItemSelected 中 clearImageViewRefForPage 形成双重保护。
@@ -1086,12 +1092,8 @@ class PageGroupAdapter(
                     config = cacheManager.getOverlayConfig(prefs)
                 )
                 withContext(Dispatchers.Main) {
-                    // 关键：异步渲染完成时校验 holder 是否仍绑定到同一个 entry + mode。
-                    // 若期间翻页/切 variant/切三态已复用此 holder 或切换了 mode，
-                    // 直接 setImageBitmap 旧 bitmap 会把过期内容写到错误的 ImageView，
-                    // 或写入后立即被新一次 loadImage 的 setImageDrawable(null) 覆盖、bitmap
-                    // 既未入 cache 也无人 recycle。校验不一致则丢弃此次结果（不入 cache、不 set）。
-                    if (holder.boundEntryId != entry.id || holder.boundMode != mode) {
+                    // 条目、模式或渲染参数已变：尚未交付的位图直接回收，不入缓存、不上屏。
+                    if (!isCurrentRequest()) {
                         LogCollector.d("MangaViewer", "loadImage: stale render discarded holder bound=(${holder.boundEntryId},${holder.boundMode}) req=(${entry.id},$mode)")
                         bitmap?.recycle()
                         return@withContext
@@ -1126,8 +1128,8 @@ class PageGroupAdapter(
                             fallback.recycle()
                             if (safe != null) {
                                 withContext(Dispatchers.Main) {
-                                    // 异步回退完成时同样校验 holder 是否仍属同一 entry + mode
-                                    if (holder.boundEntryId == entry.id && holder.boundMode == mode) {
+                                    // 回退图同样不能覆盖参数变化后新绑定的画面。
+                                    if (isCurrentRequest()) {
                                         holder.imageView.resetZoom()
                                         holder.imageView.setImageBitmap(safe)
                                     } else {

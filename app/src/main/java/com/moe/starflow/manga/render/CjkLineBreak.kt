@@ -1,5 +1,7 @@
 package com.moe.starflow.manga.render
 
+import com.moe.starflow.manga.config.TranslationTextRules
+
 /**
  * CJK 行断边界守卫：**闭标点不能出现在行/列首，开括号不能落在行/列尾**。
  *
@@ -20,25 +22,26 @@ internal object CjkLineBreak {
      * 把切点 [end] 调整到合法的 CJK 断点。
      *
      * [start] 是当前行/列起点；返回值始终满足 `start < result <= end`。
-     * 只剩一个字符时允许例外，避免把整段卡死在同一个切点。
+     * 回退以完整码点或整串省略号为单位；只剩一个单元时允许标点例外，
+     * 避免拆开代理对、已受保护的点串，或把整段卡死在同一个切点。
      */
     fun adjustBreak(text: String, start: Int, end: Int): Int {
         if (start < 0 || end <= start || end >= text.length) return end
         var cut = end
-        var guard = 0
-        while (cut > start + 1 && guard++ < text.length) {
-            var moved = false
-            if (text[cut - 1] in NO_LINE_END) {
-                cut--
-                moved = true
+        while (cut > start) {
+            if (text[cut - 1] !in NO_LINE_END && text[cut] !in NO_LINE_START) break
+            var previous = text.offsetByCodePoints(cut, -1)
+            if (TranslationTextRules.isEllipsisDot(text[previous])) {
+                while (previous > start && TranslationTextRules.isEllipsisDot(text[previous - 1])) {
+                    previous--
+                }
             }
-            if (cut < text.length && cut > start + 1 && text[cut] in NO_LINE_START) {
-                cut--
-                moved = true
-            }
-            if (!moved) break
+            // 本行只剩一个码点/点串，继续前移就会变成空行；保留当前预算内的切点。
+            // 点串自身超出容量时，仍由调用方原有的硬切兜底处理。
+            if (previous <= start) break
+            cut = previous
         }
-        return cut.coerceAtLeast(start + 1)
+        return cut
     }
 
     /** 是否包含中日韩宽字符；纯拉丁长词不走这套标点规则。 */

@@ -68,6 +68,18 @@ class LayoutEngineTest {
         override fun glyphHeight(): Float = fontSize
     }
 
+    /** 每码点一格，breakText 与真实字体一样只返回完整代理对后的边界。 */
+    private class CodePointMeasurer : TextMeasurer {
+        override var fontSize: Float = 10f
+        override fun measure(text: String): Float = text.codePointCount(0, text.length) * fontSize
+        override fun breakText(text: String, maxWidth: Float): Int {
+            val count = (maxWidth / fontSize).toInt().coerceIn(0, text.codePointCount(0, text.length))
+            return text.offsetByCodePoints(0, count)
+        }
+        override fun glyphWidth(): Float = fontSize
+        override fun glyphHeight(): Float = fontSize
+    }
+
     /** 带真实 ascent/descent 的度量：用于验证行高与基线。 */
     private class MetricMeasurer : TextMeasurer {
         override var fontSize: Float = 10f
@@ -887,6 +899,67 @@ class LayoutEngineTest {
         val columns = layout.lines.map { it.text }
         assertEquals(text, columns.joinToString(""))
         assertTrue("列首不能是闭标点：$columns", columns.none { it.startsWith("、") })
+    }
+
+    @Test
+    fun horizontalCjk_punctuationRetreatKeepsSupplementaryCharactersWhole() {
+        val region = Box(0f, 0f, 20f, 200f)
+        for (glyph in listOf("😀", "𠮷")) {
+            val text = "你$glyph，好"
+            val layout = LayoutEngine.plan(
+                CodePointMeasurer(), text, region, TextDirection.HORIZONTAL,
+                10f, false, TextAlign.LEFT, 0f, 0f
+            )
+            assertEquals(listOf("你", "$glyph，", "好"), layout.lines.map { it.text })
+            assertEquals(text, layout.lines.joinToString("") { it.text })
+            assertNoOverflow(layout, region)
+        }
+    }
+
+    @Test
+    fun horizontalCjk_singleSupplementaryCharacterAllowsPunctuationFallback() {
+        val layout = LayoutEngine.plan(
+            CodePointMeasurer(), "😀，好", Box(0f, 0f, 10f, 200f), TextDirection.HORIZONTAL,
+            10f, false, TextAlign.LEFT, 0f, 0f
+        )
+        assertEquals(listOf("😀", "，", "好"), layout.lines.map { it.text })
+    }
+
+    @Test
+    fun cjkPunctuationRetreat_preservesDotRunsInBothDirections() {
+        for (dots in listOf("...", "……", "。．⋯")) {
+            for (direction in listOf(TextDirection.HORIZONTAL, TextDirection.VERTICAL_RL)) {
+                val capacity = dots.length * 10f
+                val region = if (direction == TextDirection.HORIZONTAL) {
+                    Box(0f, 0f, capacity, 200f)
+                } else {
+                    Box(0f, 0f, 200f, capacity)
+                }
+                val text = "あ${dots}、い"
+                val layout = LayoutEngine.plan(
+                    LatinMeasurer(), text, region, direction, 10f, false, TextAlign.LEFT, 0f, 0f
+                )
+                val lines = layout.lines.map { it.text }
+                assertTrue("点串必须完整保留：$direction $lines", lines.any { it.contains(dots) })
+                assertEquals(text, lines.joinToString(""))
+                assertNoOverflow(layout, region)
+            }
+        }
+    }
+
+    @Test
+    fun cjkPunctuationRetreat_keepsOverlongDotRunHardBreakFallback() {
+        val text = "あ.....、い"
+        for (direction in listOf(TextDirection.HORIZONTAL, TextDirection.VERTICAL_RL)) {
+            val region = if (direction == TextDirection.HORIZONTAL) Box(0f, 0f, 20f, 200f)
+                else Box(0f, 0f, 200f, 20f)
+            val layout = LayoutEngine.plan(
+                LatinMeasurer(), text, region, direction, 10f, false, TextAlign.LEFT, 0f, 0f
+            )
+            assertEquals(text, layout.lines.joinToString("") { it.text })
+            assertTrue(layout.lines.all { it.text.length <= 2 })
+            assertNoOverflow(layout, region)
+        }
     }
 
     @Test

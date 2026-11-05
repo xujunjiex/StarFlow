@@ -161,7 +161,7 @@
 - `config/MangaTextSpacing` 统一间距默认值及旧值迁移：字间距、行／列间距默认均为 20%。行／列及竖排字符步距为 `字号 × (1 + 设置比例)`，不叠加固定的 1.1／1.2 倍系数；横排字间距为字形自然 advance 之间的 `字号 × 设置比例`。旧版默认的 0% 只迁移一次，之后主动选择 0% 必须保留；设置页、悬浮窗与历史／阅读器渲染共用该入口。
 - **字号线 `MIN_FONT_SIZE = 1f`**：宁可字小，**不可丢字**
 - **保底**：极小气泡塞不下时，**放弃用户间距再排一次**（而不是缩到看不见或溢出）
-- **CJK 避头尾（2026-11）**：`CjkLineBreak` 按 UAX #14 的 `CL/CP/OP` 子集，闭标点不落行首、开括号不落行尾。横排接入 `wrapByChar`（点串回退之后），竖排接入 `wrapVertical`；只前移切点，单字行例外。回归：`LayoutEngineTest.horizontalCjk_*`、`verticalCjk_*`、`cjkBreakGuard_*`。
+- **CJK 避头尾（2026-11）**：`CjkLineBreak` 按 UAX #14 的 `CL/CP/OP` 子集，闭标点不落行首、开括号不落行尾。横排接入 `wrapByChar`（点串回退之后），竖排接入 `wrapVertical`；只按完整码点或整串省略号前移切点，单个单元占满预算时允许标点例外，不能拆开代理对或已受保护的点串。点串自身超出容量时仍按原规则硬切。回归：`LayoutEngineTest.horizontalCjk_*`、`verticalCjk_*`、`cjkBreakGuard_*`、`cjkPunctuationRetreat_*`。
 - **拉丁末行平衡（2026-11）**：`wrapByWord` 在末行只有一个词、上一行至少两个词时，搬一个整词到末行；重新量宽装不下就回滚，不拆音节、不引连字符。回归：`latinLastLine_movesOneWordToAvoidOrphan`。
 - **长译自动扩框（2026-11）**：自动模式、单气泡、`mergeOverlap` 关闭、译文非原文时，若译文非空白字符数 > 原文 × 1.15，**或按参考字号量出的自然宽度超过「框宽 × 可容纳行数」×1.05**，`OverlayRenderer.expandedAutoRect` 把绘制区最多放大 1.10×（以原中心为中心，夹在坐标空间内）再交给 `LayoutEngine`。短译/装得下的译文原样；`mergeOverlap` 开时跳过，**合并块仍严格等于成员矩形并集**。常量在 `OverlayRenderer.kt`，回归 `OverlayRendererTest.autoExpand_*`。
 - **横排对齐（`manga_horizontal_align`，`0/1/2` = 左/中/右）**：
