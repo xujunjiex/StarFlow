@@ -276,6 +276,30 @@ class ReaderTranslationController(
 
     private var appliedRulesRaw: String = rulesRaw()
 
+    /** 渲染期参数指纹（不含替换表；替换表由 [refreshIfRulesChanged] 单独负责）。 */
+    private fun renderParamsRaw(): String {
+        val config = cacheManager.getOverlayConfig(appPrefs)
+        return TranslationCacheManager.overlayRenderFingerprint(
+            config,
+            appPrefs.getString("Custom_Result_Font", "").orEmpty()
+        )
+    }
+
+    private var appliedRenderParamsRaw: String = renderParamsRaw()
+
+    /**
+     * 设置页/悬浮窗改了字号、字距、行距、对齐、颜色等渲染参数 → 作废已渲染译图。
+     * 译文数据不动，随后由宿主重渲染当前页，不调用 OCR/翻译。
+     */
+    fun refreshIfRenderParamsChanged(): Boolean {
+        val now = renderParamsRaw()
+        if (now == appliedRenderParamsRaw) return false
+        appliedRenderParamsRaw = now
+        invalidateRenders()
+        LogCollector.d(TAG, "渲染参数已变更 → 作废已渲染译图（代次 $renderGeneration）")
+        return true
+    }
+
     /**
      * 渲染代次：替换表一变就 +1。
      *

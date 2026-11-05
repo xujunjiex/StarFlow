@@ -102,6 +102,8 @@ class MangaViewerActivity : AppCompatActivity() {
     private val renderCache = BitmapLruCache(maxSize = MAX_RENDER_CACHE_ENTRIES)  // key="historyId_mode"
     private var pageCacheMap: Map<Long, PageCacheEntity> = emptyMap()
     private var savedClickedEntryId: Long = -1L
+    /** 当前渲染参数指纹；从设置页/悬浮窗改字号等参数后，onResume 用它作废旧译图。 */
+    private var appliedOverlayFingerprint: String? = null
     private var savedEntryIds: LongArray? = null
     private var isManageView = false
     private var currentPagePosition = 0
@@ -124,6 +126,7 @@ class MangaViewerActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         cacheManager = TranslationCacheManager(this)
+        appliedOverlayFingerprint = currentOverlayFingerprint()
 
         val clickedEntryId = intent.getLongExtra(EXTRA_ENTRY_ID, -1L)
         val entryIds = intent.getLongArrayExtra(EXTRA_ENTRY_IDS)
@@ -133,6 +136,29 @@ class MangaViewerActivity : AppCompatActivity() {
 
         setupViews()
         loadData(clickedEntryId, entryIds)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (!::cacheManager.isInitialized) return
+        val current = currentOverlayFingerprint()
+        val previous = appliedOverlayFingerprint
+        appliedOverlayFingerprint = current
+        if (previous == null || previous == current) return
+
+        // 渲染参数变了：先断开 ViewHolder 对旧 bitmap 的引用，再回收，最后重绑。
+        // 顺序反了会在 draw 周期里碰到已 recycle 的位图。
+        clearAllAttachedImageViewRefs()
+        renderCache.clear()
+        val adapter = binding.viewPager.adapter as? PageGroupAdapter ?: return
+        adapter.notifyItemRangeChanged(0, adapter.itemCount)
+    }
+
+    private fun currentOverlayFingerprint(): String {
+        val prefs = CustomPreference.getInstance(this).getSharedPreferences()
+        val config = cacheManager.getOverlayConfig(prefs)
+        val fontName = prefs.getString("Custom_Result_Font", "").orEmpty()
+        return "r${rulesFingerprint(this)}_${TranslationCacheManager.overlayRenderFingerprint(config, fontName)}"
     }
 
     private fun setupViews() {
@@ -809,8 +835,9 @@ class MangaViewerActivity : AppCompatActivity() {
                 // 相邻页 holder 引用保留避免黑屏；随后 notifyItemChanged 触发重渲染当前页。
                 clearAttachedImageViewRefsForEntry(entry.id)
                 // 清掉该 entry 三 mode 的缓存 bitmap（让 cache MISS 触发协程重新渲染 overlay）
+                val currentPrefs = CustomPreference.getInstance(this@MangaViewerActivity).getSharedPreferences()
                 for (mode in TranslationCacheManager.OverlayMode.values()) {
-                    renderCache.remove(overlayCacheKey(this@MangaViewerActivity, entry.id, mode))
+                    renderCache.remove(overlayCacheKey(cacheManager, currentPrefs, entry.id, mode))
                 }
                 overlayState = TranslationCacheManager.OverlayMode.TRANSLATED
                 binding.btnToggleImage.setImageResource(android.R.drawable.ic_menu_camera)
@@ -927,17 +954,24 @@ data class TranslationDetailItem(
 /**
  * overlay 渲染缓存 key（"crop" scope：历史页只显示框选范围）。
  *
- * ⚠️ 必须带**译文替换表指纹**：替换表是渲染时套用的，规则一改就该重渲染；而这里以前只拼
- * `id_mode_crop` 且没有 onResume 失效 —— 用户去设置里改了规则再回到查看器，看到的仍是旧图。
+ * ⚠️ 必须带**译文替换表指纹**和**渲染参数指纹**：两者都是渲染时套用的，规则/字号/字距/
+ * 对齐一改就该重渲染；只拼 `id_mode_crop` 且没有 onResume 失效时，用户改完设置回来看到旧图。
  *
  * ⚠️ 格式仍须以 `${entryId}_` 开头：`BitmapLruCache.retainEntries` 靠 `substringBefore('_')` 认 id。
  * ⚠️ 放**文件级**（不在 Activity / PageGroupAdapter 任一类内）：两处都要用同一个 key 格式。
  */
 private fun overlayCacheKey(
-    context: Context,
+    cacheManager: TranslationCacheManager,
+    prefs: android.content.SharedPreferences,
     entryId: Long,
     mode: TranslationCacheManager.OverlayMode
-): String = "${entryId}_${mode.name}_crop_r${rulesFingerprint(context)}"
+): String {
+    val config = cacheManager.getOverlayConfig(prefs)
+    val fontName = prefs.getString("Custom_Result_Font", "").orEmpty()
+    val rules = prefs.getString(TranslationTextRules.KEY_REPLACEMENTS, "").orEmpty()
+    return "${entryId}_${mode.name}_crop_r${rules.hashCode()}_" +
+        TranslationCacheManager.overlayRenderFingerprint(config, fontName)
+}
 
 private fun rulesFingerprint(context: Context): Int =
     CustomPreference.getInstance(context)
@@ -1004,7 +1038,13 @@ class PageGroupAdapter(
         val mode = getOverlayState()
         // cacheKey 包含 scope（crop/full）—— 历史页默认只渲染 crop 区域
         // （"显示框选范围"，不显示原图其它区域）
-        val cacheKey = overlayCacheKey(holder.itemView.context, entry.id, mode)
+        val cacheKey = overlayCacheKey(cacheManager, prefs, entry.id, mode)
+
+        // 设置变化后的同条目、同模式仍会重绑；交付时现读指纹，拒绝重绑前的在途结果。
+        // 不保存另一份参数状态，正常渲染和异常回退共用同一判据。
+        fun isCurrentRequest(): Boolean =
+            holder.boundEntryId == entry.id && holder.boundMode == mode &&
+                cacheKey == overlayCacheKey(cacheManager, prefs, entry.id, mode)
 
         // 防御性释放：先清空 ImageView 旧 bitmap 引用，避免外部 recycle 后
         // 残留 dangling reference 在 rebind 之间的 draw cycle 中触发崩溃。
@@ -1052,12 +1092,8 @@ class PageGroupAdapter(
                     config = cacheManager.getOverlayConfig(prefs)
                 )
                 withContext(Dispatchers.Main) {
-                    // 关键：异步渲染完成时校验 holder 是否仍绑定到同一个 entry + mode。
-                    // 若期间翻页/切 variant/切三态已复用此 holder 或切换了 mode，
-                    // 直接 setImageBitmap 旧 bitmap 会把过期内容写到错误的 ImageView，
-                    // 或写入后立即被新一次 loadImage 的 setImageDrawable(null) 覆盖、bitmap
-                    // 既未入 cache 也无人 recycle。校验不一致则丢弃此次结果（不入 cache、不 set）。
-                    if (holder.boundEntryId != entry.id || holder.boundMode != mode) {
+                    // 条目、模式或渲染参数已变：尚未交付的位图直接回收，不入缓存、不上屏。
+                    if (!isCurrentRequest()) {
                         LogCollector.d("MangaViewer", "loadImage: stale render discarded holder bound=(${holder.boundEntryId},${holder.boundMode}) req=(${entry.id},$mode)")
                         bitmap?.recycle()
                         return@withContext
@@ -1092,8 +1128,8 @@ class PageGroupAdapter(
                             fallback.recycle()
                             if (safe != null) {
                                 withContext(Dispatchers.Main) {
-                                    // 异步回退完成时同样校验 holder 是否仍属同一 entry + mode
-                                    if (holder.boundEntryId == entry.id && holder.boundMode == mode) {
+                                    // 回退图同样不能覆盖参数变化后新绑定的画面。
+                                    if (isCurrentRequest()) {
                                         holder.imageView.resetZoom()
                                         holder.imageView.setImageBitmap(safe)
                                     } else {

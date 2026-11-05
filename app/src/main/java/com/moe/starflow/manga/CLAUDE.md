@@ -161,7 +161,9 @@
 - `config/MangaTextSpacing` 统一间距默认值及旧值迁移：字间距、行／列间距默认均为 20%。行／列及竖排字符步距为 `字号 × (1 + 设置比例)`，不叠加固定的 1.1／1.2 倍系数；横排字间距为字形自然 advance 之间的 `字号 × 设置比例`。旧版默认的 0% 只迁移一次，之后主动选择 0% 必须保留；设置页、悬浮窗与历史／阅读器渲染共用该入口。
 - **字号线 `MIN_FONT_SIZE = 1f`**：宁可字小，**不可丢字**
 - **保底**：极小气泡塞不下时，**放弃用户间距再排一次**（而不是缩到看不见或溢出）
-- **长译自动扩框（2026-11）**：自动模式、单气泡、`mergeOverlap` 关闭、译文非原文时，若译文非空白字符数 > 原文 × 1.15，`OverlayRenderer.expandedAutoRect` 把绘制区最多放大 1.10×（以原中心为中心，夹在坐标空间内）再交给 `LayoutEngine`。短译/等长译原样；`mergeOverlap` 开时跳过，**合并块仍严格等于成员矩形并集**。常量在 `OverlayRenderer.kt`，回归 `OverlayRendererTest.autoExpand_*`。
+- **CJK 避头尾（2026-11）**：`CjkLineBreak` 按 UAX #14 的 `CL/CP/OP` 子集，闭标点不落行首、开括号不落行尾。横排接入 `wrapByChar`（点串回退之后），竖排接入 `wrapVertical`；只按完整码点或整串省略号前移切点，单个单元占满预算时允许标点例外，不能拆开代理对或已受保护的点串。点串自身超出容量时仍按原规则硬切。回归：`LayoutEngineTest.horizontalCjk_*`、`verticalCjk_*`、`cjkBreakGuard_*`、`cjkPunctuationRetreat_*`。
+- **拉丁末行平衡（2026-11）**：`wrapByWord` 在末行只有一个词、上一行至少两个词时，搬一个整词到末行；重新量宽装不下就回滚，不拆音节、不引连字符。回归：`latinLastLine_movesOneWordToAvoidOrphan`。
+- **长译自动扩框（2026-11）**：自动模式、单气泡、`mergeOverlap` 关闭、译文非原文时，若译文非空白字符数 > 原文 × 1.15，**或按参考字号量出的自然宽度超过「框宽 × 可容纳行数」×1.05**，`OverlayRenderer.expandedAutoRect` 把绘制区最多放大 1.10×（以原中心为中心，夹在坐标空间内）再交给 `LayoutEngine`。短译/装得下的译文原样；`mergeOverlap` 开时跳过，**合并块仍严格等于成员矩形并集**。常量在 `OverlayRenderer.kt`，回归 `OverlayRendererTest.autoExpand_*`。
 - **横排对齐（`manga_horizontal_align`，`0/1/2` = 左/中/右）**：
   - 自动字号模式：`LayoutEngine` 按 `align` 定每行起点（左=`rect.left+pad` / 中=`centerX-行宽/2` / 右=`rect.right-pad-行宽`），
     绘制端 `VerticalTextRenderer.draw` 只按 `line.x` 落笔、不做对齐决策。
@@ -183,7 +185,7 @@
 
 - `render/VerticalGlyphRules` 只决定竖排显示字形、旋转与位置；`VerticalTextRenderer` 在字符格内绘制。原文、译文共用，横排保持原字符；已有竖排字符不重复旋转，不改 OCR 输出或持久化文本。
 - 竖排符号优先使用当前字体的竖排字形；缺字时尝试 Android 默认字体的对应竖排字形，只有没有竖排形式时才旋转原字符。逗号、顿号和句点在格内定位；字符格步距、气泡坐标及持久化文本不变。
-- OCR 返回检测几何，不是真实字号。PP-OCRv5/v6 根据单行检测框估算原文字号并随合并结果传递；RT-DETR + MangaOCR 不调用 ML Kit 补框。自动模式由 `LayoutEngine` 按最终绘制区域、显示文本及用户间距寻找能容纳全文的最大字号，不把 OCR 字号或手动字号作为上限；合并区域的最小成员字号不能限制整段排版。固定模式仍使用用户选择的字号，自动模式不扩展绘制区域（**唯一例外**是下面的长译 1.10× 扩框）。`mergeOverlap` 开或显示原文时不扩框。
+- OCR 返回检测几何，不是真实字号。PP-OCRv5/v6 根据单行检测框估算原文字号并随合并结果传递；RT-DETR + MangaOCR 不调用 ML Kit 补框。自动模式由 `LayoutEngine` 按最终绘制区域、显示文本及用户间距寻找能容纳全文的最大字号，不把 OCR 字号或手动字号作为上限；合并区域的最小成员字号不能限制整段排版。固定模式仍使用用户选择的字号，自动模式不扩展绘制区域（**唯一例外**是长译/面积超容量的 1.10× 扩框）。`mergeOverlap` 开或显示原文时不扩框。
 - PPv5/v6 识别共用 `engine/PpRecRecognizer` 与 `PpRecBatching`：按补齐后的宽度分组，按配置批量识别，结果按原索引恢复。内存保护不得增加应用自定的内存预算、文字行尺寸阈值或主动拒绝门槛；只有真实分配失败才缩小当前批量重试。用户主动启用的整页尺寸过滤属于独立识别设置，在裁剪前执行，不参与内存保护或失败重试。
 - ORT 1.19 的 `getFloatBuffer()` 会复制完整张量。识别使用预分配输出让 ORT 直接写入可复用的 direct 缓冲区，`PpRecCtcDecoder` 按偏移读取，不复制整个输出或逐张预测数组。每个 session/宽度首次用单行探测输出形状，释放探测结果后再分配输出；缓存不持有已释放的 session。
 - Java `OutOfMemoryError` 与 ORT 实际分配失败转换为 `OcrMemoryException`，记录阶段、输入/输出形状、分配字节数、堆状态及原始异常；重试成功也保留失败日志。单行仍发生真实分配失败时结束本次翻译，不让异常逃出任务；增量管线重抛，不能返回 `NotApplicable` 后回退重跑。先结束并行 OCR，再回收裁剪图；普通 `runOCR` 同样在识别的 `finally` 回收自有裁剪图。

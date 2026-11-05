@@ -425,6 +425,9 @@ object LayoutEngine {
         while (i < text.length) {
             var end = minOf(i + capacity, text.length)
             end = pullBackToDotRunStart(text, i, end)
+            if (CjkLineBreak.hasCjk(text)) {
+                end = CjkLineBreak.adjustBreak(text, i, end)
+            }
             if (end <= i) end = minOf(i + capacity, text.length)   // 兜底：整串比一列还长
             out.add(text.substring(i, end))
             i = end
@@ -555,7 +558,29 @@ object LayoutEngine {
             }
         }
         if (line.isNotEmpty()) out.add(line)
+        balanceLastLine(out, measurer, maxWidth, tracking)
         return out
+    }
+
+    /**
+     * 末行只有一个词时，尝试把上一行最后一个词搬下来，避免孤立的单字行。
+     * 只搬整词、只搬一次；放不下就保持原样，绝不为了平衡制造溢出。
+     */
+    private fun balanceLastLine(
+        lines: MutableList<String>,
+        measurer: TextMeasurer,
+        maxWidth: Float,
+        tracking: Float
+    ) {
+        if (lines.size < 2) return
+        val last = lines.last()
+        if (last.isEmpty() || last.contains(' ')) return
+        val previousWords = lines[lines.size - 2].split(' ').filter { it.isNotEmpty() }
+        if (previousWords.size < 2) return
+        val candidateLast = "${previousWords.last()} $last"
+        if (lineWidth(measurer, candidateLast, tracking) > maxWidth) return
+        lines[lines.size - 2] = previousWords.dropLast(1).joinToString(" ")
+        lines[lines.size - 1] = candidateLast
     }
 
     /** 逐字符断行（CJK、长单词兜底）。 */
@@ -582,6 +607,10 @@ object LayoutEngine {
             // 点串不可断：`...` 被拆成「每行一个点」是最主要的用户反馈（见 TranslationTextRules）。
             // 只前移切点 → 行更短，必然仍装得下，不影响上面的预算判定。
             count = pullBackToDotRunStart(remaining, 0, count)
+            // CJK 避头尾：闭标点不能出现在行首，开括号不能落在行尾；只前移切点。
+            if (CjkLineBreak.hasCjk(remaining)) {
+                count = CjkLineBreak.adjustBreak(remaining, 0, count)
+            }
             if (count <= 0) break
             lines.add(remaining.substring(0, count))
             remaining = remaining.substring(count)

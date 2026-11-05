@@ -121,11 +121,12 @@ object OverlayRenderer {
     private const val HORIZONTAL_SEPARATOR = "──"
 
     /**
-     * 自动模式的「长译扩框」：译文比原文长到 [AUTO_EXPAND_TEXT_GROWTH] 倍以上时，
-     * 把单气泡的绘制区最多放大 [AUTO_EXPAND_RATIO]，给长译文多一行/一列的空间。
+     * 自动模式的「长译扩框」：译文比原文长到 [AUTO_EXPAND_TEXT_GROWTH] 倍以上，
+     * 或按参考字号量出的自然宽度超过「框宽 × 可容纳行数」时，
+     * 把单气泡的绘制区最多放大 [AUTO_EXPAND_RATIO]。
      *
      * 只放大，不缩小；只对单气泡生效（[renderOverlay] 在 `mergeOverlap` 开时跳过），
-     * 因此「合并块 = 成员矩形并集」的硬约束不被破坏。短译/等长译原样返回。
+     * 因此「合并块 = 成员矩形并集」的硬约束不被破坏。短译/装得下的译文原样返回。
      */
     private const val AUTO_EXPAND_RATIO = 1.10f
     private const val AUTO_EXPAND_TEXT_GROWTH = 1.15f
@@ -134,12 +135,33 @@ object OverlayRenderer {
         rect: Rect,
         sourceText: String,
         translatedText: String,
+        sourceFontSize: Float,
+        trackingRatio: Float,
+        measurer: TextMeasurer,
         spaceW: Int,
         spaceH: Int
     ): Rect {
         val source = countTextUnits(sourceText)
         val target = countTextUnits(translatedText)
-        if (source <= 0 || target <= 0 || target <= source * AUTO_EXPAND_TEXT_GROWTH) return Rect(rect)
+        if (source <= 0 || target <= 0) return Rect(rect)
+
+        // 参考 calc_horizontal 的面积判据：不仅看字符数，还看真实字形宽度是否超过
+        // “框宽 × 可容纳行数”。参考字号来自 OCR 估计，异常时回退 16。
+        val referenceFont = sourceFontSize.takeIf { it.isFinite() && it > 0f } ?: 16f
+        val maxLines = ((rect.height() / referenceFont).toInt()).coerceAtLeast(1)
+        val capacity = rect.width().toFloat() * maxLines
+        val previousFontSize = measurer.fontSize
+        val naturalWidth = try {
+            measurer.fontSize = referenceFont
+            measurer.measure(translatedText) +
+                trackingRatio.coerceAtLeast(0f) * referenceFont *
+                (translatedText.length - 1).coerceAtLeast(0)
+        } finally {
+            measurer.fontSize = previousFontSize
+        }
+        val longText = target > source * AUTO_EXPAND_TEXT_GROWTH
+        val areaPressure = naturalWidth > capacity * 1.05f
+        if (!longText && !areaPressure) return Rect(rect)
         return expandRectBy(rect, AUTO_EXPAND_RATIO, spaceW, spaceH)
     }
 
@@ -292,12 +314,21 @@ object OverlayRenderer {
                 fontSize
             }
             // 自动模式：drawRect 用原始气泡；内核按最终区域选最大可容纳字号，不受 OCR 字号限制。
-            // 长译（译文比原文长 15% 以上）给单气泡多 10% 空间，避免长句被压得过小；
-            // 短译/等长译不动。mergeOverlap 开时跳过 —— 合并块必须严格等于成员矩形并集。
+            // 长译或面积超容量时给单气泡多 10% 空间；短译/装得下的译文不动。
+            // mergeOverlap 开时跳过 —— 合并块必须严格等于成员矩形并集。
             // 非自动模式：drawRect 贴合文字（收缩居中/平衡扩展）
             val drawRect = if (autoFit) {
                 if (!mergeOverlap && !useOriginalText && displayText.isNotEmpty()) {
-                    expandedAutoRect(region.rect, region.originalText, displayText, g.spaceW, g.spaceH)
+                    expandedAutoRect(
+                        region.rect,
+                        region.originalText,
+                        displayText,
+                        region.fontSize,
+                        trackingRatio,
+                        textMeasurer,
+                        g.spaceW,
+                        g.spaceH
+                    )
                 } else {
                     region.rect
                 }
