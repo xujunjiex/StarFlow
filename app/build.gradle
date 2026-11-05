@@ -92,8 +92,8 @@ android {
         applicationId "com.moe.starflow"
         minSdk 29
         targetSdk 35
-        versionCode 1204
-        versionName "0.12.4"
+        versionCode 1205
+        versionName "0.12.5"
 
         externalNativeBuild {
             cmake {
