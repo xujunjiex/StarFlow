@@ -6,13 +6,13 @@ import android.content.Context
 import android.view.LayoutInflater
 import android.widget.TextView
 import androidx.core.content.ContextCompat
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import android.app.AlertDialog
 import com.moe.starflow.R
 
 /** Shared scrollable, selectable error report for scans and both importers. */
 object AutoScanFailureDialog {
 
-    fun builder(context: Context, title: String, details: String): MaterialAlertDialogBuilder {
+    fun builder(context: Context, title: String, details: String): AlertDialog.Builder {
         val view = LayoutInflater.from(context).inflate(R.layout.dialog_auto_scan_failure, null, false)
         view.findViewById<TextView>(R.id.auto_scan_dialog_title).text = title
         val detail = view.findViewById<TextView>(R.id.auto_scan_dialog_detail).apply {
@@ -24,6 +24,6 @@ object AutoScanFailureDialog {
             clipboard.setPrimaryClip(ClipData.newPlainText(title, detail.text))
             UiUtils.showToast(context, context.getString(R.string.import_auto_scan_copied))
         }
-        return MaterialAlertDialogBuilder(context).setView(view)
+        return AlertDialog.Builder(context).setView(view)
     }
 }

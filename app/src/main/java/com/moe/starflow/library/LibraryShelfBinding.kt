@@ -48,18 +48,21 @@ object LibraryShelfBinding {
         cancelImport: (Long) -> Unit = {}) {
         val scope = fragment.viewLifecycleOwner.lifecycleScope
         fun scanReport(report: LibraryScanState) {
-            if (report.needsRecovery) {
-                if (!LibraryStorageDialog.offerRecovery(fragment, report.failures.joinToString("\n"))) LibraryScanner.deferReport(report)
+            // Resume callbacks can run inside a FragmentManager transaction. Keep the report
+            // in the scanner until the posted dialog has actually been shown.
+            fragment.view?.post {
+                if (!fragment.isAdded || !isActive() || !fragment.isResumed) return@post
+                val current = LibrarySessions.current(fragment.requireContext())
+                if (current.locationId != report.location ||
+                    LibraryScanner.peekReport(report.location, kind)?.runId != report.runId) return@post
+                if (LibraryReportDialog.show(fragment, report.details(fragment.requireContext())))
+                    LibraryScanner.acknowledgeReport(report.runId)
             }
-            else failures(report.failures)
         }
         scope.launch {
             fragment.viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
                 if (isActive()) {
-                    LibrarySessions.current(fragment.requireContext()).saveState.value.takeIf { !it.metadataOnlyError }?.error?.let {
-                        LibraryStorageDialog.offerRecovery(fragment, it)
-                    }
-                    LibraryScanner.consumeReport(LibrarySessions.current(fragment.requireContext()).locationId, kind)?.let(::scanReport)
+                    LibraryScanner.peekReport(LibrarySessions.current(fragment.requireContext()).locationId, kind)?.let(::scanReport)
                     LibraryScanner.start(fragment.requireContext(), kind)
                 }
                 awaitCancellation()
@@ -75,7 +78,7 @@ object LibraryShelfBinding {
                     if (isActive() && fragment.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) LibraryScanner.start(fragment.requireContext(), kind)
                 }
                 refresh()
-                if (isActive() && fragment.isResumed) LibraryScanner.consumeReport(next, kind)?.let(::scanReport)
+                if (isActive() && fragment.isResumed) LibraryScanner.peekReport(next, kind)?.let(::scanReport)
             }
         }
         scope.launch {
@@ -93,7 +96,8 @@ object LibraryShelfBinding {
                     val task = tasks.firstOrNull { it.progress.phase != ImportPhase.QUEUED } ?: tasks.firstOrNull()
                     val importScanning = task?.progress?.phase == ImportPhase.SCANNING
                     val message = when {
-                        saved.error != null -> fragment.getString(R.string.library_unsaved) + "：" + saved.error
+                        saved.error != null -> fragment.getString(if (saved.errorKind == LibraryErrorKind.FILES)
+                            R.string.library_unsaved else R.string.library_unavailable) + "：" + saved.error
                         task != null -> fragment.getString(R.string.library_import_active, tasks.size, taskLabel(fragment, task))
                         scanning -> fragment.getString(R.string.library_scan_progress, scan.done, scan.total)
                         deleting -> fragment.getString(R.string.library_deleting)
@@ -104,8 +108,8 @@ object LibraryShelfBinding {
                         saved.error != null || saved.saving || scanning || deleting || tasks.isNotEmpty(),
                         scanning || deleting || tasks.isNotEmpty(), showScanInline, saved.error != null)
                     if (saved.error != null) {
-                        status.setOnClickListener { LibraryStorageDialog.offerRecovery(fragment, saved.error, automatic = false) }
-                        if (isActive()) LibraryStorageDialog.offerRecovery(fragment, saved.error)
+                        status.setOnClickListener { LibraryReportDialog.show(fragment,
+                            libraryRecoveryDetails(fragment.requireContext(), saved.error, saved.errorKind)) }
                     }
                     toolbarCancel.visibility = if (tasks.isNotEmpty()) View.VISIBLE else View.GONE
                     toolbarCancel.setOnClickListener {
@@ -125,8 +129,7 @@ object LibraryShelfBinding {
                 if (scan.kind != kind || scan.location != LibrarySessions.current(fragment.requireContext()).locationId) return@collect
                 if (!scan.running) {
                     refresh()
-                    if (scan.failures.isEmpty()) LibraryStorageDialog.recoveryCompleted(scan.location)
-                    if (isActive() && fragment.isResumed) LibraryScanner.consumeReport(scan.location, kind)?.let(::scanReport)
+                    if (isActive() && fragment.isResumed) LibraryScanner.peekReport(scan.location, kind)?.let(::scanReport)
                 }
             }
         }

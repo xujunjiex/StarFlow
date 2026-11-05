@@ -12,7 +12,10 @@ import androidx.fragment.app.FragmentActivity
 import com.moe.starflow.mangaimport.data.ImportedMangaStore
 import com.moe.starflow.utils.LibraryScanFixtures
 import kotlinx.coroutines.runBlocking
-import org.junit.Assert.assertEquals
+import org.junit.Assert.*
+import android.widget.ProgressBar
+import com.moe.starflow.R
+import org.robolectric.shadows.ShadowAlertDialog
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
@@ -29,9 +32,15 @@ class LibraryShelfBindingTest {
     class Shelf : Fragment() {
         var active = true
         override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View =
-            LinearLayout(requireContext()).apply { addView(TextView(context)) }
+            LinearLayout(requireContext()).apply {
+                addView(LinearLayout(context).apply { addView(TextView(context)) })
+                addView(ProgressBar(context)); addView(TextView(context)); addView(View(context))
+            }
         override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-            LibraryShelfBinding.observe(this, "manga", (view as ViewGroup).getChildAt(0) as TextView, {}, {}, isActive = { active })
+            val host = view as ViewGroup
+            LibraryShelfBinding.observe(this, "manga", (host.getChildAt(0) as ViewGroup).getChildAt(0) as TextView,
+                host.getChildAt(1) as ProgressBar, host.getChildAt(2) as TextView, host.getChildAt(3),
+                {}, {}, isActive = { active })
         }
     }
 
@@ -70,6 +79,100 @@ class LibraryShelfBindingTest {
             activity.start().resume()
             awaitIdle { ImportedMangaStore.load(app).size == 2 && !LibraryScanner.state.value.running }
             assertEquals(2, ImportedMangaStore.load(app).size)
+        } finally { activity.pause().stop().destroy() }
+    }
+
+    @Test fun saveErrorsAndResumeNeverOpenRecoveryUntilTheUserRequestsDetails() {
+        val app = RuntimeEnvironment.getApplication()
+        val root = File(app.cacheDir, "shelf-errors-${UUID.randomUUID()}").apply { mkdirs() }
+        app.getSharedPreferences("library_locations", 0).edit().clear().putString("defaultPath", root.path).commit()
+        runBlocking { LibrarySessions.prepare(app) }
+        val session = LibrarySessions.current(app)
+        val activity = Robolectric.buildActivity(FragmentActivity::class.java).setup()
+        val shelf = Shelf()
+        activity.get().supportFragmentManager.beginTransaction().add(android.R.id.content, shelf).commitNow()
+        try {
+            awaitIdle { LibraryScanner.state.value.location == session.locationId && !LibraryScanner.state.value.running }
+            listOf(false, true).forEach { metadata ->
+                session.saveState.value = LibrarySaveState(error = "Cannot write files", metadataOnlyError = metadata)
+                shadowOf(Looper.getMainLooper()).idle()
+                assertNull(activity.get().supportFragmentManager.findFragmentByTag("library-storage"))
+                assertNull(activity.get().supportFragmentManager.findFragmentByTag("library-report"))
+                activity.pause().stop().start().resume()
+                shadowOf(Looper.getMainLooper()).idle()
+                assertNull(activity.get().supportFragmentManager.findFragmentByTag("library-report"))
+            }
+            awaitIdle { !LibraryScanner.state.value.running }
+            session.saveState.value = LibrarySaveState(error = "Cannot write files")
+            shadowOf(Looper.getMainLooper()).idle()
+            val status = ((shelf.requireView() as ViewGroup).getChildAt(0) as ViewGroup).getChildAt(0)
+            status.performClick()
+            assertNotNull(activity.get().supportFragmentManager.findFragmentByTag("library-report"))
+            assertNull(activity.get().supportFragmentManager.findFragmentByTag("library-storage"))
+        } finally { activity.pause().stop().destroy() }
+    }
+
+    @Test fun storageAndFailedTargetOnlyOfferDestructionAfterAnAdvancedClick() {
+        val app = RuntimeEnvironment.getApplication()
+        val root = File(app.cacheDir, "shelf-target-${UUID.randomUUID()}").apply { mkdirs() }
+        app.getSharedPreferences("library_locations", 0).edit().clear().putString("defaultPath", root.path).commit()
+        runBlocking { LibrarySessions.prepare(app) }
+        val active = LibrarySessions.current(app)
+        active.saveState.value = LibrarySaveState(error = "Save failed")
+        val activity = Robolectric.buildActivity(FragmentActivity::class.java).setup()
+        val dialog = LibraryStorageDialog()
+        dialog.showNow(activity.get().supportFragmentManager, "library-storage")
+        try {
+            assertEquals(View.GONE, dialog.requireDialog().findViewById<View>(R.id.library_rebuild).visibility)
+            assertFalse(ShadowAlertDialog.getLatestAlertDialog()?.isShowing == true)
+            val target = android.net.Uri.parse("content://missing.provider/tree/target-book-library")
+            dialog.change(target)
+            awaitIdle { ShadowAlertDialog.getLatestAlertDialog()?.isShowing == true }
+            val details = ShadowAlertDialog.getLatestAlertDialog()
+            assertEquals(app.getString(R.string.confirm), details.getButton(android.app.AlertDialog.BUTTON_POSITIVE).text.toString())
+            assertSame(active, LibrarySessions.current(app))
+            details.dismiss()
+            dialog.requireDialog().findViewById<View>(R.id.library_advanced).performClick()
+            dialog.requireDialog().findViewById<View>(R.id.library_rebuild).performClick()
+            val confirm = ShadowAlertDialog.getLatestAlertDialog()
+            assertEquals(app.getString(R.string.library_reinitialize_action), confirm.getButton(android.app.AlertDialog.BUTTON_POSITIVE).text.toString())
+            assertTrue(confirm.findViewById<TextView>(android.R.id.message).text.contains("target-book-library"))
+            confirm.getButton(android.app.AlertDialog.BUTTON_NEGATIVE).performClick()
+            assertSame(active, LibrarySessions.current(app))
+        } finally { activity.pause().stop().destroy() }
+    }
+
+    @Test fun backgroundReportsAreDeferredAndConsumedOnlyAfterResuming() {
+        val app = RuntimeEnvironment.getApplication()
+        val root = File(app.cacheDir, "shelf-report-${UUID.randomUUID()}").apply { mkdirs() }
+        app.getSharedPreferences("library_locations", 0).edit().clear().putString("defaultPath", root.path).commit()
+        runBlocking { LibrarySessions.prepare(app) }
+        val session = LibrarySessions.current(app)
+        val activity = Robolectric.buildActivity(FragmentActivity::class.java).setup()
+        val shelf = Shelf().apply { active = false }
+        activity.get().supportFragmentManager.beginTransaction().add(android.R.id.content, shelf).commitNow()
+        activity.pause().stop()
+        val issue = LibraryScanIssue(LibraryIssueScope.BOOK, "Inspect", "bad.cbz", "Bad package",
+            outcome = LibraryBookOutcome.NOT_ADDED)
+        val report = LibraryScanState(session.locationId, "manga", issues = listOf(issue), failures = listOf("Bad package"))
+        LibraryScanner.deferReport(report)
+        LibrarySessions.changes.value += 1
+        try {
+            shadowOf(Looper.getMainLooper()).idle()
+            assertNull(activity.get().supportFragmentManager.findFragmentByTag("library-report"))
+            shelf.active = true
+            activity.start().resume()
+            awaitIdle { activity.get().supportFragmentManager.findFragmentByTag("library-report") != null && !LibraryScanner.state.value.running }
+            assertNull(LibraryScanner.consumeReport(session.locationId, "manga"))
+            val visible = activity.get().supportFragmentManager.findFragmentByTag("library-report") as LibraryReportDialog
+            assertTrue(visible.requireArguments().getString("details")!!.contains("bad.cbz"))
+            visible.dismiss()
+            shadowOf(Looper.getMainLooper()).idle()
+            assertNull(activity.get().supportFragmentManager.findFragmentByTag("library-report"))
+            // Reports from a replaced generation cannot be delivered to the new library.
+            LibraryScanner.deferReport(report)
+            LibraryScanner.discardReports(session.locationId)
+            assertNull(LibraryScanner.consumeReport(session.locationId, "manga"))
         } finally { activity.pause().stop().destroy() }
     }
 

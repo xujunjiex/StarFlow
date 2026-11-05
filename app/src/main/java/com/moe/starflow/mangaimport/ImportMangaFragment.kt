@@ -754,7 +754,8 @@ class ImportMangaFragment : Fragment() {
         val list0 = try { ImportedMangaStore.load(requireContext()) }
             catch (e: Exception) {
                 val session = com.moe.starflow.library.LibrarySessions.current(requireContext())
-                session.saveState.value = session.saveState.value.copy(error = e.message ?: e.javaClass.simpleName)
+                session.saveState.value = session.saveState.value.copy(error = com.moe.starflow.library.libraryFailureDetail(e),
+                    errorKind = com.moe.starflow.library.LibraryErrorKind.DATABASE)
                 return
             }
         // 推导「文件丢失」标记（瞬态，不入库）：localRoot 不存在 → lost=true。

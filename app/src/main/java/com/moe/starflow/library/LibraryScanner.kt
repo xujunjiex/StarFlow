@@ -13,7 +13,9 @@ import kotlin.coroutines.coroutineContext
 
 data class LibraryScanState(val location: String = "", val kind: String = "", val running: Boolean = false,
     val done: Int = 0, val total: Int = 0, val added: Int = 0, val failures: List<String> = emptyList(),
-    val runId: String = java.util.UUID.randomUUID().toString(), val needsRecovery: Boolean = false)
+    val runId: String = java.util.UUID.randomUUID().toString(), val issues: List<LibraryScanIssue> = emptyList()) {
+    val needsRecovery: Boolean get() = issues.any { it.scope == LibraryIssueScope.LIBRARY }
+}
 
 object LibraryScanner {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -23,13 +25,16 @@ object LibraryScanner {
     @Synchronized fun consumeFailures(location: String = state.value.location, kind: String = state.value.kind): List<String>? {
         return consumeReport(location, kind)?.failures
     }
+    @Synchronized internal fun peekReport(location: String, kind: String): LibraryScanState? =
+        reports.firstOrNull { it.location == location && it.kind == kind }
+    @Synchronized internal fun acknowledgeReport(runId: String) { reports.removeAll { it.runId == runId } }
     @Synchronized fun consumeReport(location: String, kind: String): LibraryScanState? {
         val report = reports.firstOrNull { it.location == location && it.kind == kind } ?: return null
         reports.remove(report)
         return report
     }
     @Synchronized private fun completed(result: LibraryScanState): LibraryScanState {
-        if (result.failures.isNotEmpty()) reports.addLast(result)
+        if (result.issues.isNotEmpty()) reports.addLast(result)
         state.value = result
         LibrarySessions.changes.value += 1
         return result
@@ -40,7 +45,9 @@ object LibraryScanner {
     }
     @Synchronized fun start(context: Context, kind: String) {
         require(kind == "manga" || kind == "novel")
-        val pinned = LibrarySessions.pin(context)
+        val pinned = try { LibrarySessions.pin(context) }
+        catch (e: CancellationException) { throw e }
+        catch (e: Exception) { initializationFailed(context, kind, e); return }
         val session = LibrarySessions.current(pinned)
         val key = "${session.locationId}:${session.generation}:$kind"
         if (!requests.add(key)) return
@@ -48,21 +55,55 @@ object LibraryScanner {
             scan(pinned, kind)
         }.invokeOnCompletion { synchronized(this) { requests.remove(key) } }
     }
+    private fun initializationFailed(context: Context, kind: String, error: Exception): LibraryScanState {
+        val prefs = context.getSharedPreferences("library_locations", Context.MODE_PRIVATE)
+        val target = prefs.getString("tree", null) ?: prefs.getString("defaultPath", null).orEmpty()
+        val location = runCatching {
+            prefs.getString("tree", null)?.let { SafLibraryStorage(context, android.net.Uri.parse(it)).locationId }
+                ?: FileLibraryStorage(java.io.File(target)).locationId
+        }.getOrDefault(target)
+        val issue = LibraryScanIssue(LibraryIssueScope.LIBRARY,
+            context.getString(com.moe.starflow.R.string.library_stage_prepare), target,
+            libraryFailureDetail(error), reason = libraryErrorKind(error).name)
+        val result = LibraryScanState(location, kind, issues = listOf(issue), failures = listOf(issue.text(context)))
+        LogCollector.e("LibraryScanner", "run=${result.runId} kind=$kind location=$location stage=${issue.stage}", error)
+        return completed(result)
+    }
     suspend fun scan(context: Context, kind: String): LibraryScanState = LibraryWork.sourceMutations.withLock {
         withContext(Dispatchers.IO) {
-            val pinned = LibrarySessions.pin(context)
+            val pinned = try { LibrarySessions.pin(context) }
+                catch (e: CancellationException) { throw e }
+                catch (e: Exception) { return@withContext initializationFailed(context, kind, e) }
             val session = LibrarySessions.current(pinned)
-            val lease = LibrarySessions.use()
-            val failures = mutableListOf<String>()
-            val informational = hashSetOf<String>()
+            var lease: java.io.Closeable? = null
+            val runId = java.util.UUID.randomUUID().toString()
+            val problems = LibraryScanProblems(pinned, session, kind, runId)
+            fun stage(id: Int) = pinned.getString(id)
+            var libraryStage = stage(com.moe.starflow.R.string.library_stage_prepare)
             var added = 0
             try {
+                lease = LibrarySessions.use()
                 session.storage.invalidateLookups()
-                state.value = LibraryScanState(session.locationId, kind, running = true)
+                state.value = LibraryScanState(session.locationId, kind, running = true, runId = runId)
                 LibrarySessions.prepare(pinned)
                 val root = if (kind == "manga") "manga_import" else "novel_import"
-                if (kind == "manga") MangaDuplicateRepair.repair(session, failures)
-                val known = session.books(kind)
+                libraryStage = stage(com.moe.starflow.R.string.library_stage_catalog)
+                val known = session.scanBooks(kind)
+                val validKnown = known.filter { book ->
+                    try {
+                        if (kind == "manga") ImportedMangaStore.validateScanPayload(book.body)
+                        else NovelStore.validateScanPayload(book.body)
+                        session.local(book.source)
+                        true
+                    }
+                    catch (e: Exception) { problems.failed(libraryStage, book.source, e, book); false }
+                }
+                if (kind == "manga") MangaDuplicateRepair.repair(session, mutableListOf(),
+                    onFailure = { book, e -> problems.failed(stage(com.moe.starflow.R.string.library_stage_duplicates), book.source, e, book) },
+                    onNotice = { book, detail -> problems.add(LibraryScanIssue(LibraryIssueScope.NOTICE,
+                        stage(com.moe.starflow.R.string.library_stage_duplicates), book.source, detail, book.uuid,
+                        outcome = LibraryBookOutcome.RETAINED)) })
+                libraryStage = stage(com.moe.starflow.R.string.library_stage_enumerate)
                 // Overall index and candidate enumeration precede per-book inspection.
                 val listings = mutableMapOf(root to session.storage.list(root))
                 val members = mutableMapOf(root to listings.getValue(root).mapTo(hashSetOf()) { it.path })
@@ -74,13 +115,18 @@ object LibraryScanner {
                     }
                     return path in children
                 }
-                known.forEach { book ->
-                    try { session.sourcePresence[book.source] = sourceExists(book.source) }
-                    catch (e: Exception) { failures += "${session.storage.displayPath}/${book.source}：[检查来源] ${e.message}" }
+                validKnown.forEach { book ->
+                    try {
+                        session.sourcePresence[book.source] = sourceExists(book.source)
+                        session.sourceIssues.remove(book.source)
+                    } catch (e: Exception) {
+                        session.sourceIssues[book.source] = libraryFailureDetail(e)
+                        problems.failed(stage(com.moe.starflow.R.string.library_stage_presence), book.source, e, book)
+                    }
                 }
                 // Novel legacy formatting is unchanged. Manga text requires full metadata verification below.
                 val sourcePrefix = pinned.getString(com.moe.starflow.R.string.comic_meta_source, "").trim()
-                val staleDescriptions = known.filter { book ->
+                val staleDescriptions = validKnown.filter { book ->
                     val body = org.json.JSONObject(book.body)
                     val description = body.optString("description")
                     if (kind == "manga" || book.deleting || description.isBlank()) return@filter false
@@ -91,14 +137,18 @@ object LibraryScanner {
                     try {
                         normalizeDescriptions(pinned, staleDescriptions, sourcePrefix)
                     } catch (e: CancellationException) { throw e }
-                    catch (e: Exception) { failures += "[清理简介] ${e.message}" }
+                    catch (e: Exception) { problems.failed(stage(com.moe.starflow.R.string.library_stage_metadata), root, e) }
                 }
-                if (kind == "manga") MangaDirectoryUpdates.refresh(pinned, session, known, failures, listings)
-                else refreshEmptyNovels(pinned, session, known, failures)
+                if (kind == "manga") MangaDirectoryUpdates.refresh(pinned, session, validKnown, mutableListOf(), listings,
+                    onFailure = { book, e -> problems.failed(stage(com.moe.starflow.R.string.library_stage_index), book.source, e, book) })
+                else refreshEmptyNovels(pinned, session, validKnown, problems)
                 // Metadata-only changes refresh source fields without touching overrides or page layout.
-                val repairs = known.mapNotNull { previous ->
+                val repairs = validKnown.mapNotNull { previous ->
                     val book = session.database.catalog().byUuid(previous.uuid) ?: return@mapNotNull null
-                    val body = org.json.JSONObject(book.body)
+                    val body = try { org.json.JSONObject(book.body) } catch (e: org.json.JSONException) {
+                        problems.failed(stage(com.moe.starflow.R.string.library_stage_catalog), book.source, e, book)
+                        return@mapNotNull null
+                    }
                     if (book.deleting || session.sourcePresence[book.source] != true) return@mapNotNull null
                     if (kind == "novel") return@mapNotNull book.takeIf {
                         body.optInt("chapterCount") != 0 && body.optString("description").isBlank() &&
@@ -108,12 +158,13 @@ object LibraryScanner {
                         book.takeIf { session.database.catalog().meta("metadataRead${BookMetadataReader.VERSION}:${book.uuid}") !=
                             metadataFingerprint(session, book) }
                     } catch (e: CancellationException) { throw e }
+                    catch (e: android.database.sqlite.SQLiteException) { throw e }
                     catch (e: Exception) {
                         LogCollector.w("LibraryScanner", "作品元数据检查跳过：${book.source}; ${e.message}")
                         null
                     }
                 }
-                val candidates = discover(session, root, known, kind, failures, listings)
+                val candidates = discover(session, root, known, kind, problems, listings)
                 val total = repairs.size + candidates.size
                 state.value = state.value.copy(total = total)
                 repairs.forEachIndexed { index, book ->
@@ -121,34 +172,30 @@ object LibraryScanner {
                     try {
                         backfillDescription(pinned, session, book)
                     } catch (e: CancellationException) { throw e }
-                    catch (e: Exception) { LogCollector.w("LibraryScanner", "作品元数据暂未更新：${book.source}; ${e.message}") }
-                    state.value = state.value.copy(done = index + 1, failures = failures.toList())
+                    catch (e: android.database.sqlite.SQLiteException) { throw e }
+                catch (e: Exception) { LogCollector.w("LibraryScanner", "作品元数据暂未更新：${book.source}; ${e.message}") }
+                    state.value = state.value.copy(done = index + 1, failures = problems.failures, issues = problems.issues)
                 }
-                // 一次性清理：根目录没有元数据的漫画，清掉旧版本从章节/包内拼进书简介的文字。
-                // ⚠️ 失败必须静音（不写 failures）——扫描错误会触发书库恢复/重建提示。
-                if (kind == "manga") {
-                    clearStaleMangaDescriptions(pinned, session, known)
-                }
+                // Optional metadata never blocks source discovery.
+                if (kind == "manga") try { clearStaleMangaDescriptions(pinned, session, validKnown) }
+                catch (e: CancellationException) { throw e }
+                catch (e: android.database.sqlite.SQLiteException) { throw e }
+                catch (e: Exception) { LogCollector.w("LibraryScanner", "旧简介核对暂未完成", e) }
                 candidates.forEachIndexed { index, node ->
-                    val id = if (kind == "manga") ImportManager.reserveScanId(pinned, null)
-                        else NovelImportManager.reserveScanId(pinned, null)
-                    if (id == null) return@forEachIndexed
+                    coroutineContext.ensureActive()
+                    var id: Long? = null
                     var localLease: java.io.Closeable? = null
-                    var stage = "读取来源"
-                    var emptyDirectory = false
+                    var stage = stage(com.moe.starflow.R.string.library_stage_reserve)
+                    var candidateTitle: String? = null
                     try {
-                        val hintedUuid = node.path.substringAfterLast('/').takeIf { LibraryCodec.UUID_PATTERN.matches(it) }
-                        val identityPath = hintedUuid?.let { ".starflow/books/$it/source.json" }
-                        val identity = identityPath?.takeIf(session.storage::exists)?.let {
-                            org.json.JSONObject(session.storage.read(it).bufferedReader().use { reader -> reader.readText() })
-                        }?.takeIf {
-                            val original = safeLibraryPath(it.optString("source"))
-                            it.optInt("format") == 1 && it.optString("kind") == kind && it.optString("uuid") == hintedUuid &&
-                                (original == node.path || original.startsWith("${node.path}/"))
-                        }
+                        id = if (kind == "manga") ImportManager.reserveScanId(pinned, null)
+                            else NovelImportManager.reserveScanId(pinned, null)
+                        val reserved = id ?: return@forEachIndexed
+                        stage = pinned.getString(com.moe.starflow.R.string.library_stage_source)
+                        val identity = readSourceIdentity(session, node, kind)
                         val indexedUuid = identity?.getString("uuid")
                         if (indexedUuid != null && session.database.catalog().byUuid(indexedUuid) == null)
-                            session.database.catalog().meta(LibraryMeta("uuid:$kind:$id", indexedUuid))
+                            session.database.catalog().meta(LibraryMeta("uuid:$kind:$reserved", indexedUuid))
                         // UUID 目录是导入副本的外壳；按已保存的文件/子目录解析，保留原格式和分章。
                         // 原来源缺失时停止，不能把外壳内的其他内容收录并覆盖 source.json。
                         val sourcePath = identity?.getString("source")?.let(::safeLibraryPath) ?: node.path
@@ -163,62 +210,98 @@ object LibraryScanner {
                         if (!sourceNode.directory) LibrarySources.file(source)
                         val title = identity?.optString("sourceName")?.takeIf { it.isNotBlank() }
                             ?: if (sourceNode.directory) source.name else source.nameWithoutExtension.ifBlank { source.name }
-                        stage = "识别作品"
+                        candidateTitle = title
+                        val emptyDirectory: Boolean
+                        stage = pinned.getString(com.moe.starflow.R.string.library_stage_inspect)
                         if (kind == "manga") {
                             if (!sourceNode.directory && ArchiveTypes.detect(source) == ArchiveKind.ZIP &&
                                 ZipFile(source).use { it.getEntry("META-INF/container.xml") != null }) return@forEachIndexed
-                            val manga = MangaImporter.inspectLocalSource(pinned, source, id, title, sourceNode = sourceNode)
+                            val manga = MangaImporter.inspectLocalSource(pinned, source, reserved, title, sourceNode = sourceNode)
                             if (manga.pageCount <= 0 && !sourceNode.directory) throw java.io.IOException("来源中没有可读漫画图片")
                             emptyDirectory = sourceNode.directory && manga.pageCount == 0
                             added += ImportedMangaStore.mergeScanned(pinned, listOf(manga))
                         } else {
                             if (sourceNode.directory) LibrarySources.file(source, folderTexts = true)
-                            val novel = NovelImporter.inspectLocalSource(pinned, source, id, title, allowEmptyDirectory = sourceNode.directory)
+                            val novel = NovelImporter.inspectLocalSource(pinned, source, reserved, title, allowEmptyDirectory = sourceNode.directory)
                             emptyDirectory = sourceNode.directory && novel.chapterCount == 0
                             added += NovelStore.mergeScanned(pinned, listOf(novel))
                         }
                         session.sourcePresence[sourcePath] = true
-                        stage = "提交书库"
-                        session.flush()
-                        if (session.hasPendingSourceFiles()) throw java.io.IOException("未保存到书库：${session.saveState.value.error}")
+                        stage = pinned.getString(com.moe.starflow.R.string.library_stage_save)
+                        problems.files(session.flushPending())
                         if (emptyDirectory) {
                             val notice = pinned.getString(com.moe.starflow.R.string.library_empty_directory_added, node.path)
-                            informational += notice; failures += notice
+                            problems.add(LibraryScanIssue(LibraryIssueScope.NOTICE, stage, node.path, notice,
+                                outcome = LibraryBookOutcome.RETAINED))
                         }
                     } catch (e: CancellationException) { throw e }
                     catch (e: Exception) {
                         if (e !is IllegalStateException || e.message != NovelImporter.ERROR_NO_TEXT_CHAPTER)
-                            failures += "${session.storage.displayPath}/${node.path}：[$stage] ${e.javaClass.simpleName}：${e.message}"
+                            problems.failed(stage, node.path, e,
+                                id?.let { session.database.catalog().book(kind, it) },
+                                outcome = if (id?.let { session.database.catalog().book(kind, it) } != null)
+                                    LibraryBookOutcome.RETAINED else LibraryBookOutcome.NOT_ADDED,
+                                directory = node.directory,
+                                uuidHint = node.path.substringAfterLast('/').takeIf { LibraryCodec.UUID_PATTERN.matches(it) }
+                                    ?: id?.let { session.database.catalog().meta("uuid:$kind:$it") },
+                                titleHint = candidateTitle)
                     } finally {
-                        localLease?.close()
-                        try { session.discardUncommittedArtifacts(kind, id) }
-                        catch (e: Exception) {
-                            failures += "${node.path}：[清理未提交产物] ${e.message}"
+                        try {
+                            localLease?.close()
+                            id?.let { session.discardUncommittedArtifacts(kind, it) }
+                        } catch (e: Exception) {
+                            problems.failed(pinned.getString(com.moe.starflow.R.string.library_stage_cleanup), node.path, e,
+                                outcome = LibraryBookOutcome.RETAINED)
+                        } finally {
+                            id?.let { if (kind == "manga") ImportManager.releaseScanIds(listOf(it)) else NovelImportManager.releaseScanIds(listOf(it)) }
                         }
-                        if (kind == "manga") ImportManager.releaseScanIds(listOf(id)) else NovelImportManager.releaseScanIds(listOf(id))
-                        state.value = state.value.copy(done = repairs.size + index + 1, added = added, failures = failures.toList())
+                        state.value = state.value.copy(done = repairs.size + index + 1, added = added, failures = problems.failures, issues = problems.issues)
                     }
                 }
-                session.flush()
-                completed(state.value.copy(running = false, done = total, added = added, failures = failures.toList(),
-                    needsRecovery = failures.any { it !in informational }))
+                libraryStage = stage(com.moe.starflow.R.string.library_stage_save)
+                problems.files(session.flushPending())
+                LogCollector.i("LibraryScanner", "run=$runId kind=$kind location=${session.locationId} added=$added issues=${problems.issues.size}")
+                completed(state.value.copy(running = false, done = total, added = added, failures = problems.failures, issues = problems.issues))
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) {
                 com.moe.starflow.utils.LogCollector.e("LibraryScanner", "扫描书库失败：${session.storage.displayPath}", e)
-                completed(state.value.copy(running = false, failures = failures + "${session.storage.displayPath}：${e.javaClass.simpleName}：${e.message}", needsRecovery = true))
+                if (e is LibraryMigrationException) libraryStage = stage(com.moe.starflow.R.string.library_stage_migrate)
+                problems.add(LibraryScanIssue(LibraryIssueScope.LIBRARY, libraryStage, session.storage.displayPath,
+                    libraryFailureDetail(e), reason = libraryErrorKind(e).name), e)
+                completed(state.value.copy(running = false, added = added, failures = problems.failures, issues = problems.issues))
             } finally {
                 state.value = state.value.copy(running = false)
-                lease.close()
+                lease?.close()
             }
         }
     }
+    private fun readSourceIdentity(session: LibrarySession, node: LibraryNode, kind: String): org.json.JSONObject? {
+        val uuid = node.path.substringAfterLast('/').takeIf { LibraryCodec.UUID_PATTERN.matches(it) } ?: return null
+        val path = ".starflow/books/$uuid/source.json"
+        if (!session.storage.exists(path)) return null
+        val identity = try {
+            org.json.JSONObject(session.storage.read(path).bufferedReader().use { it.readText() })
+        } catch (e: CancellationException) { throw e }
+        catch (e: Exception) { throw java.io.IOException("$path: 原来源标识无法读取；已保留原文件", e) }
+        val differences = mutableListOf<String>()
+        mapOf("format" to "1", "kind" to kind, "uuid" to uuid).forEach { (field, expected) ->
+            if (identity.optString(field) != expected) differences += "$field: expected=$expected, actual=${identity.opt(field)}"
+        }
+        val source = identity.optString("source")
+        val valid = runCatching { safeLibraryPath(source) }.getOrNull()
+        if (valid == null || valid != node.path && !valid.startsWith("${node.path}/"))
+            differences += "source: expected=${node.path}[/…], actual=$source"
+        if (differences.isNotEmpty()) throw java.io.IOException("$path: 原来源标识对不上；已保留原文件\n" + differences.joinToString("\n"))
+        return identity
+    }
+
     /** Empty directories already own their paths; discover their first text chapters without making a new book. */
-    private suspend fun refreshEmptyNovels(context: Context, session: LibrarySession, known: List<LibraryBook>, failures: MutableList<String>) {
+    private suspend fun refreshEmptyNovels(context: Context, session: LibrarySession, known: List<LibraryBook>, problems: LibraryScanProblems) {
         known.filter { !it.deleting && session.sourcePresence[it.source] == true }.forEach { book ->
-            val body = org.json.JSONObject(book.body)
-            if (body.optString("format") != NovelFormat.FOLDER.name || body.optInt("chapterCount") != 0) return@forEach
-            val source = session.local(book.source)
             try {
+                val body = org.json.JSONObject(book.body)
+                if (body.optString("format") != NovelFormat.FOLDER.name || body.optInt("chapterCount") != 0) return@forEach
+                val source = session.local(book.source)
                 LibrarySources.acquire(source).use {
                     LibrarySources.file(source, folderTexts = true)
                     val parsed = NovelImporter.inspectLocalSource(context, source, book.id, body.optString("title"))
@@ -231,7 +314,7 @@ object LibraryScanner {
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) {
                 if (e !is IllegalStateException || e.message != NovelImporter.ERROR_NO_TEXT_CHAPTER)
-                    failures += "${session.storage.displayPath}/${book.source}: ${e.message}"
+                    problems.failed(context.getString(com.moe.starflow.R.string.library_stage_index), book.source, e, book)
             }
         }
     }
@@ -329,11 +412,12 @@ object LibraryScanner {
                 }
                 session.database.catalog().meta(LibraryMeta(reviewKey, fingerprint))
             } catch (e: CancellationException) { throw e }
+            catch (e: android.database.sqlite.SQLiteException) { throw e }
             catch (e: Exception) { LogCollector.w("LibraryScanner", "旧简介核对跳过: ${book.source}; ${e.message}") }
         }
     }
 
-    private fun discover(session: LibrarySession, root: String, known: List<LibraryBook>, kind: String, failures: MutableList<String>, listings: MutableMap<String, List<LibraryNode>>): List<LibraryNode> {
+    private fun discover(session: LibrarySession, root: String, known: List<LibraryBook>, kind: String, problems: LibraryScanProblems, listings: MutableMap<String, List<LibraryNode>>): List<LibraryNode> {
         val out = mutableListOf<LibraryNode>()
         val retired = session.database.catalog().allMeta().filter { it.name.startsWith("legacySource:") && it.value == "1" }
             .map { it.name.removePrefix("legacySource:") }
@@ -365,9 +449,13 @@ object LibraryScanner {
             if (ext in knownExtensions) return true
             // Novel imports also accept HTML/plain-text files with missing or nonstandard suffixes.
             // Sniff only candidates missed by the cheap extension check; the detector reads a small prefix.
-            return kind == "novel" && runCatching {
+            return kind == "novel" && try {
                 com.moe.starflow.novel.parser.NovelFormatDetector.detect(session.local(node.path)) != null
-            }.getOrDefault(false)
+            } catch (e: Exception) {
+                problems.failed(session.app.getString(com.moe.starflow.R.string.library_stage_inspect), node.path, e,
+                    outcome = LibraryBookOutcome.NOT_ADDED)
+                false
+            }
         }
         listings.getValue(root).forEach { node ->
             val name = node.path.substringAfterLast('/')

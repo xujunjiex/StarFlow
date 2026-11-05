@@ -24,15 +24,16 @@ class LibraryPersistenceTest {
     private lateinit var app: Context
     private lateinit var root: File
     private val databases = mutableListOf<LibraryDatabase>()
+    private val sessions = mutableListOf<LibrarySession>()
     @Before fun setup() {
         app = RuntimeEnvironment.getApplication()
         root = File(app.cacheDir, "library-test-${UUID.randomUUID()}").apply { mkdirs() }
     }
-    @After fun cleanup() { databases.forEach { it.close() }; root.deleteRecursively() }
+    @After fun cleanup() { sessions.forEach { it.close() }; databases.forEach { it.close() }; root.deleteRecursively() }
     private fun session(storage: LibraryStorage): LibrarySession {
         val db = Room.inMemoryDatabaseBuilder(app, LibraryDatabase::class.java).allowMainThreadQueries().build()
         databases += db
-        return LibrarySession(app, storage, db, 1).also { it.prepare() }
+        return LibrarySession(app, storage, db, 1).also { sessions += it; it.prepare() }
     }
     private fun body(uuid: String, source: String = "manga_import/book") = JSONObject()
         .put("bookUuid", uuid).put("localRoot", source).put("title", "Same title")
@@ -221,6 +222,125 @@ class LibraryPersistenceTest {
         a.flush()
         assertFalse(backend.exists(a.relative(old)))
         assertNull(a.saveState.value.error)
+    }
+
+    @Test fun failedOwnerDefersItsNextOperationButOtherOwnersSaveAndRetrySucceeds() {
+        val backend = FileLibraryStorage(root)
+        val aUuid = UUID.randomUUID().toString()
+        val bUuid = UUID.randomUUID().toString()
+        val cUuid = UUID.randomUUID().toString()
+        var failA = true
+        val attempted = mutableListOf<String>()
+        val flaky = object : LibraryStorage by backend {
+            override fun writeNew(path: String, mime: String): OutputStream {
+                attempted += path
+                if (failA && path == ".starflow/books/$aUuid/source.json") throw IOException("A denied")
+                return backend.writeNew(path, mime)
+            }
+        }
+        val a = session(flaky)
+        listOf("a", "b", "c").forEach { backend.mkdir("manga_import/$it") }
+        a.withStorageLock {
+            a.putBook("manga", 1, body(aUuid, "manga_import/a"))
+            val revision = ".starflow/books/$aUuid/sr/next.webp"
+            a.local(revision).apply { parentFile!!.mkdirs(); writeText("next result") }
+            a.enqueue(JSONObject().put("component", "asset").put("path", ".starflow/books/$aUuid/sr/page.webp").put("revision", revision))
+            a.putBook("manga", 2, body(bUuid, "manga_import/b"))
+            a.putBook("manga", 3, body(cUuid, "manga_import/c"))
+            val failure = assertThrows(LibraryFileWriteException::class.java) { a.flush() }
+            assertEquals(setOf(aUuid), failure.result.failures.map { it.uuid }.toSet())
+            assertTrue(backend.exists(".starflow/books/$bUuid/source.json"))
+            assertTrue(backend.exists(".starflow/books/$cUuid/source.json"))
+            assertFalse(attempted.contains(revision))
+            assertEquals(2, a.database.catalog().pendingCount())
+            val items = a.flushPending().items
+            assertTrue(items.any { it.uuid == aUuid && it.status == LibraryFileStatus.DEFERRED && it.component == "asset" })
+            // Publishing B is judged against B; A remains pending.
+            val bArtifact = a.local(".starflow/books/$bUuid/sr/b.webp").apply { parentFile!!.mkdirs(); writeText("B result") }
+            a.publishArtifact(bArtifact)
+            assertEquals("B result", backend.read(a.relative(bArtifact)).bufferedReader().use { it.readText() })
+            failA = false
+            a.flush()
+            assertTrue(backend.exists(revision))
+            assertEquals(0, a.database.catalog().pendingCount())
+            assertNull(a.saveState.value.error)
+        }
+    }
+
+    @Test fun metadataFailureIsIndependentOfOrdinaryFileFailureAndLaterClears() {
+        val backend = FileLibraryStorage(root)
+        val uuid = UUID.randomUUID().toString()
+        val other = UUID.randomUUID().toString()
+        val revision = UUID.randomUUID().toString()
+        var broken = false
+        val flaky = object : LibraryStorage by backend {
+            override fun writeNew(path: String, mime: String): OutputStream {
+                if (broken && (path.contains(".starflow-description-") || path == ".starflow/books/$other/source.json"))
+                    throw IOException("Provider denied")
+                return backend.writeNew(path, mime)
+            }
+        }
+        val a = session(flaky)
+        backend.mkdir("manga_import/a"); backend.mkdir("manga_import/b")
+        a.withStorageLock {
+            a.putBook("manga", 1, body(uuid, "manga_import/a").put("descriptionRevision", revision).put("descriptionOverride", "User text"))
+            a.flush()
+            broken = true
+            MangaDescriptions.enqueue(a, uuid, revision)
+            a.putBook("manga", 2, body(other, "manga_import/b"))
+            val artifact = a.local(".starflow/books/$uuid/sr/new.webp").apply { parentFile!!.mkdirs(); writeText("result") }
+            // Metadata does not block a normal file for the same book.
+            a.publishArtifact(artifact)
+            assertTrue(backend.exists(a.relative(artifact)))
+            assertFalse(a.saveState.value.metadataOnlyError)
+            assertEquals(setOf("metadata", "book"), a.fileIssues.map { it.component }.toSet())
+            assertNotNull(a.database.catalog().meta("metadataError:$uuid"))
+            // Clear only the ordinary failure: pure metadata keeps the existing nonthrowing contract.
+            a.database.catalog().pending().filter { JSONObject(it.body).optString("component") == "book" }
+                .forEach { a.database.catalog().acknowledge(it.sequence) }
+            a.flush()
+            assertTrue(a.saveState.value.metadataOnlyError)
+            broken = false
+            a.flush()
+            assertEquals(0, a.database.catalog().pendingCount())
+            assertNull(a.saveState.value.error)
+            assertTrue(backend.exists("manga_import/a/starflow.json"))
+        }
+    }
+
+    @Test fun cleanupFailuresAreIsolatedAndAnExportProtectsOldRevisions() {
+        val backend = FileLibraryStorage(root)
+        val first = UUID.randomUUID().toString()
+        val second = UUID.randomUUID().toString()
+        var failDelete = true
+        val flaky = object : LibraryStorage by backend {
+            override fun delete(path: String) {
+                if (failDelete && path.contains(first) && path.endsWith("old.webp")) throw IOException("Keep first")
+                backend.delete(path)
+            }
+        }
+        val a = session(flaky)
+        a.withStorageLock {
+            listOf(first, second).forEachIndexed { index, uuid ->
+                backend.mkdir("manga_import/$index")
+                a.putBook("manga", index + 1L, body(uuid, "manga_import/$index")); a.flush()
+                backend.writeNew(".starflow/books/$uuid/sr/old.webp").use { it.write(1) }
+            }
+            listOf(first, second).forEach { uuid ->
+                a.database.catalog().meta(LibraryMeta("cleanup:.starflow/books/$uuid/sr/old.webp", "pending"))
+            }
+            val lease = BookRecordLocks.acquire(BookRef(a.locationId, "manga", second))
+            try {
+                assertThrows(LibraryFileWriteException::class.java) { a.flush() }
+                assertTrue(backend.exists(".starflow/books/$second/sr/old.webp"))
+            } finally { lease.close() }
+            val result = a.flushPending()
+            assertEquals(first, result.failures.single().uuid)
+            assertFalse(backend.exists(".starflow/books/$second/sr/old.webp"))
+            failDelete = false
+            a.flush()
+            assertFalse(backend.exists(".starflow/books/$first/sr/old.webp"))
+        }
     }
 
 }

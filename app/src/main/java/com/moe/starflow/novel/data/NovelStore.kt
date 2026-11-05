@@ -90,15 +90,17 @@ object NovelStore {
     /** Merge only new scan results under the same monitor as manual imports and shelf edits. */
     @Synchronized
     internal fun mergeScanned(context: Context, scanned: List<ImportedNovel>): Int {
-        val latest = load(context).toMutableList()
+        val session = com.moe.starflow.library.LibrarySessions.current(context)
+        val latest = session.scanBooks("novel")
         val ids = latest.mapTo(mutableSetOf()) { it.id }
-        val paths = latest.mapTo(mutableSetOf()) { canonical(it.localRoot) }
+        val paths = latest.mapNotNullTo(mutableSetOf()) {
+            try { canonical(session.local(it.source).path) } catch (_: IllegalArgumentException) { null }
+        }
         var added = 0
         scanned.forEach { novel ->
             val path = canonical(novel.localRoot)
             if (novel.id !in ids && path !in paths) {
                 persist(context, novel)
-                latest += novel
                 ids += novel.id
                 paths += path
                 added++
@@ -151,6 +153,8 @@ object NovelStore {
      */
     private fun JSONObject.optNullableString(key: String): String? =
         if (has(key) && !isNull(key)) optString(key, "").ifBlank { null } else null
+
+    internal fun validateScanPayload(body: String) { JSONObject(body).toNovel() }
 
     private fun JSONObject.toNovel(): ImportedNovel = ImportedNovel(
         id = getLong("id"),

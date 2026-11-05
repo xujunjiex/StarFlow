@@ -339,19 +339,9 @@ object NovelImportManager {
     }
 
     /** Keep the operation and root provider/filesystem error visible instead of collapsing it to "unreadable". */
-    private fun failureDetail(error: Throwable): String? {
-        val chain = mutableListOf<String>()
-        val seen = mutableSetOf<Throwable>()
-        val messages = mutableSetOf<String>()
-        var current: Throwable? = error
-        while (current != null && seen.add(current) && seen.size <= 8 && chain.size < 3) {
-            val message = current.localizedMessage?.trim()
-            if (messages.add(message ?: current.javaClass.name)) chain +=
-                listOfNotNull(current.javaClass.simpleName.takeIf { it.isNotBlank() }, message).joinToString(": ")
-            current = current.cause
-        }
-        return chain.filter { it.isNotBlank() }.joinToString("\n\n").take(4096).ifBlank { null }
-    }
+    private fun failureDetail(error: Throwable): String? =
+        com.moe.starflow.library.libraryFailureDetail(error).ifBlank { null }
+
 
     // ===== 书架删除（进程级，不随 View 销毁被取消）=====
 

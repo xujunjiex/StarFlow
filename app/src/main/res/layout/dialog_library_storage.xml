@@ -133,15 +133,22 @@
             android:layout_marginTop="10dp" android:text="@string/library_record_storage_hint"
             android:textColor="@color/text_secondary" android:textSize="12sp" android:lineSpacingExtra="2dp" />
 
+        <TextView android:id="@+id/library_problem" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_marginTop="12dp"
+            android:textColor="@color/red" android:textSize="12sp" android:visibility="gone" />
         <TextView android:id="@+id/library_retry" android:layout_width="match_parent"
             android:layout_height="44dp" android:layout_marginTop="8dp"
             android:background="@drawable/bg_action_bar" android:gravity="center"
             android:text="@string/library_retry_save" android:textColor="@color/primary"
             android:textSize="14sp" android:visibility="gone" />
+        <TextView android:id="@+id/library_advanced" android:layout_width="match_parent"
+            android:layout_height="44dp" android:gravity="center" android:text="@string/library_advanced"
+            android:background="?attr/selectableItemBackground" android:textColor="@color/text_secondary"
+            android:textSize="14sp" />
         <TextView android:id="@+id/library_rebuild" android:layout_width="match_parent"
             android:layout_height="48dp" android:layout_marginTop="4dp"
             android:background="?attr/selectableItemBackground" android:gravity="center"
-            android:text="@string/library_reinitialize_action" android:textColor="@color/red"
+            android:text="@string/library_reinitialize_action" android:textColor="@color/red" android:visibility="gone"
             android:textSize="14sp" />
     </LinearLayout>
 </ScrollView>

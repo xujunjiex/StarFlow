@@ -10,11 +10,15 @@ import java.util.concurrent.ConcurrentHashMap
 /** Directory additions never change the meaning of an in-flight page number. */
 object MangaDirectoryUpdates {
     private val pending = ConcurrentHashMap<String, Job>()
-    fun refresh(context: Context, session: LibrarySession, books: List<LibraryBook>, failures: MutableList<String>, listings: MutableMap<String, List<LibraryNode>> = mutableMapOf()) {
+    fun refresh(context: Context, session: LibrarySession, books: List<LibraryBook>, failures: MutableList<String>, listings: MutableMap<String, List<LibraryNode>> = mutableMapOf(), onFailure: ((LibraryBook, Exception) -> Unit)? = null) {
         books.filter { !it.deleting }.forEach { book ->
-            val body = JSONObject(book.body)
             val rootPresent = session.sourcePresence[book.source] ?: return@forEach
-            val root = session.local(book.source)
+            val root = try { session.local(book.source) }
+            catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) {
+                if (onFailure != null) onFailure(book, e) else failures += "${book.source}：${libraryFailureDetail(e)}"
+                return@forEach
+            }
             if (LibrarySources.hasReaders(root) || BookRecordLocks.busy(BookRef(session.locationId, "manga", book.uuid))) {
                 val key = "${session.locationId}:${book.uuid}"
                 pending.computeIfAbsent(key) {
@@ -32,6 +36,7 @@ object MangaDirectoryUpdates {
             val ref = BookRef(session.locationId, "manga", book.uuid)
             if (!BookRecordLocks.tryExclusive(ref)) return@forEach
             try {
+                val body = JSONObject(book.body)
                 if (LibrarySources.hasReaders(root)) return@forEach
                 val old = MangaSourceIndex.load(session, body.optString("sourceIndexPath"))
                 if (!rootPresent && old == null) return@forEach
@@ -90,7 +95,10 @@ object MangaDirectoryUpdates {
                 }
                 runBlocking { session.updateMangaLayout(book, body, mapping) }
             } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { failures += "${book.source}：${e.message}" }
+            catch (e: android.database.sqlite.SQLiteException) { throw e }
+            catch (e: Exception) {
+                if (onFailure != null) onFailure(book, e) else failures += "${book.source}：${libraryFailureDetail(e)}"
+            }
             finally { BookRecordLocks.endExclusive(ref) }
         }
     }

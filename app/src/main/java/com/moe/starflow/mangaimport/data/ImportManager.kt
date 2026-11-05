@@ -303,7 +303,7 @@ object ImportManager {
         else -> ImportFailureReason.UNKNOWN
     }
 
-    private fun classifyDirectory(e: Throwable): ImportFailureReason = when (e) {
+    internal fun classifyDirectory(e: Throwable): ImportFailureReason = when (e) {
         is LibraryStorageException -> ImportFailureReason.LIBRARY_STORAGE_UNAVAILABLE
         is ImportOperationException -> e.reason
         is SecurityException -> ImportFailureReason.DIRECTORY_ACCESS_DENIED
@@ -313,17 +313,7 @@ object ImportManager {
     }
 
     /** Keep the operation/path message and the provider/filesystem root cause in the dialog. */
-    private fun failureDetail(error: Throwable): String? {
-        val chain = mutableListOf<String>()
-        val seen = mutableSetOf<Throwable>()
-        val messages = mutableSetOf<String>()
-        var current: Throwable? = error
-        while (current != null && seen.add(current) && seen.size <= 8 && chain.size < 3) {
-            val message = current.localizedMessage?.trim()
-            if (messages.add(message ?: current.javaClass.name)) chain +=
-                listOfNotNull(current.javaClass.simpleName.takeIf { it.isNotBlank() }, message).joinToString(": ")
-            current = current.cause
-        }
-        return chain.filter { it.isNotBlank() }.joinToString("\n\n").take(4096).ifBlank { null }
-    }
+    private fun failureDetail(error: Throwable): String? =
+        com.moe.starflow.library.libraryFailureDetail(error).ifBlank { null }
+
 }

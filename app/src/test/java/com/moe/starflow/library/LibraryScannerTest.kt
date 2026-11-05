@@ -34,7 +34,7 @@ class LibraryScannerTest {
         assertEquals(1, LibraryScanner.scan(app, "manga").added)
         val manga = ImportedMangaStore.load(app).single()
         assertTrue(manga.description.contains("A book summary"))
-        assertTrue(manga.description.contains("Writer"))
+        assertEquals("A book summary", manga.description)
         assertEquals(0, LibraryScanner.scan(app, "manga").added)
         ImportedMangaStore.patch(app, manga) { it.copy(description = "My edited summary") }
         LibraryScanFixtures.zip(File(first.parentFile, "two.cbz"), "001.png" to LibraryScanFixtures.png())
@@ -145,4 +145,144 @@ class LibraryScannerTest {
             assertEquals(4, it.lastReadParaIndex)
         }
     }
+    @Test fun badPackageBetweenGoodBooksIsIsolatedAndEmptyFoldersAreNotErrors() = runBlocking {
+        LibrarySessions.prepare(app)
+        LibraryScanFixtures.zip(File(root, "manga_import/a.cbz"), "1.png" to LibraryScanFixtures.png())
+        File(root, "manga_import/b.zip").writeText("broken archive")
+        LibraryScanFixtures.zip(File(root, "manga_import/c.cbz"), "1.png" to LibraryScanFixtures.png())
+        File(root, "manga_import/empty").mkdirs()
+        val result = LibraryScanner.scan(app, "manga")
+        assertEquals(result.failures.joinToString(), 3, result.added)
+        assertEquals(1, result.issues.count { it.scope == LibraryIssueScope.BOOK && it.outcome == LibraryBookOutcome.NOT_ADDED })
+        assertEquals(1, result.issues.count { it.scope == LibraryIssueScope.NOTICE })
+        assertFalse(result.needsRecovery)
+        assertEquals(1, result.failures.size)
+        assertEquals(3, ImportedMangaStore.load(app).size)
+        assertEquals(0, LibraryScanner.scan(app, "manga").issues.count { it.scope == LibraryIssueScope.NOTICE })
+    }
+
+    @Test fun invalidSourceIdentityIsPreservedAndNeverCollectedAsAUuidShell() = runBlocking {
+        LibrarySessions.prepare(app)
+        val session = LibrarySessions.current(app)
+        listOf("{broken", "mismatch").forEach { contents ->
+            val uuid = UUID.randomUUID().toString()
+            val folder = File(root, "manga_import/$uuid").apply { mkdirs() }
+            File(folder, "1.png").writeBytes(LibraryScanFixtures.png())
+            val path = ".starflow/books/$uuid/source.json"
+            val original = if (contents == "mismatch") org.json.JSONObject().put("format", 1)
+                .put("uuid", UUID.randomUUID().toString()).put("kind", "novel").put("source", "novel_import/wrong").toString()
+                else contents
+            File(root, path).apply { parentFile!!.mkdirs(); writeText(original) }
+            val result = LibraryScanner.scan(app, "manga")
+            assertEquals(0, result.added)
+            assertTrue(result.issues.any { it.scope == LibraryIssueScope.BOOK && it.path == "manga_import/$uuid" })
+            if (contents == "mismatch") assertTrue(result.failures.any { it.contains("expected=") && it.contains("actual=") })
+            assertEquals(original, File(root, path).readText())
+        }
+        assertTrue(session.scanBooks("manga").isEmpty())
+    }
+
+    @Test fun oldPendingFailureDoesNotBlockNewBooksAndIsReportedAsFilesPending() = runBlocking {
+        LibrarySessions.prepare(app)
+        val session = LibrarySessions.current(app)
+        val uuid = UUID.randomUUID().toString()
+        // An impossible old destination provides a stable file failure without changing the root.
+        File(root, ".starflow/books/$uuid").apply { parentFile!!.mkdirs(); writeText("conflict") }
+        File(root, "manga_import/old").mkdirs()
+        session.putBook("manga", 900, org.json.JSONObject().put("bookUuid", uuid)
+            .put("title", "Old book").put("localRoot", "manga_import/old"))
+        LibraryScanFixtures.zip(File(root, "manga_import/new.cbz"), "1.png" to LibraryScanFixtures.png())
+        val result = LibraryScanner.scan(app, "manga")
+        assertEquals(result.failures.joinToString(), 1, result.added)
+        assertTrue(result.issues.any { it.scope == LibraryIssueScope.FILES && it.uuid == uuid && it.outcome == LibraryBookOutcome.FILES_PENDING })
+        assertFalse(result.issues.any { it.scope == LibraryIssueScope.LIBRARY })
+        assertEquals(2, session.scanBooks("manga").size)
+    }
+
+    @Test fun libraryIdentityFailuresStopDiscovery() = runBlocking {
+        LibrarySessions.prepare(app)
+        val session = LibrarySessions.current(app)
+        LibraryScanFixtures.zip(File(root, "manga_import/good.cbz"), "1.png" to LibraryScanFixtures.png())
+        File(root, ".starflow/library.json").writeText("{broken")
+        val result = LibraryScanner.scan(app, "manga")
+        assertEquals(0, result.added)
+        assertEquals(LibraryIssueScope.LIBRARY, result.issues.single().scope)
+        assertEquals(LibraryErrorKind.IDENTITY.name, result.issues.single().reason)
+        assertTrue(session.scanBooks("manga").isEmpty())
+    }
+
+    @Test fun databaseReadFailureIsFatalAndCannotBecomeAnEmptyDiscoveryCatalog() = runBlocking {
+        val backend = FileLibraryStorage(root)
+        val db = androidx.room.Room.inMemoryDatabaseBuilder(app, LibraryDatabase::class.java).allowMainThreadQueries().build()
+        val session = LibrarySession(app, object : LibraryStorage by backend {}, db, 1)
+        try {
+            session.prepare()
+            db.openHelper.writableDatabase.execSQL("DROP TABLE library_book")
+            val result = LibraryScanner.scan(session.context(), "manga")
+            assertEquals(0, result.added)
+            assertEquals(LibraryIssueScope.LIBRARY, result.issues.single().scope)
+            assertEquals(app.getString(com.moe.starflow.R.string.library_stage_catalog), result.issues.single().stage)
+            assertEquals(LibraryErrorKind.DATABASE.name, result.issues.single().reason)
+        } finally { session.close() }
+    }
+
+    @Test fun rootEnumerationFailureStopsScanningAndCancellationIsNotReportedAsABadBook() = runBlocking {
+        val backend = FileLibraryStorage(root)
+        var failEnumeration = false
+        var cancel = false
+        val guarded = object : LibraryStorage by backend {
+            override fun list(path: String): List<LibraryNode> {
+                if (path == "manga_import" && failEnumeration) {
+                    if (cancel) throw kotlinx.coroutines.CancellationException("Stopped scan")
+                    throw java.io.IOException("Root enumeration denied", android.database.sqlite.SQLiteException("Provider backend unavailable"))
+                }
+                return backend.list(path)
+            }
+        }
+        val db = androidx.room.Room.inMemoryDatabaseBuilder(app, LibraryDatabase::class.java).allowMainThreadQueries().build()
+        val session = LibrarySession(app, guarded, db, 1)
+        try {
+            session.prepare()
+            failEnumeration = true
+            val result = LibraryScanner.scan(session.context(), "manga")
+            assertEquals(0, result.added)
+            assertEquals(LibraryIssueScope.LIBRARY, result.issues.single().scope)
+            assertEquals(app.getString(com.moe.starflow.R.string.library_stage_enumerate), result.issues.single().stage)
+            assertEquals(LibraryErrorKind.ACCESS.name, result.issues.single().reason)
+            cancel = true
+            try { LibraryScanner.scan(session.context(), "manga"); fail("Cancellation swallowed") }
+            catch (_: kotlinx.coroutines.CancellationException) { }
+            assertFalse(LibraryScanner.state.value.running)
+        } finally { session.close() }
+    }
+
+    @Test fun damagedExistingPayloadDoesNotPreventDiscoveringAnotherBook() = runBlocking {
+        LibrarySessions.prepare(app)
+        val session = LibrarySessions.current(app)
+        val uuid = UUID.randomUUID().toString()
+        session.database.catalog().put(LibraryBook("manga", 900, uuid, "{broken", "manga_import/old", false))
+        LibraryScanFixtures.zip(File(root, "manga_import/new.cbz"), "1.png" to LibraryScanFixtures.png())
+        val result = LibraryScanner.scan(app, "manga")
+        assertEquals(result.failures.joinToString(), 1, result.added)
+        assertTrue(result.issues.any { it.scope == LibraryIssueScope.BOOK && it.uuid == uuid })
+        assertFalse(result.needsRecovery)
+        assertEquals("{broken", session.database.catalog().byUuid(uuid)!!.body)
+    }
+
+    @Test fun initialLegacyMigrationRemainsStrictAndRetainsItsRetryMarker() = runBlocking {
+        val session = LibrarySessions.current(app)
+        session.prepare() // Do not complete the one-time legacy migration yet.
+        val uuid = UUID.randomUUID().toString()
+        File(root, ".starflow/books/$uuid").writeText("conflict")
+        session.putBook("manga", 900, org.json.JSONObject().put("bookUuid", uuid)
+            .put("title", "Retained").put("localRoot", "manga_import/old"))
+        val result = LibraryScanner.scan(app, "manga")
+        assertEquals(0, result.added)
+        assertEquals(app.getString(com.moe.starflow.R.string.library_stage_migrate), result.issues.single().stage)
+        assertEquals(LibraryIssueScope.LIBRARY, result.issues.single().scope)
+        assertNull(session.database.catalog().meta("legacyMigrated"))
+        assertNotNull(session.database.catalog().byUuid(uuid))
+        assertTrue(session.database.catalog().pendingCount() > 0)
+    }
+
 }

@@ -3,7 +3,6 @@
     <string name="library_import_readonly">Import folders are not writable: %1$s. Existing books remain readable. Select a writable location or repair the folder permissions. Rebuilding library records does not repair filesystem permissions.</string>
     <string name="library_reinitialize_title">Overwrite and rebuild this library?</string>
     <string name="library_reinitialize_action">Overwrite and rebuild</string>
-    <string name="library_reinitialize_message">Directory: %1$s\n\nProblem: %2$s\n\nRebuild replaces the library management information, permanently clears the previous internal book entries, translation, OCR, super-resolution and reading records for this directory, then scans the existing manga and novels again.\n\nOriginal manga and novel files stay in place. Other libraries are preserved.\n\nIf directory access has expired, choose the directory again to grant access. Cancel if you need the old records; clearing them cannot be undone.</string>
     <string name="library_recovery_choose">Choose directory again</string>
     <string name="library_rebuild_manual">Rebuild library management information from the existing original files.</string>
     <string name="book_data_actions">Actions</string>

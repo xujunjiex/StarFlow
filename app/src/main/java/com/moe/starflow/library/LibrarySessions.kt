@@ -116,8 +116,16 @@ object LibrarySessions {
         val session = current(context)
         withContext(Dispatchers.IO) {
             session.prepare()
-            LibraryMigration.migrate(context, session)
-            session.flush()
+            try { LibraryMigration.migrate(context, session) }
+            catch (e: CancellationException) { throw e }
+            catch (e: android.database.sqlite.SQLiteException) { throw e }
+            catch (e: Exception) {
+                val failure = LibraryMigrationException("旧资料迁移未完成；请重试，原资料保留", e)
+                session.saveState.value = session.saveState.value.copy(saving = false,
+                    error = libraryFailureDetail(failure), errorKind = libraryErrorKind(e))
+                throw failure
+            }
+            session.flushPending()
             changes.value += 1
         }
     }
@@ -131,12 +139,20 @@ object LibrarySessions {
         withContext(Dispatchers.IO) {
             try {
                 session.prepare()
-                session.flush()
-                (session.books("manga") + session.books("novel")).forEach { book ->
-                    session.sourcePresence[book.source] = session.storage.exists(book.source)
+                session.flushPending()
+                (session.scanBooks("manga") + session.scanBooks("novel")).forEach { book ->
+                    try {
+                        session.sourcePresence[book.source] = session.storage.exists(book.source)
+                        session.sourceIssues.remove(book.source)
+                    } catch (e: CancellationException) { throw e }
+                    catch (e: Exception) {
+                        session.sourceIssues[book.source] = libraryFailureDetail(e)
+                        LogCollector.w(TAG, "来源检查失败：${book.source}", e)
+                    }
                 }
             } catch (e: Exception) {
-                session.saveState.value = session.saveState.value.copy(error = e.message ?: e.javaClass.simpleName, metadataOnlyError = false)
+                if (e is CancellationException) throw e
+                LogCollector.w(TAG, "书库来源刷新失败", e)
             }
             changes.value += 1
         }
@@ -285,7 +301,7 @@ object LibrarySessions {
         if (located == null) file.exists() else {
             val (session, path) = located
             // Root errors must not turn every entry into a missing-file placeholder.
-            if (session.saveState.value.error != null && !session.saveState.value.metadataOnlyError) true
+            if (session.saveState.value.error != null && session.saveState.value.errorKind != LibraryErrorKind.FILES) true
             else if (session.storage is FileLibraryStorage) file.exists()
             else session.sourcePresence[path] ?: true
         }
@@ -294,7 +310,11 @@ object LibrarySessions {
         sessions.values.filter { runCatching {
             libraryRelativePath(it.workingRoot.absolutePath, file.absolutePath) != null
         }.getOrDefault(false) }
-            .forEach { it.saveState.value = it.saveState.value.copy(error = e.message ?: e.javaClass.simpleName, metadataOnlyError = false) }
+            .forEach { session ->
+                val path = runCatching { session.relative(file) }.getOrDefault(file.name)
+                session.sourceIssues[path] = libraryFailureDetail(e)
+                LogCollector.w(TAG, "来源存在性查询失败：$path", e)
+            }
         true
     }
     fun checkReaderIntent(context: Context, intent: Intent, kind: String, id: Long) {

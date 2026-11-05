@@ -9,7 +9,7 @@
 - 一次性迁移 `StorageDirStore.migrate()`：把旧版存于 `filesDir` 的漫画文件搬到外部专属目录并重写清单路径（Fragment 启动时后台执行，幂等）；封面缓存保留在应用私有目录；Manifest 已移除废弃的 READ/WRITE/MANAGE_EXTERNAL_STORAGE（漫画导入走 SAF，无需存储权限）
 - 手动导入创建独立 UUID 副本，复制到选定书库；封面使用 `.starflow/books/<UUID>/cover/` 内的新修订，提交成功后清理旧修订。SAF 待写文件保存在内部持久目录，确认提交后释放读取副本。
 - `ImportedMangaStore` 使用按位置隔离的 App 内部数据库，SharedPreferences 仅作为旧资料迁移输入。
-- 漫画、小说共用 `FileAccessDiagnostics.ensureDirectory()` 创建导入目录，保留系统原因和父目录写权限诊断。普通导入失败与扫描失败均显示红色可复制详情及存储位置入口；App 不自动改权限或重建来源目录。
+- 漫画、小说共用 `FileAccessDiagnostics.ensureDirectory()` 创建导入目录，保留系统原因和父目录写权限诊断。普通导入失败与扫描失败均显示红色可复制详情及存储位置入口；App 不自动改权限或重建来源目录。扫描按单本隔离失败，书库、单本、文件待保存和提示分组展示；保存或恢复页面不会自动弹出重建确认，重建仅在存储窗口高级操作中主动发起。
 - 长按**多选管理**：已读/未读（改 `lastReadPage`）/删除（连同 `filesDir` 副本+封面）/重命名/换封面（photo picker 复制进 covers）/编辑简介；顶部「全选」图标按钮 + 返回键退出多选
 - 下拉刷新 `SwipeRefreshLayout`；显示选项**即时生效**（详细信息列表 = 默认 / 网格，列数 = 网格尺寸；紧凑网格与纯列表已删除）
 - ⚠️ 简介/重命名确认后再 `refresh()`（曾在弹窗打开时就 refresh 导致改了不显示）

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="library_report_title">书库扫描与存储详情</string>
+    <string name="library_issue_library">书库不可用</string>
+    <string name="library_issue_book">单本操作失败</string>
+    <string name="library_issue_files">作品文件待保存</string>
+    <string name="library_issue_notice">提示</string>
+    <string name="library_outcome_not_added">尚未收录</string>
+    <string name="library_outcome_retained">已有记录保留</string>
+    <string name="library_outcome_pending">内部记录已保存，文件操作待重试</string>
+    <string name="library_outcome_none"></string>
+    <string name="library_scan_summary">新增 %1$d 本 · 问题 %2$d 项 · 提示 %3$d 项</string>
+    <string name="library_stage_prepare">准备书库</string>
+    <string name="library_stage_migrate">迁移旧资料</string>
+    <string name="library_stage_catalog">读取书目</string>
+    <string name="library_stage_enumerate">枚举来源</string>
+    <string name="library_stage_duplicates">核对重复书目</string>
+    <string name="library_stage_presence">检查来源</string>
+    <string name="library_stage_metadata">读取元数据</string>
+    <string name="library_stage_index">更新来源索引</string>
+    <string name="library_stage_reserve">预留书目编号</string>
+    <string name="library_stage_source">读取来源身份</string>
+    <string name="library_stage_inspect">识别作品</string>
+    <string name="library_stage_save">保存作品文件</string>
+    <string name="library_stage_cleanup">清理未提交文件</string>
+    <string name="library_unavailable">书库访问失败</string>
+    <string name="library_advanced">高级操作</string>
+    <string name="library_rebuild_target">重建此位置的记录：%1$s</string>
+    <string name="library_rebuild_confirmation">位置：%1$s\n\n此操作将永久清除此位置下漫画和小说共用的旧书目、翻译、OCR、超分记录、阅读进度及私有历史归档，然后重新扫描。原书文件保留，其他书库位置不受影响。</string>
+    <string name="library_help_files">内部记录保留。请重试保存作品文件，或检查存储位置、权限和剩余空间。</string>
+    <string name="library_help_access">请检查存储位置，必要时重新授权或重新选择目录。重建记录不能修复文件访问或写入权限。</string>
+    <string name="library_help_identity">原记录保留。请先确认是否选对书库，并尽可能恢复原管理文件。高级操作中的重建会放弃旧记录，仅作为最后手段。</string>
+    <string name="library_help_version">请升级到支持此书库格式的应用版本。原记录保留。</string>
+</resources>

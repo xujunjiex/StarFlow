@@ -10,7 +10,7 @@
 
 **格式判定先看内容再信扩展名**（`NovelFormatDetector`）：`.txt` 里塞 HTML 的、无扩展名的都要认出来；编码（UTF-8/GBK/Big5）同理按字节判。
 
-- **来源扫描**：进入或恢复小说页签、切换书库及下拉均触发 `LibraryScanner`，也可手动启动。仅枚举当前 `novel_import/`，逐本提交；已收录作品保留身份，不重复解析章节。文件夹按一本识别，章节保留相对路径。存储约束见 [书库存储指南](../library/CLAUDE.md)。
+- **来源扫描**：进入或恢复小说页签、切换书库及下拉均触发 `LibraryScanner`，也可手动启动。仅枚举当前 `novel_import/`，逐本隔离识别和文件保存失败；库级故障停止扫描，详情区分未收录与已入库但文件待保存。错误不自动触发重建确认，重建仅在存储窗口高级操作中主动发起；已收录作品保留身份，不重复解析章节。文件夹按一本识别，章节保留相对路径。存储约束见 [书库存储指南](../library/CLAUDE.md)。
 - **简介元数据**：各格式导入与扫描共用 `library/BookMetadataReader`；支持包内或目录中的 ComicInfo.xml / CoMet / ComicBookInfo / 通用 JSON、独立文件的同名元数据，以及单作品子目录的普通元数据。已有书库目录授权可用于复制文件来源的相邻元数据，单文件授权不推定兄弟文件可读。EPUB 读取 OPF 的 `dc:description` 与作者，HTML 读取 description/og:description，文件夹 EPUB 分卷提供缺失的作者、简介与封面。文件夹只枚举一次，按正文、插图和元数据分类复制。元数据有大小上限，坏数据不阻止正文导入；旧空简介按读取版本补齐，不覆盖非空用户修改。导入进度统一放在状态栏，书架仅显示实际书目。
 - **手动放置格式**：TXT / EPUB / HTML / HTM / XHTML；ZIP 包需含 HTML / HTM / XHTML / TXT 章节。作品目录内最多 6 层子目录中的 TXT、HTML 和 EPUB/ZIP 小说卷按自然序作为章节；HTML 插图按 HTML 所在目录的相对路径读取。SAF 提供器可能只返回 MIME、不返回扩展名，目录导入须按扩展名与 MIME 两路识别；本地扫描与解析还要嗅探无扩展名、非标准扩展名和 TXT 内嵌 HTML。单 HTML 文件无法读取兄弟目录的图片，须以文件夹形式放置整本内容。
 - **外部目录访问诊断**：`File.listFiles() == null` 时报告 `File.canRead()`、应用 UID、目录 UID/GID 与权限模式。`getExternalFilesDir()` 无需存储权限；若 MTP/ADB 创建的子目录归 `shell` 所有且没有应用遍历权限，应用无法读取其子项，不能把它误报成 SAF 授权失败。

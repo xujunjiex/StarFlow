@@ -323,7 +323,8 @@ class NovelShelfFragment : Fragment() {
             }
             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
             catch (e: Exception) {
-                session.saveState.value = session.saveState.value.copy(error = e.message ?: e.javaClass.simpleName)
+                session.saveState.value = session.saveState.value.copy(error = com.moe.starflow.library.libraryFailureDetail(e),
+                    errorKind = com.moe.starflow.library.LibraryErrorKind.DATABASE)
                 return@launch
             }
             if (!isAdded || _binding == null || com.moe.starflow.library.LibrarySessions.current(ctx).locationId != session.locationId) return@launch

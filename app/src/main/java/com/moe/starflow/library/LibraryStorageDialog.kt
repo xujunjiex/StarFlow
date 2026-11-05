@@ -18,37 +18,22 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class LibraryStorageDialog : DialogFragment() {
-    companion object {
-        private const val TAG = "library-storage"
-        private const val ERROR = "recovery_error"
-        private val offered = mutableMapOf<String, MutableSet<String>>()
-        private var recoveryOpen = false
-        fun offerRecovery(fragment: androidx.fragment.app.Fragment, error: String, automatic: Boolean = true): Boolean {
-            if (!fragment.isAdded || !fragment.isResumed || fragment.parentFragmentManager.isStateSaved) return false
-            val manager = fragment.parentFragmentManager
-            val location = LibrarySessions.current(fragment.requireContext()).locationId
-            val seen = offered.getOrPut(location) { mutableSetOf() }
-            if (recoveryOpen || manager.findFragmentByTag(TAG) != null) return error in seen
-            if (automatic && error in seen) return true
-            seen.add(error)
-            recoveryOpen = true
-            fragment.requireView().post {
-                if (!fragment.isAdded || !fragment.isResumed || manager.isStateSaved) { recoveryOpen = false; seen.remove(error) }
-                else if (manager.findFragmentByTag(TAG) == null)
-                    LibraryStorageDialog().apply { arguments = Bundle().apply { putString(ERROR, error) } }.show(manager, TAG)
-            }
-            return true
-        }
-        internal fun recoveryCompleted(location: String) { offered.remove(location) }
-    }
-    private var recoveryShown = false
+    private var targetSet = false
+    private var targetTree: android.net.Uri? = null
+    private var targetPath: String? = null
+    private var targetError: String? = null
+    private var targetKind = LibraryErrorKind.ACCESS
     private var recoveryDialog: android.app.AlertDialog? = null
     private var content: android.view.View? = null
     private val picker = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { tree ->
         if (tree != null) change(tree) else syncLocationChoice()
     }
     override fun onCreateDialog(savedInstanceState: Bundle?): Dialog {
-        recoveryOpen = true
+        targetSet = savedInstanceState?.getBoolean("targetSet") ?: false
+        targetTree = savedInstanceState?.getString("targetTree")?.let(android.net.Uri::parse)
+        targetPath = savedInstanceState?.getString("targetPath")
+        targetError = savedInstanceState?.getString("targetError")
+        targetKind = savedInstanceState?.getString("targetKind")?.let(LibraryErrorKind::valueOf) ?: LibraryErrorKind.ACCESS
         val view = requireActivity().layoutInflater.inflate(R.layout.dialog_library_storage, null, false)
         content = view
         val session = LibrarySessions.current(requireContext())
@@ -57,12 +42,16 @@ class LibraryStorageDialog : DialogFragment() {
         view.findViewById<View>(R.id.library_choose).setOnClickListener { picker.launch(null) }
         view.findViewById<View>(R.id.library_default).setOnClickListener { change(null) }
         view.findViewById<View>(R.id.library_close).setOnClickListener { dismiss() }
-        view.findViewById<View>(R.id.library_rebuild).setOnClickListener {
-            confirmReinitialization((LibrarySessions.current(requireContext()).storage as? SafLibraryStorage)?.tree,
-                session.saveState.value.error ?: getString(R.string.library_rebuild_manual))
+        view.findViewById<View>(R.id.library_advanced).setOnClickListener {
+            view.findViewById<View>(R.id.library_rebuild).apply {
+                visibility = if (visibility == View.VISIBLE) View.GONE else View.VISIBLE
+            }
         }
-        view.findViewById<TextView>(R.id.library_retry).visibility =
-            if (session.saveState.value.error != null || session.saveState.value.pending > 0) View.VISIBLE else View.GONE
+        view.findViewById<View>(R.id.library_rebuild).setOnClickListener {
+            confirmReinitialization(if (targetSet) targetTree else
+                (LibrarySessions.current(requireContext()).storage as? SafLibraryStorage)?.tree)
+        }
+        renderProblem()
         // A pre-update choice may still live in app-specific storage; it remains reachable but must warn.
         val unsafeCurrent = (session.storage as? SafLibraryStorage)
             ?.let { LibraryLocationSafety.unsafeTreeReason(it.tree) } != null
@@ -98,7 +87,7 @@ class LibraryStorageDialog : DialogFragment() {
             }
         }
         view.findViewById<TextView>(R.id.library_retry).setOnClickListener {
-            change((LibrarySessions.current(requireContext()).storage as? SafLibraryStorage)?.tree)
+            change(if (targetSet) targetTree else (LibrarySessions.current(requireContext()).storage as? SafLibraryStorage)?.tree)
         }
         return Dialog(requireContext()).also { dialog ->
             dialog.setContentView(view)
@@ -108,10 +97,9 @@ class LibraryStorageDialog : DialogFragment() {
     }
     override fun onDestroy() {
         recoveryDialog?.dismiss(); recoveryDialog = null
-        recoveryOpen = false
         content = null
         super.onDestroy()
-        LibrarySessions.changes.value += 1
+        android.os.Handler(android.os.Looper.getMainLooper()).post { LibrarySessions.changes.value += 1 }
     }
 
     override fun onStart() {
@@ -125,13 +113,36 @@ class LibraryStorageDialog : DialogFragment() {
             addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
             attributes = attributes.apply { dimAmount = 0.42f }
         }
-        if (!recoveryShown) {
-            recoveryShown = true
-            val session = LibrarySessions.current(requireContext())
-            (arguments?.getString(ERROR) ?: session.saveState.value.error)?.let {
-                confirmReinitialization((session.storage as? SafLibraryStorage)?.tree, it)
-            }
+    }
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean("targetSet", targetSet)
+        outState.putString("targetTree", targetTree?.toString())
+        outState.putString("targetPath", targetPath)
+        outState.putString("targetError", targetError)
+        outState.putString("targetKind", targetKind.name)
+    }
+    private fun renderProblem() {
+        val session = LibrarySessions.current(requireContext())
+        val detail = targetError ?: session.saveState.value.error
+        content?.findViewById<TextView>(R.id.library_problem)?.apply {
+            visibility = if (detail == null) View.GONE else View.VISIBLE
+            text = detail?.let { libraryRecoveryDetails(requireContext(), it,
+                if (targetSet) targetKind else session.saveState.value.errorKind) }
+            setOnClickListener { if (detail != null) showFailureDetails(text.toString()) }
         }
+        content?.findViewById<TextView>(R.id.library_rebuild)?.text = getString(R.string.library_rebuild_target,
+            targetPath ?: session.storage.displayPath)
+        content?.findViewById<View>(R.id.library_retry)?.visibility =
+            if (detail != null || session.saveState.value.pending > 0) View.VISIBLE else View.GONE
+    }
+    private fun showFailureDetails(details: String) {
+        recoveryDialog?.dismiss()
+        recoveryDialog = com.moe.starflow.utils.AutoScanFailureDialog.builder(requireContext(),
+            getString(R.string.library_report_title), details)
+            .setPositiveButton(R.string.confirm, null)
+            .setNeutralButton(R.string.library_recovery_choose) { _, _ -> picker.launch(targetTree) }
+            .create().also { it.show(); it.window?.setBackgroundDrawableResource(R.drawable.dialog_background) }
     }
     private fun syncLocationChoice() {
         val view = content ?: return
@@ -147,8 +158,8 @@ class LibraryStorageDialog : DialogFragment() {
         view.findViewById<ImageView>(R.id.library_default_selected).visibility = if (useCustom) View.GONE else View.VISIBLE
         view.findViewById<ImageView>(R.id.library_custom_selected).visibility = if (useCustom) View.VISIBLE else View.GONE
     }
-    private fun change(tree: android.net.Uri?, reinitialize: Boolean = false) {
-        val controls = listOf(R.id.library_choose, R.id.library_default, R.id.library_retry, R.id.library_close, R.id.library_rebuild)
+    internal fun change(tree: android.net.Uri?, reinitialize: Boolean = false) {
+        val controls = listOf(R.id.library_choose, R.id.library_default, R.id.library_retry, R.id.library_close, R.id.library_advanced, R.id.library_rebuild)
             .mapNotNull { content?.findViewById<View>(it) }
         val oldSpace = content?.findViewById<TextView>(R.id.library_space)?.text
         controls.forEach { it.isEnabled = false }
@@ -164,7 +175,14 @@ class LibraryStorageDialog : DialogFragment() {
             catch (e: Exception) {
                 if (isAdded) {
                     syncLocationChoice()
-                    confirmReinitialization(tree, e.message ?: getString(R.string.library_unsaved))
+                    targetSet = true
+                    targetTree = tree
+                    targetPath = tree?.let { SafLibraryStorage(requireContext(), it).displayPath }
+                        ?: LibrarySessions.defaultDisplayPath(requireContext())
+                    targetKind = libraryErrorKind(e)
+                    targetError = targetPath + "\n" + libraryFailureDetail(e)
+                    renderProblem()
+                    showFailureDetails(libraryRecoveryDetails(requireContext(), targetError!!, targetKind))
                 }
             }
             finally {
@@ -189,14 +207,13 @@ class LibraryStorageDialog : DialogFragment() {
             }
     }
 
-    private fun confirmReinitialization(tree: android.net.Uri?, error: String) {
+    private fun confirmReinitialization(tree: android.net.Uri?) {
         val storage = tree?.let { SafLibraryStorage(requireContext(), it) }
             ?: FileLibraryStorage(java.io.File(LibrarySessions.defaultDisplayPath(requireContext())))
         val path = storage.displayPath
-        offered.getOrPut(storage.locationId) { mutableSetOf() }.add(error)
         recoveryDialog?.dismiss()
         recoveryDialog = android.app.AlertDialog.Builder(requireContext()).setTitle(R.string.library_reinitialize_title)
-            .setMessage(getString(R.string.library_reinitialize_message, path, error))
+            .setMessage(getString(R.string.library_rebuild_confirmation, path))
             .setNegativeButton(R.string.cancel, null)
             .setNeutralButton(R.string.library_recovery_choose) { _, _ -> picker.launch(tree) }
             .setPositiveButton(R.string.library_reinitialize_action) { _, _ -> change(tree, reinitialize = true) }
@@ -204,12 +221,6 @@ class LibraryStorageDialog : DialogFragment() {
                 it.show()
                 it.findViewById<TextView>(android.R.id.message)?.apply {
                     setTextIsSelectable(true)
-                    val detail = error
-                    val start = text.toString().indexOf(detail)
-                    if (detail.isNotEmpty() && start >= 0) text = android.text.SpannableString(text).apply {
-                        setSpan(android.text.style.ForegroundColorSpan(androidx.core.content.ContextCompat.getColor(requireContext(), R.color.red)),
-                            start, start + detail.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    }
                 }
                 it.window?.setBackgroundDrawableResource(R.drawable.dialog_background)
             }

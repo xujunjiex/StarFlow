@@ -7,16 +7,17 @@ import org.json.JSONObject
 
 /** Repair the old scanner's file/containing-directory duplicates, never same-title books. */
 internal object MangaDuplicateRepair {
-    fun repair(session: LibrarySession, failures: MutableList<String>) {
+    fun repair(session: LibrarySession, failures: MutableList<String>,
+        onFailure: ((LibraryBook, Exception) -> Unit)? = null, onNotice: ((LibraryBook, String) -> Unit)? = null) {
         val catalog = session.database.catalog()
-        val books = session.books("manga").filter { !it.deleting }
+        val books = session.scanBooks("manga").filter { !it.deleting }
         for (child in books) {
-            val childBody = JSONObject(child.body)
-            if (!childBody.optBoolean("isArchive") && !childBody.optBoolean("isPdf")) continue
             val parent = books.singleOrNull { it.source == child.source.substringBeforeLast('/', "") } ?: continue
             val refs = listOf(child, parent).map { BookRef(session.locationId, "manga", it.uuid) }
             if (!BookRecordLocks.tryExclusive(refs[0])) continue
             try {
+                val childBody = JSONObject(child.body)
+                if (!childBody.optBoolean("isArchive") && !childBody.optBoolean("isPdf")) continue
                 if (!BookRecordLocks.tryExclusive(refs[1])) continue
                 try {
                     if (catalog.byUuid(child.uuid) != child || catalog.byUuid(parent.uuid) != parent ||
@@ -42,7 +43,8 @@ internal object MangaDuplicateRepair {
                     val childRecorded = hasRecords(child)
                     val parentRecorded = hasRecords(parent)
                     if (childRecorded && parentRecorded) {
-                        failures += "${child.source}：文件与外层目录重复收录，但两份书目均有处理记录，已保留两份记录；可在作品数据中分别导出"
+                        val notice = "文件与外层目录重复收录，但两份书目均有处理记录，已保留两份记录；可在作品数据中分别导出"
+                        if (onNotice != null) onNotice(child, notice) else failures += "${child.source}：$notice"
                         continue
                     }
                     // Keep the processed identity (including its stable page keys and SR paths).
@@ -80,7 +82,10 @@ internal object MangaDuplicateRepair {
                     LibrarySessions.changes.value += 1
                 } finally { BookRecordLocks.endExclusive(refs[1]) }
             } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { failures += "${child.source}：[修复重复书目] ${e.message}" }
+            catch (e: android.database.sqlite.SQLiteException) { throw e }
+            catch (e: Exception) {
+                if (onFailure != null) onFailure(child, e) else failures += "${child.source}：[修复重复书目] ${libraryFailureDetail(e)}"
+            }
             finally { BookRecordLocks.endExclusive(refs[0]) }
         }
     }

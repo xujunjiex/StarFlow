@@ -187,24 +187,38 @@ class SafLibraryStorage(private val context: Context, val tree: Uri) : LibrarySt
         val columns = arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID,
             DocumentsContract.Document.COLUMN_DISPLAY_NAME, DocumentsContract.Document.COLUMN_MIME_TYPE,
             DocumentsContract.Document.COLUMN_SIZE, DocumentsContract.Document.COLUMN_LAST_MODIFIED)
-        val out = mutableListOf<Document>()
-        val cursor = resolver.query(childUri, columns, null, null, null)
-            ?: throw IOException("无法枚举目录：$parent")
-        cursor.use {
-            while (it.moveToNext()) {
-                val name = it.getString(1) ?: throw IOException("提供器未返回文件名称：$parent")
+        return query(parent = childUri, columns = columns) { cursor ->
+            val indexes = columns.map(cursor::getColumnIndex)
+            columns.take(3).forEach { cursor.getColumnIndexOrThrow(it) }
+            val out = mutableListOf<Document>()
+            while (cursor.moveToNext()) {
+                val name = cursor.getString(indexes[1]) ?: throw IOException("提供器未返回文件名称")
                 if (name.isEmpty() || name.contains('/') || name.contains('\\') || name == "." || name == "..")
                     throw IOException("提供器返回了不可定位的名称：$name")
-                out += Document(DocumentsContract.buildDocumentUriUsingTree(tree, it.getString(0)), name,
-                    it.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR, if (it.isNull(3)) -1 else it.getLong(3), if (it.columnCount < 5 || it.isNull(4)) 0 else it.getLong(4))
+                val id = cursor.getString(indexes[0]) ?: throw IOException("提供器未返回 document_id")
+                out += Document(DocumentsContract.buildDocumentUriUsingTree(tree, id), name,
+                    cursor.getString(indexes[2]) == DocumentsContract.Document.MIME_TYPE_DIR,
+                    if (indexes[3] < 0 || cursor.isNull(indexes[3])) -1 else cursor.getLong(indexes[3]),
+                    if (indexes[4] < 0 || cursor.isNull(indexes[4])) 0 else cursor.getLong(indexes[4]))
             }
+            if (out.map { it.name }.toSet().size != out.size) throw IOException("目录有重名文件，无法可靠定位")
+            out
         }
-        if (out.map { it.name }.toSet().size != out.size) throw IOException("目录有重名文件，无法可靠定位：$parent")
-        return out
     }
-    private fun nameOf(uri: Uri): String? = resolver.query(uri,
-        arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME), null, null, null)?.use {
-        if (it.moveToFirst()) it.getString(0) else null
+    private fun <T> query(parent: Uri, columns: Array<String>, block: (android.database.Cursor) -> T): T {
+        var actual = "unavailable"
+        try {
+            val cursor = resolver.query(parent, columns, null, null, null)
+                ?: throw IOException("提供器返回空查询")
+            return cursor.use { actual = it.columnNames.joinToString(); block(it) }
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (e: Exception) {
+            throw IOException("SAF query authority=${tree.authority} uri=$parent requested=${columns.joinToString()} actual=$actual", e)
+        }
+    }
+    private fun nameOf(uri: Uri): String? = query(uri,
+        arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME)) { cursor ->
+        if (cursor.moveToFirst()) cursor.getString(cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)) else null
     }
     private fun resolve(path: String, createDirectories: Boolean = false, fresh: Boolean = false): Uri? {
         var at = rootUri
@@ -238,8 +252,12 @@ class SafLibraryStorage(private val context: Context, val tree: Uri) : LibrarySt
     }
     override fun exists(path: String): Boolean = resolve(path, fresh = true) != null
     override fun mkdir(path: String) { resolve(path, true) }
-    override fun read(path: String): InputStream = resolver.openInputStream(uri(path))
-        ?: throw IOException("无法读取书库文件：$path")
+    override fun read(path: String): InputStream {
+        val document = uri(path)
+        return try { resolver.openInputStream(document) ?: throw IOException("提供器未返回输入流") }
+        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (e: Exception) { throw IOException("SAF read authority=${tree.authority} uri=$document path=$path", e) }
+    }
     override fun writeNew(path: String, mime: String): OutputStream {
         val safe = safeLibraryPath(path)
         val parent = resolve(safe.substringBeforeLast('/', ""), true)!!

@@ -3,7 +3,6 @@
     <string name="library_import_readonly">导入目录不可写：%1$s。已有作品仍可读取。请选择可写存储位置，或修复目录权限；覆盖重建书库记录不能修复文件系统权限。</string>
     <string name="library_reinitialize_title">覆盖并重建此书库？</string>
     <string name="library_reinitialize_action">覆盖并重建</string>
-    <string name="library_reinitialize_message">目录：%1$s\n\n遇到的问题：%2$s\n\n重建会覆盖书库管理信息，永久清除此目录对应的旧内部书目、翻译、OCR、超分和阅读记录，然后重新扫描现有漫画和小说。\n\n漫画、小说原文件保持原样，其他书库保留。\n\n如果目录授权已失效，请重新选择目录并授权。若仍需旧记录，请取消；清除后无法恢复。</string>
     <string name="library_recovery_choose">重新选择目录</string>
     <string name="library_rebuild_manual">根据现有漫画、小说原文件重新建立书库管理信息。</string>
     <string name="book_data_actions">更多操作</string>

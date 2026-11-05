@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="library_report_title">Library scan and storage details</string>
+    <string name="library_issue_library">Library unavailable</string>
+    <string name="library_issue_book">Book operations failed</string>
+    <string name="library_issue_files">Book files pending</string>
+    <string name="library_issue_notice">Notices</string>
+    <string name="library_outcome_not_added">Not added to the library</string>
+    <string name="library_outcome_retained">Existing records retained</string>
+    <string name="library_outcome_pending">Local records saved; file operation pending</string>
+    <string name="library_outcome_none"></string>
+    <string name="library_scan_summary">Added: %1$d · Problems: %2$d · Notices: %3$d</string>
+    <string name="library_stage_prepare">Prepare library</string>
+    <string name="library_stage_migrate">Migrate legacy records</string>
+    <string name="library_stage_catalog">Read catalog</string>
+    <string name="library_stage_enumerate">List sources</string>
+    <string name="library_stage_duplicates">Check duplicates</string>
+    <string name="library_stage_presence">Check source</string>
+    <string name="library_stage_metadata">Read metadata</string>
+    <string name="library_stage_index">Update source index</string>
+    <string name="library_stage_reserve">Reserve book ID</string>
+    <string name="library_stage_source">Read source identity</string>
+    <string name="library_stage_inspect">Recognize book</string>
+    <string name="library_stage_save">Save book files</string>
+    <string name="library_stage_cleanup">Clean uncommitted files</string>
+    <string name="library_unavailable">Library access failed</string>
+    <string name="library_advanced">Advanced options</string>
+    <string name="library_rebuild_target">Rebuild records at: %1$s</string>
+    <string name="library_rebuild_confirmation">Location: %1$s\n\nThis permanently clears the old catalog, translations, OCR, super-resolution records, reading progress and private archives for BOTH manga and novels at this location, then scans again. Original book files are retained. Other library locations are unaffected.</string>
+    <string name="library_help_files">Local records are retained. Retry saving book files, or check the storage location and available space.</string>
+    <string name="library_help_access">Check the storage location and grant access again if needed. Rebuilding records does not fix file access or write permissions.</string>
+    <string name="library_help_identity">Records are retained. Check that this is the intended library and restore its original management files if possible. Rebuilding in Advanced options discards old records and is a last resort.</string>
+    <string name="library_help_version">Update the app to a version that supports this library format. Existing records are retained.</string>
+</resources>
