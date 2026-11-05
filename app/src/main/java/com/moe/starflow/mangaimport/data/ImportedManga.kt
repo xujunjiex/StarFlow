@@ -79,6 +79,8 @@ data class ImportedManga(
     val descriptionOverride: String? = null,
     val descriptionRevision: String = "",
     val lastReadAt: Long = 0,
+    /** Transient shelf status, derived from the metadata outbox error; never persisted in the book. */
+    val descriptionFileError: String? = null,
 ) {
     val effectiveDescription: String get() = descriptionOverride ?: description
     /** 章数（至少 1：单章漫画也算一章）。 */

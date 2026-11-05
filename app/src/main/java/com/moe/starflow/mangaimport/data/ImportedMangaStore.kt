@@ -28,9 +28,13 @@ object ImportedMangaStore {
     @Synchronized
     fun load(context: Context): List<ImportedManga> {
         val session = com.moe.starflow.library.LibrarySessions.current(context)
+        val descriptionErrors = session.database.catalog().allMeta().filter {
+            it.name.startsWith("metadataError:") && it.value.isNotBlank()
+        }.associate { it.name.removePrefix("metadataError:") to it.value }
         return session.books("manga").map { row ->
             val value = JSONObject(row.body).toManga()
             value.copy(bookUuid = row.uuid, libraryLocationId = session.locationId,
+                descriptionFileError = descriptionErrors[row.uuid],
                 localRoot = session.local(value.localRoot).path,
                 coverPath = value.coverPath?.let(session::cover),
                 lost = session.sourcePresence[row.source] == false || row.deleting,

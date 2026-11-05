@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="import_desc_file_failed">简介文件保存失败：%1$s</string>
     <string name="library_report_title">书库扫描与存储详情</string>
     <string name="library_issue_library">书库不可用</string>
     <string name="library_issue_book">单本操作失败</string>
@@ -27,8 +28,8 @@
     <string name="library_advanced">高级操作</string>
     <string name="library_rebuild_target">重建此位置的记录：%1$s</string>
     <string name="library_rebuild_confirmation">位置：%1$s\n\n此操作将永久清除此位置下漫画和小说共用的旧书目、翻译、OCR、超分记录、阅读进度及私有历史归档，然后重新扫描。原书文件保留，其他书库位置不受影响。</string>
-    <string name="library_help_files">内部记录保留。请重试保存作品文件，或检查存储位置、权限和剩余空间。</string>
-    <string name="library_help_access">请检查存储位置，必要时重新授权或重新选择目录。重建记录不能修复文件访问或写入权限。</string>
+    <string name="library_help_files">内部记录已保存，作品文件尚未保存。可重试文件保存。</string>
+    <string name="library_help_access">书库文件访问失败，具体错误见上方。重建记录不会修复文件访问错误。</string>
     <string name="library_help_identity">原记录保留。请先确认是否选对书库，并尽可能恢复原管理文件。高级操作中的重建会放弃旧记录，仅作为最后手段。</string>
     <string name="library_help_version">请升级到支持此书库格式的应用版本。原记录保留。</string>
 </resources>

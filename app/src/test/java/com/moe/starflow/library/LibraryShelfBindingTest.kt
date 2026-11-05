@@ -31,6 +31,7 @@ import java.util.UUID
 class LibraryShelfBindingTest {
     class Shelf : Fragment() {
         var active = true
+        var books: List<com.moe.starflow.mangaimport.data.ImportedManga> = emptyList()
         override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View =
             LinearLayout(requireContext()).apply {
                 addView(LinearLayout(context).apply { addView(TextView(context)) })
@@ -40,7 +41,7 @@ class LibraryShelfBindingTest {
             val host = view as ViewGroup
             LibraryShelfBinding.observe(this, "manga", (host.getChildAt(0) as ViewGroup).getChildAt(0) as TextView,
                 host.getChildAt(1) as ProgressBar, host.getChildAt(2) as TextView, host.getChildAt(3),
-                {}, {}, isActive = { active })
+                { books = ImportedMangaStore.load(requireContext()) }, {}, isActive = { active })
         }
     }
 
@@ -96,6 +97,8 @@ class LibraryShelfBindingTest {
             listOf(false, true).forEach { metadata ->
                 session.saveState.value = LibrarySaveState(error = "Cannot write files", metadataOnlyError = metadata)
                 shadowOf(Looper.getMainLooper()).idle()
+                val status = ((shelf.requireView() as ViewGroup).getChildAt(0) as ViewGroup).getChildAt(0)
+                assertEquals(if (metadata) View.GONE else View.VISIBLE, status.visibility)
                 assertNull(activity.get().supportFragmentManager.findFragmentByTag("library-storage"))
                 assertNull(activity.get().supportFragmentManager.findFragmentByTag("library-report"))
                 activity.pause().stop().start().resume()
@@ -109,6 +112,48 @@ class LibraryShelfBindingTest {
             status.performClick()
             assertNotNull(activity.get().supportFragmentManager.findFragmentByTag("library-report"))
             assertNull(activity.get().supportFragmentManager.findFragmentByTag("library-storage"))
+        } finally { activity.pause().stop().destroy() }
+    }
+
+    @Test fun descriptionSaveFailureRefreshesItsCardWithoutAHeaderErrorAndRetryClearsIt() {
+        val app = RuntimeEnvironment.getApplication()
+        val root = File(app.cacheDir, "description-card-${UUID.randomUUID()}").apply { mkdirs() }
+        app.getSharedPreferences("library_locations", 0).edit().clear().putString("defaultPath", root.path).commit()
+        runBlocking { LibrarySessions.prepare(app) }
+        val session = LibrarySessions.current(app)
+        val source = File(root, "manga_import/Book").apply { mkdirs() }
+        ImportedMangaStore.add(app, com.moe.starflow.mangaimport.data.ImportedManga(1, "Book", source.path,
+            false, coverPath = null, pageCount = 0, addedAt = 1))
+        session.flush()
+        val book = ImportedMangaStore.load(app).single()
+        val activity = Robolectric.buildActivity(FragmentActivity::class.java).setup()
+        val shelf = Shelf().apply { active = false }
+        activity.get().supportFragmentManager.beginTransaction().add(android.R.id.content, shelf).commitNow()
+        val sidecar = File(source, "starflow.json").apply { writeText("unrelated") }
+        try {
+            ImportedMangaStore.editDescription(app, book, "Manual note")
+            session.flush()
+            val status = ((shelf.requireView() as ViewGroup).getChildAt(0) as ViewGroup).getChildAt(0) as TextView
+            awaitIdle { !shelf.books.single().descriptionFileError.isNullOrBlank() && status.visibility == View.GONE }
+            assertEquals(View.GONE, status.visibility)
+            assertFalse(status.text.contains("Unrecognized"))
+            // An unrelated source-identity failure can still use the header without
+            // pulling this work's description error back into the global message.
+            val otherUuid = session.uuid("manga", 2)
+            val blockedIdentity = File(root, ".starflow/books/$otherUuid/source.json").apply { mkdirs() }
+            val other = File(root, "manga_import/Other").apply { mkdirs() }
+            ImportedMangaStore.add(app, com.moe.starflow.mangaimport.data.ImportedManga(2, "Other", other.path,
+                false, coverPath = null, pageCount = 0, addedAt = 2))
+            assertTrue(session.flushPending().failures.any { it.component != "metadata" })
+            awaitIdle { status.visibility == View.VISIBLE && status.text.contains("source.json") }
+            assertTrue(status.text.contains("source.json"))
+            assertFalse(status.text.contains("Unrecognized"))
+            assertNull(shelf.books.single { it.bookUuid == otherUuid }.descriptionFileError)
+            assertTrue(blockedIdentity.delete())
+            sidecar.delete()
+            session.flush()
+            awaitIdle { shelf.books.single { it.bookUuid == book.bookUuid }.descriptionFileError == null && status.visibility == View.GONE }
+            assertEquals(View.GONE, status.visibility)
         } finally { activity.pause().stop().destroy() }
     }
 

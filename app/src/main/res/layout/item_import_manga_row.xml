@@ -195,6 +195,24 @@
             app:layout_constraintStart_toEndOf="@id/thumb_frame"
             app:layout_constraintTop_toBottomOf="@id/tag_flow"/>
 
+        <TextView
+            android:id="@+id/tv_file_error"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="12dp"
+            android:layout_marginTop="4dp"
+            android:minHeight="48dp"
+            android:gravity="center_vertical"
+            android:textSize="12sp"
+            android:textColor="@color/red"
+            android:maxLines="2"
+            android:ellipsize="end"
+            android:visibility="gone"
+            app:layout_constraintEnd_toStartOf="@id/btn_export_records"
+            app:layout_constraintStart_toEndOf="@id/thumb_frame"
+            app:layout_constraintTop_toBottomOf="@id/tv_description"
+            app:layout_constraintBottom_toBottomOf="parent"/>
+
         <androidx.appcompat.widget.AppCompatImageButton android:id="@+id/btn_export_records"
             android:layout_width="48dp" android:layout_height="48dp" android:visibility="gone"
             android:padding="12dp" android:background="?attr/selectableItemBackgroundBorderless"

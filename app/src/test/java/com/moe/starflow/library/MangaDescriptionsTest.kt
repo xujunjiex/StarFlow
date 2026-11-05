@@ -80,6 +80,7 @@ class MangaDescriptionsTest {
         ImportedMangaStore.editDescription(app, book, "First")
         session.flush()
         assertEquals("First", ImportedMangaStore.load(app).single().effectiveDescription)
+        assertFalse(ImportedMangaStore.load(app).single().descriptionFileError.isNullOrBlank())
         assertEquals("unrelated user file", sidecar.readText())
         val reopened = LibrarySessions.openDatabase(app, session.locationId, session.storageGeneration)
         try {
@@ -94,6 +95,45 @@ class MangaDescriptionsTest {
         session.flush()
         assertEquals("Latest", JSONObject(sidecar.readText()).getString("descriptionOverride"))
         assertTrue(session.database.catalog().pending().isEmpty())
+        assertNull(ImportedMangaStore.load(app).single().descriptionFileError)
+    }
+
+    @Test fun failedDescriptionAppearsOnlyOnItsOwnCardAndClearsAfterRetry() {
+        val book = directoryBook()
+        val otherRoot = session.local("manga_import/Other").apply { mkdirs() }
+        ImportedMangaStore.add(app, ImportedManga(2, "Other", otherRoot.path, false,
+            coverPath = null, pageCount = 1, addedAt = 20))
+        session.flush()
+        val sidecar = File(book.localRoot, "starflow.json").apply { writeText("unrelated file") }
+        ImportedMangaStore.editDescription(app, book, "Saved locally")
+        session.flush()
+        val failed = ImportedMangaStore.load(app).single { it.bookUuid == book.bookUuid }
+        val other = ImportedMangaStore.load(app).single { it.id == 2L }
+        assertNotNull(failed.descriptionFileError)
+        assertNull(other.descriptionFileError)
+        assertFalse(JSONObject(session.database.catalog().byUuid(book.bookUuid)!!.body).has("descriptionFileError"))
+        val context = android.view.ContextThemeWrapper(app, com.moe.starflow.R.style.Base_Theme_MT)
+        val parent = android.widget.FrameLayout(context)
+        listOf(com.moe.starflow.mangaimport.ui.DisplayMode.GRID,
+            com.moe.starflow.mangaimport.ui.DisplayMode.DETAILED_LIST).forEach { mode ->
+            var opened: ImportedManga? = null
+            val adapter = com.moe.starflow.mangaimport.ui.MangaGridAdapter(mode, {}, { _, _ -> }, onBookData = { opened = it })
+            adapter.submitList(listOf(failed, other))
+            val holder = adapter.onCreateViewHolder(parent, adapter.getItemViewType(0))
+            val error = holder.itemView.findViewById<android.widget.TextView>(com.moe.starflow.R.id.tv_file_error)
+            adapter.onBindViewHolder(holder, 0)
+            assertEquals(android.view.View.VISIBLE, error.visibility)
+            assertTrue(error.text.contains(failed.descriptionFileError!!))
+            error.performClick()
+            assertEquals(book.bookUuid, opened?.bookUuid)
+            adapter.onBindViewHolder(holder, 1)
+            assertEquals(android.view.View.GONE, error.visibility)
+            assertFalse(error.isClickable)
+        }
+        sidecar.delete()
+        session.flush()
+        assertNull(ImportedMangaStore.load(app).single { it.bookUuid == book.bookUuid }.descriptionFileError)
+        assertEquals("Saved locally", JSONObject(sidecar.readText()).getString("descriptionOverride"))
     }
 
     @Test fun archiveEditWritesBesideTheFileWithoutRepacking() {

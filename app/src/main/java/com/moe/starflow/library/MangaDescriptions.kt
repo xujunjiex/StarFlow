@@ -132,7 +132,11 @@ object MangaDescriptions {
                 .toString(2).toByteArray(Charsets.UTF_8)
             require(bytes.size <= com.moe.starflow.mangaimport.data.ComicMetadataParser.MAX_METADATA_BYTES)
             json(String(bytes, Charsets.UTF_8))
-            val temporary = path.substringBeforeLast('/', "") + "/.starflow-description-$uuid.tmp"
+            // SAF providers may append the MIME type's extension. Match it so the
+            // verified temporary remains addressable by its actual display name.
+            val temporary = safeLibraryPath((path.substringBeforeLast('/', "").let {
+                if (it.isEmpty()) "" else "$it/"
+            }) + ".starflow-description-$uuid.tmp.json")
             fun matches(at: String): Boolean = storage.exists(at) && storage.read(at).use {
                 BookMetadataReader.readText(it)?.toByteArray(Charsets.UTF_8)?.contentEquals(bytes) == true
             }

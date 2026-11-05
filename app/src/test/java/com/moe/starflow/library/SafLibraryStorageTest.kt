@@ -74,6 +74,54 @@ class SafLibraryStorageTest {
         assertFalse(storage.exists("manga_import/第 1 卷"))
     }
 
+    @Test fun descriptionCopiesSupportProvidersThatAppendTheJsonExtension() {
+        provider.appendJsonExtension = true
+        app.getSharedPreferences("library_locations", 0).edit().putString("tree", storage.tree.toString()).commit()
+        val session = LibrarySessions.current(app)
+        session.prepare()
+        val store = com.moe.starflow.mangaimport.data.ImportedMangaStore
+        listOf(false, true).forEachIndexed { index, archive ->
+            val id = index.toLong() + 1
+            val source = if (archive) "manga_import/Imported/91559.zip" else "manga_import/Work"
+            if (archive) storage.writeNew(source).use { it.write("original archive".toByteArray()) }
+            else storage.mkdir(source)
+            store.add(app, com.moe.starflow.mangaimport.data.ImportedManga(id, "Work",
+                session.local(source).path, archive, coverPath = null, pageCount = 0, addedAt = index.toLong()))
+            session.flush()
+            val book = store.load(app).single { it.id == id }
+            val path = MangaDescriptions.sidecarPath(source, !archive)
+            // A previous app version left this empty file after the provider added .json.
+            provider.createDocument(DocumentsContract.getDocumentId(storage.uri(path.substringBeforeLast('/'))),
+                "application/json", ".starflow-description-${book.bookUuid}.tmp")
+            listOf("My description", "Updated description", "", null).forEach { description ->
+                store.editDescription(app, book, description)
+                session.flush()
+                assertEquals(description, store.load(app).single { it.bookUuid == book.bookUuid }.descriptionOverride)
+                // Reopen by display name, so a cached URI cannot hide a renamed file.
+                val reopened = SafLibraryStorage(app, storage.tree)
+                val json = org.json.JSONObject(reopened.read(path).bufferedReader().use { it.readText() })
+                if (description == null) assertTrue(json.isNull("descriptionOverride"))
+                else assertEquals(description, json.getString("descriptionOverride"))
+                assertTrue(session.database.catalog().pending().isEmpty())
+                assertTrue(session.database.catalog().meta("metadataError:${book.bookUuid}").isNullOrBlank())
+                assertEquals(listOf(path), reopened.list(path.substringBeforeLast('/'))
+                    .filter { it.path != source }.map { it.path })
+            }
+            if (archive) assertEquals("original archive", storage.read(source).bufferedReader().use { it.readText() })
+        }
+    }
+
+    @Test fun rejectedProviderRenameRemovesOnlyTheNewDocument() {
+        provider.appendJsonExtension = true
+        storage.writeNew("keep.json", "application/json").use { it.write("existing data".toByteArray()) }
+        assertThrows(java.io.IOException::class.java) {
+            storage.writeNew("unexpected.tmp", "application/json").close()
+        }
+        storage.invalidateLookups()
+        assertEquals(listOf("keep.json"), storage.list("").map { it.path })
+        assertEquals("existing data", storage.read("keep.json").bufferedReader().use { it.readText() })
+    }
+
     @Test fun reconnectingAnImportedFileWithOpaqueIdsPreservesItsSourceAndChapters() = kotlinx.coroutines.runBlocking {
         val database = androidx.room.Room.inMemoryDatabaseBuilder(app, LibraryDatabase::class.java)
             .allowMainThreadQueries().build()
@@ -386,6 +434,7 @@ class SafLibraryStorageTest {
         )
         @Volatile var accessible = true
         @Volatile var failFinalWrites = false
+        var appendJsonExtension = false
         @Volatile var beforeOpen: ((String, String) -> Unit)? = null
         var space: Long? = 1234
         var childQueries = 0
@@ -422,9 +471,11 @@ class SafLibraryStorageTest {
             checkAccess()
             val id = "opaque-${UUID.randomUUID()}"
             val dir = mimeType == DocumentsContract.Document.MIME_TYPE_DIR
-            val file = File(nodes.getValue(parentDocumentId).file, displayName)
+            val name = if (appendJsonExtension && mimeType == "application/json" && !displayName.endsWith(".json"))
+                "$displayName.json" else displayName
+            val file = File(nodes.getValue(parentDocumentId).file, name)
             if (dir) file.mkdirs() else file.createNewFile()
-            nodes[id] = Node(id, displayName, parentDocumentId, file, dir)
+            nodes[id] = Node(id, name, parentDocumentId, file, dir)
             return id
         }
         override fun openDocument(documentId: String, mode: String, signal: CancellationSignal?): ParcelFileDescriptor {

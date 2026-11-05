@@ -83,12 +83,27 @@ object LibraryShelfBinding {
         }
         scope.launch {
             val importTasks = if (kind == "manga") ImportManager.tasks else NovelImportManager.tasks
+            var previousSaved: LibrarySaveState? = null
             combine(LibrarySessions.changes.flatMapLatest { LibrarySessions.current(fragment.requireContext()).saveState },
                 LibraryScanner.state, importTasks, LibraryDeletion.state) { saved, scan, tasks, deletion ->
                 ShelfStatus(saved, scan, tasks, deletion)
             }.collect { current ->
-                    val location = LibrarySessions.current(fragment.requireContext()).locationId
+                    val session = LibrarySessions.current(fragment.requireContext())
+                    val location = session.locationId
                     val saved = current.saved
+                    // Metadata errors belong on their work cards even in mixed failures.
+                    val error = when {
+                        saved.metadataOnlyError && saved.errorKind == LibraryErrorKind.FILES -> null
+                        saved.error != null && saved.errorKind == LibraryErrorKind.FILES && session.fileIssues.isNotEmpty() ->
+                            session.fileIssues.filter { it.component != "metadata" }.joinToString("\n") {
+                                "${it.path}: ${it.detail}"
+                            }.takeIf(String::isNotBlank)
+                        else -> saved.error
+                    }
+                    if (previousSaved != saved) {
+                        previousSaved = saved
+                        refresh()
+                    }
                     val scan = current.scan
                     val scanning = scan.running && scan.kind == kind && scan.location == location
                     val deleting = current.deletion.running && current.deletion.kind == kind && current.deletion.location == location
@@ -96,27 +111,27 @@ object LibraryShelfBinding {
                     val task = tasks.firstOrNull { it.progress.phase != ImportPhase.QUEUED } ?: tasks.firstOrNull()
                     val importScanning = task?.progress?.phase == ImportPhase.SCANNING
                     val message = when {
-                        saved.error != null -> fragment.getString(if (saved.errorKind == LibraryErrorKind.FILES)
-                            R.string.library_unsaved else R.string.library_unavailable) + "：" + saved.error
+                        error != null -> fragment.getString(if (saved.errorKind == LibraryErrorKind.FILES)
+                            R.string.library_unsaved else R.string.library_unavailable) + "：" + error
                         task != null -> fragment.getString(R.string.library_import_active, tasks.size, taskLabel(fragment, task))
                         scanning -> fragment.getString(R.string.library_scan_progress, scan.done, scan.total)
                         deleting -> fragment.getString(R.string.library_deleting)
                         else -> fragment.getString(R.string.library_saving)
                     }
-                    val showScanInline = saved.error == null && (scanning && task == null || importScanning)
+                    val showScanInline = error == null && (scanning && task == null || importScanning)
                     renderStatus(status, toolbarSpinner, inlineScanStatus, message,
-                        saved.error != null || saved.saving || scanning || deleting || tasks.isNotEmpty(),
-                        scanning || deleting || tasks.isNotEmpty(), showScanInline, saved.error != null)
-                    if (saved.error != null) {
+                        error != null || saved.saving || scanning || deleting || tasks.isNotEmpty(),
+                        scanning || deleting || tasks.isNotEmpty(), showScanInline, error != null)
+                    if (error != null) {
                         status.setOnClickListener { LibraryReportDialog.show(fragment,
-                            libraryRecoveryDetails(fragment.requireContext(), saved.error, saved.errorKind)) }
+                            libraryRecoveryDetails(fragment.requireContext(), error, saved.errorKind)) }
                     }
                     toolbarCancel.visibility = if (tasks.isNotEmpty()) View.VISIBLE else View.GONE
                     toolbarCancel.setOnClickListener {
                         if (tasks.size == 1) cancelImport(tasks.single().id)
                         else showImportTasks(fragment, tasks, cancelImport)
                     }
-                    if (saved.error == null && tasks.isNotEmpty()) {
+                    if (error == null && tasks.isNotEmpty()) {
                         status.setOnClickListener { showImportTasks(fragment, tasks, cancelImport) }
                         inlineScanStatus.setOnClickListener { showImportTasks(fragment, tasks, cancelImport) }
                     } else {

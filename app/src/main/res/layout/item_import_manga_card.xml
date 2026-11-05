@@ -147,6 +147,21 @@
             android:textSize="12sp"
             android:textColor="@android:color/darker_gray"/>
 
+        <TextView
+            android:id="@+id/tv_file_error"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:minHeight="48dp"
+            android:gravity="center_vertical"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="8dp"
+            android:textSize="12sp"
+            android:textColor="@color/red"
+            android:maxLines="2"
+            android:ellipsize="end"
+            android:visibility="gone"/>
+
     </LinearLayout>
         <androidx.appcompat.widget.AppCompatImageButton android:id="@+id/btn_export_records"
             android:layout_width="48dp" android:layout_height="48dp" android:layout_gravity="bottom|end"

@@ -176,6 +176,13 @@ class MangaGridAdapter(
             is CardVH -> bindCard(holder, item)
             is RowVH -> bindRow(holder, item, position)
         }
+        holder.itemView.findViewById<android.widget.TextView>(R.id.tv_file_error)?.apply {
+            val error = item.descriptionFileError?.takeIf { !item.importing && !item.deleting }
+            visibility = if (error == null) View.GONE else View.VISIBLE
+            text = error?.let { context.getString(R.string.import_desc_file_failed, it) }.orEmpty()
+            setOnClickListener(if (error != null && !selectionMode) View.OnClickListener { onBookData(item) } else null)
+            isClickable = error != null && !selectionMode
+        }
     }
 
     private fun bindCard(h: CardVH, item: ImportedManga) {

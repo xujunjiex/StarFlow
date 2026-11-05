@@ -265,7 +265,17 @@ class SafLibraryStorage(private val context: Context, val tree: Uri) : LibrarySt
         if (children(parent).any { it.name == name }) throw IOException("文件已存在：$path")
         val made = DocumentsContract.createDocument(resolver, parent, mime, name)
             ?: throw IOException("无法创建文件：$path")
-        if (nameOf(made) != name) throw IOException("提供器改写了文件名称：$name")
+        val actualName = nameOf(made)
+        if (actualName != name) {
+            val error = IOException("提供器改写了文件名称：$name → $actualName")
+            // The requested path cannot resolve this new document. Clean up by URI
+            // rather than leaving an empty file behind on every retry.
+            try {
+                if (!DocumentsContract.deleteDocument(resolver, made))
+                    throw IOException("无法清理提供器改名后的新建文件：$actualName")
+            } catch (cleanup: Exception) { error.addSuppressed(cleanup) }
+            throw error
+        }
         documents[safe] = made
         return resolver.openOutputStream(made, "w") ?: throw IOException("无法写入书库文件：$path")
     }
