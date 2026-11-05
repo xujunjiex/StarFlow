@@ -144,7 +144,8 @@ object LayoutEngine {
      * @param measurer    度量实现（生产用 [PaintTextMeasurer]，测试注入假实现）
      * @param autoFit     true = 由内核二分选字号；false = 用 [requestedFontSize] 原样
      * @param requestedFontSize 仅用于固定模式；自动模式不以 OCR 估计字号为上限
-     * @param align       横排的行对齐方式（竖排不使用：竖排列块保持水平居中）
+     * @param align       横排的**段落内行对齐**：只决定各行相对「文本块」怎么摆，不决定文本块在区域里靠哪边
+     *                    —— 文本块恒在区域内水平居中（竖排不使用：竖排列块同样恒居中）
      * @param trackingRatio 用户字间距（×字号，20% = 相邻字符之间留 0.2 个字号）。参与字号预算。
      * @param leadingRatio 用户行／列间距（×字号，20% = 1.2 倍字号步距）。同样参与预算。
      * @param minPaddingPx 内容区最小内边距（**px 绝对值**，调用方按密度换算 `MIN_PADDING_DP`）。
@@ -342,12 +343,17 @@ object LayoutEngine {
         val baselineOffset = if (latinMetrics) -measurer.ascent() else font
         val firstBaseline = region.top + pad + topPad + baselineOffset
 
+        // 文本块先水平居中，再由 align 决定**块内**各行的起点。
+        // ⚠️ 不能把 align 当「块在选区里的锚点」（旧实现 `LEFT → region.left + pad`）：
+        // RT-DETR 的选区是宽矩形气泡框、译文远窄于框，左/右对齐会让文字整段贴边、
+        // 另一侧空出一大片（用户截图反馈）。单行短文本在三种对齐下因此完全一致 = 居中。
+        val blockLeft = maxOf(region.left + pad, region.left + (region.width - totalWidth) / 2f)
         val out = lines.mapIndexed { i, line ->
             val lineW = lineWidths[i]
-            val x = when (align) {
-                TextAlign.LEFT -> region.left + pad
-                TextAlign.CENTER -> region.centerX - lineW / 2f
-                TextAlign.RIGHT -> region.right - pad - lineW
+            val x = blockLeft + when (align) {
+                TextAlign.LEFT -> 0f
+                TextAlign.CENTER -> (totalWidth - lineW) / 2f
+                TextAlign.RIGHT -> totalWidth - lineW
             }
             TextLine(
                 text = line,

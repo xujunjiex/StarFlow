@@ -27,7 +27,7 @@ enum class TextDirection {
     HORIZONTAL     // 从左到右，从上到下（标准）
 }
 
-/** 横排译文的行对齐方式（用户可配，仅作用于 HORIZONTAL，竖排不受影响）。 */
+/** 横排译文的段落内行对齐（用户可配，仅作用于 HORIZONTAL；文本块本身恒在选区内居中，竖排不受影响）。 */
 enum class TextAlign { LEFT, CENTER, RIGHT }
 
 /**

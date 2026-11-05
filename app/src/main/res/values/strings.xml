@@ -700,7 +700,7 @@
     <string name="manga_rt_text_direction_horizontal">Horizontal</string>
 
     <string name="manga_horizontal_align_title">Horizontal Text Alignment</string>
-    <string name="manga_horizontal_align_summary">Line alignment for horizontal text; vertical text is unaffected</string>
+    <string name="manga_horizontal_align_summary">Line alignment within horizontal text (the text block stays centered in the region); vertical text is unaffected</string>
     <string name="manga_horizontal_align_left">Left</string>
     <string name="manga_horizontal_align_center">Center</string>
     <string name="manga_horizontal_align_right">Right</string>

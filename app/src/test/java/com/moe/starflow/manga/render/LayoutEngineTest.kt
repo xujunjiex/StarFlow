@@ -503,20 +503,18 @@ class LayoutEngineTest {
     // ---------- ⑤ 横排对齐 ----------
 
     /**
-     * ⚠️ 用户要求：**RT-DETR 选「横排渲染」后必须受「横排对齐」设置影响**。
+     * ⚠️ 用户要求（2026-11）：「横排对齐」的语义是**段落内行对齐**，不是文本块在选区里的锚点。
      *
-     * RT 的选区是 RT-DETR 给的**矩形气泡框**（多列/宽气泡，文字往往远窄于框），
-     * 所以这里用「宽框 + 单行短文本」这个 RT 典型形态钉死三种对齐的**绝对锚点**：
-     * - 左：`region.left + pad`
-     * - 居中：`region.centerX - 行宽/2`
-     * - 右：`region.right - pad - 行宽`
+     * 选区是 RT-DETR 给的**矩形气泡框**（宽气泡，译文远窄于框）：旧实现把 align 当块锚点
+     * （`LEFT → region.left + pad`）时，短译文整段贴左、右边空出一大片。
+     * 现在文本块恒在选区内水平居中 —— **单行短文本在三种对齐下完全相同**。
      *
      * 绘制端 `VerticalTextRenderer.draw` 只按 `line.x` 落笔、不做任何对齐决策，
      * 所以断言 `line.x` 就等于断言最终落笔位置（Robolectric 的 Canvas 不栅格化文字，
      * 像素级断言在这里做不出来 —— 形状能画、字形画不出来）。
      */
     @Test
-    fun horizontalAlign_wideBubble_anchorsLeftCenterRight() {
+    fun horizontalAlign_shortText_staysCentered() {
         val region = Box(0f, 0f, 200f, 60f)          // 宽框（RT 气泡框的典型形态）
         fun layoutOf(align: TextAlign) = LayoutEngine.plan(
             measurer = measurer(charRatio = 1f, lineRatio = 1f), text = "译文",
@@ -530,12 +528,10 @@ class LayoutEngineTest {
         val right = layoutOf(TextAlign.RIGHT)
 
         assertEquals("单行", 1, left.lines.size)
-        val w = left.lines[0].width
-        assertEquals("行宽应一致（对齐不改变换行）", w, center.lines[0].width, 0.01f)
-
-        assertEquals("左对齐锚在左内边距", region.left + PAD, left.lines[0].x, 0.5f)
-        assertEquals("居中锚在中心", region.centerX - w / 2f, center.lines[0].x, 0.5f)
-        assertEquals("右对齐锚在右内边距", region.right - PAD - w, right.lines[0].x, 0.5f)
+        val centered = region.centerX - left.lines[0].width / 2f
+        assertEquals("短文本必须居中", centered, left.lines[0].x, 0.5f)
+        assertEquals("左对齐不再把文本块推到左边", left.lines[0].x, center.lines[0].x, 0.01f)
+        assertEquals("右对齐不再把文本块推到右边", left.lines[0].x, right.lines[0].x, 0.01f)
     }
 
     /** 反向：**竖排不吃对齐设置**（设置页文案「竖排不受影响」）。 */
@@ -553,26 +549,39 @@ class LayoutEngineTest {
         assertEquals("竖排列位置不应随对齐变化", left, right)
     }
 
+    /**
+     * 多行：**文本块（最宽行）居中**，`align` 只决定块内各行的起点。
+     *
+     * 用固定字号 + 显式换行（`AB` / `C` 两行宽度不同）避免自动字号把断行和行宽也一起改掉 ——
+     * 旧写法用自动字号 + 自动换行，结果每行等宽，根本分不出「块内对齐」和「块锚点」。
+     */
     @Test
-    fun horizontalAlign_positionsLinesRelatively() {
-        // "ABCD" 换行成两行，行宽不等：第一行满宽、第二行短
-        val region = Box(0f, 0f, 60f, 200f)
-        fun leftOf(align: TextAlign) = LayoutEngine.plan(
-            measurer = measurer(charRatio = 1f, lineRatio = 1f), text = "ABCDE",
+    fun horizontalAlign_multiLine_linesAlignInsideCenteredBlock() {
+        val region = Box(0f, 0f, 120f, 60f)
+        fun linesOf(align: TextAlign) = LayoutEngine.plan(
+            measurer = measurer(charRatio = 1f, lineRatio = 1f), text = "AB\nC",
             region = region, direction = TextDirection.HORIZONTAL,
-            requestedFontSize = 20f, autoFit = true,
+            requestedFontSize = 20f, autoFit = false,
             align = align, trackingRatio = 0f, leadingRatio = 0f, minPaddingPx = PAD
         ).lines
 
-        val left = leftOf(TextAlign.LEFT)
-        val center = leftOf(TextAlign.CENTER)
-        val right = leftOf(TextAlign.RIGHT)
+        val left = linesOf(TextAlign.LEFT)
+        val center = linesOf(TextAlign.CENTER)
+        val right = linesOf(TextAlign.RIGHT)
         assertEquals("三种对齐行数一致", left.size, center.size)
+        assertEquals("两行", 2, left.size)
 
-        // 取最后一行（通常更短）比较起点
-        val li = left.size - 1
-        assertTrue("左对齐起点更靠左", left[li].x < center[li].x)
-        assertTrue("右对齐起点更靠右", right[li].x > center[li].x)
+        val widest = left[0].width
+        val blockLeft = region.centerX - widest / 2f
+        assertEquals("左对齐：块本身仍居中", blockLeft, left[0].x, 0.5f)
+        assertEquals("居中：块本身仍居中", blockLeft, center[0].x, 0.5f)
+        assertEquals("右对齐：块本身仍居中", blockLeft, right[0].x, 0.5f)
+
+        val shortW = left[1].width
+        assertEquals("左对齐：短行贴块左缘", blockLeft, left[1].x, 0.5f)
+        assertEquals("居中：短行在块内居中", blockLeft + (widest - shortW) / 2f, center[1].x, 0.5f)
+        assertEquals("右对齐：短行贴块右缘", blockLeft + widest - shortW, right[1].x, 0.5f)
+
         // 各行都不越出区域
         for (lines in listOf(left, center, right)) {
             for (line in lines) {

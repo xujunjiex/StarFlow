@@ -164,19 +164,19 @@
 - **CJK 避头尾（2026-11）**：`CjkLineBreak` 按 UAX #14 的 `CL/CP/OP` 子集，闭标点不落行首、开括号不落行尾。横排接入 `wrapByChar`（点串回退之后），竖排接入 `wrapVertical`；只按完整码点或整串省略号前移切点，单个单元占满预算时允许标点例外，不能拆开代理对或已受保护的点串。点串自身超出容量时仍按原规则硬切。回归：`LayoutEngineTest.horizontalCjk_*`、`verticalCjk_*`、`cjkBreakGuard_*`、`cjkPunctuationRetreat_*`。
 - **拉丁末行平衡（2026-11）**：`wrapByWord` 在末行只有一个词、上一行至少两个词时，搬一个整词到末行；重新量宽装不下就回滚，不拆音节、不引连字符。回归：`latinLastLine_movesOneWordToAvoidOrphan`。
 - **长译自动扩框（2026-11）**：自动模式、单气泡、`mergeOverlap` 关闭、译文非原文时，若译文非空白字符数 > 原文 × 1.15，**或按参考字号量出的自然宽度超过「框宽 × 可容纳行数」×1.05**，`OverlayRenderer.expandedAutoRect` 把绘制区最多放大 1.10×（以原中心为中心，夹在坐标空间内）再交给 `LayoutEngine`。短译/装得下的译文原样；`mergeOverlap` 开时跳过，**合并块仍严格等于成员矩形并集**。常量在 `OverlayRenderer.kt`，回归 `OverlayRendererTest.autoExpand_*`。
-- **横排对齐（`manga_horizontal_align`，`0/1/2` = 左/中/右）**：
-  - 自动字号模式：`LayoutEngine` 按 `align` 定每行起点（左=`rect.left+pad` / 中=`centerX-行宽/2` / 右=`rect.right-pad-行宽`），
-    绘制端 `VerticalTextRenderer.draw` 只按 `line.x` 落笔、不做对齐决策。
-  - **非自动字号模式也必须遵循它**：`calculateCompactRect(..., align)` 的白块水平位置按对齐摆放
-    （白块装得进气泡时；装不下 = 文字比气泡还宽 → 仍对称生长，否则会朝一侧溢出盖住相邻画面）。
-    改之前恒居中 ⇒ 这条路径上「横排对齐」等于失效（RT-DETR 选**横排渲染**时最明显：它的选区是
-    宽矩形气泡框，文字远窄于框，对齐是唯一的水平位置控制）。
-  - ⚠️ 竖排不吃对齐（恒居中）—— 设置页文案「竖排不受影响」即此。
-  - 回归守卫：`LayoutEngineTest.horizontalAlign_wideBubble_anchorsLeftCenterRight`（绝对锚点，RT 宽气泡形态）
-    + `LayoutEngineTest.verticalDirection_ignoresHorizontalAlign`（竖排不受影响）
-    + `OverlayRendererTest.nonAuto_horizontalAlign_movesWhiteBlock`（白块位置像素级断言；**去掉上面的修复即红**，
-    已用「临时还原旧代码」验证过非空转。⚠️ Robolectric 的 Canvas 能栅格化矩形但**画不出字形**，
-    文字像素级断言写不出来，只能用白块位置 + `line.x`）
+- **横排对齐（`manga_horizontal_align`，`0/1/2` = 左/中/右）—— 语义是「段落内行对齐」，不是文本块在选区里的锚点**：
+  - `LayoutEngine` 先按最宽行把**文本块**在区域内水平居中，再按 `align` 摆**块内**各行：
+    左 = 块左缘 / 中 = 块内居中 / 右 = 块右缘。绘制端 `VerticalTextRenderer.draw` 只按 `line.x` 落笔。
+  - **单行或短文本在三种对齐下完全一致**（块宽 = 行宽 ⇒ 三种都落在选区中心）。这是用户硬要求：
+    不能出现「文字贴一边、另一侧空一大片」—— RT-DETR 选**横排渲染**时选区是宽矩形气泡框，最容易暴露。
+  - 非自动字号模式同规则：`calculateCompactRect` 的白块恒以气泡中心对称收缩/扩展，**不按 align 贴边**；
+    align 只影响白块内部各行的起点，不再移动白块本身。
+  - ⚠️ 竖排不吃对齐（列块恒居中）—— 设置页文案「竖排不受影响」即此。
+  - 回归守卫：`LayoutEngineTest.horizontalAlign_shortText_staysCentered`（单行三种对齐同一 `x` = 居中）、
+    `LayoutEngineTest.horizontalAlign_multiLine_linesAlignInsideCenteredBlock`（块居中 + 块内相对位置）、
+    `LayoutEngineTest.verticalDirection_ignoresHorizontalAlign`（竖排不受影响）、
+    `OverlayRendererTest.nonAuto_align_noLongerMovesWhiteBlock`（白块中心恒等于气泡中心；
+    ⚠️ Robolectric 的 Canvas 能栅格化矩形但**画不出字形**，文字像素级断言写不出来，只能用白块位置 + `line.x`）
 - **绘制函数参数**：`VerticalTextRenderer.drawVerticalTextRL/LR` 支持 `centered`（列组水平居中 + 单列短文字垂直居中）和 `columnSpacingOverride`（填满列距）
 - **重叠合并**：非自动大字号扩展后 `neededRect` 重叠的相邻气泡合并成一个白块（union-find），组间用记号分隔（竖排 `◇` / 横排 `──`），顺序按阅读流（RL 右列先、LR 左列先）；异方向/倾斜/字号不一致 fallback 独立绘制 —— ⚠️ **「字号不一致」这一条只对非自动字号模式成立**（自动模式下字号本来就要被重算，`sameFontOk = autoFit || 组内字号差 < 2f`），别按它去改合并判据。开关 `Manga_Overlap_Merge`（个性化页，**默认关**）关掉即各自绘制、允许白块相叠
 - ⚠️ **合并块的绘制区恒等于「成员气泡矩形（`region.rect`）的并集」，与合并后文字有多长无关** —— 硬约束。曾按**文本长度**反推块尺寸（`balancedVerticalSize(合并文本长度…)` 定宽 + `maxOf(高度, 文字块高)` 定高），而块内字号又由 `LayoutEngine.plan` 按**块尺寸**二分选号（区域越大字号上限越高）→「文本越长→块越大→字号越大」正反馈 → 真机上并出**盖住大半页、字同样巨大**的白块。断言「并块 = 成员气泡并集」是唯一可靠判据，**不要**给它加字号封顶/相交占比等启发式（试过，全无效且会误伤正常合并）

@@ -637,7 +637,7 @@
     <string name="manga_rt_text_direction_horizontal">横排渲染</string>
 
     <string name="manga_horizontal_align_title">横排对齐</string>
-    <string name="manga_horizontal_align_summary">横排译文的行对齐方式；竖排不受影响</string>
+    <string name="manga_horizontal_align_summary">横排译文的行对齐方式（文本块始终在选区内居中）；竖排不受影响</string>
     <string name="manga_horizontal_align_left">左对齐</string>
     <string name="manga_horizontal_align_center">居中</string>
     <string name="manga_horizontal_align_right">右对齐</string>

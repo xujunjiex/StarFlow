@@ -336,7 +336,7 @@ object OverlayRenderer {
                 // 非自动模式：字号由用户定，矩形随文字实际尺寸扩展/收缩（见 calculateCompactRect）
                 calculateCompactRect(
                     region.rect, displayText, region.direction, fitFontSize,
-                    trackingRatio, leadingRatio, LayoutEngine.MIN_PADDING_DP * density, align
+                    trackingRatio, leadingRatio, LayoutEngine.MIN_PADDING_DP * density
                 )
             }
             Param(region, displayText, fitFontSize, drawRect)
@@ -536,9 +536,10 @@ object OverlayRenderer {
      * 两侧边距严格相等：增长时以原气泡中心为锚点双向扩展（旧实现锚在「文字流向起始角」，
      * 只往一侧长，看着像偏了）。
      *
-     * ⚠️ **横排时白块的水平位置遵循用户「横排对齐」**（[align]）：非自动模式的白块会收缩到
-     * 文字本身，若恒居中就等于**在这条路径上「横排对齐」设置完全失效** —— RT-DETR 选
-     * 「横排渲染」时最明显（它的选区是宽矩形气泡框，文字通常远窄于框）。竖排不吃对齐设置，恒居中。
+     * ⚠️ **白块水平位置恒居中**（不再按用户「横排对齐」往左/右推）：对齐是**段落内行对齐**，
+     * 由 `LayoutEngine.plan` 在块内落笔。白块一旦按对齐贴边，非自动模式下
+     * 短译文的白块会被推到气泡一侧、另一侧空出一大片 —— RT-DETR 选「横排渲染」时最明显
+     * （它的选区是宽矩形气泡框，文字远窄于框）。竖排同样居中。
      */
     private fun calculateCompactRect(
         rect: Rect,
@@ -547,8 +548,7 @@ object OverlayRenderer {
         fontSize: Float,
         trackingRatio: Float,
         leadingRatio: Float,
-        minPaddingPx: Float,
-        align: TextAlign = TextAlign.CENTER
+        minPaddingPx: Float
     ): Rect {
         if (text.isEmpty() || fontSize <= 0f) return rect
         val pad = LayoutEngine.paddingFor(
@@ -580,19 +580,9 @@ object OverlayRenderer {
         val w = (measured.totalWidth + 2 * pad).toInt().coerceAtLeast(1)
         val h = (measured.totalHeight + 2 * pad).toInt().coerceAtLeast(1)
 
-        // 以原气泡中心为锚点：文字块比气泡小就收缩（露出原图），大就向外扩展
-        // ⚠️ 只有**白块装得进气泡**时才按对齐摆放：装不下说明文字比气泡还宽，那必须对称生长，
-        // 否则白块会朝一侧溢出、盖住相邻画面。
-        val fitsInside = direction == TextDirection.HORIZONTAL && w <= rect.width() - 2 * pad
-        val left = if (fitsInside) {
-            when (align) {
-                TextAlign.LEFT -> rect.left + pad
-                TextAlign.RIGHT -> rect.right - pad - w
-                TextAlign.CENTER -> rect.centerX() - w / 2
-            }
-        } else {
-            rect.centerX() - w / 2
-        }
+        // 以原气泡中心为锚点：文字块比气泡小就收缩（露出原图），大就向两侧对称扩展。
+        // 水平位置不再按 align 贴边 —— 对齐只作用于白块内部的行（见上文）。
+        val left = rect.centerX() - w / 2
         val top = rect.centerY() - h / 2
         return Rect(left, top, left + w, top + h)
     }

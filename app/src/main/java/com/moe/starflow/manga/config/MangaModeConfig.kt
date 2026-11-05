@@ -27,7 +27,7 @@ data class MangaModeConfig(
     val ocrEngine: OcrEngine = OcrEngine.PPOcrV6,  // OCR 引擎（默认 PP-OCRv6）
     val detEngine: DetEngine = DetEngine.PP_OCR_V6,  // 检测引擎（默认 PP-OCRv6）
     val keepTextFree: Boolean = true,  // RT-DETR-V2: 是否保留 text_free 区域（自由文字/旁白/音效）
-    val horizontalAlign: TextAlign = TextAlign.CENTER,  // 横排译文对齐（竖排不受影响）
+    val horizontalAlign: TextAlign = TextAlign.CENTER,  // 横排段落内行对齐；文本块恒居中（竖排不受影响）
     val trackingRatio: Float = MangaTextSpacing.DEFAULT_RATIO, // 字间距（×字号）
     val leadingRatio: Float = MangaTextSpacing.DEFAULT_RATIO,  // 行／列间距（×字号）
     /**

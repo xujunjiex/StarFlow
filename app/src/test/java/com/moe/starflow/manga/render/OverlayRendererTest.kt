@@ -192,21 +192,21 @@ class OverlayRendererTest {
     }
 
     /**
-     * ⚠️ 用户要求：**横排对齐在非自动字号下也必须生效**（RT-DETR 选「横排渲染」时最明显：
-     * 它的选区是宽矩形气泡框，文字通常远窄于框，对齐是唯一的水平位置控制）。
+     * ⚠️ 用户要求（2026-11）：「横排对齐」是**段落内行对齐**，不是白块在选区里的锚点。
+     * 短文本的白块必须**始终居中**在气泡内 —— 旧实现按左/右对齐把白块推到气泡一侧，
+     * 另一侧空出一大片（RT-DETR 选「横排渲染」时最明显：选区是宽矩形气泡框，文字远窄于框）。
      *
-     * 非自动模式的白块收缩到文字本身 —— 若白块恒居中，对齐设置在这条路径上等于失效。
-     * 判据用**白块位置**（Robolectric 能栅格化矩形、画不出字形，正好够用）：
-     * 沿气泡中线取白色像素区间，左/中/右三种对齐的白块中心必须依次右移。
+     * 判据用**白块位置**（Robolectric 能栅格化矩形、画不出字形）：
+     * 沿气泡中线取白色像素区间，三种对齐的白块中心都必须落在气泡中心。
      */
     @Test
-    fun nonAuto_horizontalAlign_movesWhiteBlock() {
+    fun nonAuto_align_noLongerMovesWhiteBlock() {
         val green = Color.rgb(0, 255, 0)
 
         fun blockCenterX(align: TextAlign): Float {
             val bmp = solidBitmap(200, 100, green)
             val bubble = TranslatedBubble(
-                rect = Rect(20, 20, 180, 80),
+                rect = Rect(20, 20, 180, 80),          // 宽气泡（RT 横排渲染的典型选区）
                 originalText = "",
                 translatedText = "译文",          // 短文本 → 白块必然装得进气泡
                 backgroundColor = Color.WHITE,
@@ -234,15 +234,15 @@ class OverlayRendererTest {
             return (first + last) / 2f
         }
 
-        val left = blockCenterX(TextAlign.LEFT)
-        val center = blockCenterX(TextAlign.CENTER)
-        val right = blockCenterX(TextAlign.RIGHT)
-
-        assertTrue("三种对齐都应画出白块（left=$left center=$center right=$right）", left > 0f && center > 0f && right > 0f)
-        assertTrue("左对齐白块应靠左（$left < $center）", left < center - 5f)
-        assertTrue("右对齐白块应靠右（$right > $center）", right > center + 5f)
-        // 居中必须落在中间：顺带防住「左/右写反」也能通过的情况
-        assertTrue("居中应在左右之间（$left < $center < $right）", left < center && center < right)
+        val bubbleCenterX = 100f
+        for (align in TextAlign.entries) {
+            val center = blockCenterX(align)
+            assertTrue("三种对齐都应画出白块（$align=$center）", center > 0f)
+            assertTrue(
+                "白块应居中、不随对齐左右移动（$align=$center，气泡中心=$bubbleCenterX）",
+                kotlin.math.abs(center - bubbleCenterX) <= 2f
+            )
+        }
     }
 
     /**
