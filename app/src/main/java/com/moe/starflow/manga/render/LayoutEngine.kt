@@ -9,6 +9,16 @@ import com.moe.starflow.manga.types.TextDirection
 import kotlin.math.floor
 
 /**
+ * 一行文字的**墨迹**左右内边距（px，相对 advance 起点/终点）。
+ *
+ * 引号、句号等字符的笔画并不贴着字宽框（CJK 的 `「` 左侧空出约 0.6 字），
+ * 按 advance 定位会让整行看起来缩进或偏心；横排的视觉对齐需要这份真实笔画边界。
+ */
+data class InkInsets(val left: Float, val right: Float) {
+    companion object { val ZERO = InkInsets(0f, 0f) }
+}
+
+/**
  * 度量抽象：把 Paint 的字体度量隔离在接口后，排版逻辑因此成为纯函数、可做纯 JVM 单测
  * （Robolectric 的 `Paint.breakText` 不按宽度换行，测试里直接用真实 Paint 构造不出多行用例）。
  */
@@ -16,6 +26,15 @@ interface TextMeasurer {
     var fontSize: Float
     fun measure(text: String): Float
     fun breakText(text: String, maxWidth: Float): Int
+
+    /**
+     * 行内墨迹左右内边距（相对 advance 起点/终点）。
+     *
+     * 默认 [InkInsets.ZERO]：纯 JVM 假字体与旧路径不改变任何落笔位置。
+     * **只用于横排的视觉对齐**；字号选择与断行预算仍用 [measure]（advance），
+     * 因此加不加墨迹信息都不会改变字号/行数。
+     */
+    fun inkInsets(text: String): InkInsets = InkInsets.ZERO
 
     /**
      * 基线以上高度（负数，沿用 Android `Paint.FontMetrics` 约定）。
@@ -47,6 +66,22 @@ class PaintTextMeasurer(
     override fun measure(text: String): Float = paint.measureText(text)
     override fun breakText(text: String, maxWidth: Float): Int =
         paint.breakText(text, true, maxWidth, null)
+
+    /**
+     * 真实笔画边界。`getTextBounds` 不含 letterSpacing（paint 上也没设），
+     * 而右侧内边距在「宽度」与「绘制」两侧都含同样的字距，差值因此相互抵消。
+     */
+    override fun inkInsets(text: String): InkInsets {
+        if (text.isEmpty()) return InkInsets.ZERO
+        val bounds = Rect()
+        paint.getTextBounds(text, 0, text.length, bounds)
+        if (bounds.isEmpty) return InkInsets.ZERO
+        val advance = paint.measureText(text)
+        if (advance <= 0f) return InkInsets.ZERO
+        val left = bounds.left.toFloat().coerceIn(0f, advance)
+        val right = (advance - bounds.right).coerceIn(0f, advance - left)
+        return InkInsets(left, right)
+    }
 
     override fun ascent(): Float = paint.fontMetrics.ascent
     override fun descent(): Float = paint.fontMetrics.descent
@@ -347,19 +382,44 @@ object LayoutEngine {
         // ⚠️ 不能把 align 当「块在选区里的锚点」（旧实现 `LEFT → region.left + pad`）：
         // RT-DETR 的选区是宽矩形气泡框、译文远窄于框，左/右对齐会让文字整段贴边、
         // 另一侧空出一大片（用户截图反馈）。单行短文本在三种对齐下因此完全一致 = 居中。
-        val blockLeft = maxOf(region.left + pad, region.left + (region.width - totalWidth) / 2f)
-        val out = lines.mapIndexed { i, line ->
-            val lineW = lineWidths[i]
-            val x = blockLeft + when (align) {
-                TextAlign.LEFT -> 0f
-                TextAlign.CENTER -> (totalWidth - lineW) / 2f
-                TextAlign.RIGHT -> totalWidth - lineW
+        //
+        // 行首 `「`/行尾 `。」` 的笔画并不贴字宽框（`「` 左侧空出约 0.6 字）：按 advance 排会
+        // 整齐地缩进半个字。这里用墨迹内边距把各行的**笔画边缘**对齐，整块按视觉边界居中。
+        // ⚠️ 只在总宽装得下时启用；固定字号溢出时退回旧锚点，避免平移把墨迹推出选区。
+        val useInk = totalWidth <= availW + EPS
+        val insets = if (useInk) {
+            lines.mapIndexed { i, line ->
+                val lineW = lineWidths[i]
+                val raw = measurer.inkInsets(line)
+                val left = raw.left.coerceIn(0f, lineW)
+                val right = raw.right.coerceIn(0f, lineW - left)
+                InkInsets(left, right)
             }
+        } else {
+            List(lines.size) { InkInsets.ZERO }
+        }
+        val offsets = FloatArray(lines.size) { i ->
+            val lineW = lineWidths[i]
+            val ink = insets[i]
+            when (align) {
+                TextAlign.LEFT -> -ink.left
+                TextAlign.CENTER -> (totalWidth - lineW) / 2f - (ink.left - ink.right) / 2f
+                TextAlign.RIGHT -> totalWidth - lineW + ink.right
+            }
+        }
+        var inkMin = Float.MAX_VALUE
+        var inkMax = -Float.MAX_VALUE
+        for (i in lines.indices) {
+            inkMin = minOf(inkMin, offsets[i] + insets[i].left)
+            inkMax = maxOf(inkMax, offsets[i] + lineWidths[i] - insets[i].right)
+        }
+        val blockLeft = maxOf(region.left + pad, region.centerX - (inkMin + inkMax) / 2f)
+        val out = lines.mapIndexed { i, line ->
             TextLine(
                 text = line,
-                width = lineW,
+                width = lineWidths[i],
                 height = lineHeight,
-                x = x,
+                x = blockLeft + offsets[i],
                 baseline = firstBaseline + i * leading
             )
         }

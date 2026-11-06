@@ -92,6 +92,22 @@ class LayoutEngineTest {
         override fun glyphHeight(): Float = fontSize
     }
 
+    /**
+     * 给行首/行尾字符加墨迹内边距的假字体：模拟 `「` 左侧、`。` 右侧的真实空白。
+     * 其余度量全部委托给 [base]，保证断行与字号判定和普通用例一致。
+     */
+    private class InkMeasurer(
+        private val base: TextMeasurer,
+        private val leftByChar: Map<Char, Float> = emptyMap(),
+        private val rightByChar: Map<Char, Float> = emptyMap()
+    ) : TextMeasurer by base {
+        override fun inkInsets(text: String): InkInsets {
+            val left = text.firstOrNull()?.let { leftByChar[it] } ?: 0f
+            val right = text.lastOrNull()?.let { rightByChar[it] } ?: 0f
+            return InkInsets(left, right)
+        }
+    }
+
     /** 把 layout 里所有行的文本拼回，用于验证「不截断」。 */
     private fun TextLayout.reassembled(): String =
         lines.joinToString("\n") { it.text }
@@ -589,6 +605,95 @@ class LayoutEngineTest {
                 assertTrue("行右越界", line.x + line.width <= region.right + 0.01f)
             }
         }
+    }
+
+    // ---------- ⑤-2 墨迹（ink）对齐 ----------
+
+    /**
+     * ⚠️ 用户要求：行首 `「` 的笔画左缘要与普通行齐平，不能整行缩进半个字。
+     *
+     * 假字体给 `「` 造 10px 左内边距：左对齐时该行必须整体左移 10px，
+     * 两行的**笔画左缘**落在同一条线上；整块仍按视觉边界居中。
+     */
+    @Test
+    fun inkAlign_leftQuoteFlushWithPlainLines() {
+        val region = Box(0f, 0f, 200f, 120f)
+        val m = InkMeasurer(measurer(charRatio = 1f, lineRatio = 1f), leftByChar = mapOf('「' to 10f))
+        val layout = LayoutEngine.plan(
+            measurer = m, text = "「AB\nC", region = region,
+            direction = TextDirection.HORIZONTAL, requestedFontSize = 20f, autoFit = false,
+            align = TextAlign.LEFT, trackingRatio = 0f, leadingRatio = 0f, minPaddingPx = PAD
+        )
+        assertEquals("两行", 2, layout.lines.size)
+        val quoteInkLeft = layout.lines[0].x + 10f
+        val plainInkLeft = layout.lines[1].x
+        assertEquals("笔画左缘必须齐平", plainInkLeft, quoteInkLeft, 0.01f)
+        assertTrue("引号行整体左移，而不是整行缩进", layout.lines[0].x < layout.lines[1].x)
+
+        val inkMin = minOf(quoteInkLeft, plainInkLeft)
+        val inkMax = maxOf(
+            layout.lines[0].x + layout.lines[0].width,
+            layout.lines[1].x + layout.lines[1].width
+        )
+        assertEquals("视觉块按笔画边界居中", region.centerX, (inkMin + inkMax) / 2f, 0.5f)
+        assertNoOverflow(layout, region)
+    }
+
+    /**
+     * 居中 + 行尾句号：按 advance 居中会把整行推左（句号右侧空白算进了行宽），
+     * 墨迹对齐要求**笔画范围**的中心落在选区中心。
+     */
+    @Test
+    fun inkAlign_centeredTrailingPunctuationCentersInk() {
+        val region = Box(0f, 0f, 200f, 60f)
+        val m = InkMeasurer(measurer(charRatio = 1f, lineRatio = 1f), rightByChar = mapOf('。' to 10f))
+        val layout = LayoutEngine.plan(
+            measurer = m, text = "AB。", region = region,
+            direction = TextDirection.HORIZONTAL, requestedFontSize = 20f, autoFit = false,
+            align = TextAlign.CENTER, trackingRatio = 0f, leadingRatio = 0f, minPaddingPx = PAD
+        )
+        val line = layout.lines.single()
+        val inkLeft = line.x
+        val inkRight = line.x + line.width - 10f
+        assertEquals("笔画中心必须落在选区中心", region.centerX, (inkLeft + inkRight) / 2f, 0.01f)
+        assertEquals("字号/行宽不变", 62f, layout.totalWidth, 0.01f)
+    }
+
+    /** 默认度量（insets = 0）必须与旧布局逐像素一致，避免影响所有既有路径。 */
+    @Test
+    fun inkAlign_zeroInsets_matchesLegacyPositions() {
+        val region = Box(0f, 0f, 120f, 60f)
+        fun linesOf(align: TextAlign) = LayoutEngine.plan(
+            measurer(), "AB\nC", region, TextDirection.HORIZONTAL, 20f, false,
+            align, trackingRatio = 0f, leadingRatio = 0f, minPaddingPx = PAD
+        ).lines
+
+        assertEquals("假字体默认没有墨迹信息", InkInsets.ZERO, measurer().inkInsets("「AB"))
+        val blockLeft = region.centerX - 41f / 2f
+        for (align in TextAlign.entries) {
+            assertEquals("$align：最宽行仍居块首", blockLeft, linesOf(align)[0].x, 0.01f)
+        }
+        assertEquals("左对齐短行贴块左缘", blockLeft, linesOf(TextAlign.LEFT)[1].x, 0.01f)
+        assertEquals("居中短行在块内居中", blockLeft + 10.5f, linesOf(TextAlign.CENTER)[1].x, 0.01f)
+        assertEquals("右对齐短行贴块右缘", blockLeft + 21f, linesOf(TextAlign.RIGHT)[1].x, 0.01f)
+    }
+
+    /**
+     * 单个字就宽于可用区（固定字号过大）时不能按墨迹平移，否则会把笔画推出选区；
+     * 必须退回旧的 advance 锚点。
+     */
+    @Test
+    fun inkAlign_overflowFallsBackToLegacyAnchors() {
+        val region = Box(0f, 0f, 24f, 60f)   // 可用宽 ≈18.2 < 单字 20 → 必然溢出
+        val m = InkMeasurer(measurer(), leftByChar = mapOf('A' to 10f))
+        val layout = LayoutEngine.plan(
+            measurer = m, text = "AB", region = region,
+            direction = TextDirection.HORIZONTAL, requestedFontSize = 20f, autoFit = false,
+            align = TextAlign.LEFT, trackingRatio = 0f, leadingRatio = 0f, minPaddingPx = PAD
+        )
+        val pad = LayoutEngine.paddingFor(region.width, region.height, PAD)
+        assertEquals("溢出时退回左内边距锚点（不做墨迹平移）", pad, layout.lines[0].x, 0.01f)
+        assertEquals("溢出仍不丢字", "AB", layout.lines.joinToString("") { it.text })
     }
 
     @Test
