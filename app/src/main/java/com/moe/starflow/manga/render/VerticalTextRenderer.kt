@@ -57,6 +57,7 @@ object VerticalTextRenderer {
                         val glyph = glyphs.getOrPut(ch) {
                             VerticalGlyphRules.resolve(ch, paint::hasGlyph, defaultTypefacePaint::hasGlyph)
                         }
+                        // 压缩标点也按整格基线落笔（墨迹仍在右上角），只有下面的步进减半。
                         drawVerticalGlyph(canvas, glyph, line.x, y, paint, bounds)
                     }
                     y += VerticalTypography.unitAdvance(unit, fontSize) + layout.tracking

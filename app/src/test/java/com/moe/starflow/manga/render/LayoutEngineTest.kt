@@ -771,6 +771,72 @@ class LayoutEngineTest {
         assertNoOverflow(layout, region)
     }
 
+    // ---------- ⑤-4 竖排标点半格 ----------
+
+    /** `、。，` 占 0.5 格：同样文字在整格模型下要高 1 格。 */
+    @Test
+    fun verticalPunctuation_halfAdvance() {
+        val region = Box(0f, 0f, 60f, 25f)
+        val layout = LayoutEngine.plan(
+            measurer(), "あ、い", region, TextDirection.VERTICAL_RL, 10f, false,
+            TextAlign.CENTER, trackingRatio = 0f, leadingRatio = 0f, minPaddingPx = 0f
+        )
+        assertEquals("一列", 1, layout.lines.size)
+        assertEquals("10 + 5 + 10", 25f, layout.totalHeight, 0.01f)
+    }
+
+    /** 字距照常逐格叠加：标点后也加一份字距（半格 + 字距）。 */
+    @Test
+    fun verticalPunctuation_withTracking() {
+        val region = Box(0f, 0f, 60f, 29f)
+        val layout = LayoutEngine.plan(
+            measurer(), "あ、い", region, TextDirection.VERTICAL_RL, 10f, false,
+            TextAlign.CENTER, trackingRatio = 0.2f, leadingRatio = 0f, minPaddingPx = 0f
+        )
+        assertEquals("一列", 1, layout.lines.size)
+        assertEquals("10+2+5+2+10", 29f, layout.totalHeight, 0.01f)
+    }
+
+    /** 列尾标点只占半格：列高按 0.5 计，不应多出半格空白。 */
+    @Test
+    fun verticalPunctuation_atColumnEnd() {
+        val region = Box(0f, 0f, 60f, 15f)
+        val layout = LayoutEngine.plan(
+            measurer(), "あ、", region, TextDirection.VERTICAL_RL, 10f, false,
+            TextAlign.CENTER, trackingRatio = 0f, leadingRatio = 0f, minPaddingPx = 0f
+        )
+        assertEquals("一列", 1, layout.lines.size)
+        assertEquals("10 + 5", 15f, layout.totalHeight, 0.01f)
+    }
+
+    /** 压缩后避头尾仍不能让标点列首：回退一个整字后重新分列，且不溢出。 */
+    @Test
+    fun verticalPunctuation_kinsokuStillMovesPunctuationOffColumnStart() {
+        val region = Box(0f, 0f, 80f, 50f)
+        val text = "あいうえお、かき"
+        val layout = LayoutEngine.plan(
+            measurer(), text, region, TextDirection.VERTICAL_RL, 10f, false,
+            TextAlign.CENTER, trackingRatio = 0f, leadingRatio = 0f, minPaddingPx = 0f
+        )
+        val columns = layout.lines.map { it.text }
+        assertEquals("不丢字", text, columns.joinToString(""))
+        assertTrue("列首不能是闭标点：$columns", columns.none { it.startsWith("、") })
+        assertNoOverflow(layout, region)
+    }
+
+    /** 半格标点 + 数字组混合：全文不丢、不溢出。 */
+    @Test
+    fun verticalPunctuation_andTcy_noTextLossNoOverflow() {
+        val region = Box(0f, 0f, 120f, 160f)
+        val text = "20年前，他说过……今天一定会回来！？"
+        val layout = LayoutEngine.plan(
+            measurer(), text, region, TextDirection.VERTICAL_RL, 16f, true,
+            TextAlign.CENTER, trackingRatio = 0.2f, leadingRatio = 0.2f, minPaddingPx = PAD
+        )
+        assertEquals(text, layout.lines.joinToString("") { it.text })
+        assertNoOverflow(layout, region)
+    }
+
     /**
      * ⚠️ 用户硬约束：**字间距和行间距都不允许超过一个标准字符**。
      *

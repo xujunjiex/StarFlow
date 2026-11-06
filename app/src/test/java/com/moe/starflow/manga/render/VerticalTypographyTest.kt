@@ -88,4 +88,43 @@ class VerticalTypographyTest {
         assertEquals(listOf("1234", "5678"), tcy.map { it.text })
         assertTrue(tcy.all { it.text.length <= VerticalTypography.TCY_MAX_DIGITS })
     }
+
+    @Test
+    fun units_marksCompressiblePunctuation() {
+        val units = VerticalTypography.units("あ、い。")
+        assertEquals(
+            listOf(
+                VerticalUnit.Kind.CHAR,
+                VerticalUnit.Kind.COMPRESSED,
+                VerticalUnit.Kind.CHAR,
+                VerticalUnit.Kind.COMPRESSED
+            ),
+            units.map { it.kind }
+        )
+    }
+
+    @Test
+    fun unitAdvance_punctuationIsHalfEm() {
+        val punct = VerticalTypography.units("、").single()
+        val normal = VerticalTypography.units("あ").single()
+        assertEquals(5f, VerticalTypography.unitAdvance(punct, 10f), 0.01f)
+        assertEquals(10f, VerticalTypography.unitAdvance(normal, 10f), 0.01f)
+    }
+
+    @Test
+    fun columnHeight_countsCompressedPunctuationAsHalf() {
+        val units = VerticalTypography.units("あ、い")
+        assertEquals(25f, VerticalTypography.columnHeight(units, 10f, 0f), 0.01f)
+        assertEquals(29f, VerticalTypography.columnHeight(units, 10f, 2f), 0.01f)
+    }
+
+    /** 括号/引号暂不压缩：它们需要上下半格定位，单独评估，不混进本规则。 */
+    @Test
+    fun bracketsAndQuotesStayFullWidth() {
+        val units = VerticalTypography.units("「あ」")
+        assertEquals(
+            listOf(VerticalUnit.Kind.CHAR, VerticalUnit.Kind.CHAR, VerticalUnit.Kind.CHAR),
+            units.map { it.kind }
+        )
+    }
 }

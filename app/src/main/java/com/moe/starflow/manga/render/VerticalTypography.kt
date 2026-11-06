@@ -19,7 +19,7 @@ internal data class VerticalUnit(
     val end: Int,
     val kind: Kind
 ) {
-    enum class Kind { CHAR, TCY }
+    enum class Kind { CHAR, TCY, COMPRESSED }
 
     val isTcy: Boolean get() = kind == Kind.TCY
 }
@@ -38,6 +38,16 @@ internal object VerticalTypography {
     /** TCY 横排总宽上限（×字号）。超宽时横向压缩，不折行。 */
     const val TCY_MAX_WIDTH_RATIO = 1.1f
 
+    /**
+     * 竖排里占半格的标点（×字号 = 0.5）。
+     *
+     * 日文竖排的句读标记只占半个字位，标点后不需要留一整格；不压缩时每一处标点都会
+     * 在列里留下半格空洞，列高/字号被白白吃掉。括号与引号不在此列（需单独处理上下半格）。
+     */
+    const val COMPRESSED_RATIO = 0.5f
+
+    val COMPRESSED_PUNCT: Set<Char> = setOf('、', '。', '，', '．', '｡', '､')
+
     /** 单个数字合并会变成「一位横排」，没有意义；至少 2 位才成组。 */
     private const val TCY_MIN_DIGITS = 2
 
@@ -55,7 +65,12 @@ internal object VerticalTypography {
         while (i < text.length) {
             val ch = text[i]
             if (!isDigit(ch.code)) {
-                out += VerticalUnit(ch.toString(), i, i + 1, VerticalUnit.Kind.CHAR)
+                val kind = if (ch in COMPRESSED_PUNCT) {
+                    VerticalUnit.Kind.COMPRESSED
+                } else {
+                    VerticalUnit.Kind.CHAR
+                }
+                out += VerticalUnit(ch.toString(), i, i + 1, kind)
                 i++
                 continue
             }
@@ -81,10 +96,11 @@ internal object VerticalTypography {
     /**
      * 一个格子的纵向步进（不含字距）。
      *
-     * TCY 与普通字都占 1 em；标点半格在下一步实现，只需要在这里区分。
+     * TCY 与普通字都占 1 em；[VerticalUnit.Kind.COMPRESSED] 标点只占半格。
      */
     fun unitAdvance(unit: VerticalUnit, fontSize: Float): Float = when (unit.kind) {
         VerticalUnit.Kind.CHAR, VerticalUnit.Kind.TCY -> fontSize
+        VerticalUnit.Kind.COMPRESSED -> fontSize * COMPRESSED_RATIO
     }
 
     /** 一列的墨迹高度：各格步进之和 + 格间字距（末格后不加）。 */
