@@ -710,6 +710,67 @@ class LayoutEngineTest {
         assertEquals("竖排忽略横排对齐设置", xs(TextAlign.LEFT), xs(TextAlign.RIGHT))
     }
 
+    // ---------- ⑤-3 竖排 TCY（縦中横） ----------
+
+    /** 2 位数字合成一格：同样高度下从「20 竖叠 + 年」两列变成一列。 */
+    @Test
+    fun verticalTcy_twoDigitsOccupyOneCell() {
+        val region = Box(0f, 0f, 60f, 20f)
+        val layout = LayoutEngine.plan(
+            measurer(), "20年", region, TextDirection.VERTICAL_RL, 10f, false,
+            TextAlign.CENTER, trackingRatio = 0f, leadingRatio = 0f, minPaddingPx = 0f
+        )
+        assertEquals("一列", 1, layout.lines.size)
+        assertEquals("20年", layout.lines[0].text)
+        assertEquals("两个格子的高度", 20f, layout.totalHeight, 0.01f)
+    }
+
+    /** 数字组不能被切列拆开：容量只有一格时整组仍留在同一列。 */
+    @Test
+    fun verticalTcy_digitRunStaysInOneColumn() {
+        val region = Box(0f, 0f, 60f, 10f)
+        val layout = LayoutEngine.plan(
+            measurer(), "20年", region, TextDirection.VERTICAL_RL, 10f, false,
+            TextAlign.CENTER, trackingRatio = 0f, leadingRatio = 0f, minPaddingPx = 0f
+        )
+        assertEquals(listOf("20", "年"), layout.lines.map { it.text })
+        assertEquals("不丢字", "20年", layout.lines.joinToString("") { it.text })
+    }
+
+    /** 单个数字不成组：与普通字相同，一位一格。 */
+    @Test
+    fun verticalTcy_singleDigitStaysNormal() {
+        val region = Box(0f, 0f, 60f, 10f)
+        val layout = LayoutEngine.plan(
+            measurer(), "3年", region, TextDirection.VERTICAL_RL, 10f, false,
+            TextAlign.CENTER, trackingRatio = 0f, leadingRatio = 0f, minPaddingPx = 0f
+        )
+        assertEquals(listOf("3", "年"), layout.lines.map { it.text })
+    }
+
+    /** 超过 4 位按 4 位分组：5 位 = TCY(4) + 单字，不能整串横排压扁。 */
+    @Test
+    fun verticalTcy_longRunSplitsAtFour() {
+        val region = Box(0f, 0f, 60f, 10f)
+        val layout = LayoutEngine.plan(
+            measurer(), "12345", region, TextDirection.VERTICAL_RL, 10f, false,
+            TextAlign.CENTER, trackingRatio = 0f, leadingRatio = 0f, minPaddingPx = 0f
+        )
+        assertEquals(listOf("1234", "5"), layout.lines.map { it.text })
+    }
+
+    @Test
+    fun verticalTcy_noOverflowAndNoTextLoss() {
+        val region = Box(0f, 0f, 120f, 160f)
+        val text = "20年前，他说过……今天一定会回来！？"
+        val layout = LayoutEngine.plan(
+            measurer(), text, region, TextDirection.VERTICAL_RL, 16f, true,
+            TextAlign.CENTER, trackingRatio = 0.2f, leadingRatio = 0.2f, minPaddingPx = PAD
+        )
+        assertEquals("不丢字", text, layout.lines.joinToString("") { it.text })
+        assertNoOverflow(layout, region)
+    }
+
     /**
      * ⚠️ 用户硬约束：**字间距和行间距都不允许超过一个标准字符**。
      *

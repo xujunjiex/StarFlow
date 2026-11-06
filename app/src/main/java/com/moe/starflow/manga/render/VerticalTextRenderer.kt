@@ -45,14 +45,21 @@ object VerticalTextRenderer {
             val glyphs = HashMap<Char, VerticalGlyphRules.Glyph>()
             val bounds = Rect()
             val defaultTypefacePaint = Paint(paint).apply { typeface = Typeface.DEFAULT }
+            val fontSize = layout.fontSize
             for (line in layout.lines) {
                 var y = line.baseline
-                for (ch in line.text) {
-                    val glyph = glyphs.getOrPut(ch) {
-                        VerticalGlyphRules.resolve(ch, paint::hasGlyph, defaultTypefacePaint::hasGlyph)
+                for (unit in VerticalTypography.units(line.text)) {
+                    if (unit.isTcy) {
+                        // 縦中横：整组数字横排占一格，按墨迹居中并压到 1.1 字宽以内。
+                        drawTcyGroup(canvas, unit.text, line.x, y - fontSize / 2f, paint)
+                    } else {
+                        val ch = unit.text[0]
+                        val glyph = glyphs.getOrPut(ch) {
+                            VerticalGlyphRules.resolve(ch, paint::hasGlyph, defaultTypefacePaint::hasGlyph)
+                        }
+                        drawVerticalGlyph(canvas, glyph, line.x, y, paint, bounds)
                     }
-                    drawVerticalGlyph(canvas, glyph, line.x, y, paint, bounds)
-                    y += layout.charStep
+                    y += VerticalTypography.unitAdvance(unit, fontSize) + layout.tracking
                 }
             }
         } else {
@@ -60,6 +67,37 @@ object VerticalTextRenderer {
                 if (line.text.isEmpty()) continue
                 canvas.drawText(line.text, line.x, line.baseline, paint)
             }
+        }
+    }
+
+    /**
+     * 縦中横：把一组数字横向画在一格内。
+     *
+     * 与 [LayoutEngine] 的约定：TCY 格纵向占 1 em，横向最多 [VerticalTypography.TCY_MAX_WIDTH_RATIO] 字宽，
+     * 超宽只做横向压缩（不折行、不丢字）。按墨迹中心落在格心，避免不同数字宽度造成视觉偏移。
+     */
+    private fun drawTcyGroup(canvas: Canvas, text: String, cx: Float, centerY: Float, paint: Paint) {
+        if (text.isEmpty()) return
+        val fontSize = paint.textSize
+        if (fontSize <= 0f) return
+        val width = paint.measureText(text)
+        if (width <= 0f) return
+        val scaleX = (fontSize * VerticalTypography.TCY_MAX_WIDTH_RATIO / width)
+            .coerceIn(0.05f, 1f)
+        val bounds = Rect()
+        paint.getTextBounds(text, 0, text.length, bounds)
+        val dx = if (bounds.isEmpty) 0f else -(bounds.left + bounds.right) / 2f
+        val dy = if (bounds.isEmpty) 0f else -(bounds.top + bounds.bottom) / 2f
+        val previousAlign = paint.textAlign
+        val saved = canvas.save()
+        try {
+            canvas.translate(cx, centerY)
+            canvas.scale(scaleX, 1f)
+            paint.textAlign = Paint.Align.LEFT
+            canvas.drawText(text, dx, dy, paint)
+        } finally {
+            paint.textAlign = previousAlign
+            canvas.restoreToCount(saved)
         }
     }
 

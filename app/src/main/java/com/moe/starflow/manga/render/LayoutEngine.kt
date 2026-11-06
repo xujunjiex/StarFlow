@@ -6,7 +6,6 @@ import com.moe.starflow.manga.config.TranslationTextRules
 import com.moe.starflow.manga.config.MangaTextSpacing
 import com.moe.starflow.manga.types.TextAlign
 import com.moe.starflow.manga.types.TextDirection
-import kotlin.math.floor
 
 /**
  * 一行文字的**墨迹**左右内边距（px，相对 advance 起点/终点）。
@@ -91,7 +90,8 @@ class PaintTextMeasurer(
 }
 
 /**
- * 一条排版单元。横排时 = 一行；竖排时 = 一列（列内字符按 [TextLayout.charStep] 自上而下排布）。
+ * 一条排版单元。横排时 = 一行；竖排时 = 一列（列内按 [VerticalTypography] 的格子步进自上而下排布，
+ * 数字 TCY 组/标点等特殊格子不再假定 1:1 字符步进）。
  */
 data class TextLine(
     val text: String,
@@ -117,7 +117,7 @@ data class TextLayout(
     val tracking: Float,
     /** 次轴步进（横排=行距；竖排=列距），含字形本身。 */
     val leading: Float,
-    /** 竖排列内字符步进（含字形）；横排恒为 0。 */
+    /** 竖排普通字的基准步进（含字距）；TCY/标点等特殊格由 [VerticalTypography] 计算。横排恒为 0。 */
     val charStep: Float,
     val totalWidth: Float,
     val totalHeight: Float
@@ -444,16 +444,18 @@ object LayoutEngine {
         val flow = text.replace("\r", "").replace("\n", "")
 
         // 字符／列步距 = 一个字框 + 用户设置的间距，没有额外的固定增量。
-        val charStep = font * (1f + trackingRatio.coerceAtLeast(0f))
+        val tracking = (trackingRatio * font).coerceAtLeast(0f)
         val colStep = font * (1f + leadingRatio.coerceAtLeast(0f))
-        val capacity = verticalCapacity(availH, font, charStep)
-        if (capacity <= 0 || flow.isEmpty()) return TextLayout(font, emptyList(), 0f, 0f, 0f, 0f, 0f)
+        val units = VerticalTypography.units(flow)
+        if (units.isEmpty()) return TextLayout(font, emptyList(), 0f, 0f, 0f, 0f, 0f)
 
-        val chunks = wrapVertical(flow, capacity)
+        val chunks = wrapVertical(flow, units, font, tracking, availH)
+        if (chunks.isEmpty()) return TextLayout(font, emptyList(), 0f, 0f, 0f, 0f, 0f)
         val columns = chunks.size
-        val charsInTallest = chunks.maxOf { it.length }
-
-        val colHeight = if (charsInTallest <= 1) font else (charsInTallest - 1) * charStep + font
+        // 列高必须用「格子步进」逐个累加：TCY 一格、标点半格都在 VerticalTypography 里定义，
+        // 与渲染器共用同一份规则。
+        val heights = chunks.map { VerticalTypography.columnHeight(it, font, tracking) }
+        val colHeight = heights.maxOrNull() ?: 0f
         val totalWidth = if (columns <= 1) font else (columns - 1) * colStep + font
 
         // 列块水平居中（竖排不吃对齐设置）；列高不足时垂直居中
@@ -462,41 +464,59 @@ object LayoutEngine {
         val firstBaseline = region.top + pad + topPad + font
 
         val out = chunks.mapIndexed { j, chunk ->
-            val count = chunk.length
             val x = when (direction) {
                 TextDirection.VERTICAL_RL -> blockLeft + totalWidth - font / 2f - j * colStep
                 else -> blockLeft + font / 2f + j * colStep
             }
             TextLine(
-                text = chunk,
+                text = chunk.joinToString("") { it.text },
                 width = font,
-                height = if (count <= 1) font else (count - 1) * charStep + font,
+                height = heights[j],
                 x = x,
                 baseline = firstBaseline
             )
         }
-        return TextLayout(font, out, charStep - font, colStep, charStep, totalWidth, colHeight)
+        return TextLayout(font, out, tracking, colStep, font + tracking, totalWidth, colHeight)
     }
 
     /**
-     * 竖排分列：按列容量切，但**切点绝不落在点串中间** —— `...`/`…`/`。。。` 整串进下一列。
+     * 竖排分列：按**格子的真实步进**贪心填列，切点绝不落在点串中间，也不拆 TCY 数字组。
      *
-     * 真实反馈：`...` 被排成「每列一个点」（三个点占三列），既难看又白占 overlay 高度。
-     * 点串长过一列时无从避让，只能按容量硬切（不溢出、不丢字仍是硬约束）。
+     * 点串回退与避头尾只允许把切点**前移**；前移结果会按 unit 边界回退（不拆 TCY 组），
+     * 切空本列时退回未调整的切点（宁可标点列首，也不产生空列/死循环）。
      */
-    private fun wrapVertical(text: String, capacity: Int): List<String> {
-        if (capacity <= 0) return emptyList()
-        val out = mutableListOf<String>()
+    private fun wrapVertical(
+        text: String,
+        units: List<VerticalUnit>,
+        font: Float,
+        tracking: Float,
+        availH: Float
+    ): List<List<VerticalUnit>> {
+        val out = mutableListOf<List<VerticalUnit>>()
         var i = 0
-        while (i < text.length) {
-            var end = minOf(i + capacity, text.length)
-            end = pullBackToDotRunStart(text, i, end)
-            if (CjkLineBreak.hasCjk(text)) {
-                end = CjkLineBreak.adjustBreak(text, i, end)
+        while (i < units.size) {
+            var j = i
+            var height = 0f
+            while (j < units.size) {
+                val add = VerticalTypography.unitAdvance(units[j], font) +
+                    if (j == i) 0f else tracking
+                if (j > i && height + add > availH + EPS) break
+                height += add
+                j++
             }
-            if (end <= i) end = minOf(i + capacity, text.length)   // 兜底：整串比一列还长
-            out.add(text.substring(i, end))
-            i = end
+            // 单格就超过可用高：保留这一格（宁可溢出也不丢字，与字号下限口径一致）
+            if (j == i) j = i + 1
+
+            var end = units[j - 1].end
+            end = pullBackToDotRunStart(text, units[i].start, end)
+            if (CjkLineBreak.hasCjk(text)) {
+                end = CjkLineBreak.adjustBreak(text, units[i].start, end)
+            }
+            var k = j
+            while (k > i + 1 && units[k - 1].end > end) k--
+            if (k <= i) k = j
+            out.add(units.subList(i, k))
+            i = k
         }
         return out
     }
@@ -518,15 +538,6 @@ object LayoutEngine {
         return if (runStart == start) end else runStart
     }
 
-
-    /**
-     * 竖排每列可容纳字符数：起点 y = 首字基线，每字步进 `step`（含用户字距），
-     * 末字底边 `(k-1)*step + font` 必须 ≤ 可用高 → `k ≤ (可用高 - font)/step + 1`。
-     */
-    private fun verticalCapacity(availH: Float, font: Float, step: Float): Int {
-        if (step <= 0f || availH < font) return 0
-        return floor((availH - font) / step).toInt() + 1
-    }
 
     /**
      * 按 \n 分段；拉丁段落按词断，中日韩段落按字断。空段保留为空行（占一行高）。

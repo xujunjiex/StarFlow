@@ -87,4 +87,25 @@ class VerticalTextRendererTest {
             assertEquals("no glyph dropped during transformation", original.length, canvas.characters)
         }
     }
+
+    /**
+     * TCY：一组数字必须**一次**画完（横排、占一格），不能按字符竖着重画。
+     * 判据用 drawText 的调用序列 —— Robolectric 画不出字形，但能记录调用。
+     */
+    @Test
+    fun tcy_drawsDigitRunAsSingleHorizontalCall() {
+        val layout = LayoutEngine.plan(
+            PaintTextMeasurer(), "20年", Box(0f, 0f, 120f, 120f), TextDirection.VERTICAL_RL,
+            requestedFontSize = 20f, autoFit = false, align = TextAlign.CENTER,
+            trackingRatio = 0f, leadingRatio = 0f, minPaddingPx = 3f
+        )
+        val calls = mutableListOf<String>()
+        val canvas = object : Canvas(Bitmap.createBitmap(120, 120, Bitmap.Config.ARGB_8888)) {
+            override fun drawText(text: String, x: Float, y: Float, paint: Paint) {
+                calls += text
+            }
+        }
+        VerticalTextRenderer.draw(canvas, layout, 0xFF000000.toInt())
+        assertEquals("数字组一次画完、其余逐字", listOf("20", "年"), calls)
+    }
 }

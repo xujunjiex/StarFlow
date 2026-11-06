@@ -188,6 +188,15 @@
   - 回归：`LayoutEngineTest.inkAlign_leftQuoteFlushWithPlainLines`（左引号齐边）、
     `inkAlign_centeredTrailingPunctuationCentersInk`（句号居中）、`inkAlign_zeroInsets_matchesLegacyPositions`
     （默认零偏移）、`inkAlign_overflowFallsBackToLegacyAnchors`（溢出退回）。
+- **竖排字格与 TCY 縦中横（2026-11）**：竖排不再假定「一个字符一格」。字符流先由
+  `render/VerticalTypography.units` 切成格子：连续 `0-9` / `０-９` 按 4 位分组，长度 ≥2 的组为 TCY
+  （横排占 1 格，整组压到 1.1 字宽以内），单个数字与普通字为 CHAR。
+  - `LayoutEngine.buildVertical` 与 `VerticalTextRenderer` **共用**这份切分/步进；切列只允许落在
+    unit 边界，`wrapVertical` 用格子真实步进贪心填列，点串/避头尾回退后按 unit 边界回退。
+  - `TextLine.text` 仍为该列原文；`TextLayout.charStep` 只作为普通字基准步进（渲染不再用它步进）。
+  - 回归：`VerticalTypographyTest`（切分/全角/4 位上限/列高）、`LayoutEngineTest.verticalTcy_*`
+    （单格占位、不跨列、单数字普通、4+1 切分、不丢字）+
+    `VerticalTextRendererTest.tcy_drawsDigitRunAsSingleHorizontalCall`（整组一次绘制）。
 - **绘制函数参数**：`VerticalTextRenderer.drawVerticalTextRL/LR` 支持 `centered`（列组水平居中 + 单列短文字垂直居中）和 `columnSpacingOverride`（填满列距）
 - **重叠合并**：非自动大字号扩展后 `neededRect` 重叠的相邻气泡合并成一个白块（union-find），组间用记号分隔（竖排 `◇` / 横排 `──`），顺序按阅读流（RL 右列先、LR 左列先）；异方向/倾斜/字号不一致 fallback 独立绘制 —— ⚠️ **「字号不一致」这一条只对非自动字号模式成立**（自动模式下字号本来就要被重算，`sameFontOk = autoFit || 组内字号差 < 2f`），别按它去改合并判据。开关 `Manga_Overlap_Merge`（个性化页，**默认关**）关掉即各自绘制、允许白块相叠
 - ⚠️ **合并块的绘制区恒等于「成员气泡矩形（`region.rect`）的并集」，与合并后文字有多长无关** —— 硬约束。曾按**文本长度**反推块尺寸（`balancedVerticalSize(合并文本长度…)` 定宽 + `maxOf(高度, 文字块高)` 定高），而块内字号又由 `LayoutEngine.plan` 按**块尺寸**二分选号（区域越大字号上限越高）→「文本越长→块越大→字号越大」正反馈 → 真机上并出**盖住大半页、字同样巨大**的白块。断言「并块 = 成员气泡并集」是唯一可靠判据，**不要**给它加字号封顶/相交占比等启发式（试过，全无效且会误伤正常合并）
