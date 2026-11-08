@@ -7,7 +7,6 @@ import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
 import android.view.ViewConfiguration
-import android.view.ViewTreeObserver
 import android.widget.HorizontalScrollView
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -29,14 +28,25 @@ import kotlin.math.roundToInt
  * - 单指：竖向拖动一律不拦截（交给列表滚动）；放大后横向拖动才由本容器接管，
  *   未放大时本容器完全不参与，行为与没有它时一致。
  *
+ * ## 放手那一帧必须"无缝"（踩过：松手瞬间整页轻微位移/闪一下）
+ * 预览用的是子视图 `scaleX/scaleY`，提交换的是**子视图宽度**。两者只要不落在同一帧，
+ * 中间就会有一帧画在旧宽度上 → 看起来就是"松手闪一下/挪一下"。所以：
+ * 1. **绝不先清预览**：把预览留到应用新宽度的**同一轮布局**里（`measureChildWithMargins` 里清），
+ *    绘制发生在布局之后，因此那一帧直接就是"新宽度 + 无 transform"，视觉没有任何变化；
+ * 2. **重绑与阅读位置也要提前**：`onZoomWillCommit` 在 `requestLayout()` 之前通知宿主，
+ *    宿主在同一次布局里重绑页（钉新行高）并把列表预滚到新比例。等布局跑完再滚
+ *    （旧实现的 `onZoomCommitted` + post）会让中间那一帧停在错误位置；
+ * 3. **横向按手指焦点还原**：提交后用同一个焦点比例算 `scrollX`，不能按视口中心算，
+ *    否则偏心捏合会横向挪一截。
+ *
  * ## 预览与提交的口径必须一致
  * 横向：以手指焦点为锚（提交后按同一焦点比例恢复 `scrollX`）。
  * 纵向：**恒以视口顶部为锚** —— 提交后宿主按「页号 + 页内比例」把阅读位置恢复到视口顶部，
- * 若预览按手指纵向锚定，松手那一下会整体跳一段（用户看到的就是"缩放完跳页"）。
+ * 若预览按手指纵向锚定，松手那一下会整体跳一段。
  *
  * ## 所有权
  * - [zoom] 与横向滚动量只在本 View；译图缓存、页图重绑、阅读位置恢复都由宿主经
- *   [anchorProvider] / [onZoomCommitted] 完成（本 View 不依赖适配器或控制器）。
+ *   [anchorProvider] / [onZoomWillCommit] / [onZoomCommitted] 完成（本 View 不依赖适配器或控制器）。
  * - 缩放在**离开连续滚动**或**旋转**时由宿主复位（`resetZoom()`）。
  */
 class WebtoonZoomView @JvmOverloads constructor(
@@ -45,21 +55,34 @@ class WebtoonZoomView @JvmOverloads constructor(
     defStyleAttr: Int = 0,
 ) : HorizontalScrollView(context, attrs, defStyleAttr) {
 
+    /**
+     * 缩放前的阅读锚点：页号 + 页内比例 + 该页**缩放前**的像素高度。
+     *
+     * 高度要带上：提交发生在布局**之前**，宿主只能按 `高度 × 缩放比` 推算新位置，
+     * 等布局跑完再问新高度就已经晚一帧了（那一帧就是用户看到的位移）。
+     */
+    data class Anchor(val page: Int, val fraction: Float, val heightPx: Int)
+
     /** 当前已提交的缩放倍率（1 = 铺满屏宽）。 */
     var zoom: Float = MIN_ZOOM
         private set
 
-    /**
-     * 提交前取阅读锚点（页号 + 页内比例），由宿主用列表的 LayoutManager 实现。
-     * 为空时这次缩放不恢复位置（锚点 -1）。
-     */
-    var anchorProvider: (() -> Pair<Int, Float>)? = null
+    /** 提交前取阅读锚点，由宿主用列表的 LayoutManager 实现；返回 null 表示取不到。 */
+    var anchorProvider: (() -> Anchor?)? = null
 
     /**
-     * 缩放已提交、列表已按新宽度重排：宿主在这里重绑可见页 / 重渲译图 / 恢复阅读锚点。
-     * `anchorPage < 0` 表示没有锚点（未注入 provider 或取不到）。
+     * **布局之前**通知宿主：按新的列宽重绑页（重新钉行高）并把阅读位置预滚到
+     * `anchor.fraction × anchor.heightPx × heightRatio`。必须与新的子视图宽度落在同一次布局里。
+     *
+     * @param heightRatio 新列宽 / 旧列宽（行高与列宽等比，所以位置比例也按它换算）
      */
-    var onZoomCommitted: ((zoom: Float, anchorPage: Int, anchorFraction: Float) -> Unit)? = null
+    var onZoomWillCommit: ((zoom: Float, heightRatio: Float, anchor: Anchor?) -> Unit)? = null
+
+    /**
+     * 缩放已提交、新列宽/新行高已经布局完成（仍在绘制之前）：宿主在这里预热译图、
+     * 同步当前页/进度条。不要再改动列表滚动位置（会晚一帧）。
+     */
+    var onZoomCommitted: ((zoom: Float, anchor: Anchor?) -> Unit)? = null
 
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
     private var scalePreview = MIN_ZOOM
@@ -72,6 +95,14 @@ class WebtoonZoomView @JvmOverloads constructor(
 
     /** 最近一次捏合的横向焦点（视口坐标）：提交后按它恢复左右位置。 */
     private var lastFocusX = 0f
+
+    /**
+     * 预览 transform 还没撤（等下一次测量时撤）。
+     *
+     * ⚠️ 见类注释第 1 条：提交后**不能**立刻 `clearPreview()`，否则新宽度还没应用，
+     * 这一帧会画成旧宽度的内容（松手闪一下）。
+     */
+    private var pendingTransformClear = false
 
     private val scaleDetector = ScaleGestureDetector(
         context,
@@ -124,6 +155,7 @@ class WebtoonZoomView @JvmOverloads constructor(
         scaling = false
         horizontalLock = false
         horizontalRejected = false
+        pendingTransformClear = false
         clearPreview()
         scrollTo(0, 0)
         requestLayout()
@@ -138,6 +170,12 @@ class WebtoonZoomView @JvmOverloads constructor(
         parentHeightMeasureSpec: Int,
         heightUsed: Int,
     ) {
+        // ⚠️ 只在**这一轮**（已提交新宽度）撤预览 transform：本帧绘制发生在布局之后，
+        //    所以看到的是"新宽度 + 无 transform"，与松手前的预览画面完全一致。
+        if (pendingTransformClear) {
+            pendingTransformClear = false
+            clearPreview()
+        }
         val viewportW = (MeasureSpec.getSize(parentWidthMeasureSpec) - paddingLeft - paddingRight)
             .coerceAtLeast(1)
         val viewportH = (MeasureSpec.getSize(parentHeightMeasureSpec) - paddingTop - paddingBottom)
@@ -215,7 +253,8 @@ class WebtoonZoomView @JvmOverloads constructor(
                 horizontalRejected = false
                 // 保险：捏合没真正开始就抬手时，别把状态留在"缩放中"
                 scaling = false
-                clearPreview()
+                // ⚠️ 已经提交、正等新宽度布局时**不撤预览**（由 measureChildWithMargins 撤）
+                if (!pendingTransformClear) clearPreview()
                 return true
             }
         }
@@ -241,40 +280,57 @@ class WebtoonZoomView @JvmOverloads constructor(
     }
 
     /**
-     * 提交缩放：记录横向焦点比例与阅读锚点 → 改 [zoom] → 重排 → 布局完成后恢复横向位置并通知宿主。
-     *
-     * ⚠️ 必须等**布局跑完**再恢复/通知：`post` 会早于 traversal 执行，读到的是旧宽度。
+     * 提交缩放：改 [zoom] → **先**让宿主在新宽度下重绑/预滚 → 重排 →
+     * 新布局完成（绘制前）时撤预览并恢复横向位置。
      */
     private fun commit(target: Float, focusX: Float) {
         val newZoom = target.coerceIn(MIN_ZOOM, MAX_ZOOM)
-        val anchor = anchorProvider?.invoke()
         scaling = false
-        clearPreview()
-        if (abs(newZoom - zoom) < 0.01f) return
+        if (abs(newZoom - zoom) < 0.01f) {
+            clearPreview()
+            return
+        }
+        val heightRatio = newZoom / zoom
+        val anchor = anchorProvider?.invoke()
         val oldChildWidth = getChildAt(0)?.width?.coerceAtLeast(1) ?: 1
-        val focusFraction = ((scrollX + focusX.coerceIn(0f, width.toFloat())) / oldChildWidth)
-            .coerceIn(0f, 1f)
+        val focus = focusX.coerceIn(0f, width.toFloat())
+        val focusFraction = ((scrollX + focus) / oldChildWidth).coerceIn(0f, 1f)
         zoom = newZoom
+        pendingTransformClear = true
+        // ① 布局前：宿主按新列宽重绑（钉新行高）+ 预滚到新比例 → 与换宽同一次布局
+        onZoomWillCommit?.invoke(newZoom, heightRatio, anchor)
         requestLayout()
-        afterNextLayout {
-            val childWidth = getChildAt(0)?.width?.coerceAtLeast(1) ?: return@afterNextLayout
+        // ② 新宽度/新行高落定、仍在绘制之前：恢复横向位置并通知宿主
+        afterChildLayoutChange {
+            pendingTransformClear = false
+            clearPreview()
+            val childWidth = getChildAt(0)?.width?.coerceAtLeast(1) ?: return@afterChildLayoutChange
             val maxScroll = (childWidth - width).coerceAtLeast(0)
-            val targetScroll = (focusFraction * childWidth - width / 2f).roundToInt().coerceIn(0, maxScroll)
+            // 同一个焦点比例 × 新内容宽 - 手指位置：手指下的内容保持不动（不再按视口中心算）
+            val targetScroll = (focusFraction * childWidth - focus).roundToInt().coerceIn(0, maxScroll)
             scrollTo(targetScroll, 0)
-            onZoomCommitted?.invoke(newZoom, anchor?.first ?: -1, anchor?.second ?: 0f)
+            onZoomCommitted?.invoke(newZoom, anchor)
         }
     }
 
-    /** 下一次全局布局结束后执行（未附着时退回 `post`）。 */
-    private fun afterNextLayout(action: () -> Unit) {
-        val observer = viewTreeObserver
-        if (!observer.isAlive) {
+    /**
+     * 等子视图下一次**宽度变化**的布局结束时执行（回调在 `layout()` 里、绘制之前）。
+     *
+     * 提交时列宽必然变化（缩放下限 0.01 倍 → 屏宽级以上至少几个像素），所以不会漏触发。
+     */
+    private fun afterChildLayoutChange(action: () -> Unit) {
+        val child = getChildAt(0)
+        if (child == null) {
             post(action)
             return
         }
-        observer.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
-            override fun onGlobalLayout() {
-                if (observer.isAlive) observer.removeOnGlobalLayoutListener(this)
+        child.addOnLayoutChangeListener(object : View.OnLayoutChangeListener {
+            override fun onLayoutChange(
+                v: View, left: Int, top: Int, right: Int, bottom: Int,
+                oldLeft: Int, oldTop: Int, oldRight: Int, oldBottom: Int,
+            ) {
+                if (right - left == oldRight - oldLeft) return
+                v.removeOnLayoutChangeListener(this)
                 action()
             }
         })

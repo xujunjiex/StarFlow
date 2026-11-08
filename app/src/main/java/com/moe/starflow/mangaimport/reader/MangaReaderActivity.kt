@@ -22,7 +22,6 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
-import android.view.ViewTreeObserver
 import android.view.WindowManager
 import android.widget.PopupWindow
 import androidx.appcompat.app.AlertDialog
@@ -977,14 +976,26 @@ class MangaReaderActivity : AppCompatActivity() {
                 if (a.itemCount > 0) a.notifyItemRangeChanged(0, a.itemCount)
             }
         }
-        // 整列缩放提交：列宽变了 → 按新宽度重绑可见页（行高/解码宽度都要重算）、
-        // 按新宽度重渲译图，并把阅读位置恢复到「缩放前那一页的同一比例处」。
+        // 整列缩放提交。⚠️ 分两步，且**位置必须在布局前**算好：
+        //   ① onZoomWillCommit（布局前）：重绑可见页（钉新行高）+ 把列表预滚到「新高度 × 原比例」。
+        //      等布局完再滚会让中间那一帧停在错误位置 —— 就是用户看到的"松手挪一下/闪一下"。
+        //   ② onZoomCommitted（新布局完成、绘制前）：译图按新宽度预热 + 同步当前页；不再动滚动位置。
         binding.webtoonZoom.anchorProvider = ::webtoonAnchor
-        binding.webtoonZoom.onZoomCommitted = { _, page, fraction ->
+        binding.webtoonZoom.onZoomWillCommit = { _, heightRatio, anchor ->
             val a = binding.webtoonList.adapter
             if (a != null && a.itemCount > 0) a.notifyItemRangeChanged(0, a.itemCount)
+            if (anchor != null && anchor.page >= 0 && mode == 3) {
+                val lm = binding.webtoonList.layoutManager as? LinearLayoutManager
+                // 行高与列宽等比：新位置 = 原比例 × 原行高 × 缩放比
+                val offset = if (anchor.heightPx > 0) {
+                    (anchor.fraction * anchor.heightPx * heightRatio).roundToInt()
+                } else 0
+                lm?.scrollToPositionWithOffset(anchor.page, -offset)
+            }
+        }
+        binding.webtoonZoom.onZoomCommitted = { _, _ ->
             translationController?.prewarmWebtoon(currentPage)
-            afterNextWebtoonLayout { restoreWebtoonAnchor(page, fraction) }
+            updateFromWebtoonScroll()
         }
         // 手势：仿真记录折线触点（返回 false 不打断手势）
         binding.viewPager.setOnTouchListener { _, e ->
@@ -1096,42 +1107,19 @@ class MangaReaderActivity : AppCompatActivity() {
     }
 
     /**
-     * 连续滚动当前阅读锚点：首个可见页 + 该页内已滚过的比例。
+     * 连续滚动当前阅读锚点：首个可见页 + 该页内已滚过的比例 + 该页当前像素高度。
      *
-     * 缩放提交**前**记录，重排后按比例恢复 —— 行高与列宽等比变化，比例不随缩放变。
+     * 缩放提交**前**记录：高度要一起带上，提交发生在布局之前，宿主只能按
+     * `高度 × 缩放比` 推算新位置（等布局完再问就已经晚一帧）。
      */
-    private fun webtoonAnchor(): Pair<Int, Float> {
-        val lm = binding.webtoonList.layoutManager as? LinearLayoutManager ?: return currentPage to 0f
+    private fun webtoonAnchor(): WebtoonZoomView.Anchor? {
+        val lm = binding.webtoonList.layoutManager as? LinearLayoutManager ?: return null
         val first = lm.findFirstVisibleItemPosition()
         val page = if (first == RecyclerView.NO_POSITION) currentPage else first
-        val view = lm.findViewByPosition(page)
-        val fraction = if (view != null && view.height > 0) (-view.top).toFloat() / view.height else 0f
-        return page to fraction.coerceIn(0f, 1f)
-    }
-
-    /** 缩放重排后按新行高恢复锚点（⚠️ 行高要等重绑布局完成，见 [afterNextWebtoonLayout]）。 */
-    private fun restoreWebtoonAnchor(page: Int, fraction: Float) {
-        if (mode != 3 || page < 0) return
-        val lm = binding.webtoonList.layoutManager as? LinearLayoutManager ?: return
-        val view = lm.findViewByPosition(page)
-        val offset = if (view != null && view.height > 0) -(fraction * view.height).roundToInt() else 0
-        lm.scrollToPositionWithOffset(page, offset)
-        updateFromWebtoonScroll()
-    }
-
-    /** 下一次全局布局结束后执行（缩放重排 / 重绑都要等新行高真正生效）。 */
-    private fun afterNextWebtoonLayout(action: () -> Unit) {
-        val observer = binding.webtoonList.viewTreeObserver
-        if (!observer.isAlive) {
-            binding.webtoonList.post(action)
-            return
-        }
-        observer.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
-            override fun onGlobalLayout() {
-                if (observer.isAlive) observer.removeOnGlobalLayoutListener(this)
-                action()
-            }
-        })
+        val view = lm.findViewByPosition(page) ?: return WebtoonZoomView.Anchor(page, 0f, 0)
+        val height = view.height
+        val fraction = if (height > 0) (-view.top).toFloat() / height else 0f
+        return WebtoonZoomView.Anchor(page, fraction.coerceIn(0f, 1f), height)
     }
 
     /** Webtoon 平滑滚动到指定页顶部（Koto 式点击定位每页开始位置）。 */
