@@ -209,8 +209,14 @@ class ReaderTranslationController(
         /** 首批半成品的独立缓存 key（见 [cachedDisplayBitmap]）。同样带底图签名。 */
         private fun partialKey(pageIndex: Int, baseSig: String) = "page:$pageIndex:PARTIAL:b$baseSig"
 
-        /** Webtoon 译图 key。同样带底图签名（底图换了旧译图必须失效）。 */
-        private fun webtoonKey(pageIndex: Int, baseSig: String) = "$pageIndex:b$baseSig"
+        /**
+         * Webtoon 译图 key：底图签名 + **上屏目标宽**。
+         *
+         * ⚠️ 宽度必须进 key：同一页在旋转/分屏/连续滚动缩放后列表宽度会变，
+         * 旧宽度渲染出来的译图被新行宽拉伸就是"整页糊"。换宽度后由预热按新宽度重渲。
+         */
+        private fun webtoonKey(pageIndex: Int, baseSig: String, targetWidth: Int) =
+            "$pageIndex:w$targetWidth:b$baseSig"
     }
 
     val version = MutableStateFlow(0L)
@@ -466,6 +472,8 @@ class ReaderTranslationController(
     @Volatile private var loadError: (Int) -> String? = { ownSource.pageError(it) }
     @Volatile private var loadWebtoon: ((Int) -> Bitmap?)? = null
     @Volatile private var originalWidthOf: ((Int) -> Int)? = null
+    /** 连续滚动列表当前宽度（px）；0 = 未知（未绑定/未布局）。译图缓存 key 的一环。 */
+    @Volatile private var webtoonTargetWidth: () -> Int = { 0 }
     @Volatile private var currentPageProvider: () -> Int = { -1 }
     @Volatile private var pageCount: () -> Int = { 0 }
 
@@ -587,6 +595,7 @@ class ReaderTranslationController(
         loadError = { ownSource.pageError(it) }
         loadWebtoon = null
         originalWidthOf = null
+        webtoonTargetWidth = { 0 }
         displayWidthProvider = { 0 }
         currentPageProvider = { -1 }
         pageCount = { ownSource.size }
@@ -598,14 +607,21 @@ class ReaderTranslationController(
     }
 
     /**
-     * Webtoon 页图来源：采样解码器 + 原图宽查询。
+     * Webtoon 页图来源：上屏解码器 + 原图宽查询 + 当前列表宽度。
      *
      * ⚠️ 不能用 [loadFull]：Webtoon 页可能是 1080×12000 的超长条，全解析一页就 50MB+，
-     * 而 Webtoon 显示宽度只有屏宽 —— 必须按屏宽采样解码，再把气泡坐标等比缩回去。
+     * 而 Webtoon 显示宽度只有屏宽 —— 必须按屏宽精确缩放，再把气泡坐标等比缩回去。
+     *
+     * [targetWidth] 是渲染 key 的一部分：连续滚动缩放后列表变宽，译图必须按新宽度重渲。
      */
-    fun bindWebtoonSource(loadWebtoon: (Int) -> Bitmap?, originalWidth: (Int) -> Int) {
+    fun bindWebtoonSource(
+        loadWebtoon: (Int) -> Bitmap?,
+        originalWidth: (Int) -> Int,
+        targetWidth: () -> Int = { 0 },
+    ) {
         this.loadWebtoon = loadWebtoon
         this.originalWidthOf = originalWidth
+        this.webtoonTargetWidth = targetWidth
     }
 
     // ========== 队列引擎 ==========
@@ -3182,11 +3198,16 @@ class ReaderTranslationController(
     /**
      * Webtoon 适配器同步取图（IO 线程安全）：该页**已渲染好**的译图，无则 null → 适配器回落原图。
      * 只读缓存，不做渲染（渲染由 [prewarmWebtoon] 在后台限范围预热）。
+     *
+     * ⚠️ 查询宽度必须与 [prewarmWebtoon] 渲染时用的列表宽度一致（见 [webtoonKey]）：
+     *    旋转/分屏/连续滚动缩放后宽度变了就查不到旧图，于是回落到原图、由预热按新宽度重渲。
      */
     fun webtoonCachedBitmap(pageIndex: Int): Bitmap? {
         if (!_webtoonTranslated.value) return null
         if (stateOf(pageIndex) != ImportedPageTranslation.STATE_SUCCESS) return null
-        return webtoonLru.get(webtoonKey(pageIndex, baseSig(pageIndex)))
+        val target = webtoonTargetWidth()
+        if (target <= 0) return null
+        return webtoonLru.get(webtoonKey(pageIndex, baseSig(pageIndex), target))
     }
 
     /**
@@ -3201,12 +3222,15 @@ class ReaderTranslationController(
         if (!_webtoonTranslated.value) return
         val total = pageCount()
         if (total <= 0) return
+        // 渲染宽度 = 当前列表宽。0 = 还没布局，等布局后的那次预热。
+        val target = webtoonTargetWidth()
+        if (target <= 0) return
 
         val from = (center - radius).coerceAtLeast(0)
         val to = (center + radius).coerceAtMost(total - 1)
         val pending = (from..to).filter { p ->
             stateOf(p) == ImportedPageTranslation.STATE_SUCCESS &&
-                webtoonLru.get(webtoonKey(p, baseSig(p))) == null
+                webtoonLru.get(webtoonKey(p, baseSig(p), target)) == null
         }
         if (pending.isEmpty()) return
 
@@ -3219,16 +3243,16 @@ class ReaderTranslationController(
                 if (!isActive) break
                 val row = rows.value[p] ?: continue
                 val bubbles = PageTranslationCodec.fromRow(row, cfg.fontSize, cfg.bgColor) ?: continue
-                // 按屏宽采样解码（防超长页 OOM），再把「原图空间」的气泡坐标等比缩到采样图
+                // 按列表宽精确缩放解码（防超长页 OOM），再把「原图空间」的气泡坐标等比缩到上屏图
                 val src = loader(p) ?: continue
                 val fullW = widthOf(p)
                 val scale = if (fullW > 0) src.width.toFloat() / fullW else 1f
                 val scaled = if (scale != 1f && scale > 0f) bubbles.map { it.scaledBy(scale) } else bubbles
-                // Webtoon 只有「原图」与「译文」两态：原图不经渲染（适配器直出采样图），
+                // Webtoon 只有「原图」与「译文」两态：原图不经渲染（适配器直出缩放图），
                 // 所以这里恒按译文渲染。
                 //
-                // ⚠️ **不用超分底图**：Webtoon 页是**按屏宽采样解码**的（超长条防 OOM），
-                //    而超分产物是"原图精确 2x"，拿它当底图要重算一套采样倍率，
+                // ⚠️ **不用超分底图**：Webtoon 页是**按列表宽精确缩放**的（超长条防 OOM），
+                //    而超分产物是"原图精确 2x"，拿它当底图要重算一套缩放倍率，
                 //    且 Webtoon 本来就禁用单页翻译、右下角也没有超分按钮（用户口径）。
                 val out = renderBubbles(
                     original = src, bubbles = scaled,
@@ -3241,7 +3265,7 @@ class ReaderTranslationController(
                     LogCollector.d(TAG, "prewarmWebtoon: 替换表已变，丢弃旧规则的译图 page=$p")
                     break
                 }
-                webtoonLru.put(webtoonKey(p, baseSig(p)), out)
+                webtoonLru.put(webtoonKey(p, baseSig(p), target), out)
                 withContext(Dispatchers.Main) { onVisual() }
             }
         }

@@ -119,9 +119,10 @@ class ReaderPageSource(
         override fun sizeOf(key: Int, value: Bitmap) = 1
     }
 
-    // Webtoon 连续滚动采样图缓存（按像素预算计数，避免滚动反复全图解码）
-    private val webtoonCache = object : LruCache<Int, Bitmap>(WEBTOON_CACHE_PIXEL_BUDGET) {
-        override fun sizeOf(key: Int, value: Bitmap) =
+    // Webtoon 连续滚动上屏图缓存（按像素预算计数，避免滚动反复全图解码）。
+    // ⚠️ key = 页号 + 目标宽（`webtoonKey`）：只按页号会让旋转/分屏/缩放后一直用旧宽度的图。
+    private val webtoonCache = object : LruCache<Long, Bitmap>(WEBTOON_CACHE_PIXEL_BUDGET) {
+        override fun sizeOf(key: Long, value: Bitmap) =
             value.allocationByteCount.coerceAtLeast(value.rowBytes * value.height)
     }
 
@@ -346,48 +347,97 @@ class ReaderPageSource(
     }
 
     /**
-     * Webtoon 连续滚动用：按目标宽度**采样解码**（不放大、限高），带 LRU 缓存。
-     * 300-400 页大漫画全图解码会内存爆炸/滚动卡死，必须降采样到屏宽再显示。
+     * Webtoon 连续滚动用：按目标宽度**精确缩放**（不放大、限高），带 LRU 缓存。
+     * 300-400 页大漫画全图解码会内存爆炸/滚动卡死，必须缩到屏宽再显示。
      * 应在 IO 线程调用。
+     *
+     * ⚠️ 缓存 key = **页号 + 目标宽**：同一页在旋转/分屏/连续滚动缩放后宽度会变，
+     * 只按页号做 key 会一直返回旧宽度的图（旧宽度被新行宽拉伸 → 糊）。
      */
-    /** 翻起区采样目标宽（主线程安全设置；由阅读器打开时设为屏幕宽）。 */
-    @Volatile
-    var webtoonWidth = 0
-
     fun loadWebtoon(position: Int, targetWidth: Int): Bitmap? {
         if (!pageAvailable(position)) return null
         if (closed) return null
-        webtoonCache.get(position)?.let { return it }
-        val bmp = decodeWebtoon(position, targetWidth)
-        if (bmp != null) webtoonCache.put(position, bmp)
+        val target = targetWidth.coerceAtLeast(1)
+        val widthTag = webtoonWidthTag(position, target)
+        // widthTag == 0：尺寸元数据读不到 → 退回整页解码（与旧行为一致），不进缓存避免过期尺寸
+        val key = webtoonKey(position, widthTag)
+        if (widthTag > 0) webtoonCache.get(key)?.let { return it }
+        val bmp = decodeWebtoon(position, target, widthTag) ?: return null
+        if (widthTag > 0) webtoonCache.put(key, bmp)
         return bmp
     }
 
     /**
-     * 主线程安全：取下一页采样图供翻起区绘制。
-     * 缓存未命中时**同步解码兜底**（每页仅一次，随后命中缓存）→ 翻起区一定有下一页，不黑屏。
+     * 该页在目标宽下的**解码宽度标签**（缓存 key 用）。
+     *
+     * - PDF 直接按目标宽光栅化，尺寸由纯函数决定 → 用目标宽当标签（不为查尺寸多开一次页）；
+     * - 图片用 [PdfRasterPolicy.webtoonSize] 的实际输出宽；
+     * - `0` = 原图尺寸读不到（调用方退回整页解码且不缓存）。
      */
-    fun peekWebtoon(position: Int): Bitmap? {
-        if (closed) return null
-        webtoonCache.get(position)?.let { return it }
-        if (webtoonWidth <= 0) return null
-        val bmp = decodeWebtoon(position, webtoonWidth)
-        if (bmp != null) webtoonCache.put(position, bmp)
-        return bmp
+    private fun webtoonWidthTag(position: Int, targetWidth: Int): Int {
+        if (sourceIndex?.pages?.getOrNull(position)?.kind == "PDF" || isPdf) return targetWidth
+        val srcW = originalWidth(position)
+        val srcH = originalHeight(position)
+        if (srcW <= 0 || srcH <= 0) return 0
+        return PdfRasterPolicy.webtoonSize(srcW, srcH, targetWidth)[0]
     }
 
-    private fun decodeWebtoon(position: Int, targetWidth: Int): Bitmap? {
+    private fun webtoonKey(position: Int, widthTag: Int): Long =
+        (position.toLong() shl 32) or (widthTag.toLong() and 0xFFFF_FFFFL)
+
+    private fun decodeWebtoon(position: Int, targetWidth: Int, widthTag: Int): Bitmap? {
         if (closed) return null
         return try {
-            if (sourceIndex?.pages?.getOrNull(position)?.kind == "PDF") indexed(position) { child, page -> child.loadWebtoon(page, targetWidth) }
-            else if (isPdf) pdfRenderToWidth(position, targetWidth)
-            else {
-                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                openEntry(position)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-                decodeEntryScaled(position, computeSample(bounds.outWidth, bounds.outHeight, targetWidth))
+            if (sourceIndex?.pages?.getOrNull(position)?.kind == "PDF") {
+                indexed(position) { child, page -> child.loadWebtoon(page, targetWidth) }
+            } else if (isPdf) {
+                pdfRenderToWidth(position, targetWidth)
+            } else if (widthTag <= 0) {
+                // 尺寸元数据读不到：整页解码兜底（旧 `sampleFor(0,0,…) = 1` 的行为）
+                openEntry(position)?.use { BitmapFactory.decodeStream(it) }
+            } else {
+                val srcW = originalWidth(position)
+                val srcH = originalHeight(position)
+                val size = PdfRasterPolicy.webtoonSize(srcW, srcH, targetWidth)
+                if (size[0] < minOf(srcW, targetWidth)) {
+                    // 只会在长页被 12×目标宽 / 12M 上限压到这里（图源本身窄于屏幕不算），
+                    // 留着排查"为什么这一页还是被放大"
+                    LogCollector.d(
+                        TAG,
+                        "webtoon 上屏尺寸受内存上限限制 position=$position src=${srcW}x$srcH " +
+                            "target=$targetWidth out=${size[0]}x${size[1]}",
+                    )
+                }
+                val decoded = decodeEntryScaled(position, decodeSampleFor(srcW, size[0])) ?: return null
+                if (decoded.width == size[0] && decoded.height == size[1]) decoded
+                else exactScale(decoded, size[0], size[1])
             }
-        } catch (e: Exception) { LogCollector.w(TAG, "读取采样页失败", e); null }
+        } catch (e: Exception) {
+            LogCollector.w(TAG, "读取采样页失败", e)
+            null
+        }
     }
+
+    /**
+     * 解码采样率：**解码宽必须 ≥ 目标宽**（先解大再精确缩，避免"解小了再放大"的白丢分辨率）。
+     * 只在 [MAX_DECODE_SAMPLE] 内取 2 的幂。
+     */
+    private fun decodeSampleFor(srcWidth: Int, outWidth: Int): Int {
+        var sample = 1
+        while (sample < MAX_DECODE_SAMPLE && srcWidth / (sample * 2) >= outWidth.coerceAtLeast(1)) sample *= 2
+        return sample
+    }
+
+    /** 精确缩到上屏尺寸；缩放失败时退回解码出来的那张（比白屏强），成功时回收中间位图。 */
+    private fun exactScale(decoded: Bitmap, outW: Int, outH: Int): Bitmap =
+        try {
+            val scaled = Bitmap.createScaledBitmap(decoded, outW, outH, true)
+            if (scaled !== decoded && !decoded.isRecycled) decoded.recycle()
+            scaled
+        } catch (e: Exception) {
+            LogCollector.w(TAG, "上屏缩放失败 ${decoded.width}x${decoded.height} → ${outW}x$outH", e)
+            decoded
+        }
 
     /** 页图**原始**尺寸缓存（只读元数据，不解码像素）。0 = 读不到。
      *  ConcurrentHashMap：主线程（适配器钉行高）与 IO 线程（译图缩放）都会读。 */
@@ -396,9 +446,9 @@ class ReaderPageSource(
 
     /** 该页**原图**宽度（只读元数据，不解码像素）。读不到返回 0。
      *
-     * 用途：Webtoon 译图必须按屏宽**采样解码**（Webtoon 页可能是 1080×12000，全解析一页就
-     * 50MB+），而气泡坐标是在**原图空间**算出来的 —— 渲染到采样图时必须按
-     * `采样图宽 ÷ 原图宽` 等比缩放，否则译文会整体偏移、字号也不对。
+     * 用途：Webtoon 上屏图与译图都按屏幕宽度**精确缩放**（Webtoon 页可能是 1080×12000，全解析一页就
+     * 50MB+），而气泡坐标是在**原图空间**算出来的 —— 渲染到缩放图上时必须按
+     * `上屏图宽 ÷ 原图宽` 等比缩放，否则译文会整体偏移、字号也不对。
      */
     fun originalWidth(position: Int): Int {
         if (nativeArchive == null && (isArchive || isPdf || com.moe.starflow.library.LibrarySessions.findFile(File(localRoot))?.first?.storage !is com.moe.starflow.library.SafLibraryStorage)
@@ -463,13 +513,6 @@ class ReaderPageSource(
         originalWidths[position] = w
         originalHeights[position] = h
     }
-
-    /** 采样率：按目标宽度适配 + 限制超高页 + 限制总像素（防超大页 OOM 卡死）。
-     *
-     *  ⚠️ 判据**只有一份**（[PdfRasterPolicy.sampleFor]）：图片路径与 PDF 路径共用它，
-     *     各写一份就会出现"同一页在原图/Webtoon 下算出不同尺寸"，气泡缩放系数随之对不上。 */
-    private fun computeSample(boundsW: Int, boundsH: Int, targetWidth: Int): Int =
-        PdfRasterPolicy.sampleFor(boundsW, boundsH, targetWidth)
 
     private fun decodeThumb(position: Int): Bitmap? {
         if (closed) return null
@@ -569,6 +612,8 @@ class ReaderPageSource(
     private companion object {
         const val THUMB_SAMPLE = 4
         const val MAX_THUMBS = 48
+        /** 解码采样率上限（2 的幂）：防止异常超宽图把循环拖长。 */
+        const val MAX_DECODE_SAMPLE = 64
         // Webtoon 采样缓存像素预算（~60MB，约覆盖十几屏）
         const val WEBTOON_CACHE_PIXEL_BUDGET = 60 * 1024 * 1024
         // PDF 走旧 zip 链路导出原文时的 JPEG 质量（正式出口是 PDF，见 ReaderPdfExport）

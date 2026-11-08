@@ -22,6 +22,7 @@ import android.view.LayoutInflater
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
 import android.view.WindowManager
 import android.widget.PopupWindow
 import androidx.appcompat.app.AlertDialog
@@ -79,6 +80,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.util.zip.ZipOutputStream
+import kotlin.math.roundToInt
 
 /**
  * 漫画阅读器（复刻 Kototoro）：4 阅读模式(LTR/RTL/竖排/Webtoon) +
@@ -334,14 +336,14 @@ class MangaReaderActivity : AppCompatActivity() {
                             ?: resources.displayMetrics.widthPixels
                     },
                 )
-                // Webtoon 译图走采样解码（超长页直接全解析会 OOM），气泡坐标按采样比例缩放
+                // Webtoon 译图按列表宽精确缩放（超长页直接全解析会 OOM），气泡坐标按缩放比例还原
                 c.bindWebtoonSource(
                     loadWebtoon = { p ->
-                        val w = binding.webtoonList.width.takeIf { it > 0 }
-                            ?: resources.displayMetrics.widthPixels
-                        source.loadWebtoon(p, w)
+                        source.loadWebtoon(p, webtoonTargetWidth())
                     },
                     originalWidth = { p -> source.originalWidth(p) },
+                    // 上屏宽度也是译图缓存 key 的一环：旋转/分屏/整列缩放后按新宽度重渲
+                    targetWidth = { webtoonTargetWidth() },
                 )
                 c.onVisual = { runOnUiThread { applyPageVisual(currentPage) } }
                 c.onPhase = ::onTranslatePhase
@@ -551,15 +553,18 @@ class MangaReaderActivity : AppCompatActivity() {
             // 默认的 DefaultItemAnimator 会给每次刷新叠一层**淡出淡入** → 页面持续闪、像"一直在变"。
             // 同理 notifyDataSetChanged（切原图/译文）也会整体过一遍淡入淡出。
             binding.webtoonList.itemAnimator = null
-            binding.webtoonList.visibility = View.VISIBLE
+            // 整列缩放容器（双指/双击放大；上下滚动仍由列表自己处理）
+            binding.webtoonZoom.resetZoom()
+            binding.webtoonZoom.visibility = View.VISIBLE
             binding.viewPager.visibility = View.GONE
             translationController?.prewarmWebtoon(currentPage)
             return
         }
-        // 离开 Webtoon：作废 Webtoon 渲染缓存（换回翻页模式后不再需要）
+        // 离开 Webtoon：作废 Webtoon 渲染缓存（换回翻页模式后不再需要），缩放复位
         translationController?.clearWebtoonCache()
         binding.webtoonList.adapter = null
-        binding.webtoonList.visibility = View.GONE
+        binding.webtoonZoom.resetZoom()
+        binding.webtoonZoom.visibility = View.GONE
         binding.viewPager.visibility = View.VISIBLE
 
         // 竖排模式（Koto VERTICAL）= 竖向整页 Pager，逐页上/下切换；其余横向
@@ -581,6 +586,15 @@ class MangaReaderActivity : AppCompatActivity() {
         applyAnimation()
         applyPageImageSource()
     }
+
+    /**
+     * 连续滚动当前的上屏宽度（px）。
+     *
+     * ⚠️ 列表宽度会变：旋转/分屏会变，**整列缩放**（连续滚动双指放大）也会变。
+     * 页图解码与译图渲染都按这个宽度走，缓存 key 里也带着它 —— 不能缓存成定值。
+     */
+    private fun webtoonTargetWidth(): Int =
+        binding.webtoonList.width.takeIf { it > 0 } ?: resources.displayMetrics.widthPixels
 
     /**
      * 翻页动画：0无(直接跳) / 1默认(滑动) / 2高级(封面叠放) / 3仿真(页脚卷曲翻页)。
@@ -673,6 +687,8 @@ class MangaReaderActivity : AppCompatActivity() {
         super.onConfigurationChanged(newConfig)
         // 趁布局还没跑（currentPage 还没被 resize 期间的 onPageSelected 改掉）先记下当前页
         pendingRealignPage = currentPage
+        // 旋转/分屏后列宽变了：连续滚动缩放回 1×（与分页模式旋转后 fitCenter 复位同一语义）
+        binding.webtoonZoom.resetZoom()
         applyBackground()
         applyAnimation()
         // ⚠️ 旋转/分屏会改变浮层窗口的系统栏内缩量，而**胶囊高度可能一点没变** → 不主动重推的话
@@ -950,14 +966,25 @@ class MangaReaderActivity : AppCompatActivity() {
             if (or_ - ol == 0 || ob - ot == 0) return@addOnLayoutChangeListener
             realignPagerAfterResize()
         }
-        // Webtoon：行高是按「绑定那一刻的 View 宽度」钉死的，宽度一变（旋转/分屏）旧值就失真
+        // Webtoon：行高是按「绑定那一刻的 View 宽度」钉死的，视口宽度一变（旋转/分屏）旧值就失真
         // （图片按错误宽高比 fitCenter，两侧留白带），必须重绑让适配器按新宽度重算。
+        // ⚠️ 监听**缩放容器**而不是列表：列表宽度现在还会随「整列缩放」变化，
+        //    用它判断会把缩放提交误当成旋转再重绑一次。
         // 只注册一次；重绑后宽度不变 → 不会再次触发，无循环风险。
-        binding.webtoonList.addOnLayoutChangeListener { _, l, _, r, _, ol, _, or_, _ ->
+        binding.webtoonZoom.addOnLayoutChangeListener { _, l, _, r, _, ol, _, or_, _ ->
             if (r - l != or_ - ol && mode == 3) {
                 val a = binding.webtoonList.adapter ?: return@addOnLayoutChangeListener
                 if (a.itemCount > 0) a.notifyItemRangeChanged(0, a.itemCount)
             }
+        }
+        // 整列缩放提交：列宽变了 → 按新宽度重绑可见页（行高/解码宽度都要重算）、
+        // 按新宽度重渲译图，并把阅读位置恢复到「缩放前那一页的同一比例处」。
+        binding.webtoonZoom.anchorProvider = ::webtoonAnchor
+        binding.webtoonZoom.onZoomCommitted = { _, page, fraction ->
+            val a = binding.webtoonList.adapter
+            if (a != null && a.itemCount > 0) a.notifyItemRangeChanged(0, a.itemCount)
+            translationController?.prewarmWebtoon(currentPage)
+            afterNextWebtoonLayout { restoreWebtoonAnchor(page, fraction) }
         }
         // 手势：仿真记录折线触点（返回 false 不打断手势）
         binding.viewPager.setOnTouchListener { _, e ->
@@ -1048,18 +1075,63 @@ class MangaReaderActivity : AppCompatActivity() {
         for (p in from..to) a.notifyItemChanged(p)
     }
 
-    /** Webtoon 点击：点下半屏=平滑滚动到下一页顶部，上半屏=上一页顶部；中间一格=显隐 UI，右上角=菜单。 */
+    /**
+     * Webtoon 点击：点下半屏=平滑滚动到下一页顶部，上半屏=上一页顶部；中间一格=显隐 UI，右上角=菜单。
+     *
+     * ⚠️ 触摸坐标是**列表坐标**（整列放大后列表比视口宽），而分区必须按**视口**算：
+     *    减去横向滚动量，宽度取缩放容器宽度 —— 否则放大后「右上角菜单」「中间格」都会整体右移。
+     */
     private fun webtoonTapToPage(y: Float, x: Float) {
-        val w = binding.webtoonList.width.toFloat()
-        val h = binding.webtoonList.height.toFloat()
+        val w = binding.webtoonZoom.width.toFloat()
+        val h = binding.webtoonZoom.height.toFloat()
         if (w <= 0f || h <= 0f) return
-        if (consumeChromeOrMenuTap(x, y, w, h)) return
+        val viewportX = x - binding.webtoonZoom.scrollX
+        if (consumeChromeOrMenuTap(viewportX, y, w, h)) return
         val lm = binding.webtoonList.layoutManager as? androidx.recyclerview.widget.LinearLayoutManager ?: return
         val cur = lm.findFirstVisibleItemPosition()
         if (cur == androidx.recyclerview.widget.RecyclerView.NO_POSITION) return
         val delta = if (y >= h / 2f) 1 else -1
         webtoonSmoothScrollToTop((cur + delta).coerceIn(0, (source.size - 1).coerceAtLeast(0)))
         lastInteractionMs = SystemClock.elapsedRealtime()
+    }
+
+    /**
+     * 连续滚动当前阅读锚点：首个可见页 + 该页内已滚过的比例。
+     *
+     * 缩放提交**前**记录，重排后按比例恢复 —— 行高与列宽等比变化，比例不随缩放变。
+     */
+    private fun webtoonAnchor(): Pair<Int, Float> {
+        val lm = binding.webtoonList.layoutManager as? LinearLayoutManager ?: return currentPage to 0f
+        val first = lm.findFirstVisibleItemPosition()
+        val page = if (first == RecyclerView.NO_POSITION) currentPage else first
+        val view = lm.findViewByPosition(page)
+        val fraction = if (view != null && view.height > 0) (-view.top).toFloat() / view.height else 0f
+        return page to fraction.coerceIn(0f, 1f)
+    }
+
+    /** 缩放重排后按新行高恢复锚点（⚠️ 行高要等重绑布局完成，见 [afterNextWebtoonLayout]）。 */
+    private fun restoreWebtoonAnchor(page: Int, fraction: Float) {
+        if (mode != 3 || page < 0) return
+        val lm = binding.webtoonList.layoutManager as? LinearLayoutManager ?: return
+        val view = lm.findViewByPosition(page)
+        val offset = if (view != null && view.height > 0) -(fraction * view.height).roundToInt() else 0
+        lm.scrollToPositionWithOffset(page, offset)
+        updateFromWebtoonScroll()
+    }
+
+    /** 下一次全局布局结束后执行（缩放重排 / 重绑都要等新行高真正生效）。 */
+    private fun afterNextWebtoonLayout(action: () -> Unit) {
+        val observer = binding.webtoonList.viewTreeObserver
+        if (!observer.isAlive) {
+            binding.webtoonList.post(action)
+            return
+        }
+        observer.addOnGlobalLayoutListener(object : ViewTreeObserver.OnGlobalLayoutListener {
+            override fun onGlobalLayout() {
+                if (observer.isAlive) observer.removeOnGlobalLayoutListener(this)
+                action()
+            }
+        })
     }
 
     /** Webtoon 平滑滚动到指定页顶部（Koto 式点击定位每页开始位置）。 */
@@ -2717,6 +2789,8 @@ class MangaReaderActivity : AppCompatActivity() {
         val bg = resolveBgColor()
         binding.root.setBackgroundColor(bg)
         binding.viewPager.setBackgroundColor(bg)
+        // 整列缩放时列表比视口宽，容器露出的部分也要是阅读背景色（不能是黑底）
+        binding.webtoonZoom.setBackgroundColor(bg)
         binding.webtoonList.setBackgroundColor(bg)
         // 进度条配色固定（压在半透明深色胶囊上），不随页面背景深浅变化
         binding.tvPageIndicator.setTextColor(if (isDarkBackground()) Color.WHITE else Color.BLACK)

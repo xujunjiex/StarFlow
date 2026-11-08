@@ -144,14 +144,23 @@ class PdfPageRenderer(private val file: File) : Closeable {
     }
 
     /**
-     * 按**目标宽度**渲染采样图（Webtoon 连续滚动用）。
+     * 按**目标宽度**渲染上屏图（Webtoon 连续滚动用）。
      *
-     * 一次 `openPage` 内完成"读页尺寸 → 算采样尺寸 → 渲染"：曾经的写法是
+     * 一次 `openPage` 内完成"读页尺寸 → 算上屏尺寸 → 渲染"：曾经的写法是
      * `canonicalSize()` 开一次 + `render()` 再开一次（真机实测 `openPage` 0.9~27ms/页，
      * 而 Webtoon 一次要绑好几页）。
+     *
+     * ⚠️ 尺寸走 [PdfRasterPolicy.webtoonSize]（**精确目标宽**，不再是 2 的幂采样）：
+     *    页面比屏幕宽一点时不会再被砍成半宽。
      */
     fun renderSampledToWidth(index: Int, targetWidthPx: Int): Bitmap? =
-        renderScaled(index) { canonical -> PdfRasterPolicy.sampledSize(canonical, targetWidthPx) }
+        renderScaled(index) { canonical ->
+            PdfRasterPolicy.webtoonSize(
+                canonical.getOrElse(0) { 1 },
+                canonical.getOrElse(1) { 1 },
+                targetWidthPx,
+            )
+        }
 
     /** 按整数采样率渲染缩略图（预览网格用）。同上：一次 `openPage`。 */
     fun renderScaledBySample(index: Int, sample: Int): Bitmap? =

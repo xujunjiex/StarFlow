@@ -17,7 +17,8 @@
 
 **阅读器（`MangaReaderActivity`）**：
 - 存储统一走 `ReaderPageSource`（zip=`ZipFile`/目录=文件枚举；解析页 + 全图 + 缩略图 `LruCache`），`ReaderAdapters` 两种渲染：单页 `ViewPager2`(横/竖/竖排)、**Webtoon 连续滚动**（竖 `RecyclerView`）。⚠️ **横屏双页已移除**（`DoublePageAdapter` + `item_reader_double_page.xml` 已删）：横屏与竖屏同为单页，翻译逻辑不再受朝向影响
-- Webtoon 图片按屏宽**采样解码**（`loadWebtoon` + `computeSample` 限高比 ~12:1 / 限单幅像素 ~48MB）+ 像素预算 `LruCache`（~64MB，防大漫画滚动卡死/OOM）；zip **复用单例 `ZipFile`**（免每页重读中央目录，数百页漫画关键开销）；`peekWebtoon` 主线程安全同步解码兜底下一页（翻起区不黑屏）
+- Webtoon 图片按目标宽**精确缩放**（`loadWebtoon` → `PdfRasterPolicy.webtoonSize`：宽 = min(原宽, 目标宽)，只缩不放；超 12×目标宽 / 12M 像素才按比例继续缩）+ 像素预算 `LruCache`（~64MB，防大漫画滚动卡死/OOM）。⚠️ **不要再退回"2 的幂采样率"**：`inSampleSize` 只有 1/2/4…，原图 1600 宽、屏幕 1220 时会解成 800 宽再被拉回 1220（1.5 倍插值放大，整页发糊，用户报过「只有连续滚动糊」）。缓存 key = **页号 + 宽度**（旋转/分屏/整列缩放后必须按新宽度重解码）；zip **复用单例 `ZipFile`**（免每页重读中央目录，数百页漫画关键开销）。守卫：`PdfRasterPolicyTest`、`WebtoonDecodeQualityTest`
+- **连续滚动整列缩放**（`WebtoonZoomView`，`activity_manga_reader.xml` 里包住 `webtoonList`）：双指/双击把**列宽**放大到 1–3×（子视图宽 = 视口 × zoom，高度恒为一屏），**上下滚动仍由 RecyclerView 自己处理**（这是与分页模式的关键区别：分页放大后锁翻页，连续滚动放大后还要能往下滑）。放大后左右拖动看屏幕外部分；未放大时容器完全不参与手势。捏合期间用子视图 `scaleX/scaleY` 预览，**松手才提交**（提交会重排 + 重绑 + 按新宽度重解码，不能每帧做）；提交回调里宿主重绑可见页、按新宽度重渲译图、按「页号 + 页内比例」恢复阅读位置。⚠️ 视口宽度监听要挂在 `webtoonZoom` 上，不能挂 `webtoonList`（列表宽度现在会随缩放变化）；⚠️ 点击分区必须把 x 换算回视口坐标（`x - webtoonZoom.scrollX`）
 - **阅读模式**（prefs `manga_reader` 的 `reader_mode`）：0=LTR 1=RTL（页码不变，页面/滑动手势/点击分区反转）2=竖排 3=Webtoon
 - 竖排模式 = **竖向整页 `ViewPager2`**（`ORIENTATION_VERTICAL`），`handleTap` 点上半=上一页/下半=下一页
 - **翻页动画**（`reader_animation`）：0无=`NoneTransformer`（**全程静止钉住当前页**，点击/滑动/自动一律无过渡、落整瞬间换页）1默认=null(ViewPager2 滑动) 2高级=`CoverTransformer`(封面叠放) 3仿真=`SimulationTransformer`+`ReaderCurl.kt` 的 `CurlPageView`(页脚卷曲、镜像纸背)；`configChanges` 声明旋转不重建
@@ -111,10 +112,11 @@
 - ⚠️ **旋转后有三处尺寸/位置必须主动重算**（移除横屏双页时踩过，三处都是显式补的，且都靠 `viewPager` 布局回调在**新尺寸布局跑完之后**触发）：
   ① `ZoomableImageView.onSizeChanged` 复位 `isInitialized` —— 它只在 `!isInitialized` 时 `fitCenter()`，而 `isInitialized=false` **只发生在 `setImageDrawable()`**；旋转后 View 尺寸变了但没有新 drawable 进来 → `imageMatrix` 仍是按旧视口算的 → 图片偏位 + 上下被裁，要等翻页/重绑才自愈。
   ② `MangaReaderActivity.realignPagerAfterResize()` 重新吸附 + 重绑目标页 —— ViewPager2 内部 RecyclerView 把滚动位置**按像素**保留，旧视口的偏移量在新视口里不再落在页边界上 → **画面停在两页之间（各露半张），必须点一下/滑一下才吸附回来**。⚠️ **不能靠 `viewPager.setCurrentItem(当前页, false)`**：ViewPager2 在「已经是当前页 && 滚动空闲」时直接 return（源码里的早退分支），而旋转后正是这个状态；必须直接对内部 `RecyclerView` 调 `scrollToPosition(target)`（RecyclerView 1.1.0 的 `LinearLayoutManager.scrollToPosition` 会清 offset 走 anchor 重排，能把半页偏移吸回边界），再走 `applyPageVisual(target)` 重绑（不是裸 `notifyItemChanged`——那样译图被 LRU 淘汰时会退回原图）。⚠️ `target` 用**尺寸变化前**（`onConfigurationChanged` 里）记下的 `pendingRealignPage`，不是当时的 `currentPage`：resize 期间的布局会让 ViewPager2 把「吸附页」重算成别页并派发 `onPageSelected`，`currentPage` 已被改掉 → 照它对齐会停到错页。
-  ③ `webtoonList` 的宽度变化监听重绑可见页 —— Webtoon 行高是按「绑定那一刻的 View 宽度」钉死的，旋转后失真（图片按错误宽高比 `fitCenter`、两侧出现留白带）。
+  ③ `webtoonZoom` 的宽度变化监听重绑可见页 —— Webtoon 行高是按「绑定那一刻的 View 宽度」钉死的，旋转后失真（图片按错误宽高比 `fitCenter`、两侧出现留白带）。⚠️ 挂**缩放容器**而不是列表：列表宽度现在还会随整列缩放变化。
   **原先这三条都由 `refreshPagerForOrientation() → applyPager()` 重建 adapter 隐式兜住**；删掉重建就要显式补回来。⚠️ 用 `addOnLayoutChangeListener` 而不是 `view.post`：配置变更回调跑在**新布局之前**，`post` 的 Runnable 会在下一次 vsync 的 traversal 之前执行 → 拿到的还是旧几何
 - ⚠️ **Webtoon 切换显示态 = 一次性全量重绑，不做逐页增量**：`notifyItemRangeChanged(0, itemCount)`。逐页增量刷新是新旧图交替闪跳的来源。用 `notifyItemRangeChanged` 而非 `notifyDataSetChanged` —— 后者是 structure-changed 事件，会重置布局锚点把滚动位置弹掉
-- ⚠️ **Webtoon 切换时不要 `evictAll` 译图缓存**：`webtoonLru` 里只有译图（原图由适配器直接采样解码，从不进这个缓存），切到原图时 `webtoonCachedBitmap` 按 flag 短路返回 null 即可。留着缓存 → 切回译文**秒回**；清掉 → 每次切换都得重渲附近几页，正是卡顿来源。（`clearWebtoonCache()` 只在**离开** Webtoon 时清，那是为了放内存）
+- ⚠️ **Webtoon 切换时不要 `evictAll` 译图缓存**：`webtoonLru` 里只有译图（原图由适配器直接按宽度精确解码，从不进这个缓存），切到原图时 `webtoonCachedBitmap` 按 flag 短路返回 null 即可。留着缓存 → 切回译文**秒回**；清掉 → 每次切换都得重渲附近几页，正是卡顿来源。（`clearWebtoonCache()` 只在**离开** Webtoon 时清，那是为了放内存）
+- ⚠️ **Webtoon 译图缓存 key 含上屏宽度**（`webtoonKey(page, sig, targetWidth)`）：旋转/分屏/整列缩放后列表宽度变了，旧宽度的渲染结果被新行宽拉伸就是糊；`bindWebtoonSource` 的 `targetWidth` 与 `webtoonCachedBitmap` 必须读同一个宽度源（`binding.webtoonList.width`）。
 - ⚠️ **Webtoon 行高必须按页图原始宽高比钉死**：`item_webtoon_page.xml` 的 ImageView 是 `wrap_content + adjustViewBounds`，`setImageDrawable(null)` 会让**行高塌成 0** → 列表连锁重排 → 用户看到「页面一直跳、旧图清不掉、新图不进来」。绑定开头用 `source.originalWidth/Height` 算出 `targetW × oh/ow` 写进 layoutParams（原图与译图宽高比一致，钉一次永久有效）。新增了 `ReaderPageSource.originalHeight()`
 - ⚠️ **`webtoonList.itemAnimator = null` 必须关**（`applyPager` 的 webtoon 分支）：默认 `DefaultItemAnimator` 会给每次 `notifyItemChanged`（译图渲染完成）叠一层**淡出淡入** → 表现为「页面一直在变」。（`viewPager` 那边早就关了，Webtoon 这个漏了）
 - ⚠️ **Webtoon 适配器三件套缺一不可**（`WebtoonAdapter`）：①**重绑前 cancel 上一次取图**（`VH.loadJob`）—— 切显示态时同页连续重绑两次（先慢速解码原图、后缓存命中秒回译图），不取消则慢的那次最后落地把译图覆盖回原图 → 「点了没反应/状态自己弹回去」；②**同一 holder 重绑同一页时不清图**（`VH.boundPage` 判定）—— 无条件清图会闪一帧白，只有 holder 被复用去显示**别页**才清图+转圈；③落地前 `!isActive` + `adapterPosition == position` 双校验
@@ -265,12 +267,12 @@
   两处算法不一致 = 气泡框画在别处（看起来像随机错位，极难排查）。
 - `RASTER_DPI = 300` 是**钉死的基线**（A5≈1750×2479、B5≈2150×3033）：
   改它等于改所有 PDF 页的坐标空间、老译文全废 → `PdfRasterPolicyTest` 直接锁住这个数字。
-- 上限：长边 `MAX_LONG_SIDE=4096`、总像素 `MAX_PIXELS=12M`（与 `computeSample` 同口径）；
+- 上限：长边 `MAX_LONG_SIDE=4096`、总像素 `MAX_PIXELS=12M`（与上屏尺寸同一口径）；
   下限 `MIN_LONG_SIDE=600`（异常小的页面也要能 OCR）。Webtoon/缩略图**在目标尺寸上直接光栅化**
   （**分辨率只由目标位图的尺寸决定**，`render` 的 `transform` 传 `null`，见 ④ 的实测结论）。
-- **采样判据也只有一处**：`PdfRasterPolicy.sampleFor`（目标宽 + 12:1 高宽比 + 12M 像素），
-  图片路径的 `ReaderPageSource.computeSample` 已改成**委托**它 —— 两边各写一份就会出现
-  "同一页在原图/Webtoon 下算出不同尺寸"，气泡缩放系数随之对不上。
+- **上屏尺寸判据也只有一处**：`PdfRasterPolicy.webtoonSize`（目标宽精确缩放 + 12×目标宽绝对高 + 12M 像素），
+  图片路径（`ReaderPageSource.loadWebtoon`）与 PDF 路径（`PdfPageRenderer.renderSampledToWidth`）都调它 ——
+  两边各写一份就会出现"同一页在原图/Webtoon 下算出不同尺寸"，气泡缩放系数随之对不上。
 - ⚠️ **权威位图缓存的预算必须 ≥ 单页上限**（`CANONICAL_CACHE_BUDGET_BYTES = 64MB` ≥ `MAX_PIXELS×4B = 48MB`）：
   `LruCache` 对"单条比 maxSize 还大"的条目会在 `put` 之后**立刻把自己挤出去** → 缓存恒不命中，
   同一页在一次"显示 + OCR + 超分 + 导出"里被重渲 2~4 次（每次 300~600ms）还每次抢渲染锁。

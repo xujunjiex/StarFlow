@@ -12,12 +12,22 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"/>
 
-    <!-- Webtoon 连续滚动模式（竖列表，懒加载） -->
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/webtoonList"
+    <!-- Webtoon 连续滚动模式（竖列表，懒加载）
+         ⚠️ 外层是「整列缩放」容器：子视图宽度 = 视口宽 × zoom（放大时比屏幕宽，可左右拖动），
+            高度恒为一屏，**上下滚动仍由 RecyclerView 自己处理**。未放大时容器不参与任何手势。 -->
+    <com.moe.starflow.mangaimport.reader.WebtoonZoomView
+        android:id="@+id/webtoonZoom"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:visibility="gone"/>
+        android:overScrollMode="never"
+        android:scrollbars="none"
+        android:visibility="gone">
+
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/webtoonList"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"/>
+    </com.moe.starflow.mangaimport.reader.WebtoonZoomView>
 
     <!-- 顶部左侧返回按钮 -->
     <FrameLayout

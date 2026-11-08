@@ -96,7 +96,7 @@ class PdfRasterPolicyTest {
     @Test
     fun `downscaleDividesBySampleAndNeverCollapses`() {
         assertEquals(listOf(500, 700), PdfRasterPolicy.downscale(intArrayOf(2000, 2800), 4).toList())
-        // sample <= 1 = 原样（缩略图/Webtoon 的采样率就是"1,2,4,8…"）
+        // sample <= 1 = 原样（缩略图的采样率就是"1,2,4,8…"）
         assertEquals(listOf(2000, 2800), PdfRasterPolicy.downscale(intArrayOf(2000, 2800), 1).toList())
         assertEquals(listOf(2000, 2800), PdfRasterPolicy.downscale(intArrayOf(2000, 2800), 0).toList())
         // 极端采样也不能得到 0（Bitmap.createBitmap(0, h) 直接抛异常）
@@ -105,7 +105,7 @@ class PdfRasterPolicyTest {
 
     @Test
     fun `downscaleResultStaysInsideTheCaps`() {
-        // Webtoon 路径会先算权威尺寸再除采样率 —— 结果必须仍在内存上限之内
+        // 缩略图路径：权威尺寸按整数采样率除下来，必须仍在内存上限之内
         val canonical = PdfRasterPolicy.canonicalSize(2000, 3000)
         val sampled = PdfRasterPolicy.downscale(canonical, 2)
         assertTrue(PdfRasterPolicy.pixelCount(sampled) < PdfRasterPolicy.pixelCount(canonical))
@@ -137,27 +137,46 @@ class PdfRasterPolicyTest {
     }
 
     @Test
-    fun `sampleForFollowsTheSharedReaderRule`() {
-        // 普通页：按目标宽降到 2 的幂
-        assertEquals(2, PdfRasterPolicy.sampleFor(2000, 3000, 1080))
-        // 已经够小 → 不缩
-        assertEquals(1, PdfRasterPolicy.sampleFor(1000, 1400, 1080))
-        // 超高条（Webtoon 长条）：即便宽度够，也要继续缩到 12:1 与 12M 像素以内
-        assertTrue(PdfRasterPolicy.sampleFor(1080, 30_000, 1080) > 1)
-        // 退化入参不能死循环/除零
-        assertEquals(1, PdfRasterPolicy.sampleFor(0, 0, 0))
+    fun `webtoonSizeUsesTheExactTargetWidthInsteadOfHalvingIt`() {
+        // 回归：旧实现按 2 的幂采样 —— 1600 宽在 1220 目标下会解成 800 宽，
+        // 再被 ImageView 拉回 1220（1.53 倍插值放大，整页发虚）。
+        assertEquals(listOf(1220, 1830), PdfRasterPolicy.webtoonSize(1600, 2400, 1220).toList())
+        assertEquals(listOf(1220, 1830), PdfRasterPolicy.webtoonSize(1280, 1920, 1220).toList())
+        // 恰好等于目标宽
+        assertEquals(listOf(1220, 1830), PdfRasterPolicy.webtoonSize(1220, 1830, 1220).toList())
+        // 原图比屏幕窄：不放大（图源没有的像素不编）
+        assertEquals(listOf(800, 1200), PdfRasterPolicy.webtoonSize(800, 1200, 1220).toList())
     }
 
     @Test
-    fun `sampledSizeKeepsAspectAndStaysInsideEveryCap`() {
-        val canonical = PdfRasterPolicy.canonicalSize(516, 728)          // B5
-        val sampled = PdfRasterPolicy.sampledSize(canonical, 1080)
-        assertTrue("宽度不能超过目标宽", sampled[0] <= 1080)
-        assertTrue("长条页高宽比上限 ~12:1", sampled[1] <= 1080 * 12)
-        assertTrue("总像素仍在上限内", PdfRasterPolicy.pixelCount(sampled) <= PdfRasterPolicy.MAX_PIXELS)
-        assertTrue("尺寸至少 1px", sampled[0] >= 1 && sampled[1] >= 1)
-        val ptRatio = 516.0 / 728
-        val pxRatio = sampled[0].toDouble() / sampled[1]
-        assertTrue("宽高比要保持（pt=$ptRatio px=$pxRatio）", abs(ptRatio - pxRatio) < 0.02)
+    fun `webtoonSizeCapsTallPagesProportionally`() {
+        // 12:1 绝对高（目标宽 × 12）与 12M 像素上限仍然生效，但按**比例**缩，不再 2 的幂跳档
+        val tall = PdfRasterPolicy.webtoonSize(1080, 30_000, 1080)
+        assertTrue(
+            "高度必须压到 ${1080 * PdfRasterPolicy.MAX_WEBTOON_ASPECT} 以内（实际 ${tall[1]}）",
+            tall[1] <= 1080 * PdfRasterPolicy.MAX_WEBTOON_ASPECT,
+        )
+        assertTrue("宽被按比例压缩", tall[0] in 1 until 1080)
+        assertTrue("宽高比保持", abs(tall[0].toDouble() / tall[1] - 1080.0 / 30_000) < 0.001)
+
+        val big = PdfRasterPolicy.webtoonSize(4000, 4000, 4000)
+        assertTrue(
+            "总像素必须在上限内（实际 ${PdfRasterPolicy.pixelCount(big)}）",
+            PdfRasterPolicy.pixelCount(big) <= PdfRasterPolicy.MAX_PIXELS,
+        )
+        assertTrue("压完不能塌成一条线（${big[0]}x${big[1]}）", big[0] > 100 && big[1] > 100)
+    }
+
+    @Test
+    fun `webtoonSizeNeverReturnsZeroPixels`() {
+        listOf(
+            intArrayOf(0, 0),
+            intArrayOf(-5, 100),
+            intArrayOf(1, 1),
+            intArrayOf(2160, 3840),
+        ).forEach { input ->
+            val size = PdfRasterPolicy.webtoonSize(input[0], input[1], 1080)
+            assertTrue("入参 ${input.toList()} → ${size.toList()}", size[0] >= 1 && size[1] >= 1)
+        }
     }
 }

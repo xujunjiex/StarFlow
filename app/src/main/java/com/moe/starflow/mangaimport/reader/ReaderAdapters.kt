@@ -206,14 +206,18 @@ class WebtoonAdapter(
             }
             return
         }
-        // 按实际/屏幕宽度降采样解码（大漫画防卡死）；宽在首次绑定可能为 0，回退屏幕宽度
-        val targetW = (img.width.takeIf { it > 0 }
+        // 按实际/列表宽度精确缩放解码（大漫画防卡死）。
+        // ⚠️ 优先用**列表宽度**而不是 `img.width`：整列缩放提交后的那次重绑里，item 还是按旧宽度
+        //    测量的（新宽度要等这一轮布局才生效），读 `img.width` 会按旧宽度解码 → 又被拉伸变糊。
+        // ⚠️ 列表宽度会随「连续滚动整列缩放」变化 —— 这里必须每次绑定重算，不能缓存。
+        val targetW = (attachedList?.width?.takeIf { it > 0 }
+            ?: img.width.takeIf { it > 0 }
             ?: holder.itemView.context.resources.displayMetrics.widthPixels).coerceAtLeast(1)
 
         // ⚠️ 必须先把行高按【页图原始宽高比】钉死，再清图/加载。
         // ImageView 是 wrap_content + adjustViewBounds：`setImageDrawable(null)` 会让行高塌成 0，
         // 图片到达后再撑开 → 列表连锁重排，用户看到的就是「页面一直跳、旧图清不掉、新图不进来」。
-        // 原图与译图的宽高比一致（译图渲在按屏宽采样出来的原图上），所以钉一次就够、永久有效。
+        // 原图与译图的宽高比一致（译图渲在按屏宽缩放出来的原图上），所以钉一次就够、永久有效。
         val ow = source.originalWidth(position)
         val oh = source.originalHeight(position)
         val pinned = if (ow > 0 && oh > 0) {

@@ -113,8 +113,8 @@ class PdfImportWiringTest {
         assertTrue("必须持有渲染器", src.contains("PdfPageRenderer(inputFile)"))
         assertTrue("权威尺寸必须经 PdfRasterPolicy（见 PdfPageRenderer.canonicalSize）", src.contains("pdfGeometry?.canonicalSize("))
         assertTrue(
-            "采样尺寸也走策略（在渲染器内部一次 openPage 内算完）",
-            read(RENDERER).contains("PdfRasterPolicy.sampledSize(canonical, targetWidthPx)"),
+            "上屏尺寸也走策略（在渲染器内部一次 openPage 内算完）",
+            read(RENDERER).contains("PdfRasterPolicy.webtoonSize("),
         )
         assertTrue(
             "缩略图采样同样走策略",
@@ -123,7 +123,12 @@ class PdfImportWiringTest {
         // ⚠️ 反例守卫：在 ReaderPageSource 里写死 DPI/换算系数 = 出现第二套口径
         assertFalse("不许在数据源里手写 DPI 换算（72f）", src.contains("72f"))
         assertFalse("不许在数据源里手写 300dpi（300f）", src.contains("300f"))
-        assertFalse("不许对 PDF 页做二次缩放（先渲大再缩）", src.contains("createScaledBitmap"))
+        // ⚠️ 只约束 **PDF 渲染器**：图片路径（ReaderPageSource.loadWebtoon）现在会用
+        //    createScaledBitmap 精确缩到上屏宽度 —— 那是图片，不是"PDF 先渲大再缩"。
+        assertFalse(
+            "不许对 PDF 页做二次缩放（先渲大再缩）",
+            read(RENDERER).contains("createScaledBitmap"),
+        )
     }
 
     @Test
@@ -171,7 +176,7 @@ class PdfImportWiringTest {
         )
         assertTrue(
             "ensureOriginalSize 必须有 PDF 分支（Webtoon 行高靠它）",
-            body("private fun ensureOriginalSize(", "private fun computeSample").contains("if (isPdf)"),
+            body("private fun ensureOriginalSize(", "private fun decodeThumb").contains("if (isPdf)"),
         )
         assertTrue(
             "pageBytes 必须对 PDF 明说返回 0（不编假数据）",
