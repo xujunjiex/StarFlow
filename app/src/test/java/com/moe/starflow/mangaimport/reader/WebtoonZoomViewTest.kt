@@ -110,22 +110,29 @@ class WebtoonZoomViewTest {
     }
 
     /**
-     * 回归：宿主必须在**布局前**收到提交（重绑可见页 + 预滚阅读位置），
+     * 回归：宿主必须在**布局前**收到提交（重绑可见页 + 按手指预滚阅读位置），
      * 布局完成后只做译图预热/当前页同步，不能再改滚动位置。
+     *
+     * 用户口径：缩放中心必须是**手指**（横竖都是），所以锚点要按手指位置取，
+     * 且把焦点 y 一起交给宿主（否则纵向只能退回"以视口顶部为中心"）。
      */
     @Test
     fun willCommitRunsBeforeRelayoutAndCommittedRunsAfter() {
         val (zoom, child) = host()
         layout(zoom, 1000, 2000)
 
-        val will = mutableListOf<Triple<Float, Float, WebtoonZoomView.Anchor?>>()
+        val will = mutableListOf<WillCommit>()
         val done = mutableListOf<Pair<Float, WebtoonZoomView.Anchor?>>()
         var widthAtWill = -1
         var widthAtDone = -1
-        zoom.anchorProvider = { WebtoonZoomView.Anchor(3, 0.25f, 4000) }
-        zoom.onZoomWillCommit = { z, ratio, anchor ->
+        var anchorFocusY = -1f
+        zoom.anchorProvider = { focusY ->
+            anchorFocusY = focusY
+            WebtoonZoomView.Anchor(3, 0.25f, 4000)
+        }
+        zoom.onZoomWillCommit = { z, ratio, focusY, anchor ->
             widthAtWill = child.width
-            will += Triple(z, ratio, anchor)
+            will += WillCommit(z, ratio, focusY, anchor)
         }
         zoom.onZoomCommitted = { z, anchor ->
             widthAtDone = child.width
@@ -135,13 +142,15 @@ class WebtoonZoomViewTest {
         zoom.setZoom(2f)
 
         assertEquals("布局前必须通知一次", 1, will.size)
-        assertEquals(2f, will.single().first, 0.001f)
-        assertEquals("缩放比 = 新列宽 / 旧列宽（宿主用它推算新阅读位置）", 2f, will.single().second, 0.001f)
+        assertEquals(2f, will.single().zoom, 0.001f)
+        assertEquals("缩放比 = 新列宽 / 旧列宽（宿主用它推算新阅读位置）", 2f, will.single().heightRatio, 0.001f)
+        assertEquals("焦点 y 必须传给宿主（纵向按手指缩放）", 1000f, will.single().focusY, 0.001f)
+        assertEquals("锚点要按手指取", 1000f, anchorFocusY, 0.001f)
         assertEquals(1000, widthAtWill)
-        assertNotNull("锚点要带页高（布局前推算位置用）", will.single().third)
-        assertEquals(3, will.single().third!!.page)
-        assertEquals(0.25f, will.single().third!!.fraction, 0.001f)
-        assertEquals(4000, will.single().third!!.heightPx)
+        assertNotNull("锚点要带页高（布局前推算位置用）", will.single().anchor)
+        assertEquals(3, will.single().anchor!!.page)
+        assertEquals(0.25f, will.single().anchor!!.fraction, 0.001f)
+        assertEquals(4000, will.single().anchor!!.heightPx)
         assertEquals("新宽度生效前不能提前走 committed 分支", 0, done.size)
 
         layout(zoom, 1000, 2000)
@@ -150,6 +159,13 @@ class WebtoonZoomViewTest {
         assertEquals(2f, done.single().first, 0.001f)
         assertEquals("committed 时子视图已经是新宽度", 2000, widthAtDone)
     }
+
+    private data class WillCommit(
+        val zoom: Float,
+        val heightRatio: Float,
+        val focusY: Float,
+        val anchor: WebtoonZoomView.Anchor?,
+    )
 
     @Test
     fun panIsClampedToTheZoomedContent() {

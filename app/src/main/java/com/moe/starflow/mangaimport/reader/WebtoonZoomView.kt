@@ -21,28 +21,20 @@ import kotlin.math.roundToInt
  * - 上下滚动由列表自己处理，本容器**只**接管多点缩放与放大后的横向拖动；
  * - 页面比视口宽时左右拖动看屏幕外部分（`HorizontalScrollView` 的滚动范围，天然带钳制）。
  *
- * ## 手势
- * - 双指捏合：[MIN_ZOOM]–[MAX_ZOOM]；捏合期间用子视图 `scaleX/scaleY` 实时预览，
- *   **松手才提交**（提交要重排列表 → 重绑页 → 按新宽度重新解码，不能每帧做）。
- * - 双击：1× ↔ [DOUBLE_TAP_ZOOM]。
- * - 单指：竖向拖动一律不拦截（交给列表滚动）；放大后横向拖动才由本容器接管，
- *   未放大时本容器完全不参与，行为与没有它时一致。
+ * ## 缩放中心 = 手指（横竖都是）
+ * 预览用子视图 `scaleX/scaleY`，pivot 就是手指点；提交时也必须按同一个手指点还原位置，
+ * 否则松手会跳（用户报过「缩放中心一直在屏幕靠上」和「松手瞬间轻微位移」这两类问题）：
+ * - 横向：`scrollX = 焦点比例 × 新内容宽 - 手指x`；
+ * - 纵向：纵向滚动由 RecyclerView 管，宿主按**手指下方那一页**的页内比例换算
+ *   `scrollToPositionWithOffset(页, 手指y - 页内比例 × 旧行高 × 缩放比)`。
  *
- * ## 放手那一帧必须"无缝"（踩过：松手瞬间整页轻微位移/闪一下）
- * 预览用的是子视图 `scaleX/scaleY`，提交换的是**子视图宽度**。两者只要不落在同一帧，
+ * ## 放手那一帧必须"无缝"
+ * 预览画的是「旧宽度 × 缩放比」，提交换的是「新宽度」。两者只要不落在同一帧，
  * 中间就会有一帧画在旧宽度上 → 看起来就是"松手闪一下/挪一下"。所以：
  * 1. **绝不先清预览**：把预览留到应用新宽度的**同一轮布局**里（`measureChildWithMargins` 里清），
  *    绘制发生在布局之后，因此那一帧直接就是"新宽度 + 无 transform"，视觉没有任何变化；
  * 2. **重绑与阅读位置也要提前**：`onZoomWillCommit` 在 `requestLayout()` 之前通知宿主，
- *    宿主在同一次布局里重绑页（钉新行高）并把列表预滚到新比例。等布局跑完再滚
- *    （旧实现的 `onZoomCommitted` + post）会让中间那一帧停在错误位置；
- * 3. **横向按手指焦点还原**：提交后用同一个焦点比例算 `scrollX`，不能按视口中心算，
- *    否则偏心捏合会横向挪一截。
- *
- * ## 预览与提交的口径必须一致
- * 横向：以手指焦点为锚（提交后按同一焦点比例恢复 `scrollX`）。
- * 纵向：**恒以视口顶部为锚** —— 提交后宿主按「页号 + 页内比例」把阅读位置恢复到视口顶部，
- * 若预览按手指纵向锚定，松手那一下会整体跳一段。
+ *    宿主在同一次布局里重绑页（钉新行高）并把列表预滚到手指下方那一页。
  *
  * ## 所有权
  * - [zoom] 与横向滚动量只在本 View；译图缓存、页图重绑、阅读位置恢复都由宿主经
@@ -56,7 +48,7 @@ class WebtoonZoomView @JvmOverloads constructor(
 ) : HorizontalScrollView(context, attrs, defStyleAttr) {
 
     /**
-     * 缩放前的阅读锚点：页号 + 页内比例 + 该页**缩放前**的像素高度。
+     * 手指点下方的阅读锚点：页号 + 页内比例 + 该页**缩放前**的像素高度。
      *
      * 高度要带上：提交发生在布局**之前**，宿主只能按 `高度 × 缩放比` 推算新位置，
      * 等布局跑完再问新高度就已经晚一帧了（那一帧就是用户看到的位移）。
@@ -67,16 +59,16 @@ class WebtoonZoomView @JvmOverloads constructor(
     var zoom: Float = MIN_ZOOM
         private set
 
-    /** 提交前取阅读锚点，由宿主用列表的 LayoutManager 实现；返回 null 表示取不到。 */
-    var anchorProvider: (() -> Anchor?)? = null
+    /** 取 `focusY` 手指点下方的阅读锚点（一屏可能有两页，必须按手指选页），由宿实现。 */
+    var anchorProvider: ((focusY: Float) -> Anchor?)? = null
 
     /**
-     * **布局之前**通知宿主：按新的列宽重绑页（重新钉行高）并把阅读位置预滚到
-     * `anchor.fraction × anchor.heightPx × heightRatio`。必须与新的子视图宽度落在同一次布局里。
+     * **布局之前**通知宿主：按新的列宽重绑页（重新钉行高）并把列表滚到手指下方那一页的
+     * `fraction × heightPx × heightRatio` 处。必须与新的子视图宽度落在同一次布局里。
      *
-     * @param heightRatio 新列宽 / 旧列宽（行高与列宽等比，所以位置比例也按它换算）
+     * @param heightRatio 新列宽 / 旧列宽（行高与列宽等比，所以位置也按它换算）
      */
-    var onZoomWillCommit: ((zoom: Float, heightRatio: Float, anchor: Anchor?) -> Unit)? = null
+    var onZoomWillCommit: ((zoom: Float, heightRatio: Float, focusY: Float, anchor: Anchor?) -> Unit)? = null
 
     /**
      * 缩放已提交、新列宽/新行高已经布局完成（仍在绘制之前）：宿主在这里预热译图、
@@ -93,13 +85,14 @@ class WebtoonZoomView @JvmOverloads constructor(
     private var downY = 0f
     private var lastX = 0f
 
-    /** 最近一次捏合的横向焦点（视口坐标）：提交后按它恢复左右位置。 */
+    /** 最近一次捏合的焦点（视口坐标）：提交后按它恢复横竖位置，缩放中心才跟手指。 */
     private var lastFocusX = 0f
+    private var lastFocusY = 0f
 
     /**
      * 预览 transform 还没撤（等下一次测量时撤）。
      *
-     * ⚠️ 见类注释第 1 条：提交后**不能**立刻 `clearPreview()`，否则新宽度还没应用，
+     * ⚠️ 见类注释：提交后**不能**立刻 `clearPreview()`，否则新宽度还没应用，
      * 这一帧会画成旧宽度的内容（松手闪一下）。
      */
     private var pendingTransformClear = false
@@ -111,18 +104,20 @@ class WebtoonZoomView @JvmOverloads constructor(
                 scaling = true
                 scalePreview = zoom
                 lastFocusX = detector.focusX
+                lastFocusY = detector.focusY
                 return true
             }
 
             override fun onScale(detector: ScaleGestureDetector): Boolean {
                 scalePreview = (scalePreview * detector.scaleFactor).coerceIn(MIN_ZOOM, MAX_ZOOM)
                 lastFocusX = detector.focusX
-                previewScale(scalePreview, detector.focusX)
+                lastFocusY = detector.focusY
+                previewScale(scalePreview, detector.focusX, detector.focusY)
                 return true
             }
 
             override fun onScaleEnd(detector: ScaleGestureDetector) {
-                commit(scalePreview, lastFocusX)
+                commit(scalePreview, lastFocusX, lastFocusY)
             }
         },
     )
@@ -133,7 +128,7 @@ class WebtoonZoomView @JvmOverloads constructor(
             override fun onDown(e: MotionEvent): Boolean = true
 
             override fun onDoubleTap(e: MotionEvent): Boolean {
-                commit(if (zoom > 1.05f) MIN_ZOOM else DOUBLE_TAP_ZOOM, e.x)
+                commit(if (zoom > 1.05f) MIN_ZOOM else DOUBLE_TAP_ZOOM, e.x, e.y)
                 return true
             }
         },
@@ -146,7 +141,7 @@ class WebtoonZoomView @JvmOverloads constructor(
     }
 
     /** 直接设置缩放（双击/外部入口走它）；会触发一次提交。 */
-    fun setZoom(target: Float) = commit(target, width / 2f)
+    fun setZoom(target: Float) = commit(target, width / 2f, height / 2f)
 
     /** 复位到铺满屏宽（切出连续滚动/旋转时调用）。**不触发** [onZoomCommitted]。 */
     fun resetZoom() {
@@ -261,12 +256,13 @@ class WebtoonZoomView @JvmOverloads constructor(
         return true
     }
 
-    private fun previewScale(scale: Float, focusX: Float) {
+    /** 预览：以手指点为 pivot（横竖都跟手指），画出来的缩放中心就是手指所在处。 */
+    private fun previewScale(scale: Float, focusX: Float, focusY: Float) {
         val child = getChildAt(0) ?: return
         val factor = (scale / zoom).coerceAtLeast(0.01f)
-        // 横向锚在手指处（子视图坐标 = 视口坐标 + 已横向滚动量）；纵向锚在视口顶部，见类注释
+        // 子视图坐标 = 视口坐标 + 已横向滚动量；纵向列表本身不滚动（滚动在 RecyclerView 内部）
         child.pivotX = focusX + scrollX
-        child.pivotY = 0f
+        child.pivotY = focusY
         child.scaleX = factor
         child.scaleY = factor
     }
@@ -280,10 +276,10 @@ class WebtoonZoomView @JvmOverloads constructor(
     }
 
     /**
-     * 提交缩放：改 [zoom] → **先**让宿主在新宽度下重绑/预滚 → 重排 →
+     * 提交缩放：改 [zoom] → **先**让宿主在新宽度下重绑/按手指预滚 → 重排 →
      * 新布局完成（绘制前）时撤预览并恢复横向位置。
      */
-    private fun commit(target: Float, focusX: Float) {
+    private fun commit(target: Float, focusX: Float, focusY: Float) {
         val newZoom = target.coerceIn(MIN_ZOOM, MAX_ZOOM)
         scaling = false
         if (abs(newZoom - zoom) < 0.01f) {
@@ -291,14 +287,14 @@ class WebtoonZoomView @JvmOverloads constructor(
             return
         }
         val heightRatio = newZoom / zoom
-        val anchor = anchorProvider?.invoke()
+        val anchor = anchorProvider?.invoke(focusY)
         val oldChildWidth = getChildAt(0)?.width?.coerceAtLeast(1) ?: 1
         val focus = focusX.coerceIn(0f, width.toFloat())
         val focusFraction = ((scrollX + focus) / oldChildWidth).coerceIn(0f, 1f)
         zoom = newZoom
         pendingTransformClear = true
-        // ① 布局前：宿主按新列宽重绑（钉新行高）+ 预滚到新比例 → 与换宽同一次布局
-        onZoomWillCommit?.invoke(newZoom, heightRatio, anchor)
+        // ① 布局前：宿主按新列宽重绑（钉新行高）+ 按手指预滚 → 与换宽同一次布局
+        onZoomWillCommit?.invoke(newZoom, heightRatio, focusY, anchor)
         requestLayout()
         // ② 新宽度/新行高落定、仍在绘制之前：恢复横向位置并通知宿主
         afterChildLayoutChange {
@@ -306,7 +302,7 @@ class WebtoonZoomView @JvmOverloads constructor(
             clearPreview()
             val childWidth = getChildAt(0)?.width?.coerceAtLeast(1) ?: return@afterChildLayoutChange
             val maxScroll = (childWidth - width).coerceAtLeast(0)
-            // 同一个焦点比例 × 新内容宽 - 手指位置：手指下的内容保持不动（不再按视口中心算）
+            // 同一个手指位置 × 新内容宽 - 手指x：手指下的内容保持不动
             val targetScroll = (focusFraction * childWidth - focus).roundToInt().coerceIn(0, maxScroll)
             scrollTo(targetScroll, 0)
             onZoomCommitted?.invoke(newZoom, anchor)
