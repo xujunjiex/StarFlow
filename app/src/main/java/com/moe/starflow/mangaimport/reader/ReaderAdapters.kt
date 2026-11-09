@@ -285,6 +285,32 @@ class WebtoonAdapter(
     }
 
     /**
+     * 整列缩放**预览**用：把当前已上屏页的行高按 [targetWidth] 重算（只改 layoutParams）。
+     *
+     * ⚠️ 为什么需要：行高是在 `onBindViewHolder` 里按「绑定那一刻的列宽」钉死的；捏合缩放不重绑，
+     *    行高就会滞后于列宽 → 图片按旧高度 `fitCenter`，上下露出背景（用户看到的"黑边/黑屏"）。
+     *    这里只重算行高，不动 bitmap、也不触发解码；松手后由 `notifyItemRangeChanged` 正式重绑。
+     */
+    fun repinItemHeights(targetWidth: Int) {
+        val list = attachedList ?: return
+        for (i in 0 until list.childCount) {
+            val child = list.getChildAt(i) ?: continue
+            val position = list.getChildAdapterPosition(child)
+            if (position == RecyclerView.NO_POSITION) continue
+            val img = child.findViewById<ImageView>(R.id.webtoon_image) ?: continue
+            val ow = source.originalWidth(position)
+            val oh = source.originalHeight(position)
+            if (ow <= 0 || oh <= 0) continue
+            val height = (targetWidth.toLong() * oh / ow).toInt().coerceIn(1, MAX_WEBTOON_ITEM_HEIGHT)
+            val lp = img.layoutParams
+            if (lp.height != height) {
+                lp.height = height
+                img.layoutParams = lp
+            }
+        }
+    }
+
+    /**
      * 实时预览：给**当前已上屏**的所有页上滤镜。
      *
      * ⚠️ 必须存在：Webtoon 的滤镜只在 `onBindViewHolder` 里上（`img.colorFilter = shared.filter()`），

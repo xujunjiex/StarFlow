@@ -19,9 +19,10 @@ import org.robolectric.annotation.Config
  * 用户口径：放大后**还要能上下滑**，所以缩放的是**列宽**而不是单页：
  * 子视图宽度 = 视口宽 × zoom，高度恒为一屏（内部仍由 RecyclerView 滚动）。
  *
- * 另一条硬约束（用户报过「每次缩放松手瞬间漫画轻微位移/闪一下」）：
- * 预览 transform 必须保留到**新宽度被应用的同一轮测量**再撤，且「重绑 + 预滚位置」
- * 必须发生在布局**之前** —— 否则中间会有一帧画在旧宽度/旧位置上。
+ * 两条硬约束（都是用户报过的）：
+ * 1. **不做 transform 预览**：捏合期间直接用新列宽逐帧重排。用 `scaleX/scaleY` 预览时，
+ *    缩小会让整列被画小、屏幕上下露出背景（"上下黑屏"），松手才恢复。
+ * 2. **缩放中心 = 手指**：每一帧都按 `focusY` 取锚点、按当前布局的倍率算比例。
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -44,6 +45,13 @@ class WebtoonZoomViewTest {
         view.layout(0, 0, width, height)
     }
 
+    private class Preview(
+        val zoom: Float,
+        val heightRatio: Float,
+        val focusY: Float,
+        val anchor: WebtoonZoomView.Anchor?,
+    )
+
     @Test
     fun atRestFillsTheViewportAndCannotScrollSideways() {
         val (zoom, child) = host()
@@ -56,18 +64,56 @@ class WebtoonZoomViewTest {
         assertFalse("未放大时没有横向滚动", zoom.canScrollHorizontally(-1))
     }
 
+    /**
+     * 回归（用户报的「缩小的时候上下黑屏，松手才显示」）：捏合必须**直接改列宽**，
+     * 不能用 `scaleX/scaleY` 预览 —— transform 缩小时整列被画小，屏幕上下就是背景。
+     */
     @Test
-    fun zoomWidensTheWholeColumnButKeepsTheListOneScreenTall() {
+    fun liveZoomWidensTheColumnWithoutAnyTransform() {
         val (zoom, child) = host()
         layout(zoom, 1000, 2000)
+        val previews = mutableListOf<Preview>()
+        var committed = 0
+        zoom.anchorProvider = { WebtoonZoomView.Anchor(0, 0f, 2000) }
+        zoom.onZoomPreview = { z, ratio, focusY, anchor -> previews += Preview(z, ratio, focusY, anchor) }
+        zoom.onZoomCommitted = { committed++ }
 
+        zoom.setZoom(2f)
+
+        assertEquals("布局前必须先算好新行高/位置", 1, previews.size)
+        assertEquals(2f, previews.single().zoom, 0.001f)
+        assertEquals("倍率按当前布局算", 2f, previews.single().heightRatio, 0.001f)
+        assertEquals("焦点 y 必须传给宿主（纵向按手指缩放）", 1000f, previews.single().focusY, 0.001f)
+        assertNotNull(previews.single().anchor)
+        assertEquals("缩放过程中不能等布局完再通知", 0, committed)
+
+        layout(zoom, 1000, 2000)
+
+        assertEquals("整列按比例变宽", 2000, child.measuredWidth)
+        assertEquals("⚠️ 高度必须还是一屏：上下滚动由列表自己处理", 2000, child.measuredHeight)
+        assertEquals("整个缩放过程不使用 transform（否则会有黑边）", 1f, child.scaleX, 0.001f)
+        assertEquals(1f, child.scaleY, 0.001f)
+        assertTrue("放大后可左右拖动看屏幕外部分", zoom.canScrollHorizontally(1))
+        assertEquals("焦点在正中 → 布局后横向居中对齐", 500, zoom.scrollX)
+        assertEquals("布局完成后通知一次（宿主据此重绑/预热）", 1, committed)
+    }
+
+    @Test
+    fun heightRatioIsMeasuredFromTheCurrentLayoutNotFromTheTarget() {
+        val (zoom, _) = host()
+        layout(zoom, 1000, 2000)
+        zoom.anchorProvider = { WebtoonZoomView.Anchor(0, 0f, 2000) }
         zoom.setZoom(2f)
         layout(zoom, 1000, 2000)
 
-        assertEquals(2f, zoom.zoom, 0.001f)
-        assertEquals("整列按比例变宽", 2000, child.measuredWidth)
-        assertEquals("⚠️ 高度必须还是一屏：上下滚动由列表自己处理", 2000, child.measuredHeight)
-        assertTrue("放大后可左右拖动看屏幕外部分", zoom.canScrollHorizontally(1))
+        var ratio = -1f
+        var target = -1f
+        zoom.onZoomPreview = { z, r, _, _ -> target = z; ratio = r }
+
+        zoom.setZoom(1.5f)
+
+        assertEquals(1.5f, target, 0.001f)
+        assertEquals("连续缩放时要相对「当前布局的倍率」，否则会漏掉同一帧里的增量", 0.75f, ratio, 0.001f)
     }
 
     @Test
@@ -85,87 +131,6 @@ class WebtoonZoomViewTest {
         assertEquals(1000, child.measuredWidth)
         assertEquals("复位后横向滚动必须归零", 0, zoom.scrollX)
     }
-
-    /**
-     * 回归（用户报的"松手瞬间位移/闪一下"）：提交时**不能**先撤预览。
-     *
-     * 预览画的是「旧宽度 × 缩放比」，提交换的是「新宽度」。撤得太早、而新宽度还没应用，
-     * 中间那一帧就会退回旧宽度 → 肉眼看到整页缩一下/挪一下。
-     */
-    @Test
-    fun previewIsKeptUntilTheNewWidthIsApplied() {
-        val (zoom, child) = host()
-        layout(zoom, 1000, 2000)
-        // 模拟捏合过程中的预览：子视图按 1.5 倍绘制
-        child.scaleX = 1.5f
-        child.scaleY = 1.5f
-
-        zoom.setZoom(2f)
-        assertEquals("提交的同一帧里不能先撤预览", 1.5f, child.scaleX, 0.001f)
-        assertEquals(1.5f, child.scaleY, 0.001f)
-
-        layout(zoom, 1000, 2000)
-        assertEquals("新宽度生效后必须撤掉预览", 1f, child.scaleX, 0.001f)
-        assertEquals(1f, child.scaleY, 0.001f)
-    }
-
-    /**
-     * 回归：宿主必须在**布局前**收到提交（重绑可见页 + 按手指预滚阅读位置），
-     * 布局完成后只做译图预热/当前页同步，不能再改滚动位置。
-     *
-     * 用户口径：缩放中心必须是**手指**（横竖都是），所以锚点要按手指位置取，
-     * 且把焦点 y 一起交给宿主（否则纵向只能退回"以视口顶部为中心"）。
-     */
-    @Test
-    fun willCommitRunsBeforeRelayoutAndCommittedRunsAfter() {
-        val (zoom, child) = host()
-        layout(zoom, 1000, 2000)
-
-        val will = mutableListOf<WillCommit>()
-        val done = mutableListOf<Pair<Float, WebtoonZoomView.Anchor?>>()
-        var widthAtWill = -1
-        var widthAtDone = -1
-        var anchorFocusY = -1f
-        zoom.anchorProvider = { focusY ->
-            anchorFocusY = focusY
-            WebtoonZoomView.Anchor(3, 0.25f, 4000)
-        }
-        zoom.onZoomWillCommit = { z, ratio, focusY, anchor ->
-            widthAtWill = child.width
-            will += WillCommit(z, ratio, focusY, anchor)
-        }
-        zoom.onZoomCommitted = { z, anchor ->
-            widthAtDone = child.width
-            done += z to anchor
-        }
-
-        zoom.setZoom(2f)
-
-        assertEquals("布局前必须通知一次", 1, will.size)
-        assertEquals(2f, will.single().zoom, 0.001f)
-        assertEquals("缩放比 = 新列宽 / 旧列宽（宿主用它推算新阅读位置）", 2f, will.single().heightRatio, 0.001f)
-        assertEquals("焦点 y 必须传给宿主（纵向按手指缩放）", 1000f, will.single().focusY, 0.001f)
-        assertEquals("锚点要按手指取", 1000f, anchorFocusY, 0.001f)
-        assertEquals(1000, widthAtWill)
-        assertNotNull("锚点要带页高（布局前推算位置用）", will.single().anchor)
-        assertEquals(3, will.single().anchor!!.page)
-        assertEquals(0.25f, will.single().anchor!!.fraction, 0.001f)
-        assertEquals(4000, will.single().anchor!!.heightPx)
-        assertEquals("新宽度生效前不能提前走 committed 分支", 0, done.size)
-
-        layout(zoom, 1000, 2000)
-
-        assertEquals("新布局完成后通知一次", 1, done.size)
-        assertEquals(2f, done.single().first, 0.001f)
-        assertEquals("committed 时子视图已经是新宽度", 2000, widthAtDone)
-    }
-
-    private data class WillCommit(
-        val zoom: Float,
-        val heightRatio: Float,
-        val focusY: Float,
-        val anchor: WebtoonZoomView.Anchor?,
-    )
 
     @Test
     fun panIsClampedToTheZoomedContent() {
